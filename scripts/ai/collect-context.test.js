@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   isPathAllowed,
+  readFileSafe,
   resolveLocalImports,
   buildRelevantFiles,
   getMetadata,
@@ -47,7 +48,15 @@ const CYPRESS_RF_POLICY = getRelevantFilesPolicy("cypress");
 const PLAYWRIGHT_RF_POLICY = getRelevantFilesPolicy("playwright");
 
 test("isPathAllowed: allows cypress/ files and the two named root files", () => {
-  assert.equal(isPathAllowed(path.join(ROOT, "cypress", "e2e", "tests", "x.cy.js"), CYPRESS_RF_POLICY), true);
+  // Roadmap #21C-C1: isPathAllowed() now also requires the candidate's REAL
+  // (symlink-resolved) location to exist and independently satisfy the same
+  // policy (see isRealPathAllowed()) - a hypothetical, non-existent path can
+  // no longer be given a real security verdict, so this uses a real,
+  // existing Cypress spec file rather than a placeholder filename.
+  assert.equal(
+    isPathAllowed(path.join(ROOT, "cypress", "e2e", "tests", "category_tree_behavior.cy.js"), CYPRESS_RF_POLICY),
+    true
+  );
   assert.equal(isPathAllowed(path.join(ROOT, "cypress.config.js"), CYPRESS_RF_POLICY), true);
   assert.equal(isPathAllowed(path.join(ROOT, "package.json"), CYPRESS_RF_POLICY), true);
 });
@@ -850,4 +859,229 @@ test("C_RF equivalence: Cypress policy is exactly the pre-#21C ALLOWED_DIRS/ALLO
 
 test("RELEVANT_FILES_POLICIES: exactly the two known frameworks are defined, no hidden generic/default entry", () => {
   assert.deepEqual(Object.keys(RELEVANT_FILES_POLICIES).sort(), ["cypress", "playwright"]);
+});
+
+// =========================================================================
+// Roadmap #21C-C1 - real filesystem (symlink-resolved) boundary security.
+//
+// #21C-R independently proved that the lexical containment check alone
+// (path.resolve() + startsWith()) does not prove real filesystem
+// containment: fs.statSync()/fs.readFileSync() (used by readFileSafe())
+// both transparently follow symlinks, so a symlink lexically inside an
+// allowed directory - or an allowed directory whose own path passes
+// through a symlinked ancestor - could redirect a read anywhere the
+// filesystem permits, and could do so even for a lexically denylisted-
+// looking name being bypassed via an innocuous symlink name. isPathAllowed()
+// now also requires the candidate's REAL (fs.realpathSync-resolved)
+// location to independently satisfy the same repository-containment,
+// framework-policy, and denylist checks (see isRealPathAllowed() in
+// collect-context.js) before anything is read - closing that gap
+// symmetrically for both Cypress and Playwright.
+//
+// Every test below creates only temporary, uniquely-named files/symlinks
+// under an isolated OS-temp "outside" directory and this repository's own
+// (currently nonexistent) cypress/ or playwright/ directories, always
+// removed via t.after(fs.rmSync(..., {recursive:true, force:true})) - the
+// same safe-even-for-broken-symlinks cleanup this file already relies on
+// elsewhere. No repository file is ever modified.
+// =========================================================================
+
+function makeOutsideFile(prefix, name, content) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, content);
+  return { dir, file };
+}
+
+test("S_RF_1: a Playwright direct-file symlink to a real file outside the repository is rejected", (t) => {
+  const MARK = "S_RF_1_MARK";
+  const { dir: outsideDir, file: outsideFile } = makeOutsideFile("s-rf-1-outside-", "normal.txt", MARK);
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  fs.symlinkSync(outsideFile, path.join(pwDir, "s_rf_1_link.js"), "file");
+
+  assert.equal(isPathAllowed(path.join(pwDir, "s_rf_1_link.js"), PLAYWRIGHT_RF_POLICY), false);
+
+  // Real pipeline, not just the internal helper (Roadmap #21C-C1 Phase 18) -
+  // #21C-R reproduced the original bypass through buildRelevantFiles()
+  // itself, so the fix must be proven there too.
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_1_link.js" }], warnings, "playwright");
+  assert.ok(!("playwright/s_rf_1_link.js" in files));
+  assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
+});
+
+test("S_RF_2: a harmless-named Playwright symlink to a real .env file outside the repository is rejected (denylist cannot be bypassed via symlink)", (t) => {
+  const MARK = "S_RF_2_MARK";
+  const { dir: outsideDir, file: outsideEnv } = makeOutsideFile("s-rf-2-outside-", ".env", MARK);
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  const linkPath = path.join(pwDir, "s_rf_2_harmless.js");
+  fs.symlinkSync(outsideEnv, linkPath, "file");
+
+  assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY), false);
+
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_2_harmless.js" }], warnings, "playwright");
+  assert.ok(!("playwright/s_rf_2_harmless.js" in files));
+  // Prove the secret content never enters provider-visible source evidence,
+  // not merely that isPathAllowed() returned false (Roadmap #21C-C1 Phase 19).
+  assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
+});
+
+test("S_RF_3: a harmless-named Playwright symlink to a real .env file INSIDE playwright/ is also rejected", (t) => {
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+
+  const MARK = "S_RF_3_MARK";
+  const realEnv = path.join(pwDir, ".env");
+  fs.writeFileSync(realEnv, MARK);
+  const linkPath = path.join(pwDir, "s_rf_3_harmless.js");
+  fs.symlinkSync(realEnv, linkPath, "file");
+
+  assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY), false);
+
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_3_harmless.js" }], warnings, "playwright");
+  assert.ok(!("playwright/s_rf_3_harmless.js" in files));
+  assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
+});
+
+test("S_RF_4: a Playwright symlinked PARENT DIRECTORY pointing outside the repository is rejected, even though the final file is an ordinary non-symlink file", (t) => {
+  const MARK = "S_RF_4_MARK";
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "s-rf-4-outside-"));
+  fs.writeFileSync(path.join(outsideDir, "foo.js"), MARK);
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  fs.symlinkSync(outsideDir, path.join(pwDir, "link-dir"), "dir");
+
+  // The final path component ("foo.js") is an ordinary file, never itself a
+  // symlink - a final-component-only lstat check would miss this; only
+  // resolving the FULL path (fs.realpathSync) reveals the redirection.
+  assert.equal(isPathAllowed(path.join(pwDir, "link-dir", "foo.js"), PLAYWRIGHT_RF_POLICY), false);
+
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "playwright/link-dir/foo.js" }], warnings, "playwright");
+  assert.ok(!("playwright/link-dir/foo.js" in files));
+  assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
+});
+
+test("S_RF_5: a Cypress symlink to a real file outside the repository is rejected (fix applies symmetrically, not Playwright-only)", (t) => {
+  const MARK = "S_RF_5_MARK";
+  const { dir: outsideDir, file: outsideFile } = makeOutsideFile("s-rf-5-outside-", "secret.js", MARK);
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+
+  const cyDir = path.join(ROOT, "cypress");
+  const preexisting = fs.existsSync(cyDir);
+  const linkPath = path.join(cyDir, "s_rf_5_link.js");
+  fs.symlinkSync(outsideFile, linkPath, "file");
+  t.after(() => {
+    fs.rmSync(linkPath, { force: true });
+    if (!preexisting) fs.rmSync(cyDir, { recursive: true, force: true });
+  });
+
+  assert.equal(isPathAllowed(linkPath, CYPRESS_RF_POLICY), false);
+
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "cypress/s_rf_5_link.js" }], warnings, "cypress");
+  assert.ok(!("cypress/s_rf_5_link.js" in files));
+  assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
+});
+
+test("S_RF_6: an ordinary non-symlink Playwright file is still collected correctly (no regression)", (t) => {
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(pwDir, "s_rf_6_normal.spec.js"), "// ordinary file, no symlink");
+
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_6_normal.spec.js" }], warnings, "playwright");
+  assert.ok("playwright/s_rf_6_normal.spec.js" in files);
+});
+
+test("S_RF_7: an ordinary non-symlink Cypress file is still collected correctly (no regression)", () => {
+  const files = buildRelevantFiles(
+    [{ specFile: "cypress/e2e/tests/category_tree_behavior.cy.js" }],
+    [],
+    "cypress"
+  );
+  assert.ok("cypress/e2e/tests/category_tree_behavior.cy.js" in files);
+});
+
+test("S_RF_8: a broken (dangling) Playwright symlink fails safely - no throw, no crash, ordinary 'not found' warning", (t) => {
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  const nonExistentTarget = path.join(os.tmpdir(), `s-rf-8-does-not-exist-${Date.now()}.js`);
+  fs.symlinkSync(nonExistentTarget, path.join(pwDir, "s_rf_8_broken.js"), "file");
+
+  assert.doesNotThrow(() => isPathAllowed(path.join(pwDir, "s_rf_8_broken.js"), PLAYWRIGHT_RF_POLICY));
+  assert.equal(isPathAllowed(path.join(pwDir, "s_rf_8_broken.js"), PLAYWRIGHT_RF_POLICY), false);
+
+  const warnings = [];
+  let files;
+  assert.doesNotThrow(() => {
+    files = buildRelevantFiles([{ specFile: "playwright/s_rf_8_broken.js" }], warnings, "playwright");
+  });
+  assert.ok(!("playwright/s_rf_8_broken.js" in files));
+  assert.ok(warnings.some((w) => w.includes("Failed spec source not found on disk: playwright/s_rf_8_broken.js")));
+});
+
+test("Always-collect identity cannot be aliased via symlink: a symlinked playwright.config.js pointing at a different real in-repository file is rejected", (t) => {
+  const configPath = path.join(ROOT, "playwright.config.js");
+  assert.ok(!fs.existsSync(configPath), "test precondition: no real playwright.config.js may already exist");
+  const readmePath = path.join(ROOT, "README.md");
+  assert.ok(fs.existsSync(readmePath), "test precondition: README.md must exist as the real, unrelated in-repo target");
+  fs.symlinkSync(readmePath, configPath, "file");
+  t.after(() => fs.rmSync(configPath, { force: true }));
+
+  assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY), false);
+
+  const warnings = [];
+  const files = buildRelevantFiles([], warnings, "playwright");
+  assert.ok(!("playwright.config.js" in files));
+});
+
+test("In-root symlink policy: a symlink whose REAL target independently satisfies the same framework policy is allowed (documents the chosen design)", (t) => {
+  const pwDir = path.join(ROOT, "playwright");
+  fs.mkdirSync(pwDir, { recursive: true });
+  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+
+  const MARK = "SAFE_INROOT_MARK";
+  const realFile = path.join(pwDir, "real_target.js");
+  fs.writeFileSync(realFile, MARK);
+  const linkFile = path.join(pwDir, "safe_link.js");
+  fs.symlinkSync(realFile, linkFile, "file");
+
+  // Allowed - not because "symlinks are fine," but because the REAL target
+  // (playwright/real_target.js) independently satisfies the exact same
+  // repository-containment/framework-policy/denylist checks a non-symlinked
+  // candidate at that location would have to pass. This is a deliberate
+  // design choice (Roadmap #21C-C1 Phase 10), not an oversight.
+  const result = readFileSafe(linkFile, PLAYWRIGHT_RF_POLICY);
+  assert.ok(result);
+  assert.equal(result.content, MARK);
+});
+
+test("Future testDir contract (Roadmap #21C-C1): a testDir-relative 'tests/foo.spec.js' still resolves under playwright/ - the intended #21F testDir:'./playwright' contract is unaffected by the symlink fix", (t) => {
+  const specDir = path.join(ROOT, "playwright", "tests");
+  const specPath = path.join(specDir, "contract_check.spec.js");
+  fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(specPath, "// contract check fixture, no symlink involved");
+  t.after(() => fs.rmSync(path.join(ROOT, "playwright"), { recursive: true, force: true }));
+
+  const warnings = [];
+  const files = buildRelevantFiles([{ specFile: "tests/contract_check.spec.js" }], warnings, "playwright");
+  assert.ok("playwright/tests/contract_check.spec.js" in files);
+  assert.deepEqual(warnings, []);
 });
