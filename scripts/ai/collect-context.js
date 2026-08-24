@@ -60,7 +60,14 @@ function runGit(args) {
   }
 }
 
-function getMetadata() {
+// Roadmap #19.9B: frameworkId is now a parameter (defaulting to the
+// Cypress adapter's own identity, exactly the pre-#19.9B behavior for
+// every existing zero-argument caller) rather than a hardcoded reference
+// to cypressAdapter.id inline - main() passes the ACTIVE adapter's own
+// id here, so metadata.framework always reflects whichever adapter
+// actually produced this run's evidence, never a second, independently-
+// derived framework guess. One active adapter, one framework identity.
+function getMetadata(frameworkId = cypressAdapter.id) {
   const lifecycleEvent = process.env.npm_lifecycle_event || "";
   const browserFromLifecycle = ["chrome", "firefox", "edge"].includes(lifecycleEvent)
     ? lifecycleEvent
@@ -72,11 +79,7 @@ function getMetadata() {
     // scripts/ai/project-profile.js for the single source of
     // truth this value is read from.
     projectId: PROJECT_PROFILE.id,
-    // Roadmap #19.5B/#19.6B: canonical, unconditional test-framework
-    // identity - read from the current adapter's own stable identity
-    // (scripts/ai/adapters/cypress-adapter.js), never derived per-run and
-    // never a second, separately-hardcoded constant here.
-    framework: cypressAdapter.id,
+    framework: frameworkId,
     repository: process.env.GITHUB_REPOSITORY || runGit(["remote", "get-url", "origin"]) || null,
     commit: process.env.GITHUB_SHA || runGit(["rev-parse", "HEAD"]) || null,
     branch:
@@ -195,11 +198,27 @@ function buildRelevantFiles(failedTests, warnings) {
   return files;
 }
 
-function main() {
+// Roadmap #19.9B: main() now accepts an optional, explicitly injected
+// adapter - production's own zero-argument call (see require.main===module
+// below) and every existing caller keep getting exactly the Cypress
+// adapter's own defaults, byte/semantically unchanged. This is dependency
+// injection only, never a framework registry/selector/environment switch:
+// there is no string-keyed lookup anywhere, just one opaque adapter object
+// passed straight through to its own collect(). adapterOptions is never
+// inspected here - framework-specific option names (reportsDir/
+// screenshotsDir for Cypress, reportFile for Playwright) stay entirely
+// inside each adapter's own contract, never known to this generic
+// collector. Exactly one adapter is ever invoked per call - there is no
+// mechanism here for two adapters to run within one context.
+function main({ adapter = cypressAdapter, adapterOptions } = {}) {
+  if (typeof adapter.id !== "string" || adapter.id.length === 0 || typeof adapter.collect !== "function") {
+    throw new Error("main(): adapter must have a non-empty string id and a collect() function");
+  }
+
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  const metadata = getMetadata();
-  const adapterResult = cypressAdapter.collect();
+  const metadata = getMetadata(adapter.id);
+  const adapterResult = adapter.collect(adapterOptions);
   const { testResults, failedTests } = adapterResult;
   // Copied, not mutated in place - Roadmap #19.6B: the adapter's returned
   // result is treated as an immutable contract, even though the resulting

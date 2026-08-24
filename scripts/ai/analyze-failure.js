@@ -131,6 +131,35 @@ function isHistoryProjectEligible(currentIdentity, historyIdentity) {
   return currentIdentity.state === "ABSENT" && historyIdentity.state === "ABSENT";
 }
 
+// Roadmap #19.9B: the framework analogue of isHistoryProjectEligible()
+// above, using the exact same classifyFrameworkId() VALID/ABSENT/INVALID
+// vocabulary - but deliberately NOT symmetric the way the project gate is.
+// Project identity has been unconditionally emitted since Roadmap
+// #19.2/#19.3C, so a real ABSENT+ABSENT project pairing "cannot occur in
+// real production traffic" (see isHistoryProjectEligible's own comment).
+// Framework is the opposite: collect-history.js never wrote a framework
+// field before Roadmap #19.9B, so every REAL pre-#19.9B history.json on
+// disk right now has framework genuinely ABSENT - that is the actual,
+// current, expected legacy state, not a theoretical edge case. Every one
+// of those legacy records was produced by this repository's Cypress-only
+// history producer, so ABSENT history is eligible ONLY when the CURRENT
+// framework is VALID "cypress" - this is LEGACY CYPRESS COMPATIBILITY,
+// never a generic "unscoped history matches anything" rule, and a
+// Playwright analysis (VALID "playwright") can never inherit it. New
+// Cypress history (Roadmap #19.9B) now writes framework: "cypress"
+// explicitly, so this ABSENT-history branch only ever matters for records
+// collected before this change - no old file is ever rewritten to add it.
+function isHistoryFrameworkEligible(currentIdentity, historyIdentity) {
+  if (currentIdentity.state === "INVALID" || historyIdentity.state === "INVALID") return false;
+  if (currentIdentity.state === "VALID" && historyIdentity.state === "VALID") {
+    return currentIdentity.value === historyIdentity.value;
+  }
+  if (currentIdentity.state === "VALID" && historyIdentity.state === "ABSENT") {
+    return currentIdentity.value === "cypress";
+  }
+  return currentIdentity.state === "ABSENT" && historyIdentity.state === "ABSENT";
+}
+
 // Optional by design (see collect-history.js): missing file, unparseable
 // JSON, an { available: false } marker, or History collected for a
 // different/unknown project (Roadmap #19.3C) all just mean "no history"
@@ -156,9 +185,19 @@ function readHistory(currentMetadata) {
   // Existing structural gates (file/JSON/available) are checked first, above -
   // a matching projectId must never rescue a missing file, a parse
   // failure, or an available:false marker.
-  const currentIdentity = classifyProjectId(currentMetadata, "projectId");
-  const historyIdentity = classifyProjectId(parsed, "projectId");
-  if (!isHistoryProjectEligible(currentIdentity, historyIdentity)) return null;
+  const currentProjectIdentity = classifyProjectId(currentMetadata, "projectId");
+  const historyProjectIdentity = classifyProjectId(parsed, "projectId");
+  if (!isHistoryProjectEligible(currentProjectIdentity, historyProjectIdentity)) return null;
+
+  // Roadmap #19.9B: project AND framework must both be eligible - neither
+  // namespace can rescue the other. classifyFrameworkId() is reused
+  // unchanged (already used for prompt/report provenance above); `parsed`
+  // is the raw history.json object, whose top-level `framework` property
+  // (new records only - see collect-history.js) is classified exactly the
+  // same way context.metadata's `framework` property already is.
+  const currentFrameworkIdentity = classifyFrameworkId(currentMetadata);
+  const historyFrameworkIdentity = classifyFrameworkId(parsed);
+  if (!isHistoryFrameworkEligible(currentFrameworkIdentity, historyFrameworkIdentity)) return null;
 
   return {
     runsConsidered: parsed.runsConsidered ?? null,
@@ -628,6 +667,7 @@ module.exports = {
   classifyProjectId,
   classifyFrameworkId,
   isHistoryProjectEligible,
+  isHistoryFrameworkEligible,
   computeRelevantKnowledge,
   MODEL,
 };

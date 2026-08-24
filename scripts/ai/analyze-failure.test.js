@@ -13,7 +13,9 @@ const {
   summarizeProviderError,
   readHistory,
   classifyProjectId,
+  classifyFrameworkId,
   isHistoryProjectEligible,
+  isHistoryFrameworkEligible,
   computeRelevantKnowledge,
 } = require("./analyze-failure");
 const { ProviderError, PROVIDER_ERROR_CODES, normalizeProviderError } = require("./providers/provider-error");
@@ -523,6 +525,37 @@ test("isHistoryProjectEligible: full state-combination matrix", () => {
   assert.equal(isHistoryProjectEligible(INVALID, INVALID), false, "INVALID + INVALID -> false");
 });
 
+// --- Roadmap #19.9B: isHistoryFrameworkEligible() --------------------------
+//
+// Deliberately NOT symmetric with isHistoryProjectEligible's own matrix
+// above: a VALID "cypress" current framework paired with ABSENT history is
+// eligible (every real pre-#19.9B history record was produced by this
+// repository's Cypress-only history producer, before the framework field
+// existed at all), but a VALID "playwright" current framework paired with
+// ABSENT history is NOT - Playwright must never inherit undated legacy
+// Cypress evidence. This is the frozen truth table from the #19.9B mission.
+
+test("isHistoryFrameworkEligible: full state-combination matrix, including the asymmetric legacy-Cypress carve-out", () => {
+  const CYPRESS = { state: "VALID", value: "cypress" };
+  const CYPRESS_AGAIN = { state: "VALID", value: "cypress" };
+  const PLAYWRIGHT = { state: "VALID", value: "playwright" };
+  const ABSENT = { state: "ABSENT", value: null };
+  const INVALID = { state: "INVALID", value: null };
+
+  assert.equal(isHistoryFrameworkEligible(CYPRESS, CYPRESS_AGAIN), true, "VALID cypress + same VALID cypress -> true");
+  assert.equal(isHistoryFrameworkEligible(PLAYWRIGHT, PLAYWRIGHT), true, "VALID playwright + same VALID playwright -> true");
+  assert.equal(isHistoryFrameworkEligible(CYPRESS, PLAYWRIGHT), false, "current=cypress, history=playwright -> false");
+  assert.equal(isHistoryFrameworkEligible(PLAYWRIGHT, CYPRESS), false, "current=playwright, history=cypress -> false");
+  assert.equal(isHistoryFrameworkEligible(CYPRESS, ABSENT), true, "current=cypress, history=ABSENT -> true (LEGACY CYPRESS COMPATIBILITY)");
+  assert.equal(isHistoryFrameworkEligible(PLAYWRIGHT, ABSENT), false, "current=playwright, history=ABSENT -> false (never inherits legacy Cypress)");
+  assert.equal(isHistoryFrameworkEligible(ABSENT, ABSENT), true, "ABSENT + ABSENT -> true (narrow legacy compatibility)");
+  assert.equal(isHistoryFrameworkEligible(ABSENT, CYPRESS), false, "current=ABSENT, history=VALID -> false");
+  assert.equal(isHistoryFrameworkEligible(INVALID, ABSENT), false, "INVALID current -> false (fail closed)");
+  assert.equal(isHistoryFrameworkEligible(INVALID, CYPRESS), false, "INVALID current -> false (fail closed)");
+  assert.equal(isHistoryFrameworkEligible(CYPRESS, INVALID), false, "INVALID history -> false (skipped)");
+  assert.equal(isHistoryFrameworkEligible(INVALID, INVALID), false, "INVALID + INVALID -> false");
+});
+
 // --- Roadmap #19.3C: readHistory() project-namespace integration ---------
 //
 // These write a real reports/ai/history.json fixture and call the real
@@ -608,6 +641,113 @@ test("readHistory: VALID identity comparison is whitespace-normalized (trimmed) 
 test("readHistory: available:false remains unusable regardless of project identity on either side - project match never overrides availability", (t) => {
   writeHistoryFixture(t, { available: false, reason: "no prior runs", projectId: "external-poi-sut" });
   assert.equal(readHistory({ projectId: "external-poi-sut" }), null);
+});
+
+// --- Roadmap #19.9B: readHistory() framework-namespace integration -------
+//
+// The H1-H12 matrix from the #19.9B mission, exercised end to end through
+// the real readHistory(currentMetadata) exactly like the project-namespace
+// tests above. Every currentMetadata here also carries a matching
+// projectId ("external-poi-sut") so these tests isolate the FRAMEWORK gate
+// specifically - project eligibility is never the reason for exclusion in
+// H1-H8, only in the dedicated H9/H10 composition tests further below.
+
+const SAME_PROJECT = "external-poi-sut";
+
+test("H1: current cypress + history cypress -> included", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+});
+
+test("H2: current playwright + history playwright -> included", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null);
+});
+
+test("H3: current cypress + history playwright -> excluded", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+});
+
+test("H4: current playwright + history cypress -> excluded", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null);
+});
+
+test("H5: current cypress + history framework absent -> included as legacy Cypress", (t) => {
+  // No `framework` key at all - models a real pre-#19.9B history.json,
+  // written before collect-history.js ever stamped this field.
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "legacy absent-framework history must remain usable by Cypress");
+});
+
+test("H6: current playwright + history framework absent -> excluded", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "Playwright must never inherit legacy Cypress history");
+});
+
+test("H7: invalid history framework -> excluded", (t) => {
+  for (const malformed of [null, "", "   ", 123]) {
+    writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: malformed, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+    assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, `expected null for history.framework=${JSON.stringify(malformed)}`);
+  }
+});
+
+test("H8: invalid current framework -> excluded, fails closed even against an otherwise-matching record", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  for (const malformed of [null, "", "   ", 123]) {
+    assert.equal(readHistory({ projectId: SAME_PROJECT, framework: malformed }), null, `expected null for current framework=${JSON.stringify(malformed)}`);
+  }
+});
+
+test("H9: same framework + different project -> excluded (project gate still applies independently)", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: "synthetic-project", framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+});
+
+test("H10: same project + different framework -> excluded (framework gate still applies independently)", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+});
+
+test("H11: matching project + matching framework -> included", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.deepEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), {
+    runsConsidered: VALID_AGGREGATE_FIELDS.runsConsidered,
+    passes: VALID_AGGREGATE_FIELDS.passes,
+    failures: VALID_AGGREGATE_FIELDS.failures,
+    retryPasses: VALID_AGGREGATE_FIELDS.retryPasses,
+  });
+});
+
+test("H12: current framework absent + history framework absent -> legacy eligibility per the frozen rule (narrow, project gate still applies)", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT }), null, "ABSENT current framework + ABSENT history framework -> eligible");
+});
+
+test("readHistory: project AND framework composition - neither namespace can rescue the other", (t) => {
+  // same project + same framework -> eligible (positive control)
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+});
+
+test("readHistory: three-generation producer/reader transition - legacy Cypress, new Cypress, and synthetic Playwright history are each correctly scoped", (t) => {
+  // Generation A: legacy history fixture predating the framework field.
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "generation A: legacy Cypress history is eligible for current Cypress");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "generation A: legacy Cypress history is never eligible for current Playwright");
+});
+
+test("readHistory: three-generation transition - generation B (new Cypress history with explicit framework)", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "generation B: new Cypress history is eligible for current Cypress");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "generation B: new Cypress history is never eligible for current Playwright");
+});
+
+test("readHistory: three-generation transition - generation C (synthetic Playwright history)", (t) => {
+  writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "generation C: synthetic Playwright history is eligible for current Playwright");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "generation C: synthetic Playwright history is never eligible for current Cypress");
 });
 
 // --- pipeline (contract-boundary integration) test ------------------------

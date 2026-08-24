@@ -3,6 +3,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const {
   isPathAllowed,
@@ -13,6 +14,7 @@ const {
 } = require("./collect-context");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const cypressAdapter = require("./adapters/cypress-adapter");
+const playwrightAdapter = require("./adapters/playwright-adapter");
 const { normalizeSpecPath } = require("./context-utils");
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -423,4 +425,157 @@ test("S11 warning merge order: current collector wiring matches the historical o
     `warnings[0] should be the adapter warning starting with "${expectedAdapterWarningPrefix}"; got: ${written.warnings[0]}`
   );
   assert.equal(written.warnings[1], "Failed spec source not found on disk: cypress/e2e/tests/s11_missing_spec.cy.js");
+});
+
+// =========================================================================
+// Roadmap #19.9B - framework-aware offline orchestration.
+//
+// main() now accepts an optional { adapter, adapterOptions } - production's
+// own zero-argument call (and every pre-#19.9B test in this file) keeps
+// getting exactly cypressAdapter's own defaults. These tests prove: (1)
+// the default/explicit-Cypress equivalence that guarantees production
+// behavior is unchanged, and (2) that an injected Playwright adapter can
+// traverse this SAME generic collector entirely offline, producing a
+// context.json whose testResults/failedTests/warnings/metadata.framework
+// come straight from the adapter's own output - no Playwright package, no
+// browser, no live SUT, no provider call anywhere in this file.
+// =========================================================================
+
+test("O1/O2: main() with no arguments and main({adapter: cypressAdapter}) produce byte-identical context.json for the same fixture (excluding only generatedAt)", (t) => {
+  const reportsDir = path.join(ROOT, "reports", "cypress");
+  const outputFile = path.join(ROOT, "reports", "ai", "context.json");
+  const fixtureReport = JSON.stringify({
+    stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 9 },
+    results: [
+      {
+        file: "cypress/e2e/tests/category_tree_behavior.cy.js",
+        suites: [
+          { title: "Suite", suites: [], tests: [{ title: "O1/O2 fixture failure", state: "failed", duration: 9, err: { message: "m", estack: "s" } }] },
+        ],
+      },
+    ],
+  });
+
+  cleanOwnedReportPaths();
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(path.join(reportsDir, "report.json"), fixtureReport);
+  withControlledEnv(() => main());
+  const written1 = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+  cleanOwnedReportPaths();
+
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(path.join(reportsDir, "report.json"), fixtureReport);
+  withControlledEnv(() => main({ adapter: cypressAdapter }));
+  const written2 = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+  t.after(() => cleanOwnedReportPaths());
+
+  delete written1.generatedAt;
+  delete written2.generatedAt;
+  assert.deepStrictEqual(written2, written1, "explicit cypressAdapter injection must be byte-identical to the zero-argument default, field for field");
+  assert.equal(written1.metadata.framework, "cypress");
+  assert.equal(written2.metadata.framework, "cypress");
+});
+
+function pwReport({ suites = [], errors = [] } = {}) {
+  return { config: {}, suites, errors, stats: {} };
+}
+function pwFileSuite({ title, file, specs = [] }) {
+  return { title, file, line: 1, column: 1, specs, suites: [] };
+}
+function pwSpec({ title, file, tests }) {
+  return { title, ok: false, tags: [], id: `id-${title}`, file, line: 1, column: 1, tests };
+}
+function pwTest({ status, results }) {
+  return { timeout: 30000, annotations: [], expectedStatus: "passed", status, results };
+}
+function pwResult({ status, duration, error }) {
+  return { workerIndex: 0, parallelIndex: 0, status, duration, retry: 0, steps: [], startTime: "2026-01-01T00:00:00.000Z", annotations: [], attachments: [], ...(error ? { error } : {}) };
+}
+
+test("O3-O7: an injected playwrightAdapter traverses the generic collector fully offline - metadata.framework, testResults, failedTests, warnings, ProjectProfile, browser/CI metadata", (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "collect-context-playwright-orchestration-"));
+  const reportFile = path.join(tmpDir, "report.json");
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(
+    reportFile,
+    JSON.stringify(
+      pwReport({
+        suites: [
+          pwFileSuite({
+            title: "orchestration.spec.ts",
+            file: "tests/orchestration.spec.ts",
+            specs: [
+              pwSpec({
+                title: "fails under generic orchestration",
+                file: "tests/orchestration.spec.ts",
+                tests: [pwTest({ status: "unexpected", results: [pwResult({ status: "failed", duration: 42, error: { message: "orchestration failure", stack: "at x" } })] })],
+              }),
+            ],
+          }),
+        ],
+      })
+    )
+  );
+
+  const outputFile = path.join(ROOT, "reports", "ai", "context.json");
+  cleanOwnedReportPaths();
+  t.after(() => cleanOwnedReportPaths());
+
+  withControlledEnv(() => main({ adapter: playwrightAdapter, adapterOptions: { reportFile } }));
+  const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+
+  // metadata.framework comes exclusively from the injected adapter's own id.
+  assert.equal(written.metadata.framework, "playwright");
+  assert.equal(written.metadata.framework, playwrightAdapter.id);
+
+  // testResults/failedTests are the adapter's own output, unchanged.
+  assert.equal(written.testResults.found, true);
+  assert.equal(written.testResults.totals.failed, 1);
+  assert.equal(written.failedTests.length, 1);
+  assert.equal(written.failedTests[0].title, "fails under generic orchestration");
+  assert.equal(written.failedTests[0].specFile, "tests/orchestration.spec.ts");
+  assert.deepEqual(written.failedTests[0].error, { message: "orchestration failure", stack: "at x" });
+
+  // Warnings propagate unchanged from whatever the generic collector's own
+  // (adapter-independent) buildRelevantFiles() produces - here, exactly
+  // one, because "tests/orchestration.spec.ts" is neither a real file on
+  // disk nor under ALLOWED_DIRS/ALLOWED_FILES (still Cypress-only - see
+  // collect-context.js; deliberately unchanged by #19.9B, deferred to
+  // #19.10 per the #19.9A audit). This is an honest, expected limitation
+  // of relevantFiles for Playwright evidence today, not a defect in the
+  // orchestration seam itself - the seam under test here is testResults/
+  // failedTests/metadata.framework, not relevantFiles completeness.
+  assert.deepEqual(written.warnings, ["Failed spec source not found on disk: tests/orchestration.spec.ts"]);
+  // buildRelevantFiles() always includes cypress.config.js/package.json
+  // unconditionally regardless of which adapter ran (Roadmap #19.6B) - the
+  // only thing #19.9B proves here is that NO Playwright source is ever
+  // included, since ALLOWED_DIRS remains Cypress-only, unchanged.
+  assert.deepEqual(Object.keys(written.relevantFiles).sort(), ["cypress.config.js", "package.json"]);
+  assert.ok(!("tests/orchestration.spec.ts" in written.relevantFiles));
+
+  // ProjectProfile ownership is entirely adapter-independent.
+  assert.equal(written.metadata.projectId, TARGOMO_PROJECT_PROFILE.id);
+  assert.deepEqual(written.knownProjectConstraints, TARGOMO_PROJECT_PROFILE.knownProjectConstraints);
+
+  // browser/CI metadata remain generic - owned by getMetadata(), never the adapter.
+  assert.ok("browser" in written.metadata);
+  assert.ok("ci" in written.metadata);
+});
+
+test("O10: the injected-Playwright orchestration test above required zero Playwright package, browser, or live SUT", () => {
+  assert.throws(() => require.resolve("playwright"), "the playwright package must not be installed");
+  assert.throws(() => require.resolve("@playwright/test"), "the @playwright/test package must not be installed");
+});
+
+test("main(): rejects an adapter missing a usable id/collect() with a clear programmer-error message, never silently falling back to Cypress", () => {
+  assert.throws(() => main({ adapter: {} }), /adapter must have a non-empty string id and a collect\(\) function/);
+  assert.throws(() => main({ adapter: { id: "broken" } }), /adapter must have a non-empty string id and a collect\(\) function/);
+  assert.throws(() => main({ adapter: { id: "", collect: () => ({}) } }), /adapter must have a non-empty string id and a collect\(\) function/);
+});
+
+test("getMetadata: an explicit frameworkId argument overrides the default, without a second caller-supplied 'framework' parameter existing anywhere", () => {
+  assert.equal(getMetadata("playwright").framework, "playwright");
+  assert.equal(getMetadata().framework, "cypress");
+  assert.equal(getMetadata().framework, cypressAdapter.id);
 });
