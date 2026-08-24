@@ -2,8 +2,12 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { CLASSIFICATIONS, buildSystemPrompt, buildUserPrompt, pickPromptMetadata, projectPromptFailure } = require("./qa-agent-prompt");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const { collect: collectPlaywright } = require("./adapters/playwright-adapter");
 
 // Roadmap #19.2 - project-identity parameterization proof. A unit
 // boundary proof only (not the full #19.4 second-project proof): it
@@ -961,4 +965,100 @@ test("buildUserPrompt: consolidated model-visible failure contract - exactly the
   assert.deepEqual(Object.keys(failure.error).sort(), ["message", "stack"]);
   const rendered = buildUserPrompt(context);
   assert.equal(rendered.includes("SHOULD_NOT_APPEAR"), false);
+});
+
+// --- Roadmap #21D: PROMPT_1/WARN_1 - full end-to-end model-visible leak -----
+// regression. Deliberately runs the REAL playwright-adapter's collect()
+// (not a hand-built failedTests fixture) against a synthetic report whose
+// spec.file and screenshot attachment path both point outside the
+// repository and carry a unique marker - proving the redaction happens
+// upstream, in the adapter, before this file's prompt-production code
+// (buildUserPrompt/buildSystemPrompt, both left byte-for-byte unchanged by
+// Roadmap #21D) ever sees the data. If a future regression re-introduced a
+// raw out-of-root path anywhere in the pipeline, this is the test that
+// would catch it appearing in the actual provider-visible text.
+test("PROMPT_1/WARN_1: a marker embedded in an out-of-root Playwright spec path and screenshot path is absent from the entire provider-visible prompt and from warnings", (t) => {
+  const MARKER = "OUTSIDE_PRIVATE_PATH_MARKER_21D";
+
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), `${MARKER}-`));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const outsideSpecFile = path.join(outsideDir, "evil.spec.ts");
+  const outsideScreenshot = path.join(outsideDir, "shot.png");
+  fs.writeFileSync(outsideScreenshot, "");
+
+  const tmpReportDir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-agent-prompt-21d-report-"));
+  t.after(() => fs.rmSync(tmpReportDir, { recursive: true, force: true }));
+  const reportFile = path.join(tmpReportDir, "report.json");
+  fs.writeFileSync(
+    reportFile,
+    JSON.stringify({
+      config: {},
+      errors: [],
+      stats: {},
+      suites: [
+        {
+          title: "evil.spec.ts",
+          file: outsideSpecFile,
+          line: 1,
+          column: 1,
+          suites: [],
+          specs: [
+            {
+              title: "fails with out-of-root evidence paths",
+              ok: false,
+              tags: [],
+              id: "id-1",
+              file: outsideSpecFile,
+              line: 1,
+              column: 1,
+              tests: [
+                {
+                  timeout: 30000,
+                  annotations: [],
+                  expectedStatus: "passed",
+                  status: "unexpected",
+                  results: [
+                    {
+                      workerIndex: 0,
+                      parallelIndex: 0,
+                      status: "failed",
+                      duration: 5,
+                      retry: 0,
+                      steps: [],
+                      startTime: "2026-01-01T00:00:00.000Z",
+                      annotations: [],
+                      error: { message: "boom", stack: "Error: boom" },
+                      attachments: [{ name: "screenshot", contentType: "image/png", path: outsideScreenshot }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  );
+
+  const collected = collectPlaywright({ reportFile });
+
+  // Redaction must already have happened at the adapter layer.
+  assert.equal(collected.failedTests[0].specFile, null);
+  assert.equal(collected.failedTests[0].screenshot, null);
+  assert.ok(!collected.warnings.some((w) => w.includes(MARKER)), "the marker must never appear in a collector warning");
+
+  const context = {
+    metadata: { framework: "playwright" },
+    testResults: collected.testResults,
+    failedTests: collected.failedTests,
+    warnings: collected.warnings,
+    relevantFiles: {},
+  };
+
+  const systemPrompt = buildSystemPrompt(TARGOMO_PROJECT_PROFILE, "playwright");
+  const userPrompt = buildUserPrompt(context);
+
+  assert.equal(systemPrompt.includes(MARKER), false);
+  assert.equal(userPrompt.includes(MARKER), false);
+  assert.equal(userPrompt.includes(outsideDir), false);
 });
