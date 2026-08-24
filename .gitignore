@@ -6,6 +6,7 @@ cypress/screenshots
 cypress/reports
 reports/cypress
 reports/ai
+reports/playwright
 debug.log
 CLAUDE.md
 .claude/settings.local.json
