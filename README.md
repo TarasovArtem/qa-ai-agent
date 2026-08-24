@@ -21,7 +21,7 @@ See [TEST_CASES.md](TEST_CASES.md) for the full list of manual test cases covere
 
 ## Security and AI data governance
 
-See [SECURITY.md](SECURITY.md) for the full data-governance contract: what data can reach an external AI provider, what's explicitly excluded, credential handling, provider/retry policy, GitHub Actions artifact boundaries, and explicit known limitations. Roadmap #20A-#20C (baseline audit, trust-boundary hardening, independent review) are complete; #20D (that document) is in progress - see [Roadmap #20](#roadmap-20--data-security--governance) below.
+See [SECURITY.md](SECURITY.md) for the full data-governance contract: what data can reach an external AI provider, what's explicitly excluded, credential handling, provider/retry policy, GitHub Actions artifact boundaries, and explicit known limitations. Roadmap #20 (baseline audit, trust-boundary hardening, this governance documentation, and its independent review) is implemented and independently reviewed - see [Roadmap #20](#roadmap-20--data-security--governance) below for exact stage-by-stage status and delivery via PR #85.
 
 ## Why this project exists
 
@@ -358,12 +358,13 @@ Cypress raw report                  Playwright JSON-reporter-shaped evidence
 
 ## Roadmap #20 — Data Security & Governance
 
-**Status: #20A-#20C COMPLETE. #20D (this governance documentation) IN PROGRESS, pending PR merge. #20 overall: PENDING GOVERNANCE DOCUMENTATION MERGE.**
+**Status: #20A-#20E COMPLETE - implementation and independent review are both finished. Roadmap #20 closure (this documentation landing on `main`) is delivered by PR #85.**
 
 - **#20A - Security/privacy/governance baseline audit.** COMPLETE. A read-only audit of the existing pipeline's data-exposure surface.
 - **#20B - Model-visible trust-boundary hardening.** COMPLETE. Introduced a positive-projection boundary (`projectPromptFailure()`/`projectPromptError()`) so unknown adapter-added failure/error extras can never become model-visible by construction, and unified persisted/terminal provider-error handling under one sanitized policy (`summarizeProviderError()`).
 - **#20C - Independent security review.** COMPLETE. Independently re-verified #20B's claims against source and live tests, including an empirical unknown-provider-error-code fail-safe check.
-- **#20D - Governance documentation (this stage).** Consolidates the already-implemented, already-verified controls above into [SECURITY.md](SECURITY.md) - a docs-only change, adding no new runtime control.
+- **#20D - Governance documentation.** COMPLETE. Consolidates the already-implemented, already-verified controls above into [SECURITY.md](SECURITY.md) - a docs-only change, adding no new runtime control.
+- **#20E - Independent governance-documentation review.** COMPLETE. Independently verified `SECURITY.md`'s claims against current source; found and required correction of one inaccurate credential-authentication claim (`AI_API_KEY` had been described as if it universally used an `Authorization: Bearer` header, which is true for Groq but not for Gemini's `x-goog-api-key` header). The correction was applied to `SECURITY.md` and independently re-verified, with no other governance content changed.
 
 See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reaches an AI provider, what's excluded, credential handling, provider/retry policy, artifact boundaries, and explicit known limitations (no PII detector, no full content-level DLP, no global prompt-size ceiling, provider-side retention outside this repository's technical control).
 
@@ -732,7 +733,7 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #19.8 - Offline Playwright adapter | COMPLETE |
 | #19.9 - Offline framework orchestration + History framework namespace | COMPLETE |
 | #19.10 - Final portability review + documentation closure | #19.10A COMPLETE; #19.10D (this documentation update) IN PROGRESS |
-| #20 - Data security & governance | #20A-#20C COMPLETE; #20D (documentation) IN PROGRESS, pending PR merge |
+| #20 - Data security & governance | #20A-#20E COMPLETE; closure delivered by PR #85 |
 
 **Next:** Roadmap #19.10D's documentation update (this change) closes the offline portability milestone once merged. Production Playwright enablement, if ever pursued, is intentionally scoped as a distinct future roadmap item, not a continuation of #19 - see [Known Architectural Boundaries](#known-architectural-boundaries) above.
 
