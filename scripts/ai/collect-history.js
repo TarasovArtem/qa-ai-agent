@@ -30,6 +30,7 @@
 const fs = require("fs");
 const path = require("path");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const cypressAdapter = require("./adapters/cypress-adapter");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const OUTPUT_FILE = path.join(ROOT, "reports", "ai", "history.json");
@@ -215,6 +216,18 @@ async function main() {
     // scripts/ai/project-profile.js for the single source of truth this
     // value is read from.
     projectId: PROJECT_PROFILE.id,
+    // Roadmap #19.9B: explicit framework provenance, read from the same
+    // Cypress adapter identity constant collect-context.js's own
+    // metadata.framework already derives from - never an independently
+    // duplicated "cypress" literal. This producer remains Cypress-only
+    // (see WORKFLOW_FILE/the job-name lookup above); it does not import
+    // or invoke the adapter's collect() - only its stable .id. A record
+    // written from this point on is no longer legacy-ambiguous: analyze-
+    // failure.js's isHistoryFrameworkEligible() reads this exact field to
+    // ensure a Playwright analysis can never mistake a Cypress record for
+    // its own history, and a Cypress analysis matches it exactly rather
+    // than falling back to legacy ABSENT-framework compatibility.
+    framework: cypressAdapter.id,
     browser,
     branch,
     runsConsidered: inspected,
@@ -246,4 +259,5 @@ module.exports = {
   DEFAULT_BRANCH,
   MAX_RUNS,
   PROJECT_PROFILE,
+  cypressAdapter,
 };

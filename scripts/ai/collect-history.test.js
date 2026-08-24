@@ -2,8 +2,9 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { aggregateHistory, fetchJson, isRetryableStatus, clampRunsWanted, DEFAULT_RUNS, MAX_RUNS, PROJECT_PROFILE } = require("./collect-history");
+const { aggregateHistory, fetchJson, isRetryableStatus, clampRunsWanted, DEFAULT_RUNS, MAX_RUNS, PROJECT_PROFILE, cypressAdapter } = require("./collect-history");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const realCypressAdapter = require("./adapters/cypress-adapter");
 
 function run({ id, run_attempt = 1 }) {
   return { id, run_attempt };
@@ -19,6 +20,20 @@ function run({ id, run_attempt = 1 }) {
 test("PROJECT_PROFILE: collect-history.js sources project identity from the same ProjectProfile as the rest of the AI pipeline, not a duplicated/hardcoded literal", () => {
   assert.equal(PROJECT_PROFILE, TARGOMO_PROJECT_PROFILE, "must be the exact same object reference, not a copy");
   assert.equal(PROJECT_PROFILE.id, "external-poi-sut");
+});
+
+// Roadmap #19.9B: mirrors the PROJECT_PROFILE test immediately above -
+// main()'s own `framework: cypressAdapter.id` line is not otherwise
+// unit-testable without mocking the GitHub API/filesystem/env (this file
+// deliberately never does that - see every other test here), so proving
+// this module reads the real, current Cypress adapter identity BY
+// REFERENCE is the strongest available proof that a newly written history
+// record's `framework` field will always be "cypress", never an
+// independently duplicated literal that could silently drift from the
+// adapter's own id.
+test("cypressAdapter: collect-history.js sources framework identity from the same Cypress adapter as the rest of the pipeline, not a duplicated/hardcoded literal", () => {
+  assert.equal(cypressAdapter, realCypressAdapter, "must be the exact same object reference, not a copy");
+  assert.equal(cypressAdapter.id, "cypress");
 });
 
 test("aggregateHistory: counts passes and failures per browser from job conclusions", async () => {
