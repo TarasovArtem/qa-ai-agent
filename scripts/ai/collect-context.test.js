@@ -221,6 +221,44 @@ test("main(): writes context.json whose testResults/failedTests/warnings/metadat
   assert.deepEqual(written.warnings, []);
 });
 
+// Roadmap #21E (SEL_12): main({adapter}) is the generic orchestration seam
+// programmatic/test callers rely on - runtime framework selection
+// (QA_FRAMEWORK, scripts/ai/runtime-framework-selector.js) belongs only to
+// this file's own CLI bootstrap block (`if (require.main === module)`),
+// never to main() itself. Setting QA_FRAMEWORK to "playwright" here and
+// still observing the explicitly injected fake adapter's own id in the
+// written context.json proves main() never consults that environment
+// variable - an explicitly passed adapter is authoritative regardless of
+// what QA_FRAMEWORK says.
+test("main({adapter}): an explicitly injected adapter is authoritative even when QA_FRAMEWORK names a different framework", (t) => {
+  const outputFile = path.join(ROOT, "reports", "ai", "context.json");
+  cleanOwnedReportPaths();
+  t.after(() => cleanOwnedReportPaths());
+
+  const previousEnv = process.env.QA_FRAMEWORK;
+  process.env.QA_FRAMEWORK = "playwright";
+  t.after(() => {
+    if (previousEnv === undefined) delete process.env.QA_FRAMEWORK;
+    else process.env.QA_FRAMEWORK = previousEnv;
+  });
+
+  let collectCalled = false;
+  const fakeAdapter = {
+    id: "fake-test-adapter",
+    collect: () => {
+      collectCalled = true;
+      return { testResults: { found: false }, failedTests: [], warnings: [] };
+    },
+  };
+
+  main({ adapter: fakeAdapter });
+  assert.equal(collectCalled, true);
+
+  const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+  assert.equal(written.metadata.framework, "fake-test-adapter");
+  assert.notEqual(written.metadata.framework, "playwright");
+});
+
 // =========================================================================
 // Roadmap #19.7B - immutable Cypress historical full-context equivalence
 // (see scripts/ai/cypress-equivalence.test.js's own module docstring for
