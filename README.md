@@ -41,7 +41,7 @@ Cypress (Chrome)   Cypress (Edge)   Cypress (Firefox)
       │                  │                  │
       └────────┬─────────┴─────────┬────────┘
                ▼                   ▼
-         deterministic failure collectors (per browser)
+         cypressAdapter → deterministic failure collectors (per browser)
                │
                ▼
         browser aggregation  (pick ONE primary failure,
@@ -69,7 +69,9 @@ Cypress (Chrome)   Cypress (Edge)   Cypress (Firefox)
           triage report → PR comment
 ```
 
-Every box above exists in the current codebase today. A minimal `ProjectProfile` (Roadmap #19.2) now supplies the project-specific inputs the collectors and the prompt step consume - a small, deterministic data source, not a new pipeline stage, so it isn't drawn as its own box. `FrameworkAdapter` (discussed under [Roadmap #19](#roadmap-19--project--framework-portability) below) remains a **future** concept.
+Every box above exists in the current codebase today and reflects the real, currently-wired production CI path - Cypress is the only framework with an active browser workflow. A minimal `ProjectProfile` (Roadmap #19.2) supplies the project-specific inputs the collectors and the prompt step consume - a small, deterministic data source, not a new pipeline stage, so it isn't drawn as its own box.
+
+`cypressAdapter` above is a real, shipped **framework adapter boundary** (`scripts/ai/adapters/cypress-adapter.js`, Roadmap #19.6), not a hypothetical: it normalizes Cypress's raw Mochawesome report into a generic `{testResults, failedTests, warnings}` shape. An independently-tested, offline-only second adapter, `playwrightAdapter` (`scripts/ai/adapters/playwright-adapter.js`, Roadmap #19.8), produces the identical generic shape from official Playwright JSON-reporter-shaped evidence and can be injected into the same generic collector entirely offline (Roadmap #19.9). No production CI path currently selects it - see [Current Portability Status](#current-portability-status) below for exactly what is and isn't proven.
 
 ## How failure triage works
 
@@ -210,56 +212,63 @@ Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cyp
 
 ## Current Portability Status
 
-This section reflects the Roadmap #19.1 architecture audit plus Roadmap #19.2 and #19.3's completed work - it states current reality plainly, neither overclaiming nor understating it.
+This section reflects Roadmap #19's work through #19.9 - it states current reality plainly, neither overclaiming nor understating it. Two things are true at once: **Cypress is the only framework with an active production workflow**, and **a second framework (Playwright) has a fully independent, offline-tested adapter proving the architecture generalizes** - these are different claims, and this section keeps them separate throughout.
 
-**Today, this repository is wired to exactly one project and one E2E framework:**
+**Today, this repository actively runs in production against exactly one project and one E2E framework:**
 
 - Project / SUT: a single, publicly accessible third-party POI (points-of-interest) map web application. It is not part of this repository and not owned by this project - it exists only as a realistic external target for the Cypress suite and a source of real cross-browser failure evidence for the QA AI Agent to triage. Its stable identity is a `projectId` owned by the current `ProjectProfile` (see below).
-- E2E framework: **Cypress**
+- E2E framework: **Cypress** (active production runtime)
 - Browsers: **Chrome, Edge, Firefox**
 - AI providers: **Mock, Groq, Gemini**
 
-The system works correctly for this scope today - the limitations below matter for *introducing a second project or framework*, not for current production behavior.
+The system works correctly for this scope today - everything below matters for *introducing a second project or enabling a second framework in production*, not for current production behavior.
 
-**Already project/framework-neutral, and expected to stay unchanged as the rest of Roadmap #19 proceeds:**
+**Already project/framework-neutral:**
 
 - Provider abstraction (`providers/**`) and the `analyze()` contract
 - The deterministic policy layer (`agent-policy.js`)
 - The browser-correlation *algorithm* (it reasons over already-normalized evidence - `title`/`specFile`/`error.message` - not over any framework-native shape)
 - Evaluation/regression scoring semantics
 - Most of the system prompt's reasoning rules (grounding, history authority, correlation authority, knowledge authority)
-- Project identity *ownership* (Roadmap #19.2): a minimal, immutable `ProjectProfile` is now the single source of stable project identity and project-specific context - a future second project is supplied as data, not by editing consumers
+- Project identity *ownership* (Roadmap #19.2): a minimal, immutable `ProjectProfile` is the single source of stable project identity and project-specific context - a future second project is supplied as data, not by editing consumers
+- The normalized failure contract (`title`/`fullTitle`/`specFile`/`error`, optional `duration`/`screenshot`) - proven framework-neutral by a dedicated Cypress-free test and by real, independent use from both adapters (Roadmap #19.5)
+- The system prompt's persona/framework wording - parameterized by `frameworkId` since Roadmap #19.5, defaulting to `"cypress"` only for backward compatibility with contexts that predate explicit framework identity
 
-**Resolved by Roadmap #19.2 (previously listed here as open):**
+**Resolved by Roadmap #19.2/#19.3 (project axis):**
 
-- Explicit, stable project identity now exists (`projectId`), emitted unconditionally by collection and carried through to the report
-- The system prompt's persona sentence no longer hardcodes the SUT's identity - it renders whichever `ProjectProfile` it is given
-- Stable project-specific constraints are no longer owned by the collector - they come from `ProjectProfile`
+- Explicit, stable project identity (`projectId`) is emitted unconditionally by collection and carried through to the report; the prompt persona renders whichever `ProjectProfile` it is given
+- `PROJECT_VERIFIED` knowledge and flaky-test History are both scoped to `projectId` - a different or missing project can no longer influence either
+- Roadmap #19.4 proved this isolation boundary offline, against a fully synthetic second project
 
-**Resolved by Roadmap #19.3 (previously listed here as open):**
+**Resolved by Roadmap #19.5-#19.9 (framework axis):**
 
-- The `PROJECT_VERIFIED` knowledge unit now carries an explicit, machine-readable project scope (`appliesTo.projects`) - a different (or unknown) current project can no longer have it selected for its own failures
-- Flaky-test History now carries the same stable `projectId` provenance, checked before History can influence an analysis - History collected for one project can no longer influence a different (or unscoped) project's analysis
+- Explicit, canonical framework identity (`context.metadata.framework`) is produced unconditionally, sourced from a single adapter-identity constant - the prompt persona sentence names whichever framework actually ran, not a hardcoded "Cypress" (#19.5)
+- Failure collection no longer parses one framework's raw report format inline: `scripts/ai/adapters/cypress-adapter.js` owns Cypress/Mochawesome parsing behind a plain `{id, collect()}` module contract, with Cypress's own historical output protected by a frozen golden-comparison test (#19.6, #19.7)
+- A second, independently-implemented adapter, `scripts/ai/adapters/playwright-adapter.js`, proves the same contract normalizes official Playwright JSON-reporter-shaped evidence into the identical generic `{testResults, failedTests, warnings}` shape - built and unit-tested entirely offline, using Playwright's own logical `test.status` (never an individual attempt's `result.status`) as sole classification authority (#19.8)
+- The generic collector (`collect-context.js`) accepts either adapter through explicit dependency injection (`main({adapter, adapterOptions})`), offline only - the zero-argument production entry point is unchanged and always resolves to `cypressAdapter`. Flaky-test History is now namespaced by **project AND framework**: a new, available Cypress History record explicitly carries `framework: "cypress"`; a legacy pre-#19.9 record with no `framework` field remains usable only as legacy Cypress evidence; a Playwright analysis can never consume it (#19.9)
+- Knowledge units describing Cypress-specific behavior already declare `appliesTo.frameworks: ["cypress"]` and are excluded from a Playwright-framed analysis by the existing selector logic (`appliesTo` gained this dimension in #19.3B and has scoped every framework-specific unit since)
 
-**Still project- or framework-bound today:**
+**Still framework-bound today - specifically what remains before Playwright could be enabled in production, not current defects:**
 
-- Explicit framework identity is not yet produced; the system prompt's persona sentence still names "Cypress" directly, unconditionally
-- Failure collection (`collect-context.js`) parses Cypress/mochawesome report output directly - there is no separate framework-adapter boundary yet
-- Knowledge selection silently defaults to a Cypress framework assumption when no framework is specified (which is always, today)
-- No second production project exists yet to prove the isolation boundary against real multi-project traffic - Roadmap #19.4 is a fully offline, synthetic proof, not a live second project
+- Source-evidence discovery (`relevantFiles` in `collect-context.js`) still only recognizes Cypress's own directory/config conventions - a real Playwright failure today would reach the model with no page-object/spec source context
+- No production Playwright runtime or CI exists - the collector's adapter injection is proven offline only
+- No installed Playwright package has ever been run to capture and diff a real JSON reporter output against the synthetic fixture model `playwrightAdapter`'s tests use
+- Playwright attachment/path handling (screenshot resolution, out-of-repository absolute paths) is proven correct for co-located offline fixtures only, not yet validated for artifacts transported across machines
+- `collect-history.js` still only queries the Cypress CI workflow by name - a Playwright History *producer* cannot exist until a Playwright CI workflow does
 
-Project portability now has both **stable identity and enforced isolation**: `ProjectProfile.id` is the single source of project identity, and both project-scoped Knowledge and project-namespaced History refuse to let one project's context influence another's analysis. What remains is the second half of Roadmap #19: a synthetic second-project proof (#19.4) and framework portability, which has not started. This is why the rest of Roadmap #19 exists - see below.
+Both project portability and framework portability now have **stable identity and enforced isolation**: `ProjectProfile.id` and `adapter.id` are each a single source of truth, and both Knowledge and History refuse to let one project's or one framework's context influence another's analysis. What remains is enabling a second framework in real production traffic - a distinct, not-yet-started future effort, intentionally kept separate from this offline portability proof. See [Roadmap #19](#roadmap-19--project--framework-portability) below for the full history.
 
 ## Known Architectural Boundaries
 
-Stated as engineering seams and deliberately deferred abstractions, not defects. Roadmap #19.2 resolved the two boundaries that used to be listed here (no explicit `projectId`; project identity hardcoded in the generic prompt), and Roadmap #19.3 resolved two more (no project scope on `PROJECT_VERIFIED` knowledge; no project namespace on History) - what remains is entirely the framework axis:
+Stated as engineering seams and deliberately deferred work, not defects. Roadmap #19.2/#19.3 resolved the project-axis boundaries that used to be listed here (no explicit `projectId`; project identity hardcoded in the generic prompt; no project scope on `PROJECT_VERIFIED` knowledge/History). Roadmap #19.5-#19.9 resolved the framework-axis boundaries that used to be listed here (hardcoded framework wording; direct, unabstracted Cypress parsing; implicit Cypress-only Knowledge default; no framework namespace on History). What remains is entirely about *production Playwright enablement*, not the offline portability architecture itself:
 
-1. **Hardcoded framework wording.** `qa-agent-prompt.js`'s system-prompt persona sentence still names Cypress directly, unconditionally - the current concentrated framework-axis coupling point, now that the project axis is fully parameterized and isolated via `ProjectProfile`.
-2. **Direct Cypress/mochawesome parsing.** `collect-context.js` both parses the Cypress-native report format and injects project-specific constraint text in one file - there is no separate `CypressAdapter`/`FrameworkAdapter` module yet.
-3. **Implicit Cypress framework default.** The knowledge selector falls back to `framework = "cypress"` whenever framework identity isn't explicitly supplied - which is every call today, since nothing yet produces that field.
-4. **History's workflow source is still hardcoded.** `collect-history.js` queries a hardcoded workflow filename - the resulting aggregate's project *identity* is now explicit and checked (Roadmap #19.3), but *which* workflow gets queried in the first place is still a bare constant, not yet sourced from project-specific configuration.
+1. **Source-evidence discovery is still Cypress-oriented.** `collect-context.js`'s `relevantFiles` allowlist recognizes only Cypress's own directory/config conventions - a real Playwright failure would reach the model with no page-object/spec source today.
+2. **No production Playwright runtime or CI exists.** The generic collector's adapter injection (Roadmap #19.9) is proven offline only; the zero-argument production entry point always resolves to `cypressAdapter`, and no workflow currently runs Playwright at all.
+3. **Real Playwright JSON reporter compatibility is unverified.** `playwrightAdapter`'s fixtures are modeled from Playwright's documented reporter shape, not diffed against an actual installed Playwright run's output.
+4. **Playwright attachment/path handling is offline-proven only.** Screenshot resolution assumes the report and its attachments live on the same machine, and out-of-repository absolute paths are not sanitized - neither is reachable through any currently supported production path, but both need a decision before real Playwright evidence is trusted in production.
+5. **History's workflow source remains Cypress-specific.** `collect-history.js` still only queries the Cypress CI workflow by name - History *consumption* is now framework-namespaced (Roadmap #19.9), but a Playwright History *producer* cannot exist until a Playwright CI workflow does.
 
-None of these affect current production behavior. They are the specific, source-verified reasons the rest of Roadmap #19 is scoped the way it is below.
+None of these affect current production behavior, and none of them make the current offline portability claim false. They are the specific, source-verified reasons a future production-Playwright effort would still need to address each one - see [Roadmap #19](#roadmap-19--project--framework-portability) below.
 
 ## Key Architecture Decisions
 
@@ -269,7 +278,7 @@ None of these affect current production behavior. They are the specific, source-
 - **Evaluation baselines are frozen once merged.** A regression target that can move is not a regression target - new evidence becomes a new, additive dataset version, never a retroactive edit to what "passing" used to mean.
 - **Provider adapters, not a provider-aware core.** Transport, auth, and vendor-native envelopes live entirely in `scripts/ai/providers/`; adding Gemini as a second real vendor required zero changes to prompt, policy, knowledge, or evaluation code - proving the boundary is real, not aspirational.
 - **No automatic provider fallback.** A misconfigured or failing provider fails the analysis honestly rather than silently substituting a different provider or a fabricated result - hidden fallback would also hide cost, semantics, and observability changes a human should see.
-- **A synthetic portability proof is planned before a real second framework.** Roadmap #19's plan is to prove the `NormalizedFailure` abstraction offline, with a synthetic fixture, before attempting a real Playwright integration - so the question "does the abstraction actually work" isn't conflated with "did I map one specific framework's reporter API correctly."
+- **A synthetic portability proof came before any real second-framework integration.** Roadmap #19 proved the `NormalizedFailure` abstraction and a second adapter (`playwrightAdapter`) entirely offline, against official-shape synthetic fixtures, before ever considering a real Playwright integration - so the question "does the abstraction actually work" was never conflated with "did I map one specific framework's reporter API correctly."
 
 ## What this project demonstrates
 
@@ -277,9 +286,9 @@ QA automation architecture and Cypress E2E engineering; GitHub Actions CI orches
 
 ## Roadmap #19 — Project / Framework Portability
 
-**Status: #19.1 (read-only architecture audit) COMPLETE. #19.2 (explicit project identity foundation) COMPLETE. #19.3 (project-scoped knowledge/history) COMPLETE.**
+**Status: Phase A (project portability, #19.1-#19.4) COMPLETE. Phase B (framework portability, #19.5-#19.9) COMPLETE OFFLINE - production Playwright enablement is a distinct, not-yet-started future effort. #19.10 (final portability review + documentation closure) is in progress; this documentation update is part of it.**
 
-The audit (summarized under [Current Portability Status](#current-portability-status) and [Known Architectural Boundaries](#known-architectural-boundaries) above) identified two genuinely separate axes, deliberately not collapsed into one generic "plugin" concept:
+The original #19.1 audit (summarized under [Current Portability Status](#current-portability-status) and [Known Architectural Boundaries](#known-architectural-boundaries) above) identified two genuinely separate axes, deliberately not collapsed into one generic "plugin" concept:
 
 ### Phase A — Project portability
 
@@ -287,46 +296,61 @@ The audit (summarized under [Current Portability Status](#current-portability-st
 
 - #19.1 - architecture/coupling audit (read-only; identified the gaps below)
 - #19.2 - explicit project identity foundation: a minimal, immutable `ProjectProfile` now owns stable project identity (`projectId`) and stable project-specific constraints; the system prompt's persona identity is parameterized through it instead of hardcoded; `context.metadata.projectId` and the report's `sourceContext.projectId` are both populated; the production prompt output is unchanged, byte-for-byte
-- #19.3 - project-scoped knowledge/history: `PROJECT_VERIFIED` knowledge now requires an explicit `appliesTo.projects` scope, and flaky-test History now carries a `ProjectProfile`-sourced `projectId`; both are checked against the current analysis's project identity before being allowed to influence it - a different, missing, or malformed project identity on either side excludes project-specific Knowledge/History rather than treating it as universally applicable. Generic (project-independent) Knowledge, deterministic policy, and the current single-project production prompt/report output are all unchanged.
+- #19.3 - project-scoped knowledge/history: `PROJECT_VERIFIED` knowledge now requires an explicit `appliesTo.projects` scope, and flaky-test History now carries a `ProjectProfile`-sourced `projectId`; both are checked against the current analysis's project identity before being allowed to influence it - a different, missing, or malformed project identity on either side excludes project-specific Knowledge/History rather than treating it as universally applicable
+- #19.4 - a fully offline proof using a second, synthetic project - no live site, no real provider calls - validating the project-isolation boundary end to end
 
-**Next:**
-
-- #19.4 - a fully offline proof using a second, synthetic project - no live site, no real provider calls
+Phase A is complete: project identity has stable ownership (`ProjectProfile`) and enforced isolation across both Knowledge and History, proven both individually and combined.
 
 ### Phase B — Framework portability
 
-**Future** (not started): explicit framework identity; a formally documented `NormalizedFailure` contract (largely already implicit in `context.json`'s shape today); isolating Cypress/mochawesome-specific parsing behind a `FrameworkAdapter`; a fully offline proof using a synthetic second framework adapter; and only then evaluating a real Playwright adapter as a second, heavier proof.
+**Completed offline (#19.5-#19.9):**
 
-**Explicitly not implemented yet, and not implied anywhere above:** `FrameworkAdapter`, a formal `NormalizedFailure` schema, real Playwright support, and a second production project. (`ProjectProfile` and project-scoped Knowledge/History isolation are no longer on this list - they shipped in Roadmap #19.2/#19.3. What's still future is the rest of the target pipeline below: `FrameworkAdapter` and the `NormalizedFailure` boundary it and `ProjectProfile` would jointly feed, plus #19.4's synthetic second-project proof.) The diagram below is a **target**, not the current system - compare it against [High-level architecture (current)](#high-level-architecture-current) above.
+- #19.5 - explicit, canonical framework identity (`context.metadata.framework`, sourced from a single adapter-identity constant) and a formally validated `NormalizedFailure` contract (`title`/`fullTitle`/`specFile`/`error`, optional `duration`/`screenshot`) - the minimum generic shape the analysis core already depended on, now explicit and checkable
+- #19.6 - Cypress/Mochawesome-specific parsing extracted behind `scripts/ai/adapters/cypress-adapter.js`, exposing a plain `{id, collect(reportsDir?, screenshotsDir?)}` module contract - no class hierarchy, no registry
+- #19.7 (incl. #19.7H) - Cypress historical-equivalence protection (a frozen, byte-for-byte golden comparison proving the extraction changed no observable behavior) plus filesystem-isolation hardening for the unit-test suite itself
+- #19.8 - a second, independently-implemented adapter (`scripts/ai/adapters/playwright-adapter.js`) proving the same `{id, collect()}` contract normalizes official Playwright JSON-reporter-shaped evidence into the identical generic `{testResults, failedTests, warnings}` output - built and tested entirely offline, using Playwright's own logical `test.status` (never an individual attempt's `result.status`) as the sole authority for pass/fail/flaky/skipped classification
+- #19.9 - the generic collector (`collect-context.js`) now accepts either adapter through explicit dependency injection, offline; `context.metadata.framework` is unconditionally sourced from the active adapter's own `.id`; and flaky-test History gained a framework namespace (project AND framework, both required) so Cypress and Playwright evidence can never cross-contaminate each other's analysis, while legacy pre-#19.9 History (with no framework field) remains usable only as Cypress evidence
 
-### Target architecture (future - not yet implemented)
+**What Phase B proves, and what it deliberately does not:** a framework-neutral evidence pipeline exists, and a second framework's adapter has been built and independently tested against it - entirely offline, with zero Playwright package, browser, or CI involved. Cypress remains the only framework with an active production workflow; the collector's zero-argument production entry point is unchanged and always resolves to `cypressAdapter`. Enabling Playwright in real production CI is explicitly **not** part of what #19.5-#19.9 shipped - see [Known Architectural Boundaries](#known-architectural-boundaries) above for exactly what a future production-enablement effort would still need to address.
+
+**Next:**
+
+- #19.10 - final portability review (#19.10A, read-only audit: found no runtime blockers) and documentation closure (#19.10D, this update). After this merges, the offline portability milestone is considered closed. Real production Playwright enablement, if ever pursued, is intentionally scoped as a separate, later roadmap item, not a continuation of #19.
+
+### Current architecture (offline-proven framework boundary)
 
 ```
-ProjectProfile                       FrameworkAdapter
-  (stable project context,             (parses one framework's
-   never current-run evidence)          native result)
-        │                                     │
-        │                                     ▼
-        └───────────────────────────►  NormalizedFailure
-                                              │
-                        ┌─────────────────────┼─────────────────────┐
-                        ▼                     ▼                     ▼
-                     History             Correlation            Knowledge
-                        └─────────────────────┼─────────────────────┘
-                                              ▼
-                                          QA Core
-                                              │
-                                              ▼
-                                      Provider Factory   (UNCHANGED)
-                                              │
-                                              ▼
-                                validation + policy       (UNCHANGED)
-                                              │
-                                              ▼
-                                           report
+Cypress raw report                  Playwright JSON-reporter-shaped evidence
+(cypress run / Mochawesome)         (official reporter shape, offline fixtures only)
+        │                                       │
+        ▼                                       ▼
+  cypressAdapter.collect()           playwrightAdapter.collect()
+        └────────────────┬──────────────────────┘
+                          ▼
+           { testResults, failedTests, warnings }   (identical shape, either adapter)
+                          │
+                          ▼
+       collect-context.js  main({ adapter, adapterOptions })
+         - production, zero-argument call: always cypressAdapter
+         - offline dependency injection (tests only): either adapter
+                          │
+                          ▼
+         context.metadata.framework = adapter.id
+                          │
+           ┌──────────────┼──────────────┐
+           ▼              ▼              ▼
+        History        Knowledge      relevantFiles
+   (project AND       (appliesTo.    (still Cypress-
+    framework          frameworks     oriented - see
+    namespaced)         scoped)       Known Architectural
+                                       Boundaries above)
+           └──────────────┼──────────────┘
+                           ▼
+                   QA prompt / Provider Factory / validation / policy / report
+                           (UNCHANGED - already framework-neutral)
 ```
 
-The provider factory and the validation/policy layer are drawn unchanged deliberately: the #19.1 audit's whole point was confirming both are already project- and framework-neutral, and Roadmap #19 is scoped specifically to avoid touching either.
+**Not yet built** (future, only if a production Playwright integration is ever pursued): a Playwright CI workflow, a Playwright History producer, a production framework selector, a framework-aware `relevantFiles` source-evidence policy, and out-of-root/attachment-locality path hardening. None of this is required for - or claimed by - the offline portability proof above.
 
 ## Roadmap #20 — Data Security & Governance (planned)
 
@@ -349,10 +373,15 @@ The provider factory and the validation/policy layer are drawn unchanged deliber
     ./scripts/ai/collect-context.js
     ./scripts/ai/collect-history.js
     ./scripts/ai/config.js
+    ./scripts/ai/context-utils.js
     ./scripts/ai/format-pr-comment.js
+    ./scripts/ai/normalized-failure.js
     ./scripts/ai/pr-comment-client.js
     ./scripts/ai/project-profile.js
     ./scripts/ai/qa-agent-prompt.js
+
+    ./scripts/ai/adapters/cypress-adapter.js
+    ./scripts/ai/adapters/playwright-adapter.js
 
     ./scripts/ai/providers/index.js
     ./scripts/ai/providers/provider-contract.js
@@ -644,6 +673,34 @@ Wired Roadmap #15's subsystem into the real production prompt under an explicit 
 
 Both changes are eligibility gates, not evidence: a project match never becomes an observed fact, never implies a root cause, and never influences `agent-policy.js`'s classification-to-`shouldCreateBug` decision, which remains a pure function of `{classification, shouldCreateBug}` with no awareness of project identity. Dataset/Baseline v1-v5 are unaffected - the offline evaluation harness scores pre-recorded results and never executes the Knowledge selector or History reader live, so no fixture required migration. For the current, single production project, every existing selection/History outcome is unchanged; the boundary was proven both individually and combined, using a synthetic second project id in tests only (no second production `ProjectProfile` exists).
 
+### Roadmap #19.4 — Synthetic Second-Project Offline Proof
+
+**Status: complete.** Closed out Phase A by exercising #19.2/#19.3's project-isolation boundary end to end against a second, wholly synthetic `ProjectProfile` - offline, no live site, no real provider call. Confirmed Knowledge/History exclusion behaves identically for a genuinely different project id as it does for the existing single-project unit tests, with zero change to production behavior for the repository's one real project.
+
+### Roadmap #19.5 — Framework Identity + Normalized Failure Contract
+
+**Status: complete.** Introduced `context.metadata.framework`, sourced from a single canonical identity (at this stage still a repository constant; Roadmap #19.6 moved that source into an adapter), and threaded it through Knowledge selection (`appliesTo.frameworks`), the system prompt's persona sentence (`frameworkId`, defaulting to `"cypress"` for backward compatibility), and report provenance (`sourceContext.framework`) - each classifying VALID/ABSENT/INVALID the same way #19.3C's project-identity gate already did. Also formalized `scripts/ai/normalized-failure.js`'s `validateNormalizedFailure()`: the minimum generic failure shape (`title`/`fullTitle`/`specFile`/`error`, optional `duration`/`screenshot`) the analysis core already depended on implicitly, now explicit and checkable, and proven framework-neutral by a dedicated test using a synthetic, Cypress-free failure shape.
+
+### Roadmap #19.6 — Cypress Adapter Extraction
+
+**Status: complete.** Extracted all Cypress/Mochawesome-specific parsing (report loading, screenshot-path resolution, failure/status normalization) out of the generic collector and into `scripts/ai/adapters/cypress-adapter.js`, exposing a plain `{id, collect({reportsDir?, screenshotsDir?})}` module contract - deliberately no class, no registry. `collect-context.js` retained ownership of everything framework-independent (metadata, `relevantFiles`, context assembly). A behavior-preserving extraction only: no parsing/matching semantics changed.
+
+### Roadmap #19.7 (incl. #19.7H) — Cypress Historical Equivalence + Filesystem Isolation
+
+**Status: complete.** Added a frozen, byte-for-byte golden-comparison test suite (`cypress-equivalence.test.js`) proving the #19.6 extraction produced identical output to the pre-extraction implementation across ten historical scenarios (mixed results, nested suites, error/stack matrices, screenshot matching, malformed/missing reports, multi-report aggregation). Separately (#19.7H), diagnosed and structurally fixed a pre-existing Node `--test` cross-file filesystem race in the unit-test suite itself (concurrent test files sharing and deleting common report/screenshot directories) - replaced with per-file ownership (isolated `os.tmpdir()` roots or exact-path/exact-subdirectory cleanup), not a retry-based mitigation. Zero production code changed by #19.7H.
+
+### Roadmap #19.8 — Offline Playwright Adapter
+
+**Status: complete.** Implemented `scripts/ai/adapters/playwright-adapter.js`, a second, fully independent adapter proving the `{id, collect()}` contract generalizes: it parses official Playwright JSON-reporter-shaped evidence (`suites[].specs[].tests[].results[]`) and normalizes it into the same generic `{testResults, failedTests, warnings}` shape Cypress produces. The critical design decision: Playwright's *logical* outcome (`test.status` - `expected`/`unexpected`/`flaky`/`skipped`) is the sole classification authority, never an individual attempt's `result.status` - so an intentionally-expected failure (`test.fail()`) or a flaky-then-passed retry never leaks into `failedTests`, and a retried-but-still-failing test produces exactly one normalized failure, from the final attempt. Proven by 36 offline fixture tests using inline, official-shape synthetic reports - no Playwright package, browser, or CI involved. Not wired into production: `collect-context.js` still imports only `cypressAdapter`.
+
+### Roadmap #19.9 — Offline Framework Orchestration + History Framework Namespace
+
+**Status: complete.** Gave the generic collector a minimal dependency-injection seam - `main({adapter = cypressAdapter, adapterOptions})` - so either adapter's evidence can traverse the same generic pipeline offline, with `context.metadata.framework` unconditionally sourced from the active adapter's own `.id`. The zero-argument production call is unchanged and byte-identical to pre-#19.9 behavior (proven by a dedicated default-vs-explicit-injection equivalence test). Closed the History cross-framework gap #19.8 exposed: `analyze-failure.js`'s `readHistory()` now requires **project AND framework** eligibility (`isHistoryFrameworkEligible()`, mirroring #19.3C's project-identity classifier), and `collect-history.js` stamps every newly written, available Cypress History record with `framework: cypressAdapter.id`. A legacy pre-#19.9 record with no `framework` field remains eligible only for a current Cypress analysis, never Playwright - no old History file was rewritten; the compatibility rule lives entirely in the reader.
+
+### Roadmap #19.10 — Final Portability Review + Documentation Closure
+
+**Status: #19.10A (read-only architecture/evidence audit) complete - found zero runtime blockers to closing the offline portability milestone. #19.10D (this documentation update) in progress.** The audit's one substantive finding was that this README itself had fallen materially behind #19.5-#19.9's shipped work (describing the adapter boundary as a future concept after it had already merged) - #19.10D exists specifically to correct that, with no source, test, workflow, package, or evaluation-data changes.
+
 ### Roadmap summary
 
 | Roadmap item | Status |
@@ -656,9 +713,16 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #19.1 - Project/framework portability audit | COMPLETE |
 | #19.2 - Explicit project identity foundation | COMPLETE |
 | #19.3 - Project-scoped knowledge/history | COMPLETE |
-| #19.4+ - Synthetic second-project proof, framework portability | NOT STARTED |
+| #19.4 - Synthetic second-project offline proof | COMPLETE |
+| #19.5 - Framework identity + normalized failure contract | COMPLETE |
+| #19.6 - Cypress adapter extraction | COMPLETE |
+| #19.7 (incl. #19.7H) - Cypress historical equivalence + filesystem isolation hardening | COMPLETE |
+| #19.7F - Firefox CI observability | #19.7F-B4B ACTIVE ON MAIN; #19.7F-C WAITING FOR ORGANIC FORENSIC EVIDENCE |
+| #19.8 - Offline Playwright adapter | COMPLETE |
+| #19.9 - Offline framework orchestration + History framework namespace | COMPLETE |
+| #19.10 - Final portability review + documentation closure | #19.10A COMPLETE; #19.10D (this documentation update) IN PROGRESS |
 | #20 - Data security & governance | PLANNED |
 
-**Next:** Roadmap #19.4 - a fully offline, synthetic second-project proof (no live site, no real provider calls); see [Phase A](#roadmap-19--project--framework-portability) above.
+**Next:** Roadmap #19.10D's documentation update (this change) closes the offline portability milestone once merged. Production Playwright enablement, if ever pursued, is intentionally scoped as a distinct future roadmap item, not a continuation of #19 - see [Known Architectural Boundaries](#known-architectural-boundaries) above.
 
 **Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; Roadmap #20's full security/governance scope.
