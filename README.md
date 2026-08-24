@@ -19,6 +19,10 @@ See [TEST_CASES.md](TEST_CASES.md) for the full list of manual test cases covere
 - Versioned, frozen offline evaluation/regression datasets (v1-v5) that protect 15 behavioral dimensions per sample
 - GitHub Actions CI with authoritative Cypress pass/fail, independent of AI outcome
 
+## Security and AI data governance
+
+See [SECURITY.md](SECURITY.md) for the full data-governance contract: what data can reach an external AI provider, what's explicitly excluded, credential handling, provider/retry policy, GitHub Actions artifact boundaries, and explicit known limitations. Roadmap #20 (baseline audit, trust-boundary hardening, this governance documentation, and its independent review) is implemented and independently reviewed - see [Roadmap #20](#roadmap-20--data-security--governance) below for exact stage-by-stage status and delivery via PR #85.
+
 ## Why this project exists
 
 Cross-browser E2E failures are frequently ambiguous. A single failing test can mean:
@@ -169,7 +173,7 @@ This one contract is the entire boundary between core reasoning and any specific
 
 Gemini was not added merely to have a second model on hand. It exists to **prove the provider abstraction is real**, not just a single-vendor wrapper with an extensibility comment. Groq (OpenAI-compatible Chat Completions) and Gemini (Google's native `generateContent` envelope) have materially different authentication headers, request shapes, and response envelopes - yet integrating Gemini required zero changes to the prompt, semantic validation, policy, knowledge selection, or evaluation layers. That is the actual proof: the abstraction absorbed a structurally different vendor without the "core" of the system noticing.
 
-**What is and is not established about Gemini:** a single controlled, offline-triggered live API call successfully exercised the real Gemini endpoint end-to-end and produced a well-formed, correctly-policed result. **Real API compatibility was proven for that one controlled call.** That is explicitly distinct from **production validation**, which was **not** established: Gemini has never been exercised by CI, has no repository secret, and has no availability/cost/rate-limit/compliance history. Gemini is not the production default, not a fallback provider, and is not claimed to be better than Groq - see [Roadmap #20](#roadmap-20--data-security--governance-planned) for the governance work a real second-provider rollout would still need.
+**What is and is not established about Gemini:** a single controlled, offline-triggered live API call successfully exercised the real Gemini endpoint end-to-end and produced a well-formed, correctly-policed result. **Real API compatibility was proven for that one controlled call.** That is explicitly distinct from **production validation**, which was **not** established: Gemini has never been exercised by CI, has no repository secret, and has no availability/cost/rate-limit/compliance history. Gemini is not the production default, not a fallback provider, and is not claimed to be better than Groq - see [Roadmap #20](#roadmap-20--data-security--governance) and [SECURITY.md](SECURITY.md) for the governance work a real second-provider rollout would still need.
 
 ### Provider provenance & retry
 
@@ -246,7 +250,7 @@ The system works correctly for this scope today - everything below matters for *
 - Failure collection no longer parses one framework's raw report format inline: `scripts/ai/adapters/cypress-adapter.js` owns Cypress/Mochawesome parsing behind a plain `{id, collect()}` module contract, with Cypress's own historical output protected by a frozen golden-comparison test (#19.6, #19.7)
 - A second, independently-implemented adapter, `scripts/ai/adapters/playwright-adapter.js`, proves the same contract normalizes official Playwright JSON-reporter-shaped evidence into the identical generic `{testResults, failedTests, warnings}` shape - built and unit-tested entirely offline, using Playwright's own logical `test.status` (never an individual attempt's `result.status`) as sole classification authority (#19.8)
 - The generic collector (`collect-context.js`) accepts either adapter through explicit dependency injection (`main({adapter, adapterOptions})`), offline only - the zero-argument production entry point is unchanged and always resolves to `cypressAdapter`. Flaky-test History is now namespaced by **project AND framework**: a new, available Cypress History record explicitly carries `framework: "cypress"`; a legacy pre-#19.9 record with no `framework` field remains usable only as legacy Cypress evidence; a Playwright analysis can never consume it (#19.9)
-- Knowledge units describing Cypress-specific behavior already declare `appliesTo.frameworks: ["cypress"]` and are excluded from a Playwright-framed analysis by the existing selector logic (`appliesTo` gained this dimension in #19.3B and has scoped every framework-specific unit since)
+- Knowledge units describing Cypress-specific behavior already declare `appliesTo.frameworks: ["cypress"]` and are excluded from a Playwright-framed analysis by the existing selector logic (`appliesTo.frameworks` predates #19.3B; #19.3B added the parallel `appliesTo.projects` dimension - see [Roadmap #19.3](#roadmap-193--project-scoped-knowledge-and-history))
 
 **Still framework-bound today - specifically what remains before Playwright could be enabled in production, not current defects:**
 
@@ -352,9 +356,17 @@ Cypress raw report                  Playwright JSON-reporter-shaped evidence
 
 **Not yet built** (future, only if a production Playwright integration is ever pursued): a Playwright CI workflow, a Playwright History producer, a production framework selector, a framework-aware `relevantFiles` source-evidence policy, and out-of-root/attachment-locality path hardening. None of this is required for - or claimed by - the offline portability proof above.
 
-## Roadmap #20 — Data Security & Governance (planned)
+## Roadmap #20 — Data Security & Governance
 
-**Status: NOT STARTED.** No controls described below exist in the codebase today. Planned topics, informed by choices Roadmap #18/#19 are already making (e.g. the current `ProjectProfile` becoming a natural place to scope per-project data policy once this work starts): PII/secret redaction before data reaches a prompt, an AI-visible-evidence allowlist, provider governance (which vendors are permitted for which data), data retention policy, regional processing constraints, data classification, and security profiles. None of this is implied to exist by anything above.
+**Status: #20A-#20E COMPLETE - implementation and independent review are both finished. Roadmap #20 closure (this documentation landing on `main`) is delivered by PR #85.**
+
+- **#20A - Security/privacy/governance baseline audit.** COMPLETE. A read-only audit of the existing pipeline's data-exposure surface.
+- **#20B - Model-visible trust-boundary hardening.** COMPLETE. Introduced a positive-projection boundary (`projectPromptFailure()`/`projectPromptError()`) so unknown adapter-added failure/error extras can never become model-visible by construction, and unified persisted/terminal provider-error handling under one sanitized policy (`summarizeProviderError()`).
+- **#20C - Independent security review.** COMPLETE. Independently re-verified #20B's claims against source and live tests, including an empirical unknown-provider-error-code fail-safe check.
+- **#20D - Governance documentation.** COMPLETE. Consolidates the already-implemented, already-verified controls above into [SECURITY.md](SECURITY.md) - a docs-only change, adding no new runtime control.
+- **#20E - Independent governance-documentation review.** COMPLETE. Independently verified `SECURITY.md`'s claims against current source; found and required correction of one inaccurate credential-authentication claim (`AI_API_KEY` had been described as if it universally used an `Authorization: Bearer` header, which is true for Groq but not for Gemini's `x-goog-api-key` header). The correction was applied to `SECURITY.md` and independently re-verified, with no other governance content changed.
+
+See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reaches an AI provider, what's excluded, credential handling, provider/retry policy, artifact boundaries, and explicit known limitations (no PII detector, no full content-level DLP, no global prompt-size ceiling, provider-side retention outside this repository's technical control).
 
 ## Project structure
 
@@ -721,7 +733,7 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #19.8 - Offline Playwright adapter | COMPLETE |
 | #19.9 - Offline framework orchestration + History framework namespace | COMPLETE |
 | #19.10 - Final portability review + documentation closure | #19.10A COMPLETE; #19.10D (this documentation update) IN PROGRESS |
-| #20 - Data security & governance | PLANNED |
+| #20 - Data security & governance | #20A-#20E COMPLETE; closure delivered by PR #85 |
 
 **Next:** Roadmap #19.10D's documentation update (this change) closes the offline portability milestone once merged. Production Playwright enablement, if ever pursued, is intentionally scoped as a distinct future roadmap item, not a continuation of #19 - see [Known Architectural Boundaries](#known-architectural-boundaries) above.
 
