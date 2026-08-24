@@ -19,6 +19,7 @@ const { execFileSync } = require("child_process");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const { normalizeSpecPath } = require("./context-utils");
 const cypressAdapter = require("./adapters/cypress-adapter");
+const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const OUTPUT_DIR = path.join(ROOT, "reports", "ai");
@@ -466,8 +467,15 @@ function main({ adapter = cypressAdapter, adapterOptions } = {}) {
   }
 }
 
+// Roadmap #21E: the ONLY place QA_FRAMEWORK is ever read. main() itself
+// still defaults to `adapter = cypressAdapter` (unchanged above) so every
+// programmatic/test caller of main({ adapter }) keeps working exactly as
+// before, completely unaffected by this environment variable - runtime
+// framework selection belongs to this CLI entrypoint only, never to
+// generic orchestration.
 if (require.main === module) {
-  main();
+  const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
+  main({ adapter });
 }
 
 module.exports = {
