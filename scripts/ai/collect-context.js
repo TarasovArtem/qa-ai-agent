@@ -35,16 +35,78 @@ const MAX_TOTAL_RELEVANT_BYTES = 150 * 1024;
 // classification shortcut - see qa-agent-prompt.js rule 9).
 const PROJECT_PROFILE = TARGOMO_PROJECT_PROFILE;
 
-// Only files under these repo-relative roots (or exactly matching one of
-// the extra allowed paths) are ever read into relevantFiles, even if an
-// import resolves elsewhere. This is a defensive boundary, not just a
-// convenience filter.
-const ALLOWED_DIRS = ["cypress"];
-const ALLOWED_FILES = ["cypress.config.js", "package.json"];
-
-// Never read these, even if something inside ALLOWED_DIRS somehow imports
-// them (e.g. a future cypress.env.json or a stray .env in cypress/).
+// Never read these, even if something inside an allowed policy directory
+// somehow imports them (e.g. a future cypress.env.json or a stray .env in
+// cypress/). Framework-neutral - the same denylist applies to every policy
+// below, and no policy may bypass it.
 const DENYLIST_PATTERN = /(^|[\\/])\.env|secret|credential|\.pem$|\.key$|token/i;
+
+// Roadmap #21C: RelevantFiles source policy is now selected by the active
+// framework's own canonical identity (adapter.id / context.metadata.framework
+// - see main() below), never a single global Cypress-only allowlist. This
+// stays a small, closed, positive-allowlist map keyed by frameworkId - not a
+// plugin/registry/config-driven system - the same "only what is explicitly
+// named here is ever eligible" posture qa-agent-prompt.js's
+// PROMPT_METADATA_ALLOWLIST already established for the prompt-projection
+// boundary. An unrecognized frameworkId gets no policy at all (see
+// getRelevantFilesPolicy()) - it is never silently treated as Cypress, and
+// it never falls back to scanning the repository generically.
+//
+// `allowedDirs`: only files under these repo-relative roots (or exactly
+// matching one of `alwaysCollectFiles`) are ever read into relevantFiles,
+// even if an import resolves elsewhere - a defensive boundary, not just a
+// convenience filter (unchanged in spirit from the pre-#21C single
+// ALLOWED_DIRS/ALLOWED_FILES pair).
+//
+// `alwaysCollectFiles`: unconditionally attempted regardless of whether any
+// test actually failed inside that framework's own directory - baseline
+// project context (config/deps), exactly like the pre-#21C behavior for
+// Cypress, but now scoped to the framework that actually produced this run's
+// evidence rather than being hardcoded for every framework.
+//
+// `resolveSpecCandidates(specRelPath)`: given one already-adapter-normalized
+// failedTests[].specFile value, returns the ordered list of repo-relative
+// paths to try reading as that failure's own spec source. Cypress's own
+// adapter always normalizes specFile to an already repo-relative path (it
+// starts from an absolute on-disk path under ROOT), so no re-rooting is ever
+// needed. Playwright is different: Roadmap #21B's real-installed-@playwright/
+// test 1.62.1 reporter proof empirically observed spec.file reported
+// relative to Playwright's own testDir ("proof.spec.js", no directory at
+// all) rather than repo-relative - so a Playwright specFile that isn't
+// already inside the explicit playwright/ source root is also tried
+// re-rooted under it. Every candidate this function returns is still fully
+// re-verified by isPathAllowed()'s resolved-absolute-path containment check
+// below before anything is ever read - this can never grant a broader read
+// than the explicit playwright/ directory, regardless of what a candidate
+// string looks like (a "../" segment anywhere in specRelPath, however it
+// entered failedTests, is resolved away and rejected there, never trusted
+// here).
+const RELEVANT_FILES_POLICIES = Object.freeze({
+  cypress: Object.freeze({
+    allowedDirs: Object.freeze(["cypress"]),
+    alwaysCollectFiles: Object.freeze(["cypress.config.js", "package.json"]),
+    resolveSpecCandidates: (specRelPath) => [specRelPath],
+  }),
+  playwright: Object.freeze({
+    allowedDirs: Object.freeze(["playwright"]),
+    alwaysCollectFiles: Object.freeze(["playwright.config.js", "package.json"]),
+    resolveSpecCandidates: (specRelPath) => {
+      const candidates = [specRelPath];
+      if (specRelPath !== "playwright" && !specRelPath.startsWith("playwright/")) {
+        candidates.push(`playwright/${specRelPath}`);
+      }
+      return candidates;
+    },
+  }),
+});
+
+// Never a partial match, never a default - a frameworkId absent from
+// RELEVANT_FILES_POLICIES (including one that predates this map, or one this
+// repository has simply never defined a source policy for) gets null,
+// handled explicitly and fail-closed by buildRelevantFiles() below.
+function getRelevantFilesPolicy(frameworkId) {
+  return RELEVANT_FILES_POLICIES[frameworkId] || null;
+}
 
 function log(message) {
   process.stdout.write(`[ai:collect] ${message}\n`);
@@ -99,17 +161,37 @@ function getMetadata(frameworkId = cypressAdapter.id) {
   };
 }
 
-function isPathAllowed(absPath) {
+// Resolved-absolute-path containment check, not a string-prefix check on
+// the normalized relative form - immune to a "../" segment anywhere in the
+// input that would otherwise still superficially start with an allowed
+// directory's own name as a literal string. path.resolve() collapses any
+// ".." before the comparison ever runs, so an out-of-policy path can never
+// pass merely because its un-resolved string happens to begin the same way.
+function isUnderAllowedDir(absPath, allowedDirs) {
+  const resolved = path.resolve(absPath);
+  return allowedDirs.some((dir) => {
+    const dirAbs = path.resolve(ROOT, dir);
+    return resolved === dirAbs || resolved.startsWith(dirAbs + path.sep);
+  });
+}
+
+// `policy` is required (see getRelevantFilesPolicy()) - a missing/falsy
+// policy fails closed (false), it is never treated as "no restriction."
+function isPathAllowed(absPath, policy) {
+  if (!policy) return false;
   const rel = normalizeSpecPath(absPath);
   if (!rel) return false;
   if (DENYLIST_PATTERN.test(rel)) return false;
-  if (ALLOWED_FILES.includes(rel)) return true;
-  return ALLOWED_DIRS.some((dir) => rel === dir || rel.startsWith(`${dir}/`));
+
+  const resolved = path.resolve(absPath);
+  if (policy.alwaysCollectFiles.some((file) => path.resolve(ROOT, file) === resolved)) return true;
+
+  return isUnderAllowedDir(absPath, policy.allowedDirs);
 }
 
-function readFileSafe(absPath) {
+function readFileSafe(absPath, policy) {
   try {
-    if (!isPathAllowed(absPath)) return null;
+    if (!isPathAllowed(absPath, policy)) return null;
     const stat = fs.statSync(absPath);
     if (!stat.isFile()) return null;
 
@@ -153,7 +235,20 @@ function resolveLocalImports(sourceCode, fromDir) {
   return [...resolved];
 }
 
-function buildRelevantFiles(failedTests, warnings) {
+// `frameworkId` is the same canonical identity metadata.framework already
+// carries (adapter.id - see main() below), never independently re-derived
+// from a file extension, report path, or other heuristic (Roadmap #21C
+// Phase 8). A frameworkId with no defined policy yields an empty
+// relevantFiles and a bounded, path-free warning - fail-closed for source
+// evidence, never a silent fallback to Cypress's own policy or a generic
+// repository scan.
+function buildRelevantFiles(failedTests, warnings, frameworkId) {
+  const policy = getRelevantFilesPolicy(frameworkId);
+  if (!policy) {
+    warnings.push(`No relevantFiles source policy exists for framework "${frameworkId}"; relevantFiles will be empty.`);
+    return {};
+  }
+
   const files = {};
   let totalBytes = 0;
 
@@ -166,7 +261,7 @@ function buildRelevantFiles(failedTests, warnings) {
       return;
     }
 
-    const result = readFileSafe(absPath);
+    const result = readFileSafe(absPath, policy);
     if (!result) return;
 
     files[rel] = result;
@@ -174,15 +269,26 @@ function buildRelevantFiles(failedTests, warnings) {
   };
 
   // Test runner config and package.json give the AI step baseline project
-  // context (browser/base URL config, available scripts/deps).
-  addFile(path.join(ROOT, "cypress.config.js"));
-  addFile(path.join(ROOT, "package.json"));
+  // context (browser/base URL config, available scripts/deps) - scoped to
+  // whichever framework actually produced this run's evidence.
+  for (const configFile of policy.alwaysCollectFiles) {
+    addFile(path.join(ROOT, configFile));
+  }
 
   const specPaths = new Set(failedTests.map((t) => t.specFile).filter(Boolean));
 
   for (const specRelPath of specPaths) {
-    const specAbsPath = path.join(ROOT, specRelPath);
-    const specResult = readFileSafe(specAbsPath);
+    let specResult = null;
+    let specAbsPath = null;
+    for (const candidate of policy.resolveSpecCandidates(specRelPath)) {
+      const candidateAbsPath = path.join(ROOT, candidate);
+      const candidateResult = readFileSafe(candidateAbsPath, policy);
+      if (candidateResult) {
+        specResult = candidateResult;
+        specAbsPath = candidateAbsPath;
+        break;
+      }
+    }
     if (!specResult) {
       warnings.push(`Failed spec source not found on disk: ${specRelPath}`);
       continue;
@@ -230,7 +336,7 @@ function main({ adapter = cypressAdapter, adapterOptions } = {}) {
   let knownProjectConstraints = [];
 
   if (failedTests.length > 0) {
-    relevantFiles = buildRelevantFiles(failedTests, warnings);
+    relevantFiles = buildRelevantFiles(failedTests, warnings, adapter.id);
     knownProjectConstraints = PROJECT_PROFILE.knownProjectConstraints;
   }
 
@@ -265,5 +371,7 @@ module.exports = {
   resolveLocalImports,
   buildRelevantFiles,
   getMetadata,
+  getRelevantFilesPolicy,
+  RELEVANT_FILES_POLICIES,
   main,
 };
