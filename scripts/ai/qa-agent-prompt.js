@@ -171,11 +171,56 @@ function pickPromptMetadata(metadata) {
   return picked;
 }
 
+// Roadmap #20B: the normalized-failure validator (normalized-failure.js)
+// deliberately allows unknown extra fields on a failure object - that is
+// an internal adapter-contract convenience, never a prompt-visibility
+// grant. Every adapter (cypress-adapter.js, playwright-adapter.js) already
+// attaches extras beyond the required/optional set (e.g. Cypress's own
+// `suite`/`status`, Playwright's own `projectId`/`projectName` - the
+// latter is Playwright's own per-execution project name such as
+// "chromium", entirely unrelated to ProjectProfile's internal `projectId`
+// namespace, which is separately and already excluded via
+// PROMPT_METADATA_ALLOWLIST above). None of today's extras are sensitive,
+// but nothing before this function ever enforced that - buildUserPrompt()
+// used to JSON.stringify the raw failedTests array wholesale, so any
+// current or future adapter-added field became model-visible by
+// construction alone. This is a positive projection, the same philosophy
+// as pickPromptMetadata() above: only the fields named here ever reach
+// the model, regardless of what else a normalized failure object happens
+// to carry. error is projected the same way, for the same reason - only
+// message/stack, never an unknown error-object extra.
+function projectPromptError(error) {
+  const e = error || {};
+  return {
+    message: e.message ?? null,
+    stack: e.stack ?? null,
+  };
+}
+
+function projectPromptFailure(failure) {
+  const f = failure || {};
+  const projected = {
+    title: f.title ?? null,
+    fullTitle: f.fullTitle ?? null,
+    specFile: f.specFile ?? null,
+    error: projectPromptError(f.error),
+  };
+  // Optional fields are included only when the source object genuinely
+  // carries them (own-property, matching pickPromptMetadata()'s own
+  // "explicitly supplied" convention) - never invented as a misleading
+  // default for a failure that never had one.
+  if (Object.prototype.hasOwnProperty.call(f, "duration")) projected.duration = f.duration;
+  if (Object.prototype.hasOwnProperty.call(f, "screenshot")) projected.screenshot = f.screenshot;
+  return projected;
+}
+
 function buildUserPrompt(context) {
   const payload = {
     metadata: pickPromptMetadata(context.metadata),
     testResults: context.testResults || {},
-    failedTests: context.failedTests || [],
+    // Roadmap #20B: projected, never the raw adapter-normalized objects -
+    // see projectPromptFailure() above.
+    failedTests: (context.failedTests || []).map(projectPromptFailure),
     relevantFiles: context.relevantFiles || {},
     collectorWarnings: context.warnings || [],
     // Aggregated counts only (see collect-history.js) - never the raw list
@@ -218,4 +263,5 @@ module.exports = {
   buildSystemPrompt,
   buildUserPrompt,
   pickPromptMetadata,
+  projectPromptFailure,
 };
