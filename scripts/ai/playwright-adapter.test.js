@@ -16,7 +16,7 @@ const {
   extractFailedTests,
   DEFAULT_REPORT_FILE,
 } = require("./adapters/playwright-adapter");
-const { normalizeSpecPath } = require("./context-utils");
+const { normalizeSpecPath, resolveSafeLocalAttachmentPath } = require("./context-utils");
 const { validateNormalizedFailure } = require("./normalized-failure");
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -74,6 +74,19 @@ function writeReportFixture(t, reportObj) {
   fs.writeFileSync(reportFile, JSON.stringify(reportObj));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   return reportFile;
+}
+
+// Roadmap #21D: a race-safe, canonically-in-repository temp workspace for
+// attachment-locality tests - reports/ai/ already exists and is gitignored
+// (see .gitignore), so this reuses that existing convention rather than
+// introducing a new one. Only the report JSON itself may live outside the
+// repository (writeReportFixture() above) - report *content* is never
+// subject to the attachment-locality boundary, only attachment/screenshot
+// *paths named inside* that content are. Always cleaned up via t.after().
+function mkdtempInRepo(t, prefix) {
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", prefix));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  return tmpDir;
 }
 
 // --- id --------------------------------------------------------------------
@@ -337,9 +350,8 @@ test("P6 duration: passed through unchanged (ms), and totals sum per-spec exactl
 
 // --- P7: single screenshot attachment -----------------------------------------
 
-test("P7 single screenshot attachment: normalized path returned when the file exists on disk", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-screenshot-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+test("P7 single screenshot attachment: normalized repo-relative path returned when the file canonically exists inside the repository (Roadmap #21D)", (t) => {
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-screenshot-");
   const screenshotPath = path.join(tmpDir, "shot.png");
   fs.writeFileSync(screenshotPath, "");
 
@@ -374,14 +386,16 @@ test("P7 single screenshot attachment: normalized path returned when the file ex
   );
 
   const out = collect({ reportFile });
-  assert.equal(out.failedTests[0].screenshot, normalizeSpecPath(screenshotPath));
+  const expected = resolveSafeLocalAttachmentPath(screenshotPath);
+  assert.equal(expected.value !== null, true, "sanity: the in-repo fixture file itself must resolve to a safe value");
+  assert.equal(out.failedTests[0].screenshot, expected.value);
+  assert.equal(path.isAbsolute(out.failedTests[0].screenshot), false, "an accepted screenshot value must never be absolute");
 });
 
 // --- P8: multiple attachments, deterministic screenshot selection ------------
 
 test("P8 multiple attachments: only name==='screenshot' qualifies, and the LAST such attachment wins deterministically", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-attachments-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-attachments-");
   const shotA = path.join(tmpDir, "a.png");
   const shotB = path.join(tmpDir, "b.png");
   fs.writeFileSync(shotA, "");
@@ -423,7 +437,7 @@ test("P8 multiple attachments: only name==='screenshot' qualifies, and the LAST 
   );
 
   const out = collect({ reportFile });
-  assert.equal(out.failedTests[0].screenshot, normalizeSpecPath(shotB));
+  assert.equal(out.failedTests[0].screenshot, resolveSafeLocalAttachmentPath(shotB).value);
 });
 
 // --- P9: screenshot metadata without a usable path ----------------------------
@@ -969,7 +983,13 @@ test("collect(): with no argument, uses DEFAULT_REPORT_FILE and returns found:fa
 const REAL_REPORT_FIXTURE = path.join(__dirname, "__fixtures__", "playwright-real-report.json");
 const REAL_SCREENSHOT_MARKER = "__FIXTURE_SCREENSHOT_PATH__";
 
-function loadRealReportWithLiveScreenshotFiles(t) {
+// Roadmap #21D: `screenshotDir` decides where the fixture's real screenshot
+// files are materialized - INSIDE the repository (mkdtempInRepo(), the
+// production-safe/accepted case, ATT_9) or genuinely OUTSIDE it
+// (os.tmpdir(), the rejected case) - so the same real-fixture shape proves
+// both halves of the R2/R3 boundary against real reporter output, not just
+// synthetic fixtures.
+function loadRealReportWithScreenshotFilesIn(t, screenshotDir) {
   const raw = JSON.parse(fs.readFileSync(REAL_REPORT_FIXTURE, "utf8"));
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-real-report-"));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
@@ -977,9 +997,9 @@ function loadRealReportWithLiveScreenshotFiles(t) {
   // Every screenshot attachment in the sanitized fixture carries the same
   // placeholder marker instead of the real (machine-specific, temp-directory)
   // path the live proof run actually produced - replace each occurrence with
-  // its own real, existing temp file so resolveScreenshot()'s fs.existsSync()
-  // check is exercised exactly as it would be against genuine reporter
-  // output, matching this file's own P7 fixture-file convention above.
+  // its own real, existing file so the adapter's locality check is
+  // exercised exactly as it would be against genuine reporter output,
+  // matching this file's own P7 fixture-file convention above.
   let screenshotIndex = 0;
   function patchAttachments(node) {
     if (Array.isArray(node)) {
@@ -988,7 +1008,7 @@ function loadRealReportWithLiveScreenshotFiles(t) {
       if (Array.isArray(node.attachments)) {
         for (const att of node.attachments) {
           if (att && att.name === "screenshot" && att.path === REAL_SCREENSHOT_MARKER) {
-            const shotPath = path.join(tmpDir, `real-shot-${screenshotIndex}.png`);
+            const shotPath = path.join(screenshotDir, `real-shot-${screenshotIndex}.png`);
             screenshotIndex += 1;
             fs.writeFileSync(shotPath, "");
             att.path = shotPath;
@@ -1003,6 +1023,10 @@ function loadRealReportWithLiveScreenshotFiles(t) {
   const reportFile = path.join(tmpDir, "report.json");
   fs.writeFileSync(reportFile, JSON.stringify(raw));
   return reportFile;
+}
+
+function loadRealReportWithLiveScreenshotFiles(t) {
+  return loadRealReportWithScreenshotFilesIn(t, mkdtempInRepo(t, "playwright-adapter-real-shots-"));
 }
 
 test("parses sanitized JSON produced by a real installed Playwright reporter (Roadmap #21B) - correct logical status classification for every real outcome", (t) => {
@@ -1046,11 +1070,14 @@ test("parses sanitized JSON produced by a real installed Playwright reporter (Ro
 
   // Real screenshot attachment: only name==="screenshot" ever qualifies
   // (confirmed by this fixture also carrying "error-context" attachments,
-  // which must never be mistaken for a screenshot), and the adapter must
-  // resolve it to a non-null normalized path once the file genuinely exists
-  // on disk.
+  // which must never be mistaken for a screenshot - ATT_8), and the adapter
+  // must resolve it to a non-null, repo-relative, never-absolute normalized
+  // path once the file genuinely exists canonically inside the repository
+  // (Roadmap #21D, ATT_9).
   assert.equal(typeof failure.screenshot, "string");
   assert.ok(failure.screenshot.length > 0);
+  assert.equal(path.isAbsolute(failure.screenshot), false, "an accepted screenshot value must never be absolute");
+  assert.ok(!failure.screenshot.includes("\\"), "an accepted screenshot value must use forward slashes only");
 
   // project identity fields stay on the normalized failure object as
   // allowed extras (Roadmap #19.8B) - never required, never dropped.
@@ -1065,4 +1092,244 @@ test("parses sanitized JSON produced by a real installed Playwright reporter (Ro
   assert.equal(validation.valid, true);
 
   assert.deepEqual(out.warnings, []);
+});
+
+test("real reporter fixture, out-of-root screenshot: the same real reporter shape is rejected when its screenshot file is genuinely outside the repository (Roadmap #21D)", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-real-report-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const reportFile = loadRealReportWithScreenshotFilesIn(t, outsideDir);
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests.length, 1);
+  assert.equal(out.failedTests[0].screenshot, null);
+  assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
+  assert.ok(!out.warnings.some((w) => w.includes(outsideDir)), "the outside temp directory path must never appear in a warning");
+});
+
+// --- Roadmap #21D: R2/R3 required coverage matrix, adapter-integration level ---
+
+test("S21D_1 out-of-root screenshot: rejected end-to-end through the real adapter pipeline, bounded path-free warning", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-s21d1-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const outsideShot = path.join(outsideDir, "shot.png");
+  fs.writeFileSync(outsideShot, "");
+
+  const reportFile = writeReportFixture(
+    t,
+    report({
+      suites: [
+        fileSuite({
+          title: "s21d1.spec.ts",
+          file: "tests/s21d1.spec.ts",
+          specs: [
+            spec({
+              title: "fails with an out-of-root screenshot",
+              file: "tests/s21d1.spec.ts",
+              tests: [
+                logicalTest({
+                  status: "unexpected",
+                  results: [result({ status: "failed", duration: 10, attachments: [{ name: "screenshot", contentType: "image/png", path: outsideShot }] })],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests[0].screenshot, null);
+  assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
+  assert.ok(!out.warnings.some((w) => w.includes(outsideShot)), "the raw out-of-root path must never appear in a warning");
+});
+
+test("S21D_2 screenshot symlink escape: a repository-local symlink pointing outside the repository is rejected, real content never read", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-s21d2-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const outsideShot = path.join(outsideDir, "secret.png");
+  fs.writeFileSync(outsideShot, "OUTSIDE_PRIVATE_PATH_MARKER_21D");
+
+  const insideDir = mkdtempInRepo(t, "playwright-adapter-s21d2-inside-");
+  const symlinkShot = path.join(insideDir, "shot.png");
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(outsideShot, symlinkShot, "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return; // environment cannot create filesystem symlinks - nothing to prove here
+
+  const reportFile = writeReportFixture(
+    t,
+    report({
+      suites: [
+        fileSuite({
+          title: "s21d2.spec.ts",
+          file: "tests/s21d2.spec.ts",
+          specs: [
+            spec({
+              title: "fails with a symlinked screenshot escaping the repository",
+              file: "tests/s21d2.spec.ts",
+              tests: [
+                logicalTest({
+                  status: "unexpected",
+                  results: [result({ status: "failed", duration: 10, attachments: [{ name: "screenshot", contentType: "image/png", path: symlinkShot }] })],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests[0].screenshot, null);
+  assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
+  assert.ok(!out.warnings.some((w) => w.includes(outsideShot) || w.includes("OUTSIDE_PRIVATE_PATH_MARKER_21D")));
+});
+
+test("S21D_3 safe in-repo symlink: a repository-local symlink to a repository-local file is accepted, returning the canonical target's own repo-relative path", (t) => {
+  const insideDir = mkdtempInRepo(t, "playwright-adapter-s21d3-");
+  const realShot = path.join(insideDir, "real.png");
+  fs.writeFileSync(realShot, "");
+  const symlinkShot = path.join(insideDir, "link.png");
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(realShot, symlinkShot, "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const reportFile = writeReportFixture(
+    t,
+    report({
+      suites: [
+        fileSuite({
+          title: "s21d3.spec.ts",
+          file: "tests/s21d3.spec.ts",
+          specs: [
+            spec({
+              title: "fails with a safe in-repo symlinked screenshot",
+              file: "tests/s21d3.spec.ts",
+              tests: [
+                logicalTest({
+                  status: "unexpected",
+                  results: [result({ status: "failed", duration: 10, attachments: [{ name: "screenshot", contentType: "image/png", path: symlinkShot }] })],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests[0].screenshot, resolveSafeLocalAttachmentPath(realShot).value);
+  assert.equal(path.isAbsolute(out.failedTests[0].screenshot), false);
+});
+
+test("S21D_4 URL screenshot: never fetched, never materialized, rejected with no network access", (t) => {
+  const reportFile = writeReportFixture(
+    t,
+    report({
+      suites: [
+        fileSuite({
+          title: "s21d4.spec.ts",
+          file: "tests/s21d4.spec.ts",
+          specs: [
+            spec({
+              title: "fails with a URL screenshot attachment",
+              file: "tests/s21d4.spec.ts",
+              tests: [
+                logicalTest({
+                  status: "unexpected",
+                  results: [
+                    result({
+                      status: "failed",
+                      duration: 10,
+                      attachments: [{ name: "screenshot", contentType: "image/png", path: "https://example.invalid/screenshot.png" }],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests[0].screenshot, null);
+  assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
+});
+
+test("S21D_5 non-image contentType named \"screenshot\" is never treated as a screenshot", (t) => {
+  const reportFile = writeReportFixture(
+    t,
+    report({
+      suites: [
+        fileSuite({
+          title: "s21d5.spec.ts",
+          file: "tests/s21d5.spec.ts",
+          specs: [
+            spec({
+              title: "fails with a text attachment merely named screenshot",
+              file: "tests/s21d5.spec.ts",
+              tests: [
+                logicalTest({
+                  status: "unexpected",
+                  results: [
+                    result({
+                      status: "failed",
+                      duration: 10,
+                      attachments: [{ name: "screenshot", contentType: "text/plain", path: "tests/s21d5.spec.ts" }],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests[0].screenshot, null);
+});
+
+test("S21D_6 out-of-root spec.file: redacted end-to-end (both testResults.specs and failedTests), bounded path-free warning", (t) => {
+  const outsideSpecFile = path.join(os.tmpdir(), "OUTSIDE_PRIVATE_PATH_MARKER_21D", "evil.spec.ts");
+
+  const reportFile = writeReportFixture(
+    t,
+    report({
+      suites: [
+        fileSuite({
+          title: "s21d6.spec.ts",
+          file: outsideSpecFile,
+          specs: [
+            spec({
+              title: "fails, reported under an out-of-root spec file",
+              file: outsideSpecFile,
+              tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 10 })] })],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  const out = collect({ reportFile });
+  assert.equal(out.failedTests[0].specFile, null);
+  assert.deepEqual(out.testResults.specs, []);
+  assert.ok(out.warnings.some((w) => w.includes("was outside the repository/workspace boundary and was redacted")));
+  assert.ok(!out.warnings.some((w) => w.includes(outsideSpecFile) || w.includes("OUTSIDE_PRIVATE_PATH_MARKER_21D")));
 });

@@ -40,7 +40,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { normalizeSpecPath } = require("../context-utils");
+const { resolveSafeSpecPath, resolveSafeLocalAttachmentPath } = require("../context-utils");
 
 const ROOT = path.resolve(__dirname, "..", "..", "..");
 const DEFAULT_REPORT_FILE = path.join(ROOT, "reports", "playwright", "report.json");
@@ -86,31 +86,41 @@ function loadReport(reportFile = DEFAULT_REPORT_FILE) {
 // report.suites[] represents a *file*, not a describe block - its own
 // title is deliberately never folded into suiteTitles (see buildFailure's
 // fullTitle construction), only nested suite.suites[] entries are.
-function walkReportSuites(suites) {
+function walkReportSuites(suites, warnings = []) {
   const entries = [];
   for (const fileSuite of Array.isArray(suites) ? suites : []) {
     if (!fileSuite || typeof fileSuite !== "object") continue;
     const fileHint = typeof fileSuite.file === "string" && fileSuite.file ? fileSuite.file : null;
-    walkGroup(fileSuite, [], fileHint, entries);
+    walkGroup(fileSuite, [], fileHint, entries, warnings);
   }
   return entries;
 }
 
-function walkGroup(suite, ancestorTitles, fileHint, entries) {
+function walkGroup(suite, ancestorTitles, fileHint, entries, warnings) {
   for (const spec of Array.isArray(suite.specs) ? suite.specs : []) {
     if (!spec || typeof spec !== "object") continue;
     // Roadmap #19.8B Phase 9: spec.file is preferred; the nearest
-    // enclosing suite's file is only a fallback, never duplicated
-    // normalization logic - normalizeSpecPath() (context-utils.js) is
-    // reused unchanged, exactly as the Cypress adapter does.
+    // enclosing suite's file is only a fallback. Roadmap #21D: the raw
+    // value is a reporter-derived PATH STRING, not a file-read
+    // authorization (that remains #21C's RelevantFiles policy) -
+    // resolveSafeSpecPath() (context-utils.js) classifies and either
+    // normalizes or safely redacts it before it ever becomes
+    // model-visible; a genuinely-supplied-but-unsafe value produces one
+    // bounded, path-free warning, never the raw string.
     const specFileRaw = (typeof spec.file === "string" && spec.file) || fileHint || null;
-    entries.push({ spec, suiteTitles: ancestorTitles, specFile: normalizeSpecPath(specFileRaw) });
+    const { value: specFile, rejected } = resolveSafeSpecPath(specFileRaw);
+    if (rejected) {
+      warnings.push(
+        `Playwright spec path for "${typeof spec.title === "string" ? spec.title : "(untitled)"}" was outside the repository/workspace boundary and was redacted.`
+      );
+    }
+    entries.push({ spec, suiteTitles: ancestorTitles, specFile });
   }
   for (const child of Array.isArray(suite.suites) ? suite.suites : []) {
     if (!child || typeof child !== "object") continue;
     const childFileHint = (typeof child.file === "string" && child.file) || fileHint;
     const childTitles = typeof child.title === "string" && child.title ? [...ancestorTitles, child.title] : ancestorTitles;
-    walkGroup(child, childTitles, childFileHint, entries);
+    walkGroup(child, childTitles, childFileHint, entries, warnings);
   }
 }
 
@@ -153,34 +163,48 @@ function buildFailureError(primary) {
 
 // Screenshot mapping is entirely adapter-local (Roadmap #19.8A Phase 15):
 // only the PRIMARY (final) result's attachments are ever inspected, only
-// an attachment explicitly named "screenshot" ever qualifies, and among
+// an attachment explicitly named "screenshot" with an image/* contentType
+// ever qualifies (Roadmap #21D: this also keeps a non-image attachment
+// merely renamed "screenshot" from ever being treated as one), and among
 // several such attachments the last one wins deterministically. A
-// body-only attachment (no `path`) never becomes a screenshot - #19.8B
-// does not write attachment bodies to disk. Existence on disk is verified
-// exactly like the Cypress adapter verifies its own screenshot
-// candidates, so a stale/incorrect path never silently becomes a lie.
+// body-only attachment (no `path`) never becomes a screenshot - no
+// attachment body is ever decoded, written, or otherwise materialized
+// anywhere in this module (Roadmap #19.8B / #21D R3). Roadmap #21D (R2):
+// the candidate path is never trusted as-is - resolveSafeLocalAttachmentPath()
+// (context-utils.js) additionally requires it to name a real, ordinary
+// file that is canonically inside the repository/workspace boundary
+// (rejecting URLs, UNC paths, foreign-OS absolute paths, traversal, and
+// symlink escapes) before it can ever become the normalized screenshot
+// value - and even then returns a repo-relative path, never an absolute
+// one.
 function resolveScreenshot(primary, title, warnings) {
   if (!primary || !Array.isArray(primary.attachments)) return null;
 
   const screenshotAttachments = primary.attachments.filter(
-    (a) => a && typeof a === "object" && a.name === "screenshot"
+    (a) => a && typeof a === "object" && a.name === "screenshot" && typeof a.contentType === "string" && a.contentType.startsWith("image/")
   );
   if (screenshotAttachments.length === 0) return null;
 
   const chosen = screenshotAttachments[screenshotAttachments.length - 1];
 
-  if (typeof chosen.path === "string" && chosen.path) {
-    if (fs.existsSync(chosen.path)) {
-      return normalizeSpecPath(chosen.path);
-    }
-    // Never interpolates the actual (possibly absolute/temp) path into
-    // the warning string - only the test title, matching the
-    // no-absolute-temp-paths-in-warnings policy.
-    warnings.push(`Screenshot attachment path for test "${title || "(untitled)"}" does not exist on disk.`);
+  if (typeof chosen.path !== "string" || !chosen.path) {
+    warnings.push(`Screenshot attachment for test "${title || "(untitled)"}" has no usable path.`);
     return null;
   }
 
-  warnings.push(`Screenshot attachment for test "${title || "(untitled)"}" has no usable path.`);
+  const { value, rejected } = resolveSafeLocalAttachmentPath(chosen.path);
+  if (value) return value;
+
+  // Never interpolates the actual (possibly absolute/temp/remote) path
+  // into the warning string - only the test title, matching the
+  // no-absolute-temp-paths-in-warnings policy this adapter has always
+  // followed, now also covering the out-of-root/URL/UNC/symlink-escape
+  // rejection case introduced by Roadmap #21D.
+  if (rejected) {
+    warnings.push(`Screenshot attachment path for test "${title || "(untitled)"}" was not a safe repository-local path and was redacted.`);
+  } else {
+    warnings.push(`Screenshot attachment path for test "${title || "(untitled)"}" does not exist on disk.`);
+  }
   return null;
 }
 
@@ -304,7 +328,7 @@ function collect({ reportFile = DEFAULT_REPORT_FILE } = {}) {
     return { testResults: { found: false }, failedTests: [], warnings };
   }
 
-  const entries = walkReportSuites(report.suites);
+  const entries = walkReportSuites(report.suites, warnings);
   const testResults = summarizeTestResults(entries, warnings);
   const failedTests = extractFailedTests(entries, warnings);
 
