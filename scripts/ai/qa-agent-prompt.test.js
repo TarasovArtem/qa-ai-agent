@@ -2,7 +2,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { CLASSIFICATIONS, buildSystemPrompt, buildUserPrompt, pickPromptMetadata } = require("./qa-agent-prompt");
+const { CLASSIFICATIONS, buildSystemPrompt, buildUserPrompt, pickPromptMetadata, projectPromptFailure } = require("./qa-agent-prompt");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 
 // Roadmap #19.2 - project-identity parameterization proof. A unit
@@ -778,4 +778,187 @@ test("pickPromptMetadata: framework normalization does not affect the other allo
     browser: "firefox",
     ci: true,
   });
+});
+
+// --- Roadmap #20B: model-visible failed-test evidence boundary -------------
+// buildUserPrompt() used to JSON.stringify the raw failedTests array
+// wholesale. The normalized-failure validator (normalized-failure.js)
+// deliberately allows unknown extra fields on a failure object as an
+// internal adapter-contract convenience - that is not, and must never be,
+// a prompt-visibility grant. These tests prove projectPromptFailure()
+// positively projects only the intentional key set, regardless of what
+// else a real or synthetic failure object happens to carry.
+
+test("projectPromptFailure: positively projects only title/fullTitle/specFile/error(+duration/screenshot when present) - no arbitrary extras", () => {
+  const projected = projectPromptFailure({
+    title: "t",
+    fullTitle: "Suite > t",
+    specFile: "cypress/e2e/tests/x.cy.js",
+    suite: "Suite",
+    status: "failed",
+    error: { message: "m", stack: "s" },
+    duration: 42,
+    screenshot: "cypress/screenshots/x.cy.js/shot.png",
+  });
+  assert.deepEqual(Object.keys(projected).sort(), ["duration", "error", "fullTitle", "screenshot", "specFile", "title"]);
+  assert.deepEqual(Object.keys(projected.error).sort(), ["message", "stack"]);
+});
+
+test("buildUserPrompt: a Cypress-shaped failure's own extras (suite, status) never reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    relevantFiles: {},
+    failedTests: [
+      {
+        title: "renders results",
+        fullTitle: "Suite > renders results",
+        specFile: "cypress/e2e/tests/x.cy.js",
+        suite: "Suite",
+        status: "failed",
+        duration: 10,
+        error: { message: "m", stack: "s" },
+        screenshot: null,
+      },
+    ],
+  };
+  const prompt = buildUserPrompt(context);
+  assert.equal(prompt.includes('"suite"'), false);
+  assert.equal(prompt.includes('"status"'), false);
+});
+
+test("buildUserPrompt: a Playwright-shaped failure's own extras (projectId, projectName) never reach the rendered prompt - distinct from and unrelated to ProjectProfile's internal projectId", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    relevantFiles: {},
+    failedTests: [
+      {
+        title: "fails under generic orchestration",
+        fullTitle: "fails under generic orchestration",
+        specFile: "tests/orchestration.spec.ts",
+        suite: null,
+        status: "failed",
+        duration: 42,
+        error: { message: "orchestration failure", stack: "at x" },
+        screenshot: null,
+        projectId: "chromium",
+        projectName: "chromium",
+      },
+    ],
+  };
+  const prompt = buildUserPrompt(context);
+  assert.equal(prompt.includes('"projectId"'), false);
+  assert.equal(prompt.includes('"projectName"'), false);
+  assert.equal(prompt.includes("chromium"), false);
+});
+
+test("buildUserPrompt: a synthetic secret-looking extra field never reaches the rendered prompt, neither its key nor its value", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    relevantFiles: {},
+    failedTests: [
+      {
+        title: "t",
+        fullTitle: "t",
+        specFile: "s",
+        error: { message: "m", stack: null },
+        apiToken: "FAKE_SECRET_SHOULD_NOT_APPEAR",
+        authorization: "Bearer FAKE_SECRET_SHOULD_NOT_APPEAR",
+      },
+    ],
+  };
+  const prompt = buildUserPrompt(context);
+  assert.equal(prompt.includes("apiToken"), false);
+  assert.equal(prompt.includes("authorization"), false);
+  assert.equal(prompt.includes("FAKE_SECRET_SHOULD_NOT_APPEAR"), false);
+});
+
+test("buildUserPrompt: required QA evidence fields (title, fullTitle, specFile, error.message, error.stack) are preserved through the projection", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    relevantFiles: {},
+    failedTests: [
+      {
+        title: "should do the thing",
+        fullTitle: "Suite > should do the thing",
+        specFile: "cypress/e2e/tests/example.cy.js",
+        error: { message: "AssertionError: boom", stack: "AssertionError: boom\n  at x" },
+      },
+    ],
+  };
+  const payload = parsePromptPayload(buildUserPrompt(context));
+  assert.deepEqual(payload.failedTests[0], {
+    title: "should do the thing",
+    fullTitle: "Suite > should do the thing",
+    specFile: "cypress/e2e/tests/example.cy.js",
+    error: { message: "AssertionError: boom", stack: "AssertionError: boom\n  at x" },
+  });
+});
+
+test("buildUserPrompt: duration and screenshot appear when genuinely present, and are absent (not null-defaulted) when the source object never had them", () => {
+  const withBoth = parsePromptPayload(
+    buildUserPrompt({
+      metadata: {},
+      testResults: {},
+      relevantFiles: {},
+      failedTests: [{ title: "t", fullTitle: "t", specFile: "s", error: { message: "m" }, duration: 99, screenshot: "path.png" }],
+    })
+  );
+  assert.equal(withBoth.failedTests[0].duration, 99);
+  assert.equal(withBoth.failedTests[0].screenshot, "path.png");
+
+  const withNeither = parsePromptPayload(
+    buildUserPrompt({
+      metadata: {},
+      testResults: {},
+      relevantFiles: {},
+      failedTests: [{ title: "t", fullTitle: "t", specFile: "s", error: { message: "m" } }],
+    })
+  );
+  assert.equal(Object.prototype.hasOwnProperty.call(withNeither.failedTests[0], "duration"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(withNeither.failedTests[0], "screenshot"), false);
+});
+
+test("buildUserPrompt: a missing/malformed error object projects to {message: null, stack: null} rather than throwing or leaking the raw value", () => {
+  const payload = parsePromptPayload(
+    buildUserPrompt({
+      metadata: {},
+      testResults: {},
+      relevantFiles: {},
+      failedTests: [{ title: "t", fullTitle: "t", specFile: "s" }],
+    })
+  );
+  assert.deepEqual(payload.failedTests[0].error, { message: null, stack: null });
+});
+
+test("buildUserPrompt: consolidated model-visible failure contract - exactly the intentional key set, nothing else, across a realistic multi-extra fixture", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    relevantFiles: {},
+    failedTests: [
+      {
+        title: "t",
+        fullTitle: "Suite > t",
+        specFile: "s",
+        suite: "Suite",
+        status: "failed",
+        duration: 5,
+        screenshot: "shot.png",
+        error: { message: "m", stack: "s", extraErrorField: "SHOULD_NOT_APPEAR" },
+        projectId: "chromium",
+        projectName: "chromium",
+        randomFutureAdapterField: "SHOULD_NOT_APPEAR_EITHER",
+      },
+    ],
+  };
+  const payload = parsePromptPayload(buildUserPrompt(context));
+  const failure = payload.failedTests[0];
+  assert.deepEqual(Object.keys(failure).sort(), ["duration", "error", "fullTitle", "screenshot", "specFile", "title"]);
+  assert.deepEqual(Object.keys(failure.error).sort(), ["message", "stack"]);
+  const rendered = buildUserPrompt(context);
+  assert.equal(rendered.includes("SHOULD_NOT_APPEAR"), false);
 });

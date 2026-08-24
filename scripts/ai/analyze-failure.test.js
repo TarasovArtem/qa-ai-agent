@@ -158,13 +158,19 @@ test("stripCodeFences: strips a ```json fence, leaves plain JSON untouched", () 
   assert.equal(stripCodeFences('{"a":1}'), '{"a":1}');
 });
 
-test("runProviderAnalysis: a non-retryable ProviderError surfaces cleanly, without leaking any secret it might carry", async () => {
+// Roadmap #20B: the terminal AnalyzerError message now routes through the
+// same summarizeProviderError() allowlist the persisted firstAttemptError
+// already used - it must never surface the raw ProviderError.message
+// (here, an unrecognized numeric "401" code, deliberately chosen to prove
+// the safe fallback applies even to a made-up/unexpected code, exactly
+// like summarizeProviderError()'s own defensive UNKNOWN fallback).
+test("runProviderAnalysis: a non-retryable ProviderError surfaces cleanly, using the safe allowlisted message - never the raw error text", async () => {
   const err = new ProviderError("Unauthorized (401)", { code: 401, retryable: false });
   await assert.rejects(
     () => runProviderAnalysis(providerThrowing(err), context, { sleep: noopSleep }),
     (thrown) => {
-      assert.match(thrown.message, /401/);
-      assert.match(thrown.message, /Unauthorized/);
+      assert.match(thrown.message, /Unknown provider error/);
+      assert.equal(thrown.message.includes("Unauthorized"), false, "the raw provider error text must never reach the terminal message");
       return true;
     }
   );
@@ -201,24 +207,55 @@ test("runProviderAnalysis: a plain (non-ProviderError) throw is treated as non-r
   assert.equal(provider.calls, 1);
 });
 
-test("runProviderAnalysis: empty response content produces a clear error, not a crash", async () => {
+// Roadmap #20B Finding B: a synthetic, fake-secret-shaped raw error message
+// (e.g. from an underlying transport library's own error text - never a
+// real credential, never a live provider) must never reach the terminal
+// AnalyzerError message, which is what fail()/console.error ultimately
+// surfaces in CI logs. Only the fixed, allowlisted safe message may appear.
+test("runProviderAnalysis: a fake-secret-shaped raw provider error message never reaches the terminal AnalyzerError - only the safe allowlisted message does", async () => {
+  const err = new ProviderError("network error FAKE_API_KEY_123456", {
+    code: PROVIDER_ERROR_CODES.NETWORK,
+    retryable: false,
+  });
+  await assert.rejects(
+    () => runProviderAnalysis(providerThrowing(err), context, { sleep: noopSleep }),
+    (thrown) => {
+      assert.equal(thrown.message.includes("FAKE_API_KEY_123456"), false, "the fake secret-shaped raw text must never reach the terminal message");
+      assert.match(thrown.message, /Provider network request failed/);
+      return true;
+    }
+  );
+});
+
+// Roadmap #20B: validateProviderResponse() (provider-contract.js) already
+// constructs these as ProviderError(code: INVALID_RESPONSE) - a safe,
+// hardcoded, project-owned message, never raw provider/transport text.
+// The terminal AnalyzerError now uniformly routes every provider-loop
+// failure through summarizeProviderError()'s fixed allowlist (the same
+// policy the persisted firstAttemptError already used) rather than
+// selectively deciding "this particular message happens to already be
+// safe" - one consistent sanitization policy, not two. The underlying
+// rejection behavior (empty/whitespace/non-string/object all fail before
+// reaching JSON.parse) is unchanged; only the exact surfaced text is now
+// the shared safe INVALID_RESPONSE message.
+test("runProviderAnalysis: empty response content produces a clear, safely-worded error, not a crash", async () => {
   const provider = { analyze: async () => "" };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /empty response/i);
+  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: a whitespace-only response is treated the same as empty", async () => {
   const provider = { analyze: async () => "   \n  " };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /empty response/i);
+  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
-test("runProviderAnalysis: a non-string response produces a clear error, not a crash", async () => {
+test("runProviderAnalysis: a non-string response produces a clear, safely-worded error, not a crash", async () => {
   const provider = { analyze: async () => null };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /invalid response type/i);
+  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: an object response (not yet a string) is rejected before ever reaching JSON.parse", async () => {
   const provider = { analyze: async () => ({ results: [goodItem()] }) };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /invalid response type/i);
+  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: a provider object missing analyze() fails immediately with a clear error, no retries spent", async () => {

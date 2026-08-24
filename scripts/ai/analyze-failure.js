@@ -369,16 +369,20 @@ const SAFE_PROVIDER_ERROR_MESSAGES = {
   [PROVIDER_ERROR_CODES.UNKNOWN]: "Unknown provider error",
 };
 
-// Safe, provider-neutral summary of a ProviderError for persistence onto
-// ai-report.json - code/message/retryable only, exactly mirroring the
-// runtime shape callers already expect, but message is now looked up from
-// the fixed allowlist above rather than copied from the error itself. An
-// unrecognized code (should never happen given PROVIDER_ERROR_CODES is the
-// only vocabulary ProviderError uses, but checked defensively) falls back
-// to the same fixed UNKNOWN message rather than ever touching err.message.
-// This function only changes what gets PERSISTED - the live ProviderError
-// instance (and the AnalyzerError thrown on ultimate failure, logged to
-// the console) is untouched and keeps its original, richer message.
+// Safe, provider-neutral summary of a ProviderError - code/message/
+// retryable only, message looked up from the fixed allowlist above rather
+// than copied from the error itself. An unrecognized code (should never
+// happen given PROVIDER_ERROR_CODES is the only vocabulary ProviderError
+// uses, but checked defensively) falls back to the same fixed UNKNOWN
+// message rather than ever touching err.message. Roadmap #20B: this is
+// the ONE sanitization policy used everywhere a provider error becomes
+// visible outside the live ProviderError instance itself - both the
+// persisted ai-report.json's firstAttemptError AND the terminal
+// AnalyzerError thrown below (which fail()/console.error ultimately
+// surfaces in CI logs) route through this exact same lookup, so a raw
+// provider/network error message (which could otherwise contain request
+// detail an underlying transport library's own error text happens to
+// include) is never propagated to either destination.
 function summarizeProviderError(err) {
   if (!err) return null;
   return {
@@ -470,12 +474,20 @@ async function runProviderAnalysis(
   }
 
   if (lastErr) {
-    // Deliberately surface only code/message - never the raw provider
+    // Roadmap #20B: routed through the same summarizeProviderError()
+    // allowlist the persisted firstAttemptError already uses - never
+    // lastErr.message directly, which could otherwise carry an
+    // underlying transport/network library's own raw error text (not a
+    // credential today, in this repo's own providers, but never
+    // guaranteed for any error that reaches this generic retry loop)
+    // into a terminal, console-logged CI message. Deliberately surfaces
+    // only code + the fixed safe message - never the raw provider
     // error/request object (or its .cause), which could otherwise leak
-    // request metadata (e.g. an Authorization header a real provider set)
-    // into CI logs.
+    // request metadata (e.g. an Authorization header a real provider
+    // set) into CI logs.
     const code = lastErr.code ? ` (${lastErr.code})` : "";
-    throw new AnalyzerError(`AI provider request failed${code}: ${lastErr.message || "unknown error"}`);
+    const safeMessage = summarizeProviderError(lastErr).message;
+    throw new AnalyzerError(`AI provider request failed${code}: ${safeMessage}`);
   }
 
   let parsed;
