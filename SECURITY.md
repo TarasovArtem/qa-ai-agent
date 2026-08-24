@@ -93,10 +93,16 @@ This is the same **provider-visible data vs. local/CI audit provenance** distinc
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `AI_API_KEY` | `scripts/ai/config.js` → provider constructors | Generic, provider-neutral credential a real provider implementation authenticates with (as a `Bearer` header value in its own request only) |
+| `AI_API_KEY` | `scripts/ai/config.js` → provider constructors | Generic, provider-neutral credential input at the **configuration** layer only. `config.js` never reads an endpoint URL, request format, or auth header/scheme - it only resolves this value from `process.env` and hands it to whichever provider is selected. The actual HTTP authentication **transport** is decided entirely by that provider's own implementation, and is not uniform across providers - see the Groq/Gemini rows below. |
 | `AI_MODEL` / `AI_PROVIDER` | `scripts/ai/config.js` | Configuration, not secret - safe to log |
-| `GITHUB_TOKEN` | `scripts/ai/collect-history.js` | `Bearer` auth for read-only GitHub Actions history API calls |
-| `GROQ_API_KEY` (GitHub Actions secret) | `.github/workflows/cypress.yml` | Mapped to `AI_API_KEY` for the CI-wired Groq step only; application code never references Groq's name directly |
+| `GITHUB_TOKEN` | `scripts/ai/collect-history.js` | Separate GitHub API credential, unrelated to `AI_API_KEY` - sent as an `Authorization: Bearer <token>` header for read-only GitHub Actions history API calls |
+| `GROQ_API_KEY` (GitHub Actions secret) | `.github/workflows/cypress.yml` | The GitHub Actions repository secret backing the current Groq CI path only - not itself the generic provider-contract variable. The workflow maps it to `AI_API_KEY` (`AI_API_KEY: ${{ secrets.GROQ_API_KEY }}`) before `GroqProvider` ever sees it; application code never references Groq's name directly |
+
+**`AI_API_KEY`'s actual HTTP authentication mechanism is provider-specific, not universal:**
+
+- **Groq** (`groq-provider.js`) sends it as `Authorization: Bearer <apiKey>`.
+- **Gemini** (`gemini-provider.js`) sends it as `x-goog-api-key: <apiKey>` - a materially different header, **not** `Authorization: Bearer`. No `GEMINI_API_KEY` repository secret or workflow step exists today; Gemini receives the same generic `AI_API_KEY` value as Groq would, through the same configuration layer, whenever `AI_PROVIDER=gemini` is set locally.
+- A future third provider is free to use yet another mechanism - the configuration layer (`AI_API_KEY`) never dictates or constrains it.
 
 All of the above are read from `process.env` and used exclusively as HTTP header values in their own dedicated request. None of them is intentionally written into `systemPrompt`, `userPrompt`, `context.json`, `ai-report.json`, `history.json`, or any `console.log`/`console.error` call in this codebase - `analyze-failure.js`'s own module comment states this as an explicit rule ("Never add `AI_API_KEY` ... to this or any other log line in this file"). This is a code-review-enforced convention, not a runtime secret-scanner - see [§16](#16-known-limitations--non-goals).
 
