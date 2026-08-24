@@ -9,3 +9,4 @@ reports/ai
 debug.log
 CLAUDE.md
 .claude/settings.local.json
+bash.exe.stackdump
