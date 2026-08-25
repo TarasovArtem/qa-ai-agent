@@ -2,22 +2,24 @@
 
 ![Cypress E2E Tests](https://github.com/TarasovArtem/qa-ai-agent/actions/workflows/cypress.yml/badge.svg?branch=main)
 
-QA AI Agent is an AI-assisted failure-triage system built on top of a cross-browser Cypress E2E suite. It deterministically aggregates cross-browser test evidence, performs one centralized AI analysis through a provider-neutral abstraction (Mock / Groq / Gemini), validates the model's output by hand, applies a deterministic application-level safety policy on top of the model's recommendation, and protects its own behavior over time with an offline evaluation/regression suite. The AI is **assistive, not authoritative**: it never decides whether a CI run passes, and it never files a bug on its own recommendation alone.
+QA AI Agent is a framework-portable, AI-assisted failure-triage system with production integration for **two** E2E frameworks - Cypress and Playwright. It deterministically aggregates cross-browser and cross-framework test evidence, performs one centralized AI analysis through a provider-neutral abstraction (Mock / Groq / Gemini), validates the model's output by hand, applies a deterministic application-level safety policy on top of the model's recommendation, and protects its own behavior over time with an offline evaluation/regression suite. The AI is **assistive, not authoritative**: it never decides whether a CI run passes, and it never files a bug on its own recommendation alone.
 
 See [TEST_CASES.md](TEST_CASES.md) for the full list of manual test cases covered by the Cypress suite, with preconditions, steps, and expected results for each.
 
 ## Key capabilities
 
-- Cross-browser E2E execution: Chrome / Edge / Firefox, each in its own CI job
-- One logical AI analysis per failing workflow, never one call per browser
-- Deterministic, code-computed cross-browser failure correlation (no LLM involved)
+- Two production E2E frameworks: Cypress (Chrome / Edge / Firefox) and Playwright (Chromium), each with its own framework adapter and its own CI job(s)
+- One logical AI analysis per failing workflow, never one call per browser or per framework
+- Deterministic, code-computed evidence correlation: `browserCorrelation` (same-framework, cross-browser) and `frameworkCorrelation` (cross-framework, workflow-level outcomes only) - kept explicitly separate, no LLM involved in computing either
+- Framework-scoped, project-scoped flaky-test History, derived from prior GitHub Actions run/job evidence (not a custom durable database - GitHub Actions' own records are the durable substrate)
 - Evidence-grounded model reasoning (observed fact vs. supported inference vs. unknown - enforced by prompt contract)
-- Deterministic `shouldCreateBug` safety policy the model cannot override
-- Provider abstraction across three real backends: Mock / Groq / Gemini, swappable with zero core changes
+- Deterministic `shouldCreateBug` safety policy the model cannot override; no automatic GitHub issue creation
+- Provider abstraction across three real backends: Mock / Groq / Gemini, swappable with zero core changes; no automatic cross-provider fallback
 - Machine-readable provider provenance (attempt count, first-attempt error) and bounded transport retry
 - Curated, schema-validated, offline Knowledge Layer selected before the model is ever called
 - Versioned, frozen offline evaluation/regression datasets (v1-v5) that protect 15 behavioral dimensions per sample
-- GitHub Actions CI with authoritative Cypress pass/fail, independent of AI outcome
+- Repo-local, canonical-path, cross-platform (Windows/POSIX) attachment and source-evidence containment
+- GitHub Actions CI with authoritative Cypress/Playwright pass/fail, independent of AI outcome
 
 ## Security and AI data governance
 
@@ -41,45 +43,49 @@ Two things are true at once by design: **the AI is doing real reasoning work**, 
 ## High-level architecture (current)
 
 ```
-Cypress (Chrome)   Cypress (Edge)   Cypress (Firefox)
-      │                  │                  │
-      └────────┬─────────┴─────────┬────────┘
-               ▼                   ▼
-         cypressAdapter → deterministic failure collectors (per browser)
-               │
-               ▼
-        browser aggregation  (pick ONE primary failure,
-                               compute browserCorrelation)
-               │
-               ▼
-        history + knowledge selection  (both offline, deterministic)
-               │
-               ▼
-          QA prompt / context
-               │
-               ▼
-          Provider Factory
-        ┌──────┼───────┐
-        ▼      ▼        ▼
-      Mock   Groq    Gemini
-        └──────┼───────┘
-               ▼
-       raw model text (never trusted as-is)
-               │
-               ▼
-       validation + deterministic policy
-               │
-               ▼
-          triage report → PR comment
+Cypress (Chrome)  Cypress (Edge)  Cypress (Firefox)      Playwright (Chromium)
+      │                 │                │                        │
+      └────────┬────────┴────────┬───────┘                        │
+               ▼                 ▼                                ▼
+         cypressAdapter → per-browser failure collectors    playwrightAdapter
+               │                                                   │
+               └─────────────────────────┬─────────────────────────┘
+                                          ▼
+                runtime framework selector (QA_FRAMEWORK; default cypress)
+                                          │
+                                          ▼
+        browser + framework aggregation  (pick ONE primary failure workflow-wide,
+                              compute browserCorrelation + frameworkCorrelation)
+                                          │
+                                          ▼
+        history (project + framework scoped) + knowledge selection  (offline, deterministic)
+                                          │
+                                          ▼
+                                   QA prompt / context
+                                          │
+                                          ▼
+                                   Provider Factory
+                                ┌──────────┼──────────┐
+                                ▼          ▼           ▼
+                              Mock       Groq       Gemini
+                                └──────────┼──────────┘
+                                          ▼
+                       raw model text (never trusted as-is)
+                                          │
+                                          ▼
+                       validation + deterministic policy
+                                          │
+                                          ▼
+                                triage report → PR comment
 ```
 
-Every box above exists in the current codebase today and reflects the real, currently-wired production CI path - Cypress is the only framework with an active browser workflow. A minimal `ProjectProfile` (Roadmap #19.2) supplies the project-specific inputs the collectors and the prompt step consume - a small, deterministic data source, not a new pipeline stage, so it isn't drawn as its own box.
+Every box above exists in the current codebase today and reflects the real, currently-wired production CI path. **Both Cypress and Playwright have active production browser workflows** - see [Current Multi-Framework Status](#current-multi-framework-status) below for exactly what is production-proven for each. A minimal `ProjectProfile` (Roadmap #19.2) supplies the project-specific inputs the collectors and the prompt step consume - a small, deterministic data source, not a new pipeline stage, so it isn't drawn as its own box.
 
-`cypressAdapter` above is a real, shipped **framework adapter boundary** (`scripts/ai/adapters/cypress-adapter.js`, Roadmap #19.6), not a hypothetical: it normalizes Cypress's raw Mochawesome report into a generic `{testResults, failedTests, warnings}` shape. An independently-tested, offline-only second adapter, `playwrightAdapter` (`scripts/ai/adapters/playwright-adapter.js`, Roadmap #19.8), produces the identical generic shape from official Playwright JSON-reporter-shaped evidence and can be injected into the same generic collector entirely offline (Roadmap #19.9). No production CI path currently selects it - see [Current Portability Status](#current-portability-status) below for exactly what is and isn't proven.
+`cypressAdapter` and `playwrightAdapter` are both real, shipped **framework adapter boundaries** (`scripts/ai/adapters/cypress-adapter.js`, Roadmap #19.6; `scripts/ai/adapters/playwright-adapter.js`, Roadmap #19.8): each normalizes its framework's own raw report format (Cypress/Mochawesome; Playwright's official JSON reporter) into the identical generic `{testResults, failedTests, warnings}` shape. Which adapter runs is decided by the **runtime framework selector** (`scripts/ai/runtime-framework-selector.js`, Roadmap #21E): `QA_FRAMEWORK=playwright` selects `playwrightAdapter`; an absent/unset value defaults to `cypressAdapter` (the established backward-compatible default); an unrecognized value fails closed with a configuration error - it never silently falls back to a supported framework. The architecture is extensible through this adapter boundary, but the only two adapters that actually exist and actually run in production today are Cypress and Playwright - no other framework is implemented or implied.
 
 ## How failure triage works
 
-**Browsers never call the AI themselves.** Chrome, Edge, and Firefox each run the identical, unmodified Cypress suite in their own CI job and only ever record their own pass/fail outcome plus (on failure) a structured failure context - no job calls an AI provider. A separate, downstream job runs after all three browsers finish, aggregates every browser's result, and performs **at most one** real AI analysis for the whole workflow run - never one per browser. On a fully green run, this job still runs but performs zero AI calls.
+**Browsers and frameworks never call the AI themselves.** Chrome, Edge, and Firefox each run the identical, unmodified Cypress suite in their own CI job; Chromium runs Playwright's own independent smoke test in its own CI job. Each job only ever records its own pass/fail outcome plus (on failure) a structured failure context - no job calls an AI provider. A separate, downstream `QA AI triage` job runs after all four legs finish, aggregates every leg's result across both frameworks, and performs **at most one** real AI analysis for the whole workflow run - never one per browser and never one per framework. On a fully green run, this job still runs but performs zero AI calls.
 
 This "one logical analysis" design is a deliberate architecture decision, not an accident of implementation:
 
@@ -115,22 +121,42 @@ A confident, well-evidenced classification never needs an unproven mechanism to 
 
 Three supporting data sources are each bounded by an explicit authority rule so none of them can manufacture a fact about the current run:
 
-- **History** (recent pass/fail counts for this browser) is a probabilistic signal, never proof - an intermittent pattern can support `FLAKY_TEST`, but history alone can never establish what happened in *this* run.
-- **Browser correlation** (below) is deterministic, code-computed evidence about what was actually observed across browsers - real evidence, but it never by itself proves *why* two browsers agree or differ.
+- **History** (recent pass/fail counts for this exact job, same project and same framework - see [History](#history) below) is a probabilistic signal, never proof - an intermittent pattern can support `FLAKY_TEST`, but history alone can never establish what happened in *this* run.
+- **Correlation** (`browserCorrelation`/`frameworkCorrelation`, see [Multi-browser and multi-framework correlation](#multi-browser-and-multi-framework-correlation) above) is deterministic, code-computed evidence about what was actually observed - real evidence, but it never by itself proves *why* two browsers or frameworks agree or differ, and cross-framework outcomes are never same-test evidence.
 - **Knowledge Layer content** (below) is guidance only - it can broaden which hypotheses the model considers, but it can never stand in for evidence, override direct evidence, override correlation, override history, or override policy.
 
 This does not claim hallucinations are impossible; it claims the prompt contract and the surrounding evidence pipeline are deliberately engineered to make an ungrounded claim visible and structurally discouraged, and that the one dimension that matters most for safety - `shouldCreateBug` - is never decided by the model's own text at all (see [Deterministic safety model](#deterministic-safety-model) above).
 
-## Multi-browser correlation
+## Multi-browser and multi-framework correlation
 
-When more than one browser fails in the same workflow run, the aggregator still analyzes only one primary browser's failure - but it deterministically computes cross-browser correlation metadata from *every* browser's real, recorded outcome (never by an LLM) and attaches it to that one analysis:
+Two deterministic, code-computed correlation objects exist, deliberately kept separate because they answer different questions and must never be conflated:
 
-- `failedBrowsers` / `passedBrowsers` - which browsers actually failed/passed in this run
+### `browserCorrelation` - same-framework, cross-browser
+
+When more than one *same-framework* browser leg fails in the same workflow run, the aggregator still analyzes only one primary failure - but it deterministically computes correlation metadata from every leg of **that same framework's** real, recorded outcome (never by an LLM) and attaches it to that one analysis:
+
+- `failedBrowsers` / `passedBrowsers` - which browsers of the primary's own framework actually failed/passed in this run
 - `primaryBrowser` - which one was selected for the single AI analysis
 - `failureScope` - `single-browser` or `multi-browser`
 - `sameFailureSignature` - `true`/`false` when at least two failed browsers have comparable evidence, `null` when that comparison couldn't be made (explicitly not the same as `false`)
 
-This distinction matters diagnostically: "Firefox failed alone while Chrome and Edge passed" and "all three browsers failed with an identical error signature" are materially different pieces of debugging evidence, and the prompt explicitly forbids collapsing either pattern into an automatic conclusion (multiple browsers failing the same way does not by itself prove `PRODUCT_BUG` - a shared test bug or shared environment issue produces the same pattern). Correlation is evidence to weigh, never a classification rule by itself.
+An independent framework's job is **never** a member of this comparison: its pass does not mean "the same test passed in another browser," and its fail does not mean "the same failure occurred in another browser" - the primary's own framework is the only framework `browserCorrelation` ever reasons over.
+
+### `frameworkCorrelation` - cross-framework, workflow-level only
+
+A separate, smaller object states only whether each framework present in this workflow run's jobs, as a whole, passed or failed - e.g. `{primaryFramework: "playwright", outcomes: [{framework: "cypress", outcome: "success"}, {framework: "playwright", outcome: "failure"}]}`. This is **workflow-level evidence, never same-test evidence**: a Cypress pass does not disprove a Playwright failure, and vice versa - the two frameworks run entirely independent test suites against the same target application. The system prompt explicitly instructs the model never to treat `frameworkCorrelation` as equivalent-coverage or same-test evidence.
+
+Both correlation objects matter diagnostically, but neither is a classification rule by itself: the prompt explicitly forbids collapsing either pattern into an automatic conclusion (multiple browsers or frameworks failing does not by itself prove `PRODUCT_BUG` - a shared test bug or shared environment issue produces the same pattern). Correlation is evidence to weigh, never proof.
+
+## History
+
+Flaky-test History is a temporal signal derived from **prior GitHub Actions run/job evidence for this repository's own workflow** (`scripts/ai/collect-history.js`) - it is not a custom durable database this project maintains; GitHub Actions' own run/job records are the durable substrate, re-queried fresh on each collection.
+
+- **Scope**: eligible only when both **project** and **framework** match the current analysis (`readHistory()` in `scripts/ai/analyze-failure.js`) - History collected for a different project, or for the other framework, can never influence an unrelated analysis. A narrow legacy-compatibility exception exists only for pre-framework-namespace records, and only for a current Cypress analysis; a Playwright analysis can never inherit it.
+- **Job targeting**: the collector matches an exact GitHub Actions job name (`Cypress - <browser>` for Cypress; `Playwright Chromium` for Playwright) over the last several completed runs on `main` - not an arbitrary browser/framework guess.
+- **Model-visible fields**: exactly four integers - `runsConsidered`, `passes`, `failures`, `retryPasses` - never raw run/job data, paths, or run IDs.
+- **`retryPasses` is a GitHub Actions job-rerun signal, not a test-level retry count.** It counts a run where the matched job failed on an earlier attempt and then passed after being rerun (`run_attempt > 1`) - neither Cypress nor the current Playwright configuration (`retries: 0`) has test-level retries; this metric is entirely independent of that.
+- **Never a root-cause oracle**: History can strengthen or weaken a hypothesis (e.g. a consistent run of failures argues *against* `FLAKY_TEST`, not for it), but it can never manufacture an observed fact about the current run - this boundary is enforced by the same prompt-contract rule described in [Evidence grounding](#evidence-grounding) above.
 
 ## Knowledge Layer
 
@@ -206,73 +232,95 @@ npm run eval:regression:v5  # compares against frozen Baseline v5
 
 **Verified at Roadmap #18 completion** (a historical milestone snapshot, not a permanent repository invariant - re-run `npm run test:unit` for the current count): 918 unit tests passing, including 93 provider-layer tests (27 Gemini / 17 Groq / 14 Mock / remainder shared contract-and-factory tests); Dataset/Baseline v1-v5 all `UNCHANGED`.
 
+**Verified at Roadmap #21J-A completion** (current, most recent snapshot - again, re-run `npm run test:unit` for the up-to-date count as the suite keeps growing): 1377 unit tests passing; Dataset/Baseline v1-v5 all `UNCHANGED`; no v6 exists yet.
+
 ## Continuous Integration
 
-GitHub Actions ([.github/workflows/cypress.yml](.github/workflows/cypress.yml)) runs on pushes to `main`, pull requests targeting `main`, and manual dispatch. Six jobs run per trigger: `Unit tests`, `QA Agent evaluation` (offline, informational), `Cypress - chrome`, `Cypress - edge`, `Cypress - firefox`, and `QA AI triage` (runs after all three browsers, at most once per workflow run).
+GitHub Actions ([.github/workflows/cypress.yml](.github/workflows/cypress.yml)) runs on pushes to `main`, pull requests targeting `main`, and manual dispatch. Seven jobs run per trigger: `Unit tests`, `QA Agent evaluation` (offline, informational), `Cypress - chrome`, `Cypress - edge`, `Cypress - firefox`, `Playwright Chromium`, and `QA AI triage` (runs after all four E2E legs, at most once per workflow run).
 
-**If all three browsers pass, AI analysis is skipped entirely** (`No E2E failures detected; AI triage skipped.`) - zero provider calls happen on a green run. If any browser fails, the deterministic aggregator selects one primary failure, computes cross-browser correlation, and triggers exactly one AI analysis. **AI never controls whether the workflow passes or fails** - Cypress's own pass/fail is always authoritative, regardless of whether AI analysis ran, succeeded, or failed.
+**If every E2E leg (all three Cypress browsers and Playwright) passes, AI analysis is skipped entirely** (`No E2E failures detected; AI triage skipped.`) - zero provider calls happen on a green run. If any leg fails, the deterministic aggregator selects one primary failure across both frameworks, computes `browserCorrelation`/`frameworkCorrelation`, and triggers exactly one AI analysis. **AI never controls whether the workflow passes or fails** - each framework's own pass/fail is always authoritative, regardless of whether AI analysis ran, succeeded, or failed.
 
-Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cypress - edge`. `Cypress - firefox`, `QA Agent evaluation`, and `QA AI triage` are deliberately **not required** - each is informational while its real-world reliability is observed independently. (Firefox's own execution-environment split from Chrome/Edge, and CI history in general, are explained in [Detailed Engineering History](#detailed-engineering-history) below - this is normal engineering history for a live external site, not evidence of a current defect.)
+Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cypress - edge`. `Cypress - firefox`, `Playwright Chromium`, `QA Agent evaluation`, and `QA AI triage` are deliberately **not required yet** - each is informational while its real-world reliability is observed independently. (Firefox's own execution-environment split from Chrome/Edge, and CI history in general, are explained in [Detailed Engineering History](#detailed-engineering-history) below - this is normal engineering history for a live external site, not evidence of a current defect.)
 
-## Current Portability Status
+## Current Multi-Framework Status
 
-This section reflects Roadmap #19's work through #19.9 - it states current reality plainly, neither overclaiming nor understating it. Two things are true at once: **Cypress is the only framework with an active production workflow**, and **a second framework (Playwright) has a fully independent, offline-tested adapter proving the architecture generalizes** - these are different claims, and this section keeps them separate throughout.
+This section states current reality plainly, neither overclaiming nor understating it. **Both Cypress and Playwright have active, production-integrated GitHub Actions workflows today** - this is the result of Roadmap #21 (#21A-#21J), which took Roadmap #19's offline-proven adapter architecture into real production CI, including one deliberately controlled, real Playwright failure that exercised the entire evidence pipeline end to end (see [Evidence maturity](#evidence-maturity) below for exactly what that controlled run did and did not prove).
 
-**Today, this repository actively runs in production against exactly one project and one E2E framework:**
+**Today, this repository actively runs in production against one project, across two E2E frameworks:**
 
 - Project / SUT: a single, publicly accessible third-party POI (points-of-interest) map web application. It is not part of this repository and not owned by this project - it exists only as a realistic external target for the Cypress suite and a source of real cross-browser failure evidence for the QA AI Agent to triage. Its stable identity is a `projectId` owned by the current `ProjectProfile` (see below).
 - E2E framework: **Cypress** (active production runtime)
 - Browsers: **Chrome, Edge, Firefox**
 - AI providers: **Mock, Groq, Gemini**
 
-The system works correctly for this scope today - everything below matters for *introducing a second project or enabling a second framework in production*, not for current production behavior.
+Everything below matters for *introducing a second project*, not for enabling a second framework - that work is done (Roadmap #21).
 
 **Already project/framework-neutral:**
 
 - Provider abstraction (`providers/**`) and the `analyze()` contract
 - The deterministic policy layer (`agent-policy.js`)
-- The browser-correlation *algorithm* (it reasons over already-normalized evidence - `title`/`specFile`/`error.message` - not over any framework-native shape)
+- The correlation *algorithms* (they reason over already-normalized evidence - `title`/`specFile`/`error.message`, or trusted `framework`/`outcome` literals - not over any framework-native shape)
 - Evaluation/regression scoring semantics
 - Most of the system prompt's reasoning rules (grounding, history authority, correlation authority, knowledge authority)
 - Project identity *ownership* (Roadmap #19.2): a minimal, immutable `ProjectProfile` is the single source of stable project identity and project-specific context - a future second project is supplied as data, not by editing consumers
-- The normalized failure contract (`title`/`fullTitle`/`specFile`/`error`, optional `duration`/`screenshot`) - proven framework-neutral by a dedicated Cypress-free test and by real, independent use from both adapters (Roadmap #19.5)
-- The system prompt's persona/framework wording - parameterized by `frameworkId` since Roadmap #19.5, defaulting to `"cypress"` only for backward compatibility with contexts that predate explicit framework identity
+- The normalized failure contract (`title`/`fullTitle`/`specFile`/`error`, optional `duration`/`screenshot`) - proven framework-neutral by a dedicated Cypress-free test and by real, independent, **production** use from both adapters
 
-**Resolved by Roadmap #19.2/#19.3 (project axis):**
+**Resolved (project axis, Roadmap #19.2/#19.3):**
 
 - Explicit, stable project identity (`projectId`) is emitted unconditionally by collection and carried through to the report; the prompt persona renders whichever `ProjectProfile` it is given
 - `PROJECT_VERIFIED` knowledge and flaky-test History are both scoped to `projectId` - a different or missing project can no longer influence either
-- Roadmap #19.4 proved this isolation boundary offline, against a fully synthetic second project
+- Roadmap #19.4 proved this isolation boundary offline, against a fully synthetic second project - no second real project exists in production today
 
-**Resolved by Roadmap #19.5-#19.9 (framework axis):**
+**Resolved (framework axis - offline foundation Roadmap #19.5-#19.9, real production enablement Roadmap #21):**
 
-- Explicit, canonical framework identity (`context.metadata.framework`) is produced unconditionally, sourced from a single adapter-identity constant - the prompt persona sentence names whichever framework actually ran, not a hardcoded "Cypress" (#19.5)
-- Failure collection no longer parses one framework's raw report format inline: `scripts/ai/adapters/cypress-adapter.js` owns Cypress/Mochawesome parsing behind a plain `{id, collect()}` module contract, with Cypress's own historical output protected by a frozen golden-comparison test (#19.6, #19.7)
-- A second, independently-implemented adapter, `scripts/ai/adapters/playwright-adapter.js`, proves the same contract normalizes official Playwright JSON-reporter-shaped evidence into the identical generic `{testResults, failedTests, warnings}` shape - built and unit-tested entirely offline, using Playwright's own logical `test.status` (never an individual attempt's `result.status`) as sole classification authority (#19.8)
-- The generic collector (`collect-context.js`) accepts either adapter through explicit dependency injection (`main({adapter, adapterOptions})`), offline only - the zero-argument production entry point is unchanged and always resolves to `cypressAdapter`. Flaky-test History is now namespaced by **project AND framework**: a new, available Cypress History record explicitly carries `framework: "cypress"`; a legacy pre-#19.9 record with no `framework` field remains usable only as legacy Cypress evidence; a Playwright analysis can never consume it (#19.9)
-- Knowledge units describing Cypress-specific behavior already declare `appliesTo.frameworks: ["cypress"]` and are excluded from a Playwright-framed analysis by the existing selector logic (`appliesTo.frameworks` predates #19.3B; #19.3B added the parallel `appliesTo.projects` dimension - see [Roadmap #19.3](#roadmap-193--project-scoped-knowledge-and-history))
+- Explicit, canonical framework identity (`context.metadata.framework`) is produced unconditionally, sourced from the active adapter's own `.id`, selected at runtime by `scripts/ai/runtime-framework-selector.js` (`QA_FRAMEWORK=playwright`, defaulting to `cypress`; an unsupported value fails closed) (#19.5, #21E)
+- Failure collection no longer parses one framework's raw report format inline: `cypressAdapter` and `playwrightAdapter` each own their own report parsing behind the identical `{id, collect()}` module contract, with Cypress's own historical output protected by a frozen golden-comparison test (#19.6, #19.7)
+- **Both adapters run in real production CI today** - `cypressAdapter` against Chrome/Edge/Firefox, `playwrightAdapter` against a real, installed `@playwright/test` Chromium run in its own GitHub Actions job (Roadmap #21B/#21C/#21F/#21G)
+- Source-evidence discovery (`relevantFiles`) is now **framework-aware**: a `RELEVANT_FILES_POLICIES` map (`scripts/ai/collect-context.js`) gives Cypress its own allowlist (`cypress/`, `cypress.config.js`, `package.json`) and Playwright its own, independently-scoped allowlist (`playwright/`, `playwright.config.js`, `package.json`) - a real Playwright failure reaches the model with real spec-source context, not none (Roadmap #21C)
+- Flaky-test History has both a **project AND framework** namespace (Roadmap #19.9) and a **real Playwright producer**: `collect-history.js` targets the exact GitHub Actions job name for either framework (`Cypress - <browser>` or `Playwright Chromium`) - a real controlled Playwright failure independently proved the Playwright History path executes naturally in CI, with counts matching independently-derived GitHub Actions ground truth (Roadmap #21H/#21I - see [Evidence maturity](#evidence-maturity) below)
+- Attachment/source-path handling is canonical-path, realpath-based, and cross-platform (Windows case-insensitive drive/segment matching; POSIX case-sensitive), proven both by a deterministic adversarial test matrix and by one real controlled Playwright failure's real screenshot evidence (Roadmap #21D/#21I - see [Evidence maturity](#evidence-maturity))
+- Knowledge units describing Cypress-specific behavior already declare `appliesTo.frameworks: ["cypress"]` and are excluded from a Playwright-framed analysis by the existing selector logic
 
-**Still framework-bound today - specifically what remains before Playwright could be enabled in production, not current defects:**
+**What remains (only the project axis, not the framework axis):** enabling a genuinely second project in production is not yet done - `ProjectProfile` and the isolation boundary are proven offline against a synthetic second project only (Roadmap #19.4). This repository still runs against exactly one real project.
 
-- Source-evidence discovery (`relevantFiles` in `collect-context.js`) still only recognizes Cypress's own directory/config conventions - a real Playwright failure today would reach the model with no page-object/spec source context
-- No production Playwright runtime or CI exists - the collector's adapter injection is proven offline only
-- No installed Playwright package has ever been run to capture and diff a real JSON reporter output against the synthetic fixture model `playwrightAdapter`'s tests use
-- Playwright attachment/path handling (screenshot resolution, out-of-repository absolute paths) is proven correct for co-located offline fixtures only, not yet validated for artifacts transported across machines
-- `collect-history.js` still only queries the Cypress CI workflow by name - a Playwright History *producer* cannot exist until a Playwright CI workflow does
+Both project portability and framework portability now have **stable identity and enforced isolation**: `ProjectProfile.id` and `adapter.id` are each a single source of truth, and both Knowledge and History refuse to let one project's or one framework's context influence another's analysis. See [Roadmap #19](#roadmap-19--project--framework-portability) and [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) below for the full history.
 
-Both project portability and framework portability now have **stable identity and enforced isolation**: `ProjectProfile.id` and `adapter.id` are each a single source of truth, and both Knowledge and History refuse to let one project's or one framework's context influence another's analysis. What remains is enabling a second framework in real production traffic - a distinct, not-yet-started future effort, intentionally kept separate from this offline portability proof. See [Roadmap #19](#roadmap-19--project--framework-portability) below for the full history.
+## Evidence maturity
+
+Not every claim in this document carries the same kind of proof. This section states, plainly, which claims have **real GitHub Actions CI evidence** versus which are **covered primarily by deterministic offline tests** versus which are **architectural/source-derived** claims never specifically exercised.
+
+**Live-proven** (one real, controlled, natural GitHub Actions `pull_request` run - Roadmap #21I - preserved immutably on an unmerged evidence branch, never rerun):
+
+- Real Playwright production execution: Chromium, one worker, one test, zero retries, one invocation
+- Real Playwright JSON reporter output and a real failure screenshot, both from the actual run
+- Real `playwrightAdapter` routing, with real framework-aware source-evidence selection (no Cypress source contaminated the analysis)
+- Real, observed reporter-path normalization and real screenshot locality/containment handling (the "happy path" of R1/R2/R3 - see below)
+- Real `QA_FRAMEWORK=playwright` → `metadata.framework=playwright`, with no framework fallback
+- Real Playwright History execution: the History-collection step ran naturally (conditioned on the Playwright job's own failure), scoped to the real project and framework, with counts that independently matched GitHub Actions ground truth computed separately from the same API
+- Real `browserCorrelation` (Playwright-only, no Cypress contamination) and real `frameworkCorrelation` (Cypress success / Playwright failure, both frameworks passed cleanly with zero organic confound on the Cypress side)
+- Exactly one real, logical AI analysis (Groq, first-attempt success, no fallback)
+- A real `TEST_BUG` classification with an evidence-grounded root cause, and a model-native `shouldCreateBug: false` (the deterministic policy layer was not even needed to correct it)
+- No automatic GitHub issue was created
+
+**Deterministically proven** (covered by the offline unit-test suite, not live-exercised by the one controlled run above): adversarial path-safety rejection cases - URL-like values, `file:` scheme, UNC paths, traversal, same-prefix sibling directories, a different drive letter, symlink escape, a directory masquerading as a screenshot, an attachment body never treated as filesystem evidence; malformed/invalid framework-identity fail-closed behavior for both frameworks; malformed History-metric rejection; project/framework History-isolation matrices; provider contract/error-normalization/retry behavior; evaluation regression protection.
+
+**Not claimed:**
+
+- Playwright's one independent smoke scenario is **not** equivalent coverage to the Cypress suite - it exercises one representative UI flow, not the same scenarios
+- `frameworkCorrelation` never implies same-test equivalence between frameworks - a Cypress pass never disproves a Playwright failure, or vice versa
+- The AI provider does **not** receive screenshot image bytes/pixels - only a repo-relative path/reference reaches the model (see [What is sent to AI providers](SECURITY.md#3-what-is-sent-to-ai-providers) in `SECURITY.md`)
+- There is no automatic GitHub issue creation, no automatic cross-provider fallback, and no generic content-level DLP anywhere in this pipeline
+- Not every adversarial security case above was live-tested against real CI - they are proven deterministically, which is a different (still strong) kind of evidence, and this document does not collapse the two
 
 ## Known Architectural Boundaries
 
-Stated as engineering seams and deliberately deferred work, not defects. Roadmap #19.2/#19.3 resolved the project-axis boundaries that used to be listed here (no explicit `projectId`; project identity hardcoded in the generic prompt; no project scope on `PROJECT_VERIFIED` knowledge/History). Roadmap #19.5-#19.9 resolved the framework-axis boundaries that used to be listed here (hardcoded framework wording; direct, unabstracted Cypress parsing; implicit Cypress-only Knowledge default; no framework namespace on History). What remains is entirely about *production Playwright enablement*, not the offline portability architecture itself:
+Stated as engineering seams and deliberately deferred work, not defects. Roadmap #19.2/#19.3 resolved the project-axis boundaries that used to be listed here. Roadmap #19.5-#19.9 (offline foundation) plus Roadmap #21 (real production enablement) resolved every framework-axis boundary that used to be listed here - source-evidence discovery, production runtime/CI, real reporter compatibility, attachment/path handling, and History's producer are all now framework-aware and Playwright-proven in real CI. What remains is entirely about the *project* axis, not the framework axis:
 
-1. **Source-evidence discovery is still Cypress-oriented.** `collect-context.js`'s `relevantFiles` allowlist recognizes only Cypress's own directory/config conventions - a real Playwright failure would reach the model with no page-object/spec source today.
-2. **No production Playwright runtime or CI exists.** The generic collector's adapter injection (Roadmap #19.9) is proven offline only; the zero-argument production entry point always resolves to `cypressAdapter`, and no workflow currently runs Playwright at all.
-3. **Real Playwright JSON reporter compatibility is unverified.** `playwrightAdapter`'s fixtures are modeled from Playwright's documented reporter shape, not diffed against an actual installed Playwright run's output.
-4. **Playwright attachment/path handling is offline-proven only.** Screenshot resolution assumes the report and its attachments live on the same machine, and out-of-repository absolute paths are not sanitized - neither is reachable through any currently supported production path, but both need a decision before real Playwright evidence is trusted in production.
-5. **History's workflow source remains Cypress-specific.** `collect-history.js` still only queries the Cypress CI workflow by name - History *consumption* is now framework-namespaced (Roadmap #19.9), but a Playwright History *producer* cannot exist until a Playwright CI workflow does.
+1. **Only one real production project exists.** `ProjectProfile`/History/Knowledge project-isolation is proven offline against a synthetic second project (Roadmap #19.4) only - a genuine second project has never run through this pipeline in production.
+2. **A small number of informational, non-blocking observations remain** (documented, not hidden): `error.stack` may contain a standard hosted-runner absolute source path as intentional model-visible evidence (never a secret) - see `SECURITY.md`; a theoretical, structurally-unreachable "both sides say an unsupported framework string" edge case in the framework-identity consistency check, closed off in practice by every real production producer being hardcoded to exactly `cypress`/`playwright`.
+3. **#19.7F-B4B (Firefox forensic observability) remains passively active**, awaiting the next organic occurrence of a known intermittent Firefox failure signature to validate its corrected capture behavior live - see [Detailed Engineering History](#detailed-engineering-history) below.
 
-None of these affect current production behavior, and none of them make the current offline portability claim false. They are the specific, source-verified reasons a future production-Playwright effort would still need to address each one - see [Roadmap #19](#roadmap-19--project--framework-portability) below.
+None of these affect current production behavior. See [Roadmap #19](#roadmap-19--project--framework-portability) and [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) below.
 
 ## Key Architecture Decisions
 
@@ -290,9 +338,9 @@ QA automation architecture and Cypress E2E engineering; GitHub Actions CI orches
 
 ## Roadmap #19 — Project / Framework Portability
 
-**Status: Phase A (project portability, #19.1-#19.4) COMPLETE. Phase B (framework portability, #19.5-#19.9) COMPLETE OFFLINE - production Playwright enablement is a distinct, not-yet-started future effort. #19.10 (final portability review + documentation closure) is in progress; this documentation update is part of it.**
+**Status: Phase A (project portability, #19.1-#19.4) COMPLETE. Phase B (framework portability, #19.5-#19.9) COMPLETE OFFLINE. #19.10 (final portability review + documentation closure) COMPLETE. Production Playwright enablement, deferred at the time this roadmap item closed, was later completed by Roadmap #21 - see [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) above.**
 
-The original #19.1 audit (summarized under [Current Portability Status](#current-portability-status) and [Known Architectural Boundaries](#known-architectural-boundaries) above) identified two genuinely separate axes, deliberately not collapsed into one generic "plugin" concept:
+The original #19.1 audit (summarized under [Current Multi-Framework Status](#current-multi-framework-status) and [Known Architectural Boundaries](#known-architectural-boundaries) above) identified two genuinely separate axes, deliberately not collapsed into one generic "plugin" concept:
 
 ### Phase A — Project portability
 
@@ -315,11 +363,11 @@ Phase A is complete: project identity has stable ownership (`ProjectProfile`) an
 - #19.8 - a second, independently-implemented adapter (`scripts/ai/adapters/playwright-adapter.js`) proving the same `{id, collect()}` contract normalizes official Playwright JSON-reporter-shaped evidence into the identical generic `{testResults, failedTests, warnings}` output - built and tested entirely offline, using Playwright's own logical `test.status` (never an individual attempt's `result.status`) as the sole authority for pass/fail/flaky/skipped classification
 - #19.9 - the generic collector (`collect-context.js`) now accepts either adapter through explicit dependency injection, offline; `context.metadata.framework` is unconditionally sourced from the active adapter's own `.id`; and flaky-test History gained a framework namespace (project AND framework, both required) so Cypress and Playwright evidence can never cross-contaminate each other's analysis, while legacy pre-#19.9 History (with no framework field) remains usable only as Cypress evidence
 
-**What Phase B proves, and what it deliberately does not:** a framework-neutral evidence pipeline exists, and a second framework's adapter has been built and independently tested against it - entirely offline, with zero Playwright package, browser, or CI involved. Cypress remains the only framework with an active production workflow; the collector's zero-argument production entry point is unchanged and always resolves to `cypressAdapter`. Enabling Playwright in real production CI is explicitly **not** part of what #19.5-#19.9 shipped - see [Known Architectural Boundaries](#known-architectural-boundaries) above for exactly what a future production-enablement effort would still need to address.
+**What Phase B proved, and what it deliberately did not, at the time it shipped:** a framework-neutral evidence pipeline existed, and a second framework's adapter had been built and independently tested against it - entirely offline, with zero Playwright package, browser, or CI involved. At that point Cypress remained the only framework with an active production workflow, and the collector's zero-argument production entry point always resolved to `cypressAdapter`. **This is now historical**: real production Playwright enablement was completed by Roadmap #21 (see [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) above) - Phase B's offline proof is preserved here as the accurate record of what #19.5-#19.9 itself shipped, not a statement of current production capability.
 
 **Next:**
 
-- #19.10 - final portability review (#19.10A, read-only audit: found no runtime blockers) and documentation closure (#19.10D, this update). After this merges, the offline portability milestone is considered closed. Real production Playwright enablement, if ever pursued, is intentionally scoped as a separate, later roadmap item, not a continuation of #19.
+- #19.10 - final portability review (#19.10A, read-only audit: found no runtime blockers) and documentation closure (#19.10D). This closed the offline portability milestone. Real production Playwright enablement was later delivered as Roadmap #21, a separate roadmap item, not a continuation of #19 - see [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) above.
 
 ### Current architecture (offline-proven framework boundary)
 
@@ -354,7 +402,7 @@ Cypress raw report                  Playwright JSON-reporter-shaped evidence
                            (UNCHANGED - already framework-neutral)
 ```
 
-**Not yet built** (future, only if a production Playwright integration is ever pursued): a Playwright CI workflow, a Playwright History producer, a production framework selector, a framework-aware `relevantFiles` source-evidence policy, and out-of-root/attachment-locality path hardening. None of this is required for - or claimed by - the offline portability proof above.
+**Not yet built at the time this diagram was drawn** (all since delivered by Roadmap #21, see above): a Playwright CI workflow, a Playwright History producer, a production framework selector, a framework-aware `relevantFiles` source-evidence policy, and out-of-root/attachment-locality path hardening. None of this was required for - or claimed by - the offline portability proof above; this diagram documents the offline-only state Roadmap #19 itself shipped.
 
 ## Roadmap #20 — Data Security & Governance
 
@@ -368,6 +416,22 @@ Cypress raw report                  Playwright JSON-reporter-shaped evidence
 
 See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reaches an AI provider, what's excluded, credential handling, provider/retry policy, artifact boundaries, and explicit known limitations (no PII detector, no full content-level DLP, no global prompt-size ceiling, provider-side retention outside this repository's technical control).
 
+## Roadmap #21 — Production Playwright Enablement + Final Hardening
+
+**Status: technical implementation and evidence work COMPLETE. Formal closure (this documentation, #21J-B) requires independent review and a standard merge - see [Roadmap closure state](#roadmap-closure-state) at the end of this document for the exact current status.**
+
+Roadmap #21 took Roadmap #19's offline-proven adapter/portability architecture into real, production GitHub Actions CI - the single largest architectural change since the original pipeline shipped.
+
+- **#21A-#21C - Playwright production groundwork.** Real, installed `@playwright/test` configuration (single Chromium project, one worker, zero retries), a real-installed-reporter proof of Playwright's actual JSON report shape (superseding the #19.8 synthetic-fixture model), and a framework-aware `relevantFiles` source-evidence policy (`RELEVANT_FILES_POLICIES`) giving Playwright its own independent allowlist alongside Cypress's.
+- **#21D - Path/attachment security hardening (R1/R2/R3).** Repo-local, canonical-path (realpath-based) containment for reporter-derived spec paths and attachment locality, closing the out-of-root/absolute-path gaps #19's own boundary list had flagged. Windows canonical-path case-sensitivity was later found and closed (D21D-3, #21I-A) using segment-aware `path.win32`/`path.posix` semantics - never a naive lowercase-prefix check.
+- **#21E - Runtime framework selector.** `scripts/ai/runtime-framework-selector.js`: `QA_FRAMEWORK=playwright` selects `playwrightAdapter`; absent/unset defaults to `cypressAdapter`; any other value fails closed with a bounded configuration error - hardened (D21E-2) against non-string selector values (arrays, objects, a crafted `toString()`) that could otherwise coerce into an accidental selection.
+- **#21F-#21G - Real Playwright CI + centralized triage integration.** A real `Playwright Chromium` GitHub Actions job, wired into the same centralized `QA AI triage` job Cypress already used - `browserCorrelation` and the new, separate `frameworkCorrelation` (Roadmap #21G-C1) were split apart after an independent review found the original design risked treating an independent framework's outcome as same-test browser corroboration.
+- **#21H - Production Playwright History.** `collect-history.js` parameterized to target Playwright's own GitHub Actions job name and framework identity, with zero change to Cypress's own byte-identical default behavior; the pre-existing project+framework History isolation gates (from #19.9B) required no changes at all.
+- **#21I - Independent controlled Playwright failure proof.** A single, deliberate, deterministic test-side assertion failure, executed exactly once via a natural GitHub Actions `pull_request` run on a dedicated, permanently unmerged evidence branch/PR, live-proving the entire evidence pipeline end to end for a real Playwright failure - see [Evidence maturity](#evidence-maturity) above for exactly what this did and did not prove. Also closed D21D-3 (Windows canonical containment) beforehand, as a prerequisite.
+- **#21J - Final residual hardening + documentation.** Closed two low-severity, non-exploitable-in-production residual observations (D21H-1: framework-identity ABSENT-vs-INVALID distinction; D21H-2: bounded History-metric validation) and produced this documentation update (#21J-B).
+
+Every stage above was independently reviewed before merging, following the same pattern used throughout this project's history: implement → validate → independent review → standard merge → natural post-merge CI verification.
+
 ## Project structure
 
     ./cypress/e2e/tests/select_group_POI.cy.js
@@ -379,6 +443,9 @@ See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reach
     ./cypress/e2e/pageObjects/navigation.js
     ./cypress/e2e/pageObjects/subCategories.js
 
+    ./playwright/tests/smoke.spec.js
+    ./playwright.config.js
+
     ./scripts/ai/agent-policy.js
     ./scripts/ai/aggregate-browser-context.js
     ./scripts/ai/analyze-failure.js
@@ -386,11 +453,13 @@ See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reach
     ./scripts/ai/collect-history.js
     ./scripts/ai/config.js
     ./scripts/ai/context-utils.js
+    ./scripts/ai/correlation-projection.js
     ./scripts/ai/format-pr-comment.js
     ./scripts/ai/normalized-failure.js
     ./scripts/ai/pr-comment-client.js
     ./scripts/ai/project-profile.js
     ./scripts/ai/qa-agent-prompt.js
+    ./scripts/ai/runtime-framework-selector.js
 
     ./scripts/ai/adapters/cypress-adapter.js
     ./scripts/ai/adapters/playwright-adapter.js
@@ -484,9 +553,9 @@ The sections below are the project's chronological engineering log: every roadma
 
 ### Current System Under Test
 
-The repository currently uses a publicly accessible third-party POI (points-of-interest) map web application as its real E2E target/demo application - the Cypress suite in `cypress/` exercises that application's category-tree UI and POI-tile data requests, and the QA Agent's failure triage is exercised against that suite's real failures.
+The repository currently uses a publicly accessible third-party POI (points-of-interest) map web application as its real E2E target/demo application - the Cypress suite in `cypress/` exercises that application's category-tree UI and POI-tile data requests, and the Playwright smoke test in `playwright/` independently exercises the same category-selection/map-visibility flow through a second framework. The QA Agent's failure triage is exercised against both suites' real failures.
 
-**The external application is the current System Under Test. QA AI Agent is the project being developed in this repository.** The SUT is not part of this repository and not affiliated with it - it is used only as a realistic public target for exercising the CI and failure-triage architecture; its stable identity within this codebase is a `projectId` owned by the current `ProjectProfile` (Roadmap #19.2). See [Current Portability Status](#current-portability-status) above for exactly what is and is not yet portable beyond this project.
+**The external application is the current System Under Test. QA AI Agent is the project being developed in this repository.** The SUT is not part of this repository and not affiliated with it - it is used only as a realistic public target for exercising the CI and failure-triage architecture; its stable identity within this codebase is a `projectId` owned by the current `ProjectProfile` (Roadmap #19.2). See [Current Multi-Framework Status](#current-multi-framework-status) above for exactly what is and is not yet portable beyond this project.
 
 ### Architectural Invariants
 
@@ -503,29 +572,30 @@ These properties are enforced by design and construction, not merely by conventi
 
 ### Continuous Integration - job detail
 
-GitHub Actions runs six jobs per trigger: `Unit tests` and `QA Agent evaluation` start immediately and need no browser; `Cypress - chrome` and `Cypress - edge` run in parallel inside a `cypress/included` Docker container (bundles Node/npm/browsers matching the Cypress version in `package.json`); `Cypress - firefox` runs separately; `QA AI triage` runs last, after all three browsers.
+GitHub Actions runs seven jobs per trigger: `Unit tests` and `QA Agent evaluation` start immediately and need no browser; `Cypress - chrome` and `Cypress - edge` run in parallel inside a `cypress/included` Docker container (bundles Node/npm/browsers matching the Cypress version in `package.json`); `Cypress - firefox` runs separately; `Playwright Chromium` runs an independent, real-installed `@playwright/test` run against Chromium, in its own job; `QA AI triage` runs last, after all four E2E legs.
 
 **Why Firefox has its own job, on the bare runner instead of the container:** Firefox previously hung during WebDriver session creation when run inside the same nested `cypress/included` container Chrome/Edge use - a container-sandboxing limitation of that specific setup, confirmed by a dedicated CI spike (Roadmap #14B): the identical, unmodified suite ran cleanly in ~80s once moved directly onto the bare `ubuntu-latest` runner, with Firefox installed explicitly via `browser-actions/setup-firefox`. This is infrastructure history, not evidence of a Firefox-specific application or test defect - the job produces the same artifact shapes and the same authoritative-failure semantics as Chrome/Edge (a failed Firefox E2E run fails this job, and nothing downstream can turn it green).
 
-Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cypress - edge`. `Cypress - firefox` is deliberately not required yet - informational only while its real-world CI reliability is observed, exactly like `QA Agent evaluation` and `QA AI triage` already are.
+Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cypress - edge`. `Cypress - firefox`, `Playwright Chromium`, `QA Agent evaluation`, and `QA AI triage` are deliberately not required yet - each is informational only while its real-world CI reliability is observed independently, the same treatment already applied to Firefox since Roadmap #14C.
 
 ### QA Agent (AI failure analysis) - full detail
 
 The QA Agent's AI backend is a swappable **provider abstraction** (`scripts/ai/providers/`), selected at runtime via the `AI_PROVIDER` environment variable.
 
 ```
-Cypress (Chrome)      Cypress (Edge)      Cypress (Firefox)
-   │  browser-result.json      │  browser-result.json      │  browser-result.json
-   │  context.json (on failure)│  context.json (on failure)│  context.json (on failure)
-   ▼                           ▼                            ▼
-        Browser aggregation (scripts/ai/aggregate-browser-context.js)
-   │  reads every browser's outcome; decides whether ANY failed;
-   │  deterministically picks ONE primary failing browser;
-   │  builds cross-browser correlation metadata (below)
+Cypress (Chrome)  Cypress (Edge)  Cypress (Firefox)   Playwright (Chromium)
+   │  browser-result.json  │  browser-result.json  │  browser-result.json   │  browser-result.json
+   │  context.json/history.json (on failure, each leg)                     │  (via QA AI triage, on failure)
+   ▼                       ▼                        ▼                      ▼
+        Browser + framework aggregation (scripts/ai/aggregate-browser-context.js)
+   │  reads every leg's outcome, across both frameworks; decides whether ANY failed;
+   │  deterministically picks ONE primary failing leg workflow-wide;
+   │  checks framework-identity consistency (descriptor vs. adapter-derived), fails
+   │  closed on any contradiction; builds browserCorrelation + frameworkCorrelation (below)
    ▼
-Failure Context Collector output + browserCorrelation
-   │  failed test names, errors, relevant spec/page-object source,
-   │  browser, known project constraints, browser correlation -
+Failure Context Collector output + browserCorrelation + frameworkCorrelation
+   │  failed test names, errors, relevant spec/page-object source (framework-aware),
+   │  browser, known project constraints, both correlation objects -
    │  no secrets, no full repo dump
    ▼
 Knowledge selection (scripts/ai/knowledge/selector.js) - deterministic, offline, zero provider calls
@@ -554,7 +624,7 @@ This is a deliberate choice, not a bug: the project previously called [GitHub Mo
 
 The boundary is runtime-checked, not just documented: `providers/provider-contract.js` rejects a provider missing `analyze()` (or a non-empty-string response) with a clear error before it can reach `JSON.parse` or a retry loop. Provider failures are normalized to one shared `ProviderError` shape (`message`, `code` from a small provider-neutral set, `retryable`, `cause`) in `providers/provider-error.js`. Each provider also exposes a plain `provider.name` string (`"mock"`, `"groq"`, or `"gemini"`, depending on which is configured), which the application attaches to the report as `analysis.provider` *after* the model response is validated.
 
-Since Roadmap #19.2, the "known project constraints" and project identity shown above are sourced from the current `ProjectProfile` (`scripts/ai/project-profile.js`), not hardcoded in the collector or the prompt - see [Roadmap #19.2](#roadmap-192--explicit-project-identity-foundation) below for what changed and [Current Portability Status](#current-portability-status) for what that does and doesn't make portable yet.
+Since Roadmap #19.2, the "known project constraints" and project identity shown above are sourced from the current `ProjectProfile` (`scripts/ai/project-profile.js`), not hardcoded in the collector or the prompt - see [Roadmap #19.2](#roadmap-192--explicit-project-identity-foundation) below for what changed and [Current Multi-Framework Status](#current-multi-framework-status) for what that does and doesn't make portable yet.
 
 ### Controlled experiments
 
@@ -669,7 +739,7 @@ Wired Roadmap #15's subsystem into the real production prompt under an explicit 
 
 ### Roadmap #19.1 — Project / Framework Portability Audit
 
-**Status: complete (read-only).** A source-verified architecture audit classifying every meaningful component's coupling to the current project (the external SUT) and framework (Cypress), producing the [Current Portability Status](#current-portability-status) and [Known Architectural Boundaries](#known-architectural-boundaries) sections above, plus the target architecture and Phase A/Phase B plan under [Roadmap #19](#roadmap-19--project--framework-portability). No production code, tests, workflow, or dataset/baseline files were changed by this audit.
+**Status: complete (read-only).** A source-verified architecture audit classifying every meaningful component's coupling to the current project (the external SUT) and framework (Cypress), producing the [Current Multi-Framework Status](#current-multi-framework-status) and [Known Architectural Boundaries](#known-architectural-boundaries) sections above, plus the target architecture and Phase A/Phase B plan under [Roadmap #19](#roadmap-19--project--framework-portability). No production code, tests, workflow, or dataset/baseline files were changed by this audit.
 
 ### Roadmap #19.2 — Explicit Project Identity Foundation
 
@@ -732,9 +802,23 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #19.7F - Firefox CI observability | #19.7F-B4B ACTIVE ON MAIN; #19.7F-C WAITING FOR ORGANIC FORENSIC EVIDENCE |
 | #19.8 - Offline Playwright adapter | COMPLETE |
 | #19.9 - Offline framework orchestration + History framework namespace | COMPLETE |
-| #19.10 - Final portability review + documentation closure | #19.10A COMPLETE; #19.10D (this documentation update) IN PROGRESS |
+| #19.10 - Final portability review + documentation closure | COMPLETE |
 | #20 - Data security & governance | #20A-#20E COMPLETE; closure delivered by PR #85 |
+| #21A-#21C - Playwright production groundwork | COMPLETE_ON_MAIN |
+| #21D - Path/attachment security hardening (R1/R2/R3) | COMPLETE_ON_MAIN |
+| #21E - Runtime framework selector | COMPLETE_ON_MAIN |
+| #21F-#21G - Real Playwright CI + centralized triage integration | COMPLETE_ON_MAIN |
+| #21H - Production Playwright History | COMPLETE_ON_MAIN |
+| #21I - Independent controlled Playwright failure proof + D21D-3 (Windows containment) | COMPLETE |
+| #21J-A - Final residual hardening (D21H-1, D21H-2) | COMPLETE_ON_MAIN |
+| #21J-B - Final documentation closure (this update) | READY_FOR_INDEPENDENT_REVIEW |
 
-**Next:** Roadmap #19.10D's documentation update (this change) closes the offline portability milestone once merged. Production Playwright enablement, if ever pursued, is intentionally scoped as a distinct future roadmap item, not a continuation of #19 - see [Known Architectural Boundaries](#known-architectural-boundaries) above.
+**Next:** #21J-B's independent review (#21J-B-R), then a standard merge and post-merge verification, formally closes Roadmap #21 - see [Roadmap closure state](#roadmap-closure-state) below. After that, the next locked stage is **#22/23-F0 (Shared QA Generation Foundation)**, which will define/freeze shared versioned generation contracts before two parallel streams diverge: **#22 (AI Test Design)** and **#23 (AI Test Automation)**. None of #22/23-F0, #22, or #23 has been started or designed yet - they are named here only as the next locked roadmap stage, not as implemented or in-progress work.
 
-**Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; Roadmap #20's full security/governance scope.
+**Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); a genuine second production project (only offline-proven today); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; #22/23-F0, #22, and #23 (see above).
+
+## Roadmap closure state
+
+- **`ROADMAP_21_TECHNICAL_WORK`: COMPLETE** - every #21A-#21J-A stage is implemented, independently reviewed, and merged to `main`, including one real, independently-reviewed, controlled Playwright failure proof.
+- **`ROADMAP_21_DOCUMENTATION`: READY_FOR_FINAL_REVIEW** - this documentation update (#21J-B) is open for independent review (#21J-B-R) as of this writing; it changes no runtime code, workflow, or test.
+- **`ROADMAP_21_FORMAL_CLOSURE`: PENDING #21J-B-R AND MERGE** - Roadmap #21 is not yet formally `COMPLETE_ON_MAIN` until #21J-B's independent review passes, its PR is standard-merged, and natural post-merge CI is verified on the exact merge commit.
