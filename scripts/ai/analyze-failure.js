@@ -171,6 +171,33 @@ function isHistoryFrameworkEligible(currentIdentity, historyIdentity) {
 // read directly) so the project-eligibility check below can distinguish
 // a genuinely absent field from an explicit malformed one using the
 // exact same classifyProjectId() rules the History side uses.
+// Roadmap #21J-A (D21H-2): the production collect-history.js producer
+// already structurally guarantees runsConsidered/passes/failures/
+// retryPasses are non-negative integers with passes + failures ==
+// runsConsidered and retryPasses <= passes (every counter starts at 0 and
+// is only ever incremented by exactly 1, with retryPasses incremented
+// only inside the same conditional branch that increments passes - see
+// collect-history.js's aggregateHistory()). readHistory() itself never
+// enforced that guarantee at its own boundary, so a hand-tampered or
+// future-regressed history.json could still reach provider-visible
+// evidence with the wrong type or an internally inconsistent count.
+// history.json is trusted-internal (produced only by collect-history.js,
+// copied verbatim through the workflow, never reachable from PR-controlled
+// content under normal CI operation), so this is defense-in-depth for
+// evidence QUALITY, not a response to a live external threat model - a
+// malformed record is treated exactly like the other pre-existing "no
+// usable history" cases below (missing file/parse failure/available:false/
+// project or framework ineligible): returned as unavailable, never as a
+// fabricated zero-history object, so "no history" and "history says 0
+// failures" remain distinguishable exactly as before.
+function isValidHistoryMetrics(parsed) {
+  const fields = [parsed.runsConsidered, parsed.passes, parsed.failures, parsed.retryPasses];
+  if (!fields.every((n) => Number.isInteger(n) && n >= 0)) return false;
+  if (parsed.passes + parsed.failures !== parsed.runsConsidered) return false;
+  if (parsed.retryPasses > parsed.passes) return false;
+  return true;
+}
+
 function readHistory(currentMetadata) {
   if (!fs.existsSync(HISTORY_FILE)) return null;
 
@@ -200,11 +227,13 @@ function readHistory(currentMetadata) {
   const historyFrameworkIdentity = classifyFrameworkId(parsed);
   if (!isHistoryFrameworkEligible(currentFrameworkIdentity, historyFrameworkIdentity)) return null;
 
+  if (!isValidHistoryMetrics(parsed)) return null;
+
   return {
-    runsConsidered: parsed.runsConsidered ?? null,
-    passes: parsed.passes ?? null,
-    failures: parsed.failures ?? null,
-    retryPasses: parsed.retryPasses ?? null,
+    runsConsidered: parsed.runsConsidered,
+    passes: parsed.passes,
+    failures: parsed.failures,
+    retryPasses: parsed.retryPasses,
   };
 }
 
@@ -696,6 +725,7 @@ module.exports = {
   classifyFrameworkId,
   isHistoryProjectEligible,
   isHistoryFrameworkEligible,
+  isValidHistoryMetrics,
   computeRelevantKnowledge,
   MODEL,
 };

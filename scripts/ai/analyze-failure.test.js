@@ -16,6 +16,7 @@ const {
   classifyFrameworkId,
   isHistoryProjectEligible,
   isHistoryFrameworkEligible,
+  isValidHistoryMetrics,
   computeRelevantKnowledge,
 } = require("./analyze-failure");
 const { ProviderError, PROVIDER_ERROR_CODES, normalizeProviderError } = require("./providers/provider-error");
@@ -514,6 +515,112 @@ test("readHistory: strips internal bookkeeping fields, keeping only the compact 
 
   assert.deepEqual(readHistory(), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
 });
+
+// =========================================================================
+// Roadmap #21J-A (D21H-2): readHistory() must never forward a malformed
+// history.json's metrics into provider-visible evidence, and must never
+// mistake "unavailable" for "history says 0". history.json is
+// trusted-internal (produced only by collect-history.js, which
+// structurally guarantees non-negative integers with
+// passes+failures==runsConsidered and retryPasses<=passes), but this is
+// defense-in-depth for evidence quality, not a response to a live
+// external threat - the same "no usable history" treatment already
+// applied to a missing file/parse failure/available:false/project or
+// framework mismatch now also applies to a malformed metric.
+// =========================================================================
+
+test("isValidHistoryMetrics: the real production shape (10/7/3/2) is valid", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 }), true);
+});
+
+test("isValidHistoryMetrics: a genuinely zero-failure history (10/10/0/0) is valid - zero is not itself malformed", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 10, passes: 10, failures: 0, retryPasses: 0 }), true);
+});
+
+test("H1/H2 isValidHistoryMetrics: string-typed metrics are rejected, even numeric-looking strings", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: "3", passes: 3, failures: 0, retryPasses: 0 }), false);
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 3, passes: "3", failures: 0, retryPasses: 0 }), false);
+});
+
+test("H3/H4 isValidHistoryMetrics: negative metrics are rejected", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 3, passes: 3, failures: -1, retryPasses: 0 }), false);
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 3, passes: 3, failures: 0, retryPasses: -1 }), false);
+});
+
+test("H5/H6 isValidHistoryMetrics: NaN and Infinity are rejected (Number.isInteger is false for both)", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: NaN, passes: 3, failures: 0, retryPasses: 0 }), false);
+  assert.equal(isValidHistoryMetrics({ runsConsidered: Infinity, passes: 3, failures: 0, retryPasses: 0 }), false);
+});
+
+test("H7/H8 isValidHistoryMetrics: object/array-typed metrics are rejected", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: {}, passes: 3, failures: 0, retryPasses: 0 }), false);
+  assert.equal(isValidHistoryMetrics({ runsConsidered: [], passes: 3, failures: 0, retryPasses: 0 }), false);
+});
+
+test("H9 isValidHistoryMetrics: an arithmetically inconsistent record (passes+failures != runsConsidered) is rejected", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 3, passes: 10, failures: 10, retryPasses: 0 }), false);
+});
+
+test("H10 isValidHistoryMetrics: retryPasses > passes is rejected (a producer-guaranteed invariant)", () => {
+  assert.equal(isValidHistoryMetrics({ runsConsidered: 3, passes: 1, failures: 2, retryPasses: 5 }), false);
+});
+
+test("isValidHistoryMetrics: missing metrics entirely are rejected, not silently coerced", () => {
+  assert.equal(isValidHistoryMetrics({}), false);
+});
+
+test("readHistory: a malformed metric (string runsConsidered) makes the whole record unavailable - null, never a partially-forwarded value", (t) => {
+  writeHistoryFixtureDirect(t, { available: true, runsConsidered: "10", passes: 7, failures: 3, retryPasses: 2 });
+  assert.equal(readHistory(), null);
+});
+
+test("readHistory: a negative metric makes the whole record unavailable", (t) => {
+  writeHistoryFixtureDirect(t, { available: true, runsConsidered: 3, passes: 3, failures: -1, retryPasses: 0 });
+  assert.equal(readHistory(), null);
+});
+
+test("readHistory: an arithmetically inconsistent record is unavailable, never forwarded as false historical signal", (t) => {
+  writeHistoryFixtureDirect(t, { available: true, runsConsidered: 3, passes: 10, failures: 10, retryPasses: 0 });
+  assert.equal(readHistory(), null);
+});
+
+test("readHistory: 'unavailable' (malformed metrics) is distinguishable from a genuine zero-failure history - never synthesized as {runsConsidered:0,...}", (t) => {
+  writeHistoryFixtureDirect(t, { available: true, runsConsidered: "bad", passes: 3, failures: 0, retryPasses: 0 });
+  const malformedResult = readHistory();
+
+  writeHistoryFixtureDirect(t, { available: true, runsConsidered: 3, passes: 3, failures: 0, retryPasses: 0 });
+  const genuineZeroFailureResult = readHistory();
+
+  assert.equal(malformedResult, null, "malformed metrics collapse to the same 'unavailable' null as a missing file");
+  assert.deepEqual(genuineZeroFailureResult, { runsConsidered: 3, passes: 3, failures: 0, retryPasses: 0 }, "a real zero-failure history is never confused with unavailable");
+  assert.notDeepEqual(malformedResult, genuineZeroFailureResult);
+});
+
+test("readHistory: the exact #21I-B observed live shape (3/3/0/0) remains valid and renders identically", (t) => {
+  writeHistoryFixtureDirect(t, {
+    available: true,
+    projectId: "external-poi-sut",
+    framework: "playwright",
+    browser: "playwright-chromium",
+    branch: "main",
+    runsConsidered: 3,
+    passes: 3,
+    failures: 0,
+    retryPasses: 0,
+  });
+  assert.deepEqual(readHistory({ projectId: "external-poi-sut", framework: "playwright" }), {
+    runsConsidered: 3,
+    passes: 3,
+    failures: 0,
+    retryPasses: 0,
+  });
+});
+
+function writeHistoryFixtureDirect(t, historyObject) {
+  fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(historyObject));
+  t.after(() => fs.rmSync(HISTORY_FILE, { force: true }));
+}
 
 // --- Roadmap #19.3C: classifyProjectId() ----------------------------------
 
