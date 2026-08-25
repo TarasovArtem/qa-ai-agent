@@ -31,6 +31,14 @@ const fs = require("fs");
 const path = require("path");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const cypressAdapter = require("./adapters/cypress-adapter");
+// Roadmap #21H: the exact same trusted selection mechanism collect-context.js's
+// own CLI bootstrap already uses (Roadmap #21E) - QA_FRAMEWORK absent still
+// resolves to cypressAdapter (DEFAULT_FRAMEWORK), so every existing Cypress
+// invocation of this script (which never sets QA_FRAMEWORK) keeps writing
+// framework: "cypress" exactly as before. This is never a second, independent
+// framework-identity mechanism - it is the one this repository already trusts
+// everywhere else.
+const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const OUTPUT_FILE = path.join(ROOT, "reports", "ai", "history.json");
@@ -117,7 +125,16 @@ async function fetchJson(apiBase, token, urlPath, { maxAttempts = 3, retryDelays
 // `async (run) => [{ name, conclusion }, ...]`. Job lookups run
 // concurrently (Promise.all) - same number of API calls as before, just
 // not paid for serially one run at a time.
-async function aggregateHistory({ runs, browser, getJobsForRun }) {
+//
+// Roadmap #21H: `jobName`, when explicitly provided, names the EXACT
+// GitHub Actions job to match (e.g. "Playwright Chromium") - required
+// because Playwright's real job name is a fixed string, not a
+// `Cypress - <browser>` template. Every existing Cypress call site never
+// passes it, so the historical `Cypress - ${browser}` template remains the
+// exact, unchanged default - byte-identical behavior for every pre-#21H
+// invocation.
+async function aggregateHistory({ runs, browser, jobName, getJobsForRun }) {
+  const targetJobName = jobName || `Cypress - ${browser}`;
   const lookups = await Promise.all(
     runs.map(async (run) => {
       try {
@@ -136,7 +153,7 @@ async function aggregateHistory({ runs, browser, getJobsForRun }) {
   for (const lookup of lookups) {
     if (!lookup) continue;
     const { run, jobs } = lookup;
-    const job = (jobs || []).find((j) => j.name === `Cypress - ${browser}`);
+    const job = (jobs || []).find((j) => j.name === targetJobName);
     if (!job) continue;
 
     // Only success/failure are meaningful pass/fail data points - a
@@ -170,6 +187,22 @@ async function main() {
   const branch = process.env.HISTORY_BRANCH || DEFAULT_BRANCH;
   const runsWanted = clampRunsWanted(process.env.HISTORY_RUNS);
   const currentRunId = process.env.GITHUB_RUN_ID ? Number(process.env.GITHUB_RUN_ID) : null;
+  // Roadmap #21H: the exact same QA_FRAMEWORK -> adapter resolution
+  // collect-context.js's own CLI bootstrap uses (Roadmap #21E) - absent
+  // (every existing Cypress invocation) resolves to cypressAdapter, so
+  // framework identity below is unchanged for Cypress. An invalid
+  // QA_FRAMEWORK value throws RuntimeFrameworkError, which the existing
+  // `main().catch(...)` wrapper at the bottom of this file already
+  // converts to a safe writeUnavailable() marker - no new error handling
+  // needed here.
+  const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
+  // Roadmap #21H: the exact GitHub Actions job name to match, when the
+  // caller can't rely on the historical `Cypress - <browser>` template
+  // (Playwright's real job name, "Playwright Chromium", is a fixed
+  // string, not a per-browser template). Every existing Cypress call site
+  // never sets this, so the template remains the exact, unchanged
+  // default.
+  const jobName = process.env.HISTORY_JOB_NAME || `Cypress - ${browser}`;
 
   if (!token) return writeUnavailable("GITHUB_TOKEN not set");
   if (!repo) return writeUnavailable("GITHUB_REPOSITORY not set");
@@ -197,6 +230,7 @@ async function main() {
   const { passes, failures, retryPasses, inspected } = await aggregateHistory({
     runs,
     browser,
+    jobName,
     getJobsForRun: async (run) => {
       const jobsResponse = await fetchJson(apiBase, token, `/repos/${repo}/actions/runs/${run.id}/jobs`);
       return jobsResponse.jobs || [];
@@ -204,7 +238,7 @@ async function main() {
   });
 
   if (inspected === 0) {
-    return writeUnavailable(`no prior '${browser}' job history found in the last ${runs.length} run(s) on '${branch}'`);
+    return writeUnavailable(`no prior '${jobName}' job history found in the last ${runs.length} run(s) on '${branch}'`);
   }
 
   const history = {
@@ -216,18 +250,20 @@ async function main() {
     // scripts/ai/project-profile.js for the single source of truth this
     // value is read from.
     projectId: PROJECT_PROFILE.id,
-    // Roadmap #19.9B: explicit framework provenance, read from the same
-    // Cypress adapter identity constant collect-context.js's own
-    // metadata.framework already derives from - never an independently
-    // duplicated "cypress" literal. This producer remains Cypress-only
-    // (see WORKFLOW_FILE/the job-name lookup above); it does not import
-    // or invoke the adapter's collect() - only its stable .id. A record
-    // written from this point on is no longer legacy-ambiguous: analyze-
-    // failure.js's isHistoryFrameworkEligible() reads this exact field to
-    // ensure a Playwright analysis can never mistake a Cypress record for
-    // its own history, and a Cypress analysis matches it exactly rather
-    // than falling back to legacy ABSENT-framework compatibility.
-    framework: cypressAdapter.id,
+    // Roadmap #19.9B: explicit framework provenance, read from the
+    // selected adapter's own stable identity constant - the exact same
+    // one collect-context.js's own metadata.framework already derives
+    // from (Roadmap #21E's runtime-framework-selector.js), never an
+    // independently duplicated literal. A record written from this point
+    // on is no longer legacy-ambiguous: analyze-failure.js's
+    // isHistoryFrameworkEligible() reads this exact field to ensure a
+    // Playwright analysis can never mistake a Cypress record for its own
+    // history, and a Cypress analysis matches it exactly rather than
+    // falling back to legacy ABSENT-framework compatibility. Roadmap
+    // #21H: previously always cypressAdapter.id (this producer was
+    // Cypress-only) - now the selected adapter's own id, so a
+    // QA_FRAMEWORK=playwright invocation correctly writes "playwright".
+    framework: adapter.id,
     browser,
     branch,
     runsConsidered: inspected,
@@ -260,4 +296,10 @@ module.exports = {
   MAX_RUNS,
   PROJECT_PROFILE,
   cypressAdapter,
+  // Roadmap #21H: exported by reference (same pattern as cypressAdapter
+  // above) so a test can prove main()'s `framework: adapter.id` line
+  // resolves to the real, current adapter identity for a given
+  // QA_FRAMEWORK value, without needing to mock the GitHub API/filesystem/
+  // env just to exercise main() itself.
+  selectRuntimeAdapter,
 };

@@ -2,9 +2,21 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { aggregateHistory, fetchJson, isRetryableStatus, clampRunsWanted, DEFAULT_RUNS, MAX_RUNS, PROJECT_PROFILE, cypressAdapter } = require("./collect-history");
+const {
+  aggregateHistory,
+  fetchJson,
+  isRetryableStatus,
+  clampRunsWanted,
+  DEFAULT_RUNS,
+  MAX_RUNS,
+  PROJECT_PROFILE,
+  cypressAdapter,
+  selectRuntimeAdapter,
+} = require("./collect-history");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const realCypressAdapter = require("./adapters/cypress-adapter");
+const realPlaywrightAdapter = require("./adapters/playwright-adapter");
+const realSelectRuntimeAdapter = require("./runtime-framework-selector").selectRuntimeAdapter;
 
 function run({ id, run_attempt = 1 }) {
   return { id, run_attempt };
@@ -34,6 +46,25 @@ test("PROJECT_PROFILE: collect-history.js sources project identity from the same
 test("cypressAdapter: collect-history.js sources framework identity from the same Cypress adapter as the rest of the pipeline, not a duplicated/hardcoded literal", () => {
   assert.equal(cypressAdapter, realCypressAdapter, "must be the exact same object reference, not a copy");
   assert.equal(cypressAdapter.id, "cypress");
+});
+
+// Roadmap #21H: mirrors the cypressAdapter test above - main() no longer
+// unconditionally writes `framework: cypressAdapter.id`, it writes
+// `framework: adapter.id` where `adapter = selectRuntimeAdapter(process.env.
+// QA_FRAMEWORK)`. Proving this module's selectRuntimeAdapter is the exact
+// same function reference as runtime-framework-selector.js's own (Roadmap
+// #21E), and that it resolves to the real Cypress/Playwright adapters by
+// reference, is the strongest available proof that a QA_FRAMEWORK=playwright
+// invocation will write framework: "playwright" and every existing
+// QA_FRAMEWORK-absent Cypress invocation keeps writing framework: "cypress" -
+// without needing to mock the GitHub API/filesystem/env just to exercise
+// main() itself.
+test("selectRuntimeAdapter: collect-history.js sources framework resolution from the same mechanism collect-context.js uses, not a duplicated/independent one", () => {
+  assert.equal(selectRuntimeAdapter, realSelectRuntimeAdapter, "must be the exact same function reference, not a copy");
+  assert.equal(selectRuntimeAdapter(undefined), realCypressAdapter, "QA_FRAMEWORK absent must still resolve to the real cypressAdapter");
+  assert.equal(selectRuntimeAdapter(undefined).id, "cypress");
+  assert.equal(selectRuntimeAdapter("playwright"), realPlaywrightAdapter, "QA_FRAMEWORK=playwright must resolve to the real playwrightAdapter");
+  assert.equal(selectRuntimeAdapter("playwright").id, "playwright");
 });
 
 test("aggregateHistory: counts passes and failures per browser from job conclusions", async () => {
@@ -127,6 +158,65 @@ test("aggregateHistory: a job matching a different browser name is not counted a
 test("aggregateHistory: no runs at all -> zeroed-out result, no crash", async () => {
   const result = await aggregateHistory({ runs: [], browser: "chrome", getJobsForRun: async () => [] });
   assert.deepEqual(result, { passes: 0, failures: 0, retryPasses: 0, inspected: 0 });
+});
+
+// Roadmap #21H: Playwright's real GitHub Actions job name ("Playwright
+// Chromium") is a fixed string, not a `Cypress - <browser>` template, so
+// collect-history.js must be able to match it via an explicit jobName
+// override rather than deriving it from `browser`.
+test("aggregateHistory: an explicit jobName matches that exact job, independent of the browser value (Playwright case)", async () => {
+  const runs = [run({ id: 1 }), run({ id: 2 }), run({ id: 3 })];
+  const jobsByRun = {
+    1: [{ name: "Playwright Chromium", conclusion: "success" }],
+    2: [{ name: "Playwright Chromium", conclusion: "failure" }],
+    3: [{ name: "Playwright Chromium", conclusion: "success" }],
+  };
+
+  const result = await aggregateHistory({
+    runs,
+    browser: "playwright-chromium",
+    jobName: "Playwright Chromium",
+    getJobsForRun: async (r) => jobsByRun[r.id],
+  });
+
+  assert.deepEqual(result, { passes: 2, failures: 1, retryPasses: 0, inspected: 3 });
+});
+
+test("aggregateHistory: an explicit jobName takes precedence over the `Cypress - <browser>` default template", async () => {
+  const runs = [run({ id: 1 })];
+  const jobsByRun = {
+    1: [
+      { name: "Cypress - chrome", conclusion: "failure" },
+      { name: "Playwright Chromium", conclusion: "success" },
+    ],
+  };
+
+  // browser is "chrome" here (arbitrary/unused for matching), but jobName
+  // explicitly names the Playwright job - only that job may be counted.
+  const result = await aggregateHistory({
+    runs,
+    browser: "chrome",
+    jobName: "Playwright Chromium",
+    getJobsForRun: async (r) => jobsByRun[r.id],
+  });
+
+  assert.deepEqual(result, { passes: 1, failures: 0, retryPasses: 0, inspected: 1 });
+});
+
+test("aggregateHistory: omitting jobName falls back to the exact, unchanged `Cypress - <browser>` template (backward compatibility)", async () => {
+  const runs = [run({ id: 1 })];
+  const jobsByRun = { 1: [{ name: "Cypress - edge", conclusion: "success" }] };
+
+  const withoutJobName = await aggregateHistory({ runs, browser: "edge", getJobsForRun: async (r) => jobsByRun[r.id] });
+  const withUndefinedJobName = await aggregateHistory({
+    runs,
+    browser: "edge",
+    jobName: undefined,
+    getJobsForRun: async (r) => jobsByRun[r.id],
+  });
+
+  assert.deepEqual(withoutJobName, { passes: 1, failures: 0, retryPasses: 0, inspected: 1 });
+  assert.deepEqual(withUndefinedJobName, { passes: 1, failures: 0, retryPasses: 0, inspected: 1 });
 });
 
 test("clampRunsWanted: falls back to the default when unset, non-numeric, or zero", () => {
