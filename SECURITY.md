@@ -187,7 +187,7 @@ The temporary `scripts/diagnostics/firefox-failure-forensics.sh` (Roadmap #19.7F
 
 **This content-level scan is scoped to the Firefox forensics artifact only.** It does not apply to `cypress-screenshots-*`, `cypress-videos-*`, `cypress-report-*`, or any `ai-report`/`context.json` content - do not generalize this one protection to the rest of the pipeline's artifacts (see [§16](#16-known-limitations--non-goals)).
 
-Firefox's underlying root cause remains **under investigation, not solved**: observability (`#19.7F-B4B`) is active on `main`; organic forensic evidence from a real failure is still pending (`#19.7F-C`). This document makes no root-cause claim.
+Firefox's underlying root cause remains **under investigation, not solved**: observability (`#19.7F-B4B`) is active on `main` and has now been live-validated by one organic occurrence (captured during a documentation PR's own CI run, `32873480322` - the corrected capture pipeline uploaded its `firefox-forensics` artifact cleanly, with nothing flagged by the sensitive-pattern scan); root-cause analysis of that captured evidence (`#19.7F-C`) has not yet been performed. This document makes no root-cause claim.
 
 ## 16. Known limitations / non-goals
 

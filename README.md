@@ -318,7 +318,7 @@ Stated as engineering seams and deliberately deferred work, not defects. Roadmap
 
 1. **Only one real production project exists.** `ProjectProfile`/History/Knowledge project-isolation is proven offline against a synthetic second project (Roadmap #19.4) only - a genuine second project has never run through this pipeline in production.
 2. **A small number of informational, non-blocking observations remain** (documented, not hidden): `error.stack` may contain a standard hosted-runner absolute source path as intentional model-visible evidence (never a secret) - see `SECURITY.md`; a theoretical, structurally-unreachable "both sides say an unsupported framework string" edge case in the framework-identity consistency check, closed off in practice by every real production producer being hardcoded to exactly `cypress`/`playwright`.
-3. **#19.7F-B4B (Firefox forensic observability) remains passively active**, awaiting the next organic occurrence of a known intermittent Firefox failure signature to validate its corrected capture behavior live - see [Detailed Engineering History](#detailed-engineering-history) below.
+3. **#19.7F-B4B (Firefox forensic observability) is now live-validated.** An organic occurrence of the known intermittent Firefox failure signature (`cy.wait()` timeout on the `poiTiles` route, no request ever occurring) happened naturally during this documentation PR's own CI run (GitHub Actions run `32873480322`, unrelated to and unaffected by this PR's docs-only content) - the corrected capture behavior executed and its `firefox-forensics` artifact uploaded successfully (18 files), and the sensitive-pattern scan flagged nothing. **This confirms the capture pipeline itself works live; it does not establish a root cause.** #19.7F-C (root-cause analysis of a real captured occurrence) is now unblocked with real evidence to analyze, but that analysis has not been performed as part of this documentation-only mission - see [Detailed Engineering History](#detailed-engineering-history) below.
 
 None of these affect current production behavior. See [Roadmap #19](#roadmap-19--project--framework-portability) and [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) below.
 
@@ -799,7 +799,7 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #19.5 - Framework identity + normalized failure contract | COMPLETE |
 | #19.6 - Cypress adapter extraction | COMPLETE |
 | #19.7 (incl. #19.7H) - Cypress historical equivalence + filesystem isolation hardening | COMPLETE |
-| #19.7F - Firefox CI observability | #19.7F-B4B ACTIVE ON MAIN; #19.7F-C WAITING FOR ORGANIC FORENSIC EVIDENCE |
+| #19.7F - Firefox CI observability | #19.7F-B4B LIVE-VALIDATED (organic occurrence captured during #21J-B's own PR CI, run 32873480322); #19.7F-C (root-cause analysis) NOT YET PERFORMED |
 | #19.8 - Offline Playwright adapter | COMPLETE |
 | #19.9 - Offline framework orchestration + History framework namespace | COMPLETE |
 | #19.10 - Final portability review + documentation closure | COMPLETE |
