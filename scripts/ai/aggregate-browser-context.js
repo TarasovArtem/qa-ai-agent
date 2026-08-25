@@ -293,6 +293,53 @@ function buildFrameworkCorrelation(browserInputs, primaryFramework) {
   return { primaryFramework, outcomes };
 }
 
+// Roadmap #21H (D21G-2): the workflow's own trusted framework descriptor
+// (primary.framework - a static literal a workflow step writes because it
+// KNOWS which framework that job runs, see .github/workflows/cypress.yml's
+// "Record browser result"/"Record Playwright browser result" steps) and
+// the adapter-derived runtime identity (primary.context.metadata.framework
+// - set by getMetadata() from the SELECTED adapter's own .id, see
+// collect-context.js) are two INDEPENDENTLY DERIVED statements about the
+// exact same job's framework identity, not two competing canonical
+// sources a caller may pick between. In the current, correctly-wired
+// workflow they can never actually disagree, because both are authored
+// together for the same job block - but #21G-R2 demonstrated that nothing
+// in this file's own code enforced that, so a future editing mistake
+// (e.g. a job's QA_FRAMEWORK env var updated without also updating its
+// "framework" literal) could silently produce a context.json whose
+// metadata.framework and frameworkCorrelation.primaryFramework disagree.
+// This is a fail-closed consistency check, not a resolution/precedence
+// rule: when a genuinely comparable context exists and its adapter-
+// derived identity disagrees with the trusted descriptor, this is a
+// workflow/evidence contract violation, and the caller must refuse to
+// treat that evidence as analyzable - never silently prefer one identity
+// over the other.
+function checkFrameworkIdentityConsistency(primary) {
+  if (!primary) {
+    return { consistent: true, descriptorFramework: null, contextFramework: null };
+  }
+
+  const descriptorFramework = primary.framework || "cypress";
+
+  // A framework-level failure can genuinely have no analyzable context at
+  // all (a setup/report failure before any test ran - see the existing
+  // "no usable context.json" path in main()). That is absent evidence,
+  // not contradictory evidence - nothing to compare, so this is never
+  // treated as a mismatch. Likewise, a context whose own metadata carries
+  // no usable framework string (a legacy/hand-built fixture predating
+  // explicit framework identity) has nothing comparable either.
+  const contextFramework =
+    primary.context && primary.context.metadata && typeof primary.context.metadata.framework === "string"
+      ? primary.context.metadata.framework
+      : null;
+
+  if (contextFramework === null) {
+    return { consistent: true, descriptorFramework, contextFramework: null };
+  }
+
+  return { consistent: descriptorFramework === contextFramework, descriptorFramework, contextFramework };
+}
+
 // Composes the decisions above into the one result main() (and tests)
 // actually need: whether to run at all, which browser is primary, which
 // other SAME-FRAMEWORK browsers also failed (logged only - never
@@ -306,12 +353,34 @@ function buildFrameworkCorrelation(browserInputs, primaryFramework) {
 // its sameFailureSignature/failureScope computations can never compare or
 // count across frameworks. frameworkCorrelation is built from the FULL,
 // unfiltered browserInputs, independently.
+//
+// Roadmap #21H (D21G-2): a detected identity mismatch (see
+// checkFrameworkIdentityConsistency() above) fails closed by returning
+// primary: null with identityMismatch populated - main() below already
+// refuses to write context.json or run analysis whenever primary (or its
+// context) is null, the exact same safe branch a genuinely-missing
+// context already takes, so this can never reach the AI provider. No new
+// call site, no new bypassable check - the existing "cannot run AI
+// triage" guard is what actually enforces this.
 function aggregateBrowserInputs(browserInputs, priorityOrder = DEFAULT_BROWSER_PRIORITY) {
   if (!shouldRunAiTriage(browserInputs)) {
-    return { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null };
+    return { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null, identityMismatch: null };
   }
 
   const primary = selectPrimaryFailure(browserInputs, priorityOrder);
+  const identity = checkFrameworkIdentityConsistency(primary);
+
+  if (!identity.consistent) {
+    return {
+      shouldRun: true,
+      primary: null,
+      otherFailedBrowsers: [],
+      correlation: null,
+      frameworkCorrelation: null,
+      identityMismatch: { descriptorFramework: identity.descriptorFramework, contextFramework: identity.contextFramework },
+    };
+  }
+
   const primaryFramework = primary ? primary.framework || "cypress" : null;
   const sameFrameworkInputs = browserInputs.filter((b) => (b.framework || "cypress") === primaryFramework);
 
@@ -321,15 +390,30 @@ function aggregateBrowserInputs(browserInputs, priorityOrder = DEFAULT_BROWSER_P
   const correlation = buildBrowserCorrelation(sameFrameworkInputs, primary, priorityOrder);
   const frameworkCorrelation = buildFrameworkCorrelation(browserInputs, primaryFramework);
 
-  return { shouldRun: true, primary, otherFailedBrowsers, correlation, frameworkCorrelation };
+  return { shouldRun: true, primary, otherFailedBrowsers, correlation, frameworkCorrelation, identityMismatch: null };
 }
 
 function main() {
   const browserInputs = readBrowserInputs();
-  const { shouldRun, primary, otherFailedBrowsers, correlation, frameworkCorrelation } = aggregateBrowserInputs(browserInputs);
+  const { shouldRun, primary, otherFailedBrowsers, correlation, frameworkCorrelation, identityMismatch } = aggregateBrowserInputs(browserInputs);
 
   if (!shouldRun) {
     log("No E2E failures detected; AI triage skipped.");
+    return;
+  }
+
+  // Roadmap #21H (D21G-2): a bounded, framework-name-only log line - never
+  // the full context, paths, test errors, or environment - distinguishing
+  // this fail-closed case from the generic "no usable context.json" one
+  // below for anyone reading CI logs. The actual safety guarantee (no
+  // context.json written, no analysis, no provider call) already comes
+  // from primary being null here, which the very next guard below already
+  // catches - this branch only exists for a clearer diagnostic message.
+  if (identityMismatch) {
+    log(
+      `Framework identity mismatch detected (workflow descriptor said '${identityMismatch.descriptorFramework}', ` +
+        `but the collected context's own metadata.framework said '${identityMismatch.contextFramework}') - refusing to treat this as analyzable evidence.`
+    );
     return;
   }
 
@@ -372,6 +456,7 @@ module.exports = {
   readBrowserInputs,
   shouldRunAiTriage,
   selectPrimaryFailure,
+  checkFrameworkIdentityConsistency,
   aggregateBrowserInputs,
   buildBrowserCorrelation,
   buildFrameworkCorrelation,

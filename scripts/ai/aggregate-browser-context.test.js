@@ -9,6 +9,7 @@ const {
   readBrowserInputs,
   shouldRunAiTriage,
   selectPrimaryFailure,
+  checkFrameworkIdentityConsistency,
   aggregateBrowserInputs,
   buildBrowserCorrelation,
   DEFAULT_BROWSER_PRIORITY,
@@ -99,7 +100,7 @@ test("selectPrimaryFailure: a browser outside the known priority order still get
 test("aggregateBrowserInputs: chrome+edge both pass -> shouldRun false, no primary, no correlation", () => {
   const inputs = [browserInput("chrome", "success"), browserInput("edge", "success")];
   const result = aggregateBrowserInputs(inputs);
-  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null });
+  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null, identityMismatch: null });
 });
 
 test("aggregateBrowserInputs: chrome+edge both fail -> deterministically picks chrome, notes edge", () => {
@@ -312,7 +313,7 @@ test("correlation: firefox only fails -> primaryBrowser=firefox, single-browser,
 test("aggregateBrowserInputs: chrome+edge+firefox all pass -> shouldRun false, correlation null", () => {
   const inputs = [browserInput("chrome", "success"), browserInput("edge", "success"), browserInput("firefox", "success")];
   const result = aggregateBrowserInputs(inputs);
-  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null });
+  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null, identityMismatch: null });
 });
 
 test("aggregateBrowserInputs: primaryBrowser is deterministic across repeated calls with three browsers failing", () => {
@@ -883,7 +884,7 @@ test("aggregateBrowserInputs: all four (chrome, edge, firefox, playwright-chromi
     playwrightInput("success"),
   ];
   const result = aggregateBrowserInputs(inputs);
-  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null });
+  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null, identityMismatch: null });
 });
 
 test("readBrowserInputs: called with NO explicit browser list discovers a playwright-chromium directory via the real production DEFAULT_BROWSER_PRIORITY, with its trusted framework field intact", () => {
@@ -945,4 +946,130 @@ test("integration: single-browser correlation (one pass, one fail) also reaches 
 
   assert.match(seenUserPrompt, /"failureScope": "single-browser"/);
   assert.match(seenUserPrompt, /"passedBrowsers": \[\s*"edge"\s*\]/);
+});
+
+// =========================================================================
+// Roadmap #21H (D21G-2): framework identity consistency between the
+// trusted workflow descriptor (input.framework) and the adapter-derived
+// runtime identity (input.context.metadata.framework). #21G-R2 found
+// nothing in this file enforced these ever agree - unreachable through
+// the correctly-wired workflow today, but with no code-level check, a
+// future editing mistake could silently produce contradictory evidence.
+// =========================================================================
+
+function fakeContextWithFramework(framework, browser, overrides = {}) {
+  const ctx = fakeContext(browser, overrides);
+  return { ...ctx, metadata: { ...ctx.metadata, framework } };
+}
+
+// I1: descriptor=cypress, context.metadata.framework=cypress -> accepted.
+test("I1 descriptor 'cypress' matching context.metadata.framework 'cypress' is accepted", () => {
+  const inputs = [browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithFramework("cypress", "chrome") })];
+  const { primary, identityMismatch } = aggregateBrowserInputs(inputs);
+  assert.equal(identityMismatch, null);
+  assert.ok(primary);
+  assert.equal(primary.browser, "chrome");
+});
+
+// I2: descriptor=playwright, context.metadata.framework=playwright -> accepted.
+test("I2 descriptor 'playwright' matching context.metadata.framework 'playwright' is accepted", () => {
+  const inputs = [
+    browserInput("playwright-chromium", "failure", { framework: "playwright", context: fakeContextWithFramework("playwright", "playwright-chromium") }),
+  ];
+  const { primary, identityMismatch } = aggregateBrowserInputs(inputs);
+  assert.equal(identityMismatch, null);
+  assert.ok(primary);
+  assert.equal(primary.browser, "playwright-chromium");
+});
+
+// I3: descriptor=cypress, context.metadata.framework=playwright -> FAIL CLOSED, 0 provider calls.
+test("I3 descriptor 'cypress' contradicting context.metadata.framework 'playwright' fails closed - no analyzable primary, no context written, no provider call possible", async () => {
+  const inputs = [browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithFramework("playwright", "chrome") })];
+  const result = aggregateBrowserInputs(inputs);
+
+  assert.equal(result.shouldRun, true, "a failure was genuinely reported - triage consideration still begins");
+  assert.equal(result.primary, null, "but the contradictory evidence must never become the analyzed primary");
+  assert.deepEqual(result.correlation, null);
+  assert.deepEqual(result.frameworkCorrelation, null);
+  assert.deepEqual(result.identityMismatch, { descriptorFramework: "cypress", contextFramework: "playwright" });
+
+  // main()'s own guard (`if (!primary || !primary.context)` / the new
+  // identityMismatch branch immediately above it) is what actually
+  // prevents analysis - proven here structurally: primary is null, so
+  // there is no context object any caller could pass to
+  // buildFailureReport()/the provider at all. Zero calls is not merely
+  // asserted, it is unreachable by construction.
+  assert.equal(result.primary, null);
+});
+
+// I4: descriptor=playwright, context.metadata.framework=cypress -> FAIL CLOSED, 0 provider calls.
+test("I4 descriptor 'playwright' contradicting context.metadata.framework 'cypress' fails closed - no analyzable primary", () => {
+  const inputs = [
+    browserInput("playwright-chromium", "failure", { framework: "playwright", context: fakeContextWithFramework("cypress", "playwright-chromium") }),
+  ];
+  const result = aggregateBrowserInputs(inputs);
+
+  assert.equal(result.primary, null);
+  assert.deepEqual(result.identityMismatch, { descriptorFramework: "playwright", contextFramework: "cypress" });
+});
+
+// I5: descriptor=playwright, context=null (genuine no-report failure) -> no fabricated mismatch, existing behavior preserved.
+test("I5 descriptor present with context=null (genuine no-report failure) is never treated as a mismatch", () => {
+  const inputs = [{ browser: "playwright-chromium", framework: "playwright", outcome: "failure", context: null, history: null }];
+  const result = aggregateBrowserInputs(inputs);
+
+  assert.equal(result.identityMismatch, null, "absent evidence is not contradictory evidence");
+  assert.ok(result.primary, "primary selection itself is unaffected - only the context is absent");
+  assert.equal(result.primary.context, null);
+});
+
+// I6: framework field missing on the descriptor defaults to the existing
+// documented legacy "cypress" compatibility fallback (unchanged from
+// #21G-C1) - never silently broadened to accept an actually-contradictory
+// value.
+test("I6 a descriptor with no framework field at all still defaults to the existing 'cypress' legacy fallback, and still correctly detects a real contradiction against that default", () => {
+  const consistent = checkFrameworkIdentityConsistency({ browser: "chrome", context: fakeContextWithFramework("cypress", "chrome") });
+  assert.deepEqual(consistent, { consistent: true, descriptorFramework: "cypress", contextFramework: "cypress" });
+
+  const contradictory = checkFrameworkIdentityConsistency({ browser: "chrome", context: fakeContextWithFramework("playwright", "chrome") });
+  assert.deepEqual(contradictory, { consistent: false, descriptorFramework: "cypress", contextFramework: "playwright" });
+});
+
+test("checkFrameworkIdentityConsistency: a context with no usable metadata.framework string at all (legacy fixture) has nothing to compare, never a mismatch", () => {
+  assert.deepEqual(
+    checkFrameworkIdentityConsistency({ browser: "chrome", framework: "cypress", context: fakeContext("chrome") }),
+    { consistent: true, descriptorFramework: "cypress", contextFramework: null }
+  );
+});
+
+test("checkFrameworkIdentityConsistency: null primary (nothing failed) is trivially consistent", () => {
+  assert.deepEqual(checkFrameworkIdentityConsistency(null), { consistent: true, descriptorFramework: null, contextFramework: null });
+});
+
+// Adversarial: even when a SECOND, genuinely-consistent Cypress browser
+// also failed, a contradictory primary must still fail the whole
+// aggregation closed - it must not silently fall back to the second
+// failing browser as a workaround, since that would hide the contract
+// violation rather than surface it.
+test("I3b a contradictory primary does not silently fall back to a different, consistent failing browser", () => {
+  const inputs = [
+    browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithFramework("playwright", "chrome") }),
+    browserInput("edge", "failure", { framework: "cypress", context: fakeContextWithFramework("cypress", "edge") }),
+  ];
+  const result = aggregateBrowserInputs(inputs);
+  assert.equal(result.primary, null, "must fail closed on the actual selected primary (chrome, priority-first), never silently substitute edge");
+  assert.deepEqual(result.identityMismatch, { descriptorFramework: "cypress", contextFramework: "playwright" });
+});
+
+test("bounded log message: identity mismatch log never includes full context, paths, or test errors - only the two framework name strings", () => {
+  // main()'s own log line construction is exercised indirectly via the
+  // identityMismatch object shape it reads from - proven here that the
+  // object itself carries only bounded framework-name strings, never a
+  // context/path/error, which is what makes the log line in main()
+  // structurally bounded (it can only ever interpolate these two fields).
+  const inputs = [browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithFramework("playwright", "chrome", { message: "SENSITIVE_ERROR_TEXT_21H" }) })];
+  const { identityMismatch } = aggregateBrowserInputs(inputs);
+  const serialized = JSON.stringify(identityMismatch);
+  assert.ok(!serialized.includes("SENSITIVE_ERROR_TEXT_21H"));
+  assert.deepEqual(Object.keys(identityMismatch).sort(), ["contextFramework", "descriptorFramework"]);
 });

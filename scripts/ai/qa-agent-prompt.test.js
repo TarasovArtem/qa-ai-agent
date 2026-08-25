@@ -164,6 +164,56 @@ test("buildUserPrompt: never inlines the raw list of historical runs, only aggre
   assert.doesNotMatch(prompt, /"runs"\s*:\s*\[/);
 });
 
+// Roadmap #21H (Stage H3.16): proves the three evidence dimensions History
+// added a third of (current-run failure, Playwright's own historical
+// aggregate, and the current workflow's Cypress frameworkCorrelation
+// outcome) render as textually distinct, non-overlapping JSON regions -
+// no cross-framework historical contamination bleeding into the wrong
+// section, even when a Playwright analysis and a Cypress workflow outcome
+// are both present in the same rendered prompt at once.
+test("buildUserPrompt: current-run failure, history, and frameworkCorrelation remain textually distinct with no cross-framework contamination", () => {
+  const context = {
+    metadata: { framework: "playwright" },
+    testResults: {},
+    failedTests: [{ title: "PLAYWRIGHT_CURRENT_FAILURE_MARKER", fullTitle: null, specFile: null, error: {} }],
+    relevantFiles: {},
+    // Playwright's own historical aggregate (readHistory()'s bounded
+    // output shape - see analyze-failure.js) - must never carry a
+    // "framework" field of its own into the prompt (only the four
+    // aggregate-count fields do), and must never be influenced by the
+    // Cypress frameworkCorrelation outcome below.
+    history: { runsConsidered: 10, passes: 6, failures: 4, retryPasses: 1 },
+    // The current workflow's own Cypress outcome, via frameworkCorrelation
+    // - workflow-level evidence about an unrelated framework's jobs, never
+    // temporal/historical evidence about Playwright.
+    frameworkCorrelation: { primaryFramework: "playwright", outcomes: [{ framework: "playwright", outcome: "failure" }, { framework: "cypress", outcome: "success" }] },
+  };
+  const prompt = buildUserPrompt(context);
+  const payload = JSON.parse(prompt.slice(prompt.indexOf("{"), prompt.lastIndexOf("}") + 1));
+
+  // Three separate, independently-projected top-level keys - never merged
+  // into one combined "evidence" blob.
+  assert.deepEqual(payload.history, { runsConsidered: 10, passes: 6, failures: 4, retryPasses: 1 });
+  assert.ok(!("framework" in payload.history), "history must never carry its own framework field into the prompt");
+  assert.deepEqual(payload.frameworkCorrelation, {
+    primaryFramework: "playwright",
+    outcomes: [
+      { framework: "playwright", outcome: "failure" },
+      { framework: "cypress", outcome: "success" },
+    ],
+  });
+  assert.equal(payload.failedTests[0].title, "PLAYWRIGHT_CURRENT_FAILURE_MARKER");
+
+  // The current-run failure marker must appear only inside failedTests,
+  // never leaking into history or frameworkCorrelation's own JSON regions.
+  assert.ok(!JSON.stringify(payload.history).includes("PLAYWRIGHT_CURRENT_FAILURE_MARKER"));
+  assert.ok(!JSON.stringify(payload.frameworkCorrelation).includes("PLAYWRIGHT_CURRENT_FAILURE_MARKER"));
+  // Cypress's presence in frameworkCorrelation must never leak into
+  // history - history is Playwright's own temporal aggregate only, never
+  // merged with another framework's current-workflow outcome.
+  assert.ok(!JSON.stringify(payload.history).includes("cypress"));
+});
+
 test("buildUserPrompt: includes knownProjectConstraints when present, empty array when absent", () => {
   const withConstraints = buildUserPrompt({
     metadata: {},
@@ -210,6 +260,68 @@ test("buildUserPrompt: browserCorrelation is explicitly null when absent from co
   const context = { metadata: {}, testResults: {}, failedTests: [], relevantFiles: {} };
   const prompt = buildUserPrompt(context);
   assert.match(prompt, /"browserCorrelation": null/);
+});
+
+// --- Roadmap #21H (D21G-3): end-to-end bounded projection, not just the --
+// --- isolated correlation-projection.js unit tests -----------------------
+
+test("buildUserPrompt: an adversarial extra property on browserCorrelation cannot reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    browserCorrelation: {
+      browsers: ["chrome"],
+      failedBrowsers: ["chrome"],
+      passedBrowsers: [],
+      primaryBrowser: "chrome",
+      additionalFailedBrowsers: [],
+      failureScope: "single-browser",
+      sameFailureSignature: null,
+      privateMarker: "PRIVATE_BROWSERCORRELATION_MARKER_21H",
+    },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.ok(!prompt.includes("PRIVATE_BROWSERCORRELATION_MARKER_21H"));
+});
+
+test("buildUserPrompt: an adversarial extra property on frameworkCorrelation (top-level, nested, and per-outcome) cannot reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    frameworkCorrelation: {
+      primaryFramework: "cypress",
+      outcomes: [
+        { framework: "cypress", outcome: "failure", extraOutcomeMarker: "PRIVATE_OUTCOME_MARKER_21H" },
+        { framework: "playwright", outcome: "success" },
+      ],
+      privateMarker: "PRIVATE_FRAMEWORK_MARKER_21H",
+      nested: { secret: "PRIVATE_NESTED_MARKER_21H" },
+    },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.ok(!prompt.includes("PRIVATE_FRAMEWORK_MARKER_21H"));
+  assert.ok(!prompt.includes("PRIVATE_NESTED_MARKER_21H"));
+  assert.ok(!prompt.includes("PRIVATE_OUTCOME_MARKER_21H"));
+  // The two legitimate outcomes must still be present, unaffected.
+  assert.match(prompt, /"framework": "cypress"/);
+  assert.match(prompt, /"framework": "playwright"/);
+});
+
+test("buildUserPrompt: an unrecognized framework/outcome string cannot reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    frameworkCorrelation: { primaryFramework: "PRIVATE_MARKER_FRAMEWORK", outcomes: [{ framework: "PRIVATE_MARKER_FRAMEWORK", outcome: "PRIVATE_MARKER_OUTCOME" }] },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.ok(!prompt.includes("PRIVATE_MARKER_FRAMEWORK"));
+  assert.ok(!prompt.includes("PRIVATE_MARKER_OUTCOME"));
 });
 
 // --- Roadmap #21G-C1: frameworkCorrelation (separate from browserCorrelation) --
