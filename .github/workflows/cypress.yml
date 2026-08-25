@@ -186,7 +186,7 @@ jobs:
         if: always()
         run: |
           mkdir -p reports/ai
-          printf '{"browser": "%s", "outcome": "%s"}' "${{ matrix.browser }}" "${{ steps.run_tests.outcome }}" > reports/ai/browser-result.json
+          printf '{"browser": "%s", "framework": "cypress", "outcome": "%s"}' "${{ matrix.browser }}" "${{ steps.run_tests.outcome }}" > reports/ai/browser-result.json
 
       - name: Collect structured failure context
         if: steps.run_tests.outcome == 'failure'
@@ -375,7 +375,7 @@ jobs:
         if: always()
         run: |
           mkdir -p reports/ai
-          printf '{"browser": "firefox", "outcome": "%s"}' "${{ steps.run_tests.outcome }}" > reports/ai/browser-result.json
+          printf '{"browser": "firefox", "framework": "cypress", "outcome": "%s"}' "${{ steps.run_tests.outcome }}" > reports/ai/browser-result.json
 
       - name: Collect structured failure context
         if: steps.run_tests.outcome == 'failure'
@@ -665,11 +665,20 @@ jobs:
       # skipped Playwright job is handled by the exact same pre-existing
       # logic chrome/edge/firefox already rely on - no new filtering
       # needed here.
+      #
+      # Roadmap #21G-C1: "framework": "playwright" is a static literal
+      # this workflow step itself knows to be true - never inferred by
+      # aggregate-browser-context.js from the "playwright-chromium" job
+      # name string. This is what lets that script keep Playwright's
+      # outcome out of Cypress's own browserCorrelation (and vice versa):
+      # a Playwright pass/fail is workflow-level evidence about an
+      # independent, unrelated smoke test, never same-test evidence that
+      # the Cypress suite also passed/failed in "another browser".
       - name: Record Playwright browser result
         if: always()
         run: |
           mkdir -p reports/ai/browser-inputs/playwright-chromium
-          printf '{"browser": "playwright-chromium", "outcome": "%s"}' "${{ needs.playwright-tests.result }}" > reports/ai/browser-inputs/playwright-chromium/browser-result.json
+          printf '{"browser": "playwright-chromium", "framework": "playwright", "outcome": "%s"}' "${{ needs.playwright-tests.result }}" > reports/ai/browser-inputs/playwright-chromium/browser-result.json
 
       # The RAW reporter artifact from playwright-tests, downloaded to
       # exactly the adapter's own default path (reports/playwright/

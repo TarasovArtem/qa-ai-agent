@@ -122,6 +122,18 @@ function formatCorrelationLine(correlation) {
   return `${failureScope} — failed: ${failedBrowsers.join(", ") || "none"}${passedPart}.`;
 }
 
+// Roadmap #21G-C1: a separate, explicitly-labeled summary of frameworkCorrelation
+// (see aggregate-browser-context.js's buildFrameworkCorrelation()) - deliberately
+// never merged into formatCorrelationLine() above, and deliberately worded as
+// "outcomes" rather than "passed/failed browsers" so a reader never mistakes an
+// independent framework's job for same-test browser evidence.
+function formatFrameworkCorrelationLine(frameworkCorrelation) {
+  if (!frameworkCorrelation || !Array.isArray(frameworkCorrelation.outcomes) || frameworkCorrelation.outcomes.length < 2) return null;
+
+  const parts = frameworkCorrelation.outcomes.map((o) => `${o.framework} ${o.outcome}`);
+  return `${parts.join("; ")} (independent frameworks - not same-test evidence).`;
+}
+
 function formatComment({ browser, report, runUrl }) {
   const results = Array.isArray(report && report.results) ? report.results : [];
 
@@ -135,6 +147,11 @@ function formatComment({ browser, report, runUrl }) {
   const correlationLine = formatCorrelationLine(report && report.sourceContext && report.sourceContext.browserCorrelation);
   if (correlationLine) {
     header.push("**Browser scope:**", correlationLine, "");
+  }
+
+  const frameworkCorrelationLine = formatFrameworkCorrelationLine(report && report.sourceContext && report.sourceContext.frameworkCorrelation);
+  if (frameworkCorrelationLine) {
+    header.push("**Framework outcomes:**", frameworkCorrelationLine, "");
   }
 
   const blocks = results.map((result, i) => {
@@ -176,4 +193,4 @@ function formatResolvedComment({ browser, runUrl }) {
   return lines.join("\n");
 }
 
-module.exports = { formatComment, formatResolvedComment, formatHistoryLine, formatCorrelationLine, MARKER };
+module.exports = { formatComment, formatResolvedComment, formatHistoryLine, formatCorrelationLine, formatFrameworkCorrelationLine, MARKER };

@@ -868,6 +868,43 @@ test("buildFailureReport: sourceContext.browserCorrelation carries through uncha
   assert.deepEqual(report.sourceContext.browserCorrelation, correlation);
 });
 
+// --- Roadmap #21G-C1: separate cross-framework rollup passthrough -----------
+
+test("buildFailureReport: sourceContext.frameworkCorrelation is null when context has no cross-framework metadata", async () => {
+  const provider = providerReturning([goodItem()]);
+  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  assert.equal(report.sourceContext.frameworkCorrelation, null);
+});
+
+test("buildFailureReport: sourceContext.frameworkCorrelation carries through unchanged when present, as a field distinct from browserCorrelation", async () => {
+  const browserCorrelation = {
+    browsers: ["chrome"],
+    failedBrowsers: ["chrome"],
+    passedBrowsers: [],
+    primaryBrowser: "chrome",
+    additionalFailedBrowsers: [],
+    failureScope: "single-browser",
+    sameFailureSignature: null,
+  };
+  const frameworkCorrelation = {
+    primaryFramework: "cypress",
+    outcomes: [
+      { framework: "cypress", outcome: "failure" },
+      { framework: "playwright", outcome: "failure" },
+    ],
+  };
+  const provider = providerReturning([goodItem()]);
+  const report = await buildFailureReport(
+    { ...context, browserCorrelation, frameworkCorrelation },
+    { provider, history: null, relevantKnowledge: [] }
+  );
+  assert.deepEqual(report.sourceContext.frameworkCorrelation, frameworkCorrelation);
+  assert.deepEqual(report.sourceContext.browserCorrelation, browserCorrelation);
+  // Playwright's outcome must never appear inside browserCorrelation's own
+  // browser-name arrays.
+  assert.ok(!report.sourceContext.browserCorrelation.browsers.includes("playwright"));
+});
+
 // --- agent policy integration ----------------------------------------------
 // Proves the full pipeline - provider -> parse -> validate -> agent policy
 // -> report - actually applies scripts/ai/agent-policy.js, not just that
