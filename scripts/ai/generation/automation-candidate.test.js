@@ -180,12 +180,24 @@ test("DO_NOT_AUTOMATE with an empty target-framework list is accepted (no automa
 
 test("repository evidence ref dangling from evidenceRefs registry is rejected", () => {
   const candidate = minimalCandidate({
-    evidenceRefs: [{ id: "ev-real", kind: "repository" }],
+    evidenceRefs: [{ id: "ev-real", kind: "repository", location: "playwright/tests/" }],
     rationaleEvidenceRefIds: ["ev-real", "ev-phantom"],
   });
   const result = validateAutomationCandidate(candidate);
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVALID_REFERENCE));
+});
+
+// --- Roadmap #22/23-F0-C1: empty-pointer grounding correction -----------
+
+test("rationale evidence grounded only in an empty-pointer ref is rejected", () => {
+  const candidate = minimalCandidate({
+    evidenceRefs: [{ id: "ev-1", kind: "repository" }],
+    rationaleEvidenceRefIds: ["ev-1"],
+  });
+  const result = validateAutomationCandidate(candidate);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
 });
 
 // --- Stage M: serialization ---------------------------------------------

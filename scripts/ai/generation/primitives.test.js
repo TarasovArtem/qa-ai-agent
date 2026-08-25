@@ -181,10 +181,65 @@ test("validateEvidenceRef: rejects unknown fields and an unrecognized kind", () 
   assert.ok(codes.includes(ERROR_CODES.INVALID_ENUM));
 });
 
-test("validateEvidenceRef: accepts a minimal valid reference", () => {
+test("validateEvidenceRef: accepts a minimal valid reference with a location", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "repository", location: "docs/requirements.md" }, "$.ref", errors);
+  assert.equal(errors.length, 0);
+});
+
+test("validateEvidenceRef: a ref with neither sourceId nor location is rejected (empty pointer)", () => {
   const errors = [];
   validateEvidenceRef({ id: "ev-1", kind: "repository" }, "$.ref", errors);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].code, ERROR_CODES.INVARIANT_VIOLATION);
+});
+
+test("validateEvidenceRef: sourceId alone satisfies the pointer requirement", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "document", sourceId: "requirements-doc" }, "$.ref", errors);
   assert.equal(errors.length, 0);
+});
+
+test("validateEvidenceRef: location alone satisfies the pointer requirement", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "repository", location: "docs/requirements.md" }, "$.ref", errors);
+  assert.equal(errors.length, 0);
+});
+
+test("validateEvidenceRef: both sourceId and location together are accepted", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "document", sourceId: "requirements-doc", location: "section 3" }, "$.ref", errors);
+  assert.equal(errors.length, 0);
+});
+
+test("validateEvidenceRef: an empty-string sourceId does not count toward the pointer requirement", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "document", sourceId: "" }, "$.ref", errors);
+  assert.ok(errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
+});
+
+test("validateEvidenceRef: a whitespace-only location does not count toward the pointer requirement", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "document", location: "   " }, "$.ref", errors);
+  assert.ok(errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
+});
+
+test("validateEvidenceRef: a wrong-type sourceId does not count toward the pointer requirement", () => {
+  const errors = [];
+  validateEvidenceRef({ id: "ev-1", kind: "document", sourceId: 123 }, "$.ref", errors);
+  assert.ok(errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
+});
+
+test("validateEvidenceRef: pointer sufficiency holds for every allowed kind", () => {
+  for (const kind of ["user_input", "document", "repository", "project_profile", "knowledge"]) {
+    const empty = [];
+    validateEvidenceRef({ id: "ev-1", kind }, "$.ref", empty);
+    assert.ok(empty.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION), `expected ${kind} empty pointer to be rejected`);
+
+    const withLocation = [];
+    validateEvidenceRef({ id: "ev-1", kind, location: "somewhere" }, "$.ref", withLocation);
+    assert.equal(withLocation.length, 0, `expected ${kind} with a location to be accepted`);
+  }
 });
 
 test("validateAssumption: requires id/text/rationale and rejects unknown fields", () => {

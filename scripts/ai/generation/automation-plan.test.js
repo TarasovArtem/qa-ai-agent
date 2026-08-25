@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 
 const { ERROR_CODES } = require("./errors");
 const { LIMITS } = require("./limits");
-const { KIND, OPERATIONS, isSafeRepoRelativePath, validateAutomationPlan } = require("./automation-plan");
+const { KIND, OPERATIONS, isSafeRepoRelativePath, isCanonicalPlanPath, validateAutomationPlan } = require("./automation-plan");
 
 const PROJECT_ID = "test-project";
 
@@ -211,6 +211,91 @@ test("unrecognized validationPlan step type is rejected", () => {
   const result = validateAutomationPlan(plan);
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVALID_ENUM));
+});
+
+// --- Roadmap #22/23-F0-C1: canonical planned-path semantics -------------
+// These forms all pass the existing security gate (isSafeRepoRelativePath)
+// unchanged - they are rejected for canonical-identity reasons, not
+// escape/security reasons, so a v1 plan can never target the bare
+// repository root or a directory-only/no-op location, and two differently
+// -spelled strings can never alias the same file.
+
+test("isCanonicalPlanPath: rejects non-canonical forms", () => {
+  for (const p of [".", "./", "./foo", "foo/", "a//b", "foo/../bar", "foo/./bar"]) {
+    assert.equal(isSafeRepoRelativePath(p), true, `expected ${JSON.stringify(p)} to still pass the security gate`);
+    assert.equal(isCanonicalPlanPath(p), false, `expected ${JSON.stringify(p)} to be rejected as non-canonical`);
+  }
+});
+
+test("isCanonicalPlanPath: rejects a backslash-separated path even though it passes the security gate", () => {
+  const backslashPath = "foo" + String.fromCharCode(92) + "bar";
+  assert.equal(isSafeRepoRelativePath(backslashPath), true);
+  assert.equal(isCanonicalPlanPath(backslashPath), false);
+});
+
+test("isCanonicalPlanPath: accepts canonical safe relative paths", () => {
+  for (const p of ["foo", "foo/bar", "playwright/tests/generated/foo.spec.js", "cypress/e2e/generated/foo.cy.js"]) {
+    assert.equal(isCanonicalPlanPath(p), true, `expected ${JSON.stringify(p)} to be accepted as canonical`);
+  }
+});
+
+test("a plan with a non-canonical planned path (\".\") is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: ".", operation: "CREATE", purpose: "p" }] });
+  const result = validateAutomationPlan(plan);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVALID_PATH));
+});
+
+test("a plan with a non-canonical planned path (\"./\") is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "./", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a non-canonical planned path (\"./foo\") is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "./foo", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a non-canonical planned path (\"foo/\") is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "foo/", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a non-canonical planned path (\"a//b\") is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "a//b", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a non-canonical planned path (\"foo/../bar\", non-escaping but non-canonical) is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "foo/../bar", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a non-canonical planned path (\"foo/./bar\") is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "foo/./bar", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a backslash-separated planned path is rejected", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "foo" + String.fromCharCode(92) + "bar", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, false);
+});
+
+test("a plan with a canonical safe planned path is accepted", () => {
+  const plan = minimalPlan({ plannedChanges: [{ path: "playwright/tests/generated/new-flow.spec.js", operation: "CREATE", purpose: "p" }] });
+  assert.equal(validateAutomationPlan(plan).ok, true);
+});
+
+test("two plannedChanges targeting the exact same canonical path are rejected", () => {
+  const plan = minimalPlan({
+    plannedChanges: [
+      { path: "foo/bar.spec.js", operation: "CREATE", purpose: "create it" },
+      { path: "foo/bar.spec.js", operation: "MODIFY", purpose: "modify it" },
+    ],
+  });
+  const result = validateAutomationPlan(plan);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.DUPLICATE_ID));
 });
 
 // --- Stage M: serialization ---------------------------------------------

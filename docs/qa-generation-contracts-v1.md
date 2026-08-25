@@ -56,7 +56,13 @@ browser, or writes a file on an artifact's behalf.
   never a requirement fact.
 - **`AutomationPlan`** (`automation-plan.js`) - a **non-mutating**, descriptive
   proposed implementation plan for one candidate. Never generated code, a
-  patch blob, or a filesystem-writer method.
+  patch blob, or a filesystem-writer method. **May only exist for a candidate
+  whose decision is `AUTOMATE`** - `cross-model-validation.js` rejects a plan
+  referencing a `DO_NOT_AUTOMATE` or `BLOCKED` candidate, even when the
+  planned framework would otherwise match one of that candidate's
+  `targetFrameworks`. A non-`AUTOMATE` candidate may still legitimately list
+  `targetFrameworks` (e.g. to record which frameworks were contemplated when
+  the decision was made) - that field alone never authorizes a plan.
 
 `cross-model-validation.js` validates a full chain
 (`RequirementModel -> TestCaseModel -> AutomationCandidate[] -> AutomationPlan[]`)
@@ -70,15 +76,17 @@ conflated:
 
 - **A requirement fact must never silently become an assumption.** A
   `requirement` entry in `RequirementModel.requirements` must cite at least
-  one entry in the model's own `evidenceRefs` registry (a real source/
-  evidence pointer) - a requirement with zero provenance, or a dangling
-  evidence-reference id, fails validation. This is the foundation's core
-  anti-hallucination invariant.
+  one entry in the model's own `evidenceRefs` registry, and that entry must
+  itself be a **real** pointer - it must carry a valid `sourceId` and/or
+  `location`, not merely an `id`/`kind` label with nothing behind it (see
+  [Grounding / provenance](#grounding--provenance) below). A requirement
+  with zero provenance, a dangling evidence-reference id, or provenance that
+  resolves only to a non-locating reference, fails validation. This is the
+  foundation's core anti-hallucination invariant.
 - **An assumption must never masquerade as a requirement.** Assumptions live
-  in their own top-level `assumptions` array (`{id, text, rationale,
-  relatedIds?}`), structurally separate from `requirements` - exact-key
-  rejection means a `requirement` object can never also carry
-  assumption-shaped fields.
+  in their own top-level `assumptions` array (`{id, text, rationale}`),
+  structurally separate from `requirements` - exact-key rejection means a
+  `requirement` object can never also carry assumption-shaped fields.
 - **Missing requirement / unspecified behavior must never be represented as
   an invented requirement.** The contract instead offers `openQuestions`
   entries typed `OPEN_QUESTION`, `AMBIGUITY`, or `MISSING_REQUIREMENT` - the
@@ -106,6 +114,16 @@ means. Any intentional, incompatible shape or meaning change requires a new
 after the fact. This exists specifically so `#22` and `#23` cannot drift
 independently once they start consuming these contracts.
 
+**A `relatedIds` field on assumptions/open questions was considered and
+removed before freeze.** It would have let a producer attach bounded
+id-shaped strings meant to reference "related requirements/evidence," but
+nothing validated that those ids actually resolved, and the field's intended
+referent was an untyped union (a requirement id? an evidence-ref id?
+something else?) with no way to tell which. Rather than freeze that
+ambiguity into v1, the field was removed; it is now an unknown field like
+any other. A real, typed relationship/trace contract - if one proves
+necessary - is a `schemaVersion: 2` concern, not a v1 patch.
+
 ## Grounding / provenance
 
 `evidenceRefs` entries (`{id, kind, sourceId?, location?}`) are **pointers**,
@@ -113,6 +131,16 @@ not raw content - `kind` is one of a closed vocabulary (`user_input`,
 `document`, `repository`, `project_profile`, `knowledge`). They identify a
 source; they do not embed a multi-kilobyte file body or an arbitrary payload.
 Future producers/consumers retrieve bounded repository evidence separately.
+
+**Every EvidenceRef must carry at least one locator: a valid `sourceId`
+and/or a valid `location`.** `sourceId` and `location` are each individually
+optional, but a reference with neither (or with only a present-but-invalid
+one, e.g. an empty string) is rejected - a reference is a real pointer
+because it actually points somewhere, not because it merely has an `id` a
+requirement's `evidenceRefIds` can name. This applies identically to every
+`kind`, and to both `RequirementModel.evidenceRefs` and
+`AutomationCandidate.evidenceRefs`/`rationaleEvidenceRefIds` (the same
+`EvidenceRef` shape and validator is shared by both contracts).
 
 ## Project isolation
 
@@ -129,10 +157,24 @@ failure-analysis pipeline.
 
 `AutomationPlan.plannedChanges[].path` reuses
 `scripts/ai/context-utils.js`'s existing, already-tested `classifyPathString()`
-path classifier - only a `SAFE_RELATIVE` classification is ever accepted.
-Absolute POSIX/Windows-drive/UNC paths, `http(s)://`/`file:` URLs, and
-traversal (`../`) are all rejected. This is validation of a **path string
-only** - `automation-plan.js` never touches the filesystem.
+path classifier as its first, security gate - only a `SAFE_RELATIVE`
+classification is ever accepted. Absolute POSIX/Windows-drive/UNC paths,
+`http(s)://`/`file:` URLs, and escaping traversal are all rejected. This is
+validation of a **path string only** - `automation-plan.js` never touches the
+filesystem.
+
+A second, plan-specific **canonicality** layer then applies on top (never a
+replacement for the security gate above): a planned path must be the bare
+repository root or directory (`.`, `./`), have no leading `./`, no `.` or
+`..` segment anywhere (even a non-escaping one like `foo/../bar`, which the
+security gate alone would allow), no trailing or doubled `/`, and no
+backslash separator (planned paths are cross-platform repository
+identifiers, not native host filesystem spellings). This exists so a v1 plan
+can never target the bare repository root or a directory-only, no-op
+location, and so two differently-spelled strings can never denote the same
+file. Within one plan, no two `plannedChanges` may target the exact same
+canonical path (F0 defines no operation-ordering semantics, so two entries
+for one path would be ambiguous).
 
 ## No provider, browser, or filesystem behavior
 

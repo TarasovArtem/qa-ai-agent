@@ -107,7 +107,14 @@ function validateAutomationCandidate(candidate, { expectedProjectId } = {}) {
     }
   }
 
-  // D4: closed v1 framework vocabulary only - never an arbitrary string.
+  // D4/Roadmap #22/23-F0-C1 (B7): closed v1 framework vocabulary only -
+  // never an arbitrary string. targetFrameworks is allowed to be non-empty
+  // on a DO_NOT_AUTOMATE or BLOCKED candidate (it may legitimately record
+  // which frameworks were contemplated when that decision was made) -
+  // this field alone never authorizes an AutomationPlan for a non-AUTOMATE
+  // candidate; that is enforced structurally by
+  // cross-model-validation.js's decision-compatibility check, not by
+  // restricting this field.
   if (!Array.isArray(candidate.targetFrameworks)) {
     errors.push(err("$.targetFrameworks", ERROR_CODES.MISSING_FIELD, "$.targetFrameworks must be an array"));
   } else {

@@ -117,6 +117,26 @@ function validateGenerationChain(chain, { expectedProjectId } = {}) {
       errors.push(err(`automationPlans[${i}].automationCandidateId`, ERROR_CODES.INVALID_REFERENCE, `unknown automationCandidate id "${plan.automationCandidateId}"`));
       return;
     }
+    // Roadmap #22/23-F0-C1: an AutomationPlan is a proposed IMPLEMENTATION
+    // of a candidate's recommendation - it may only exist for a candidate
+    // whose decision is AUTOMATE. A DO_NOT_AUTOMATE or BLOCKED candidate
+    // explicitly says no implementation should proceed; a plan referencing
+    // either is a recommendation/plan contradiction, not a framework
+    // mismatch, so it is checked and rejected before framework
+    // compatibility is even considered. targetFrameworks may still be
+    // non-empty on a non-AUTOMATE candidate (it can legitimately record
+    // which frameworks were contemplated when the decision was made) - it
+    // never by itself authorizes a plan.
+    if (candidate.decision !== "AUTOMATE") {
+      errors.push(
+        err(
+          `automationPlans[${i}].automationCandidateId`,
+          ERROR_CODES.INVARIANT_VIOLATION,
+          `automationPlans[${i}] references candidate "${candidate.id}" whose decision is "${candidate.decision}", not AUTOMATE - a plan may only exist for an AUTOMATE candidate`
+        )
+      );
+      return;
+    }
     if (!candidate.targetFrameworks.includes(plan.framework)) {
       errors.push(err(`automationPlans[${i}].framework`, ERROR_CODES.INVALID_VALUE, `framework "${plan.framework}" is not among candidate "${candidate.id}"'s target frameworks`));
     }

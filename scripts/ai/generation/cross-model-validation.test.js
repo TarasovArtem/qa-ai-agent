@@ -14,7 +14,7 @@ function baseRequirementModel(overrides = {}) {
     kind: "RequirementModel",
     id: "rm-1",
     projectId: PROJECT_ID,
-    evidenceRefs: [{ id: "ev-1", kind: "document" }],
+    evidenceRefs: [{ id: "ev-1", kind: "document", location: "docs/requirements.md" }],
     requirements: [{ id: "req-1", text: "The system shall do X.", evidenceRefIds: ["ev-1"] }],
     assumptions: [],
     openQuestions: [],
@@ -179,6 +179,42 @@ test("F6: plan framework matching one of the candidate's target frameworks is ac
     fullChain({ automationCandidates: [baseCandidate({ targetFrameworks: ["cypress", "playwright"] })], automationPlans: [basePlan({ framework: "cypress" })] })
   );
   assert.equal(result.ok, true);
+});
+
+// --- Roadmap #22/23-F0-C1: AutomationPlan decision-compatibility --------
+
+test("a plan referencing an AUTOMATE candidate is accepted", () => {
+  const result = validateGenerationChain(fullChain({ automationCandidates: [baseCandidate({ decision: "AUTOMATE", targetFrameworks: ["playwright"] })] }));
+  assert.equal(result.ok, true);
+});
+
+test("a plan referencing a DO_NOT_AUTOMATE candidate is rejected, even when the framework would otherwise match", () => {
+  const result = validateGenerationChain(
+    fullChain({ automationCandidates: [baseCandidate({ decision: "DO_NOT_AUTOMATE", targetFrameworks: ["playwright"] })] })
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
+});
+
+test("a plan referencing a BLOCKED candidate is rejected, even when the framework would otherwise match", () => {
+  const result = validateGenerationChain(fullChain({ automationCandidates: [baseCandidate({ decision: "BLOCKED", targetFrameworks: ["playwright"] })] }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
+});
+
+test("AUTOMATE + cypress candidate with a cypress plan is accepted", () => {
+  const result = validateGenerationChain(
+    fullChain({ automationCandidates: [baseCandidate({ decision: "AUTOMATE", targetFrameworks: ["cypress"] })], automationPlans: [basePlan({ framework: "cypress" })] })
+  );
+  assert.equal(result.ok, true);
+});
+
+test("AUTOMATE candidate with a plan framework it does not support is still rejected (framework check independent of decision check)", () => {
+  const result = validateGenerationChain(
+    fullChain({ automationCandidates: [baseCandidate({ decision: "AUTOMATE", targetFrameworks: ["cypress"] })], automationPlans: [basePlan({ framework: "playwright" })] })
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVALID_VALUE));
 });
 
 // --- F7: duplicates --------------------------------------------------------

@@ -15,7 +15,7 @@ function minimalModel(overrides = {}) {
     kind: KIND,
     id: "rm-1",
     projectId: PROJECT_ID,
-    evidenceRefs: [{ id: "ev-1", kind: "document" }],
+    evidenceRefs: [{ id: "ev-1", kind: "document", location: "docs/requirements.md" }],
     requirements: [{ id: "req-1", text: "The system shall do X.", evidenceRefIds: ["ev-1"] }],
     assumptions: [],
     openQuestions: [],
@@ -35,7 +35,7 @@ test("valid representative RequirementModel with assumptions/openQuestions is ac
       { id: "req-1", text: "The system shall do X.", evidenceRefIds: ["ev-1"] },
       { id: "req-2", text: "The system shall do Y.", evidenceRefIds: ["ev-1"] },
     ],
-    assumptions: [{ id: "as-1", text: "Assume Z", rationale: "no evidence either way", relatedIds: ["req-1"] }],
+    assumptions: [{ id: "as-1", text: "Assume Z", rationale: "no evidence either way" }],
     openQuestions: [
       { id: "oq-1", type: "OPEN_QUESTION", description: "What happens on timeout?", reason: "not specified" },
       { id: "oq-2", type: "AMBIGUITY", description: "Unclear ordering", reason: "two conflicting statements" },
@@ -158,6 +158,29 @@ test("requirement citing an unknown evidence ref is rejected (dangling provenanc
   assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVALID_REFERENCE));
 });
 
+// --- Roadmap #22/23-F0-C1: empty-pointer grounding correction -----------
+
+test("a requirement grounded only in an empty-pointer evidence ref is rejected - referencing an id is not the same as referencing real evidence", () => {
+  const model = minimalModel({ evidenceRefs: [{ id: "ev-1", kind: "repository" }] });
+  const result = validateRequirementModel(model);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.INVARIANT_VIOLATION));
+});
+
+test("relatedIds is no longer an accepted field on an assumption - it fails closed like any unknown field", () => {
+  const model = minimalModel({ assumptions: [{ id: "as-1", text: "t", rationale: "r", relatedIds: ["req-1"] }] });
+  const result = validateRequirementModel(model);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.UNKNOWN_FIELD && e.path.includes("relatedIds")));
+});
+
+test("relatedIds is no longer an accepted field on an open question - it fails closed like any unknown field", () => {
+  const model = minimalModel({ openQuestions: [{ id: "oq-1", type: "OPEN_QUESTION", description: "d", reason: "r", relatedIds: ["req-1"] }] });
+  const result = validateRequirementModel(model);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === ERROR_CODES.UNKNOWN_FIELD && e.path.includes("relatedIds")));
+});
+
 test("duplicate requirement id is rejected", () => {
   const model = minimalModel({
     requirements: [
@@ -173,8 +196,8 @@ test("duplicate requirement id is rejected", () => {
 test("duplicate evidence ref id is rejected", () => {
   const model = minimalModel({
     evidenceRefs: [
-      { id: "ev-1", kind: "document" },
-      { id: "ev-1", kind: "repository" },
+      { id: "ev-1", kind: "document", location: "docs/a.md" },
+      { id: "ev-1", kind: "repository", location: "docs/b.md" },
     ],
   });
   const result = validateRequirementModel(model);
