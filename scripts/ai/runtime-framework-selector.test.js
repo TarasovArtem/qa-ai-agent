@@ -212,6 +212,87 @@ test("SEL_15 an unsupported selector value never appears in the thrown error, ev
   }
 });
 
+// --- D21E-2: non-string/non-absent selectors fail closed, never coerced ---
+//
+// Before this hardening, resolveFrameworkId() called `String(rawValue).trim()`
+// unconditionally - so `[]` silently became `""` (the Cypress default, as
+// if no selector had been given at all) and `["playwright"]` silently
+// became `"playwright"` (a real adapter selection driven purely by
+// Array.prototype's own toString(), never a string the caller actually
+// supplied). Every non-string, non-absent input below must now fail
+// closed with RuntimeFrameworkError, with no adapter selected and no
+// object content echoed into the error.
+
+test("D21E-2 an empty array selector fails closed - never silently the Cypress default", () => {
+  assert.throws(() => resolveFrameworkId([]), RuntimeFrameworkError);
+  assert.throws(() => selectRuntimeAdapter([]), RuntimeFrameworkError);
+});
+
+test("D21E-2 an array containing a supported framework name still fails closed - never an accidental selection", () => {
+  assert.throws(() => resolveFrameworkId(["playwright"]), RuntimeFrameworkError);
+  assert.throws(() => selectRuntimeAdapter(["playwright"]), RuntimeFrameworkError);
+});
+
+test("D21E-2 a plain object selector fails closed", () => {
+  assert.throws(() => resolveFrameworkId({}), RuntimeFrameworkError);
+});
+
+test("D21E-2 an object with a crafted toString() fails closed without ever invoking it to pick an adapter", () => {
+  const crafted = { toString: () => "playwright" };
+  assert.throws(() => resolveFrameworkId(crafted), RuntimeFrameworkError);
+  assert.throws(() => selectRuntimeAdapter(crafted), RuntimeFrameworkError);
+});
+
+test("D21E-2 numeric selectors fail closed", () => {
+  assert.throws(() => resolveFrameworkId(42), RuntimeFrameworkError);
+  assert.throws(() => resolveFrameworkId(0), RuntimeFrameworkError);
+});
+
+test("D21E-2 boolean selectors fail closed", () => {
+  assert.throws(() => resolveFrameworkId(true), RuntimeFrameworkError);
+  assert.throws(() => resolveFrameworkId(false), RuntimeFrameworkError);
+});
+
+test("D21E-2 a Symbol selector fails closed", () => {
+  assert.throws(() => resolveFrameworkId(Symbol("playwright")), RuntimeFrameworkError);
+});
+
+test("D21E-2 a function selector fails closed", () => {
+  assert.throws(() => resolveFrameworkId(function () {}), RuntimeFrameworkError);
+});
+
+test("D21E-2 a thenable/Promise-like selector fails closed, never awaited or treated as a string", () => {
+  const thenable = { then: () => {} };
+  assert.throws(() => resolveFrameworkId(thenable), RuntimeFrameworkError);
+});
+
+test("D21E-2 the rejected value's own content is never echoed into the error message", () => {
+  const crafted = { toString: () => "SENSITIVE_MARKER_D21E2" };
+  try {
+    resolveFrameworkId(crafted);
+    assert.fail("expected a throw");
+  } catch (err) {
+    assert.ok(err instanceof RuntimeFrameworkError);
+    assert.ok(!err.message.includes("SENSITIVE_MARKER_D21E2"));
+    assert.ok(err.message.includes("string"));
+  }
+});
+
+test("D21E-2 null remains the documented absent case and still resolves to the Cypress default (unchanged)", () => {
+  assert.equal(resolveFrameworkId(null), "cypress");
+  assert.equal(selectRuntimeAdapter(null), cypressAdapter);
+});
+
+test("D21E-2 existing string-selector regression is entirely unchanged", () => {
+  assert.equal(resolveFrameworkId(undefined), "cypress");
+  assert.equal(resolveFrameworkId(""), "cypress");
+  assert.equal(resolveFrameworkId("   "), "cypress");
+  assert.equal(resolveFrameworkId("cypress"), "cypress");
+  assert.equal(resolveFrameworkId("CYPRESS"), "cypress");
+  assert.equal(resolveFrameworkId(" playwright "), "playwright");
+  assert.throws(() => resolveFrameworkId("jest"), RuntimeFrameworkError);
+});
+
 // --- CLI process-level proof (Phase 10/24): real non-zero exit -------------
 
 test("CLI: `node collect-context.js` with an unsupported QA_FRAMEWORK exits non-zero, bounded error, marker absent from stderr", () => {

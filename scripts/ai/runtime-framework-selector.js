@@ -50,15 +50,38 @@ const ADAPTERS = Object.freeze({
 // Pure: normalizes and validates a raw selector value into one of the
 // closed set of canonical framework ids this repository supports - never
 // touches the filesystem, network, environment, or any adapter itself.
-// Absent/empty/whitespace-only input is treated as "no explicit selection"
-// and resolves to DEFAULT_FRAMEWORK; a genuinely supplied, non-empty,
+// Absent (undefined/null) input is treated as "no explicit selection" and
+// resolves to DEFAULT_FRAMEWORK; a genuinely supplied, non-empty,
 // unrecognized value is a configuration error, never silently coerced to
 // a supported one, and never falls back to any framework (including
 // DEFAULT_FRAMEWORK itself).
+//
+// D21E-2 (pre-#21G hardening): the input contract is exactly {undefined,
+// null, string} - anything else (array, plain object, number, boolean,
+// symbol, function, thenable, ...) is rejected outright, BEFORE any
+// String() coercion is attempted. This module used to call
+// `String(rawValue).trim()` unconditionally, which silently turned e.g.
+// `[]` into `""` (empty -> the Cypress default, exactly as if no selector
+// had been supplied at all) and `["playwright"]` into `"playwright"` (an
+// accidental, never-intended selection route driven by Array.prototype's
+// own toString() rather than a real string the caller supplied). Neither
+// outcome is safe: both let a non-string, non-configuration value quietly
+// pick a real adapter through JS's implicit coercion rules instead of
+// failing closed like any other malformed selector.
 function resolveFrameworkId(rawValue) {
   if (rawValue === undefined || rawValue === null) return DEFAULT_FRAMEWORK;
 
-  const trimmed = String(rawValue).trim();
+  if (typeof rawValue !== "string") {
+    // Never String()-coerces or otherwise echoes the rejected value itself
+    // - only its typeof - so an object's own toString()/Symbol.toPrimitive
+    // can never influence the error text, and no object content is
+    // reflected back to the caller.
+    throw new RuntimeFrameworkError(
+      `QA_FRAMEWORK selector must be a string (or absent). Received type: ${typeof rawValue}.`
+    );
+  }
+
+  const trimmed = rawValue.trim();
   if (trimmed.length === 0) return DEFAULT_FRAMEWORK;
 
   const normalized = trimmed.toLowerCase();

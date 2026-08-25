@@ -80,6 +80,57 @@ test("classifyPathString: non-string/empty input is INVALID", () => {
   assert.equal(classifyPathString(42), PATH_KIND.INVALID);
 });
 
+// --- D21D-2 (pre-#21G hardening): malformed file:-URI-like forms ------------
+//
+// URL_LIKE_PATTERN alone requires a full "scheme://" - a degenerate
+// file-URI-like reporter value carrying only one or zero slashes after the
+// colon used to fall all the way through to SAFE_RELATIVE (it matches
+// neither the Windows-drive nor the POSIX-absolute pattern either), which
+// would let it flow onward through resolveSafeSpecPath()/
+// resolveSafeLocalAttachmentPath() as if it were an ordinary safe relative
+// path. Every one of these forms must now classify as URL_LIKE and never
+// SAFE_RELATIVE.
+
+test("classifyPathString: malformed file:-URI-like forms (one or zero slashes) are URL_LIKE, never SAFE_RELATIVE", () => {
+  assert.equal(classifyPathString("file:C:\\foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("file:/tmp/foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("FILE:C:\\foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("FILE:/tmp/foo"), PATH_KIND.URL_LIKE);
+});
+
+test("classifyPathString: well-formed file:// URI forms remain URL_LIKE regardless of scheme casing", () => {
+  assert.equal(classifyPathString("file:///tmp/foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("FiLe:///tmp/foo"), PATH_KIND.URL_LIKE);
+});
+
+test("classifyPathString: legitimate Windows drive paths are unaffected by the file:-scheme hardening", () => {
+  assert.equal(classifyPathString("C:\\foo"), PATH_KIND.WINDOWS_DRIVE_ABSOLUTE);
+  assert.equal(classifyPathString("C:/foo"), PATH_KIND.WINDOWS_DRIVE_ABSOLUTE);
+  assert.equal(classifyPathString("D:\\repo\\file.js"), PATH_KIND.WINDOWS_DRIVE_ABSOLUTE);
+});
+
+test("classifyPathString: normal relative reporter paths are unaffected by the file:-scheme hardening", () => {
+  assert.equal(classifyPathString("tests/smoke.spec.js"), PATH_KIND.SAFE_RELATIVE);
+  assert.equal(classifyPathString("playwright/tests/smoke.spec.js"), PATH_KIND.SAFE_RELATIVE);
+  assert.equal(classifyPathString("reports/playwright/test-results/foo.png"), PATH_KIND.SAFE_RELATIVE);
+});
+
+test("D21D-2 resolveSafeSpecPath: malformed file:-URI-like values are rejected, never preserved as a spec path", () => {
+  for (const raw of ["file:C:\\foo", "file:/tmp/foo", "FILE:C:\\foo", "FILE:/tmp/foo"]) {
+    const result = resolveSafeSpecPath(raw);
+    assert.equal(result.value, null, `expected null value for ${raw}`);
+    assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
+  }
+});
+
+test("D21D-2 resolveSafeLocalAttachmentPath: malformed file:-URI-like values are rejected, never resolved against the filesystem", () => {
+  for (const raw of ["file:C:\\foo", "file:/tmp/foo", "FILE:C:\\foo", "FILE:/tmp/foo"]) {
+    const result = resolveSafeLocalAttachmentPath(raw);
+    assert.equal(result.value, null, `expected null value for ${raw}`);
+    assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
+  }
+});
+
 // --- resolveSafeSpecPath (Roadmap #21D, R2) ---------------------------------
 
 test("PATH_1 resolveSafeSpecPath: a safe relative spec path is preserved, normalized to forward slashes", () => {
@@ -237,4 +288,66 @@ test("ATT_7 resolveSafeLocalAttachmentPath: a nonexistent local-looking path fai
 test("resolveSafeLocalAttachmentPath: absent/empty input is null but not rejected", () => {
   assert.deepEqual(resolveSafeLocalAttachmentPath(null), { value: null, rejected: false });
   assert.deepEqual(resolveSafeLocalAttachmentPath(""), { value: null, rejected: false });
+});
+
+// =========================================================================
+// D21D-1 (pre-#21G hardening): a dedicated, committed regression locking the
+// specific contract that was previously only "safe by implementation/probe"
+// - a genuinely relative attachment.path (the shape #21B's own real
+// Playwright reporter proof never actually produced, since it always
+// emitted absolute paths, but which resolveSafeLocalAttachmentPath() has
+// always handled via `path.join(ROOT, rawPath)`) is anchored to the
+// repository ROOT constant, never to whatever process.cwd() the caller
+// happens to be running from - proven here with a real, genuinely
+// separate child process, not an unsafe process.chdir() mutation shared
+// with every other test in this file.
+// =========================================================================
+
+const { execFileSync } = require("node:child_process");
+
+test("D21D-1 relative attachment.path resolves anchored to repository ROOT, accepted as canonical repo-relative text", (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-d21d1-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const absoluteFixture = path.join(tmpDir, "shot.png");
+  fs.writeFileSync(absoluteFixture, "");
+
+  const relativeFromRoot = path.relative(ROOT, absoluteFixture).split(path.sep).join("/");
+  const result = resolveSafeLocalAttachmentPath(relativeFromRoot);
+
+  assert.equal(result.rejected, false);
+  assert.equal(result.value, relativeFromRoot);
+  assert.equal(path.isAbsolute(result.value), false);
+  assert.equal(path.resolve(ROOT, result.value), fs.realpathSync(absoluteFixture));
+});
+
+test("D21D-1 relative attachment.path resolution is independent of the caller's process.cwd() (real child process, not process.chdir())", (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-d21d1-cwd-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const absoluteFixture = path.join(tmpDir, "shot.png");
+  fs.writeFileSync(absoluteFixture, "");
+  const relativeFromRoot = path.relative(ROOT, absoluteFixture).split(path.sep).join("/");
+
+  // Baseline: resolved from this process, whose cwd already happens to be
+  // the repo root (the standard `node --test` invocation convention this
+  // repository uses throughout).
+  const fromRepoRootCwd = resolveSafeLocalAttachmentPath(relativeFromRoot);
+  assert.equal(fromRepoRootCwd.rejected, false);
+  assert.ok(fromRepoRootCwd.value);
+
+  // A genuinely separate child process, with cwd deliberately set to OS
+  // temp (never the repo root, never any repo subdirectory) - proves the
+  // resolution is anchored to context-utils.js's own ROOT constant
+  // (path.resolve(__dirname, "..", "..")), never to the invoking
+  // process's own cwd.
+  const foreignCwd = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-d21d1-foreign-cwd-"));
+  t.after(() => fs.rmSync(foreignCwd, { recursive: true, force: true }));
+  const probeScript = `
+    const { resolveSafeLocalAttachmentPath } = require(${JSON.stringify(path.join(__dirname, "context-utils.js"))});
+    process.stdout.write(JSON.stringify(resolveSafeLocalAttachmentPath(${JSON.stringify(relativeFromRoot)})));
+  `;
+  const childOutput = execFileSync(process.execPath, ["-e", probeScript], { cwd: foreignCwd, encoding: "utf8" });
+  const fromForeignCwd = JSON.parse(childOutput);
+
+  assert.deepEqual(fromForeignCwd, fromRepoRootCwd, "resolution must be byte-identical regardless of the caller's cwd");
+  assert.notEqual(process.cwd(), foreignCwd, "sanity: the child's cwd was genuinely different from this process's own cwd");
 });

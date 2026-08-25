@@ -63,6 +63,19 @@ const PATH_KIND = Object.freeze({
 // character before the colon, so it can never satisfy this pattern merely
 // for containing a colon.
 const URL_LIKE_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]+:\/\//;
+// D21D-2 (pre-#21G hardening): URL_LIKE_PATTERN alone requires a full
+// "scheme://" - it does not catch a malformed/degenerate file-URI-like
+// reporter value carrying only one or zero slashes after the colon (e.g.
+// "file:C:\foo", "file:/tmp/foo"), which used to fall all the way through
+// to SAFE_RELATIVE (neither a Windows-drive nor a POSIX-absolute pattern
+// matches "file:..." either). Deliberately a narrow, case-insensitive
+// literal-scheme check rather than a general URI-scheme regex: a generic
+// `^[a-z]+:` pattern would misclassify a genuine Windows drive path
+// ("C:\foo") as scheme "C", which must keep resolving as
+// WINDOWS_DRIVE_ABSOLUTE. "file:" is never a legitimate leading path
+// segment anywhere in this repository's own relative paths, so this can
+// never collide with a real relative reporter path.
+const FILE_SCHEME_PATTERN = /^file:/i;
 const WINDOWS_DRIVE_PATTERN = /^[A-Za-z]:[\\/]/;
 // "\\server\share..." or "//server/share..." - exactly two leading
 // separators followed by a non-separator character. A plain POSIX root
@@ -73,6 +86,7 @@ function classifyPathString(raw) {
   if (typeof raw !== "string" || raw.length === 0) return PATH_KIND.INVALID;
 
   if (URL_LIKE_PATTERN.test(raw)) return PATH_KIND.URL_LIKE;
+  if (FILE_SCHEME_PATTERN.test(raw)) return PATH_KIND.URL_LIKE;
   if (WINDOWS_UNC_PATTERN.test(raw)) return PATH_KIND.WINDOWS_UNC;
   if (WINDOWS_DRIVE_PATTERN.test(raw)) return PATH_KIND.WINDOWS_DRIVE_ABSOLUTE;
   if (raw.startsWith("/")) return PATH_KIND.POSIX_ABSOLUTE;

@@ -1,5 +1,5 @@
 // @ts-check
-const { test, expect } = require("@playwright/test");
+const { test, expect, errors } = require("@playwright/test");
 
 // Roadmap #21F: minimal production Playwright smoke proof - not a port of
 // the Cypress suite, and deliberately not built around the historically
@@ -23,11 +23,24 @@ test("selecting the Gastronomy category checks it and keeps the map visible", as
   // the current DOM state and returns immediately, which would race
   // against the dialog's own render timing rather than actually waiting
   // for it).
+  //
+  // D21F-1 (pre-#21G hardening): only the expected "dialog never appeared
+  // within the bound" outcome is tolerated here - that is genuinely an
+  // errors.TimeoutError (the actual, installed @playwright/test 1.62.1
+  // export, verified via a real triggered timeout: `err instanceof
+  // errors.TimeoutError` is true), never a bare `.catch(() => false)` that
+  // would also silently swallow an unrelated failure (a detached page, a
+  // closed browser, a genuine locator/selector error). Any error that is
+  // not a TimeoutError is rethrown rather than treated as "cookie dialog
+  // absent."
   const acceptCookies = page.getByRole("button", { name: "Accept" });
-  const cookieDialogAppeared = await acceptCookies
-    .waitFor({ state: "visible", timeout: 5000 })
-    .then(() => true)
-    .catch(() => false);
+  let cookieDialogAppeared = true;
+  try {
+    await acceptCookies.waitFor({ state: "visible", timeout: 5000 });
+  } catch (err) {
+    if (!(err instanceof errors.TimeoutError)) throw err;
+    cookieDialogAppeared = false;
+  }
   if (cookieDialogAppeared) {
     await acceptCookies.click();
   }

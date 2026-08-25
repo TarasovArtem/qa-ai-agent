@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const {
   isPathAllowed,
   readFileSafe,
@@ -257,6 +258,64 @@ test("main({adapter}): an explicitly injected adapter is authoritative even when
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   assert.equal(written.metadata.framework, "fake-test-adapter");
   assert.notEqual(written.metadata.framework, "playwright");
+});
+
+// D21E-1 (pre-#21G hardening): the real, spawned, actual production CLI
+// (`node scripts/ai/collect-context.js`, not selectRuntimeAdapter() or
+// main({adapter}) called directly) with QA_FRAMEWORK genuinely absent from
+// the child's environment - the strongest possible proof that the
+// zero-configuration production entrypoint really does select Cypress
+// end-to-end, upgrading ZERO_ARG_CYPRESS_RUNTIME_EQUIVALENCE from the
+// prior source-level/referential-equality evidence to a full spawned-
+// process proof. Uses this file's own owned reports/cypress and
+// reports/ai/context.json paths (cleanOwnedReportPaths()), so it cannot
+// collide with any other test file's real-path main() usage.
+test("D21E-1 spawned CLI, QA_FRAMEWORK absent: the actual production entrypoint selects Cypress end-to-end", () => {
+  const outputFile = path.join(ROOT, "reports", "ai", "context.json");
+  const reportsDir = path.join(ROOT, "reports", "cypress");
+  cleanOwnedReportPaths();
+  try {
+    fs.mkdirSync(reportsDir, { recursive: true });
+    const marker = "D21E1_ZERO_CONFIG_CYPRESS_MARKER";
+    fs.writeFileSync(
+      path.join(reportsDir, "report.json"),
+      JSON.stringify({
+        stats: { tests: 1, passes: 1, failures: 0, pending: 0, duration: 3 },
+        results: [
+          {
+            file: "cypress/e2e/tests/category_tree_behavior.cy.js",
+            suites: [
+              { title: marker, suites: [], tests: [{ title: "spawned CLI fixture test", state: "passed", duration: 3 }] },
+            ],
+          },
+        ],
+      })
+    );
+
+    const env = { ...process.env };
+    delete env.QA_FRAMEWORK;
+    assert.equal(Object.prototype.hasOwnProperty.call(env, "QA_FRAMEWORK"), false, "sanity: QA_FRAMEWORK must be genuinely absent from the child's environment");
+
+    const result = spawnSync(process.execPath, [path.join(ROOT, "scripts", "ai", "collect-context.js")], {
+      cwd: ROOT,
+      env,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, "the zero-config production CLI must exit successfully");
+    assert.ok(!result.stdout.includes("playwright"), "stdout must never mention Playwright for a zero-config Cypress run");
+
+    const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+    assert.equal(written.metadata.framework, "cypress");
+    assert.equal(written.metadata.projectId, TARGOMO_PROJECT_PROFILE.id);
+    // Provenance: the normalized context genuinely derives from THIS
+    // controlled fixture, not a stale or fabricated one - the marker only
+    // exists in the fixture report just written above.
+    assert.equal(written.testResults.totals.tests, 1);
+    assert.equal(written.testResults.totals.passed, 1);
+  } finally {
+    cleanOwnedReportPaths();
+  }
 });
 
 // =========================================================================
