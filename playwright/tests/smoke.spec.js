@@ -16,10 +16,19 @@ test("selecting the Gastronomy category checks it and keeps the map visible", as
   // Bounded, optional cookie-consent handling (see the #19.7F-C organic
   // Firefox forensic review, which observed this dialog undismissed in
   // fresh sessions) - dismiss it if present, continue unconditionally if
-  // not. Never a fixed sleep: the timeout only bounds how long this
-  // specific optional check waits before concluding the dialog is absent.
+  // not. Never a fixed sleep: locator.waitFor({state, timeout}) genuinely
+  // waits up to the bound before concluding the dialog is absent (unlike
+  // locator.isVisible({timeout}), whose timeout option is deprecated and
+  // ignored by the installed @playwright/test version - it inspects only
+  // the current DOM state and returns immediately, which would race
+  // against the dialog's own render timing rather than actually waiting
+  // for it).
   const acceptCookies = page.getByRole("button", { name: "Accept" });
-  if (await acceptCookies.isVisible({ timeout: 5000 }).catch(() => false)) {
+  const cookieDialogAppeared = await acceptCookies
+    .waitFor({ state: "visible", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (cookieDialogAppeared) {
     await acceptCookies.click();
   }
 
