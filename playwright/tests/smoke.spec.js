@@ -62,4 +62,16 @@ test("selecting the Gastronomy category checks it and keeps the map visible", as
   await expect(gastronomyCheckboxInput).toBeChecked();
 
   await expect(page.locator(".map-container")).toBeVisible();
+
+  // Roadmap #21I-B: controlled, deterministic evidence probe - deliberately
+  // added AFTER every legitimate assertion above has already passed (the
+  // real SUT behavior this smoke exists to check is fully proven by that
+  // point). This assertion can never pass; it exists solely to produce one
+  // real, natural GitHub Actions Playwright failure so the production
+  // failure-evidence pipeline (adapter, R1/R2/R3, History, correlation,
+  // triage, provider analysis, policy) can be proven end-to-end against a
+  // genuine CI run. Never merged to main - see the #21I-B evidence branch's
+  // own PR description. CONTROLLED_EVIDENCE_PROBE_21I_B is the bounded,
+  // non-sensitive marker this experiment's evidence review traces back to.
+  expect(true, "CONTROLLED_EVIDENCE_PROBE_21I_B").toBe(false);
 });
