@@ -39,6 +39,7 @@ const { validateProvider, validateProviderResponse } = require("./providers/prov
 const { applyAgentPolicy } = require("./agent-policy");
 const { loadKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
+const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const CONTEXT_FILE = path.join(ROOT, "reports", "ai", "context.json");
@@ -251,22 +252,28 @@ function pickSourceContext(context) {
     ci: m.ci ?? null,
     contextGeneratedAt: context.generatedAt || null,
     // Deterministic cross-browser correlation metadata (see PR #33's
-    // aggregate-browser-context.js) - carried through onto ai-report.json
-    // unchanged, the same way it was already carried into the prompt (see
+    // aggregate-browser-context.js) - carried through onto ai-report.json,
+    // the same way it was already carried into the prompt (see
     // qa-agent-prompt.js), purely for observability: future
     // evaluation/tooling can tell single- from multi-browser failures
     // without re-deriving it. null for contexts that weren't produced by
     // the aggregator (e.g. a local run). Roadmap #21G-C1: restricted to
     // the primary failure's own framework only - see aggregate-browser-
-    // context.js's own module comment.
-    browserCorrelation: context.browserCorrelation ?? null,
+    // context.js's own module comment. Roadmap #21H (D21G-3): explicitly
+    // re-projected through correlation-projection.js rather than passed
+    // through wholesale - see that file's own module comment for why a
+    // bare `context.browserCorrelation ?? null` passthrough was no longer
+    // sufficient once History added another framework-sensitive evidence
+    // dimension.
+    browserCorrelation: projectBrowserCorrelation(context.browserCorrelation),
     // Roadmap #21G-C1: the separate cross-framework rollup (see
     // aggregate-browser-context.js's buildFrameworkCorrelation() and
-    // qa-agent-prompt.js's rule 10b) - carried through unchanged, for the
-    // same observability reason as browserCorrelation above. Deliberately
-    // never merged with browserCorrelation: this is workflow-level
-    // evidence, never same-test evidence.
-    frameworkCorrelation: context.frameworkCorrelation ?? null,
+    // qa-agent-prompt.js's rule 10b) - carried through for the same
+    // observability reason as browserCorrelation above. Deliberately never
+    // merged with browserCorrelation: this is workflow-level evidence,
+    // never same-test evidence. Roadmap #21H (D21G-3): same explicit
+    // bounded re-projection as browserCorrelation above.
+    frameworkCorrelation: projectFrameworkCorrelation(context.frameworkCorrelation),
     // The EXACT QA Knowledge units this analysis's provider call actually
     // received (Roadmap #16C) - read directly off context.relevantKnowledge
     // (already attached in buildFailureReport(), before runProviderAnalysis

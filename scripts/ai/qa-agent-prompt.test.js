@@ -212,6 +212,68 @@ test("buildUserPrompt: browserCorrelation is explicitly null when absent from co
   assert.match(prompt, /"browserCorrelation": null/);
 });
 
+// --- Roadmap #21H (D21G-3): end-to-end bounded projection, not just the --
+// --- isolated correlation-projection.js unit tests -----------------------
+
+test("buildUserPrompt: an adversarial extra property on browserCorrelation cannot reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    browserCorrelation: {
+      browsers: ["chrome"],
+      failedBrowsers: ["chrome"],
+      passedBrowsers: [],
+      primaryBrowser: "chrome",
+      additionalFailedBrowsers: [],
+      failureScope: "single-browser",
+      sameFailureSignature: null,
+      privateMarker: "PRIVATE_BROWSERCORRELATION_MARKER_21H",
+    },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.ok(!prompt.includes("PRIVATE_BROWSERCORRELATION_MARKER_21H"));
+});
+
+test("buildUserPrompt: an adversarial extra property on frameworkCorrelation (top-level, nested, and per-outcome) cannot reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    frameworkCorrelation: {
+      primaryFramework: "cypress",
+      outcomes: [
+        { framework: "cypress", outcome: "failure", extraOutcomeMarker: "PRIVATE_OUTCOME_MARKER_21H" },
+        { framework: "playwright", outcome: "success" },
+      ],
+      privateMarker: "PRIVATE_FRAMEWORK_MARKER_21H",
+      nested: { secret: "PRIVATE_NESTED_MARKER_21H" },
+    },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.ok(!prompt.includes("PRIVATE_FRAMEWORK_MARKER_21H"));
+  assert.ok(!prompt.includes("PRIVATE_NESTED_MARKER_21H"));
+  assert.ok(!prompt.includes("PRIVATE_OUTCOME_MARKER_21H"));
+  // The two legitimate outcomes must still be present, unaffected.
+  assert.match(prompt, /"framework": "cypress"/);
+  assert.match(prompt, /"framework": "playwright"/);
+});
+
+test("buildUserPrompt: an unrecognized framework/outcome string cannot reach the rendered prompt", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    frameworkCorrelation: { primaryFramework: "PRIVATE_MARKER_FRAMEWORK", outcomes: [{ framework: "PRIVATE_MARKER_FRAMEWORK", outcome: "PRIVATE_MARKER_OUTCOME" }] },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.ok(!prompt.includes("PRIVATE_MARKER_FRAMEWORK"));
+  assert.ok(!prompt.includes("PRIVATE_MARKER_OUTCOME"));
+});
+
 // --- Roadmap #21G-C1: frameworkCorrelation (separate from browserCorrelation) --
 
 test("buildUserPrompt: includes frameworkCorrelation when present on context, as a field separate from browserCorrelation", () => {

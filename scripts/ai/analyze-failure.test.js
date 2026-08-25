@@ -905,6 +905,50 @@ test("buildFailureReport: sourceContext.frameworkCorrelation carries through unc
   assert.ok(!report.sourceContext.browserCorrelation.browsers.includes("playwright"));
 });
 
+// --- Roadmap #21H (D21G-3): end-to-end bounded projection ------------------
+
+test("buildFailureReport: an adversarial extra property on browserCorrelation cannot reach report.sourceContext", async () => {
+  const browserCorrelation = {
+    browsers: ["chrome"],
+    failedBrowsers: ["chrome"],
+    passedBrowsers: [],
+    primaryBrowser: "chrome",
+    additionalFailedBrowsers: [],
+    failureScope: "single-browser",
+    sameFailureSignature: null,
+    privateMarker: "PRIVATE_BROWSERCORRELATION_MARKER_21H",
+  };
+  const provider = providerReturning([goodItem()]);
+  const report = await buildFailureReport({ ...context, browserCorrelation }, { provider, history: null, relevantKnowledge: [] });
+  assert.ok(!("privateMarker" in report.sourceContext.browserCorrelation));
+  assert.ok(!JSON.stringify(report.sourceContext).includes("PRIVATE_BROWSERCORRELATION_MARKER_21H"));
+});
+
+test("buildFailureReport: adversarial extra properties on frameworkCorrelation (top-level, nested, per-outcome) cannot reach report.sourceContext", async () => {
+  const frameworkCorrelation = {
+    primaryFramework: "cypress",
+    outcomes: [
+      { framework: "cypress", outcome: "failure", extraOutcomeMarker: "PRIVATE_OUTCOME_MARKER_21H" },
+      { framework: "playwright", outcome: "success" },
+    ],
+    privateMarker: "PRIVATE_FRAMEWORK_MARKER_21H",
+    nested: { secret: "PRIVATE_NESTED_MARKER_21H" },
+  };
+  const provider = providerReturning([goodItem()]);
+  const report = await buildFailureReport({ ...context, frameworkCorrelation }, { provider, history: null, relevantKnowledge: [] });
+  const serialized = JSON.stringify(report.sourceContext);
+  assert.ok(!serialized.includes("PRIVATE_FRAMEWORK_MARKER_21H"));
+  assert.ok(!serialized.includes("PRIVATE_NESTED_MARKER_21H"));
+  assert.ok(!serialized.includes("PRIVATE_OUTCOME_MARKER_21H"));
+  assert.deepEqual(report.sourceContext.frameworkCorrelation, {
+    primaryFramework: "cypress",
+    outcomes: [
+      { framework: "cypress", outcome: "failure" },
+      { framework: "playwright", outcome: "success" },
+    ],
+  });
+});
+
 // --- agent policy integration ----------------------------------------------
 // Proves the full pipeline - provider -> parse -> validate -> agent policy
 // -> report - actually applies scripts/ai/agent-policy.js, not just that

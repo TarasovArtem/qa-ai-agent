@@ -17,6 +17,7 @@
 "use strict";
 
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
 
 // Single source of truth for valid classifications - reused by
 // analyze-failure.js's response validation, so the two can never drift
@@ -240,13 +241,19 @@ function buildUserPrompt(context) {
     // never computed or guessed by the model itself. null when this
     // context wasn't produced by that aggregator (e.g. a local run).
     // Roadmap #21G-C1: restricted to the primary failure's own framework
-    // only - never includes an independent framework's job.
-    browserCorrelation: context.browserCorrelation || null,
+    // only - never includes an independent framework's job. Roadmap #21H
+    // (D21G-3): explicitly re-projected through correlation-projection.js
+    // (see that file's own module comment) rather than forwarded
+    // wholesale - only the exact bounded field set either object has ever
+    // legitimately carried can reach this prompt.
+    browserCorrelation: projectBrowserCorrelation(context.browserCorrelation),
     // Roadmap #21G-C1: separate, deliberately smaller cross-framework
     // rollup (see rule 10b) - workflow-level outcomes only, never
     // same-test evidence. null when this context wasn't produced by the
     // aggregator, or when only one framework ran in this workflow.
-    frameworkCorrelation: context.frameworkCorrelation || null,
+    // Roadmap #21H (D21G-3): same explicit bounded re-projection as
+    // browserCorrelation above.
+    frameworkCorrelation: projectFrameworkCorrelation(context.frameworkCorrelation),
     // Deterministic, offline QA Knowledge selection (see
     // scripts/ai/knowledge/, Roadmap #16A) - computed entirely by
     // application code before this prompt is ever built, never by the
