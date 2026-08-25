@@ -256,8 +256,17 @@ function pickSourceContext(context) {
     // qa-agent-prompt.js), purely for observability: future
     // evaluation/tooling can tell single- from multi-browser failures
     // without re-deriving it. null for contexts that weren't produced by
-    // the aggregator (e.g. a local run).
+    // the aggregator (e.g. a local run). Roadmap #21G-C1: restricted to
+    // the primary failure's own framework only - see aggregate-browser-
+    // context.js's own module comment.
     browserCorrelation: context.browserCorrelation ?? null,
+    // Roadmap #21G-C1: the separate cross-framework rollup (see
+    // aggregate-browser-context.js's buildFrameworkCorrelation() and
+    // qa-agent-prompt.js's rule 10b) - carried through unchanged, for the
+    // same observability reason as browserCorrelation above. Deliberately
+    // never merged with browserCorrelation: this is workflow-level
+    // evidence, never same-test evidence.
+    frameworkCorrelation: context.frameworkCorrelation ?? null,
     // The EXACT QA Knowledge units this analysis's provider call actually
     // received (Roadmap #16C) - read directly off context.relevantKnowledge
     // (already attached in buildFailureReport(), before runProviderAnalysis

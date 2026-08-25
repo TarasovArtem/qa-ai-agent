@@ -9,6 +9,7 @@
     "chrome": "cypress run --spec 'cypress/e2e/**' --headless --browser chrome",
     "firefox": "cypress run --spec 'cypress/e2e/**' --headless --browser firefox",
     "edge": "cypress run --spec 'cypress/e2e/**' --headless --browser edge",
+    "test:e2e:playwright": "playwright test --config=playwright.config.js --project=chromium",
     "ai:collect": "node scripts/ai/collect-context.js",
     "ai:history": "node scripts/ai/collect-history.js",
     "ai:analyze": "node scripts/ai/analyze-failure.js",

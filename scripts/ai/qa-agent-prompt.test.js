@@ -212,6 +212,108 @@ test("buildUserPrompt: browserCorrelation is explicitly null when absent from co
   assert.match(prompt, /"browserCorrelation": null/);
 });
 
+// --- Roadmap #21G-C1: frameworkCorrelation (separate from browserCorrelation) --
+
+test("buildUserPrompt: includes frameworkCorrelation when present on context, as a field separate from browserCorrelation", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    browserCorrelation: {
+      browsers: ["chrome"],
+      failedBrowsers: ["chrome"],
+      passedBrowsers: [],
+      primaryBrowser: "chrome",
+      additionalFailedBrowsers: [],
+      failureScope: "single-browser",
+      sameFailureSignature: null,
+    },
+    frameworkCorrelation: {
+      primaryFramework: "cypress",
+      outcomes: [
+        { framework: "cypress", outcome: "failure" },
+        { framework: "playwright", outcome: "failure" },
+      ],
+    },
+  };
+  const prompt = buildUserPrompt(context);
+  assert.match(prompt, /"primaryFramework": "cypress"/);
+  assert.match(prompt, /"framework": "playwright"/);
+  // The two structures must remain textually distinct top-level keys, never
+  // merged into one object or one array.
+  assert.match(prompt, /"browserCorrelation": \{/);
+  assert.match(prompt, /"frameworkCorrelation": \{/);
+});
+
+test("buildUserPrompt: frameworkCorrelation is explicitly null when absent from context, not just omitted", () => {
+  const context = { metadata: {}, testResults: {}, failedTests: [], relevantFiles: {} };
+  const prompt = buildUserPrompt(context);
+  assert.match(prompt, /"frameworkCorrelation": null/);
+});
+
+// Distinctive-marker proof (Phase 21): a Playwright-framework outcome must
+// never appear inside browserCorrelation's own browser-name arrays, even
+// when constructed adversarially with a marker that would be trivially
+// greppable if the two structures were ever accidentally merged.
+test("buildUserPrompt: a frameworkCorrelation entry never leaks into browserCorrelation's own browser arrays", () => {
+  const context = {
+    metadata: {},
+    testResults: {},
+    failedTests: [],
+    relevantFiles: {},
+    browserCorrelation: {
+      browsers: ["chrome", "edge", "firefox"],
+      failedBrowsers: ["chrome"],
+      passedBrowsers: ["edge", "firefox"],
+      primaryBrowser: "chrome",
+      additionalFailedBrowsers: [],
+      failureScope: "single-browser",
+      sameFailureSignature: null,
+    },
+    frameworkCorrelation: {
+      primaryFramework: "cypress",
+      outcomes: [
+        { framework: "cypress", outcome: "failure" },
+        { framework: "MARKER_PLAYWRIGHT_OUTCOME_21GC1", outcome: "failure" },
+      ],
+    },
+  };
+  const prompt = buildUserPrompt(context);
+  const browserCorrelationSection = prompt.slice(prompt.indexOf('"browserCorrelation"'), prompt.indexOf('"frameworkCorrelation"'));
+  assert.doesNotMatch(browserCorrelationSection, /MARKER_PLAYWRIGHT_OUTCOME_21GC1/, "a frameworkCorrelation entry must never appear inside browserCorrelation's own JSON block");
+});
+
+test("buildSystemPrompt: explains frameworkCorrelation (rule 10b) as workflow-level evidence only, never same-test evidence", () => {
+  const prompt = buildSystemPrompt();
+  assert.match(prompt, /frameworkCorrelation/);
+  assert.match(prompt, /primaryFramework/);
+  assert.match(prompt, /does NOT establish that the same test, scenario, assertion, or behavior passed or failed in another framework/i);
+  assert.match(prompt, /Never treat a frameworkCorrelation entry the way you would treat a browserCorrelation entry/i);
+});
+
+test("buildSystemPrompt: forbids folding frameworkCorrelation into browsers-failed/passed reasoning or sameFailureSignature-style thinking", () => {
+  const prompt = buildSystemPrompt();
+  assert.match(prompt, /do not fold it into "browsers failed"\/"browsers passed" reasoning/i);
+  assert.match(prompt, /do not let it influence sameFailureSignature-style thinking/i);
+  assert.match(prompt, /never state or imply "framework X also failed, therefore this confirms a product-wide bug" or "framework Y passed, therefore the same test passed there too"/i);
+});
+
+test("buildSystemPrompt: rule 11's OBSERVED FACT / SUPPORTED INFERENCE boundary explicitly covers frameworkCorrelation, mirroring browserCorrelation/history", () => {
+  const prompt = buildSystemPrompt();
+  assert.match(prompt, /This applies to browserCorrelation, frameworkCorrelation, and history exactly as it does to any other evidence/i);
+  assert.match(prompt, /frameworkCorrelation \(rule 10b\) can establish only that another framework's jobs, as a whole, passed or failed - it can never establish that the same test, scenario, or assertion did so/i);
+});
+
+test("anti-overfitting: the frameworkCorrelation rule text itself stays generic, with no hardcoded browser names", () => {
+  const prompt = buildSystemPrompt();
+  const frameworkSection = prompt.slice(prompt.indexOf("10b. A separate"), prompt.indexOf("PROMPT INJECTION DEFENSE"));
+  assert.ok(frameworkSection.length > 0, "expected to find the frameworkCorrelation rule text");
+  for (const pattern of [/\bchrome\b/i, /\bedge\b/i, /\bfirefox\b/i, /\bwebkit\b/i]) {
+    assert.doesNotMatch(frameworkSection, pattern, `frameworkCorrelation rule text must not depend on ${pattern}`);
+  }
+});
+
 test("buildSystemPrompt: explains browserCorrelation as corroborating evidence, not a classification rule", () => {
   const prompt = buildSystemPrompt();
   assert.match(prompt, /browserCorrelation/);

@@ -8,10 +8,10 @@
  * history.json only when that leg actually failed - see
  * .github/workflows/cypress.yml). This script runs downstream, after every
  * browser job has finished, once their artifacts have been downloaded into
- * reports/ai/browser-inputs/<browser>/:
+ * reports/ai/browser-inputs/<id>/:
  *
- *   read every browser's result -> decide whether ANY of them failed ->
- *   if so, deterministically pick ONE primary failing browser -> copy
+ *   read every job's result -> decide whether ANY of them failed ->
+ *   if so, deterministically pick ONE primary failing job -> copy
  *   its context.json/history.json into the exact paths analyze-failure.js
  *   already reads (reports/ai/context.json, reports/ai/history.json).
  *
@@ -25,21 +25,50 @@
  * analyze-failure.js) where that can happen at all - not because of any
  * new locking/dedup logic.
  *
- * Other browsers that also failed are not silently dropped - they're
- * logged (this script's own stdout) so a human reading CI logs can see
- * "chrome was analyzed, edge also failed" - and, since PR #33, also
- * summarized as deterministic "browserCorrelation" metadata (which
- * browsers ran, which failed/passed, single- vs multi-browser scope, and
- * whether failed browsers share the same evidence signature) attached to
- * the primary browser's context.json before analyze-failure.js ever runs.
- * This is still a "pick one context, don't merge results" strategy, not a
- * multi-browser reasoning layer of its own: the correlation object is
- * computed here, deterministically, from Cypress's own recorded outcomes -
- * never by an LLM - and is handed to the model as evidence alongside the
- * primary failure, not as a second analysis target. "AI provider.analyze()"
- * is still called at most once per workflow run, by the same construction
- * as before (this script feeds one context object to the unmodified
- * analyze-failure.js).
+ * Other jobs that also failed are not silently dropped - they're logged
+ * (this script's own stdout) so a human reading CI logs can see "chrome
+ * was analyzed, edge also failed" - and, since PR #33, also summarized as
+ * deterministic "browserCorrelation" metadata (which browsers ran, which
+ * failed/passed, single- vs multi-browser scope, and whether failed
+ * browsers share the same evidence signature) attached to the primary
+ * browser's context.json before analyze-failure.js ever runs.
+ *
+ * Roadmap #21G-C1 (evidence-semantics correction): browserCorrelation was
+ * originally designed, and its own sameFailureSignature comparison only
+ * makes sense, for the SAME test suite executed across multiple browser
+ * engines of the SAME framework (Cypress's own cypress/e2e/** run on
+ * chrome/edge/firefox) - an independent framework's job (Playwright's own,
+ * unrelated smoke) is not a valid member of that comparison: its PASS does
+ * not mean "the same test passed in another browser", and its FAIL does
+ * not mean "the same failure occurred in another browser" (#21G-R found
+ * this could be represented in a way that risked over-weighting an
+ * unrelated framework's outcome as same-kind browser corroboration).
+ * Every input now carries an explicit, trusted `framework` field (never
+ * inferred by parsing a browser name - see .github/workflows/cypress.yml's
+ * "Record browser result"/"Record Playwright browser result" steps, which
+ * write it as a static literal known to the workflow itself). Two
+ * separate, independently-scoped outputs now exist:
+ *
+ *   - browserCorrelation: restricted to inputs sharing the SELECTED
+ *     primary's own framework only (buildBrowserCorrelation() itself is
+ *     completely unchanged - callers now simply pass it an already
+ *     same-framework-filtered array, so byte-for-byte output for any
+ *     Cypress-only input set, including every pre-#21G-C1 test, is
+ *     unaffected by construction).
+ *   - frameworkCorrelation: a small, separate, explicitly-named
+ *     workflow-level rollup (see buildFrameworkCorrelation()) truthfully
+ *     stating which frameworks ran and whether each one's jobs, as a
+ *     whole, passed or failed - never same-test evidence, never fed into
+ *     sameFailureSignature, never merged into browserCorrelation.
+ *
+ * Still a "pick one context, don't merge results" strategy, not a
+ * multi-browser (or multi-framework) reasoning layer of its own: both
+ * correlation objects are computed here, deterministically, from the CI's
+ * own recorded outcomes - never by an LLM - and are handed to the model as
+ * evidence alongside the primary failure, never as a second analysis
+ * target. "AI provider.analyze()" is still called at most once per
+ * workflow run, by the same construction as before (this script feeds one
+ * context object to the unmodified analyze-failure.js).
  */
 
 "use strict";
@@ -54,15 +83,31 @@ const HISTORY_FILE = path.join(ROOT, "reports", "ai", "history.json");
 
 // Matches the CI browsers declared in .github/workflows/cypress.yml
 // (cypress-tests' matrix: [chrome, edge], plus firefox-tests since
-// Roadmap #14C) - also doubles as the default priority order used to
-// deterministically pick a primary browser when more than one failed, so
-// the same input always yields the same choice. This is also the list
-// readBrowserInputs() below actually looks for artifact directories under
-// when main() calls it with no arguments (the real production path) - a
-// browser missing from this list is invisible to aggregation entirely,
-// not just deprioritized, regardless of whether that browser's job and
-// artifact upload actually ran.
-const DEFAULT_BROWSER_PRIORITY = ["chrome", "edge", "firefox"];
+// Roadmap #14C, plus playwright-tests since Roadmap #21G) - also doubles
+// as the default priority order used to deterministically pick a primary
+// browser when more than one failed, so the same input always yields the
+// same choice. This is also the list readBrowserInputs() below actually
+// looks for artifact directories under when main() calls it with no
+// arguments (the real production path) - a browser missing from this list
+// is invisible to aggregation entirely, not just deprioritized, regardless
+// of whether that browser's job and artifact upload actually ran.
+//
+// Roadmap #21G: "playwright-chromium" is deliberately last - Cypress
+// remains the zero-configuration/default framework (Roadmap #21E), so if
+// Cypress AND Playwright both fail in the same run, a Cypress browser is
+// still selected as primary, exactly as adding firefox last did not
+// change chrome/edge's own relative priority. Playwright's failure is
+// never silently dropped when it isn't primary - it is always represented
+// truthfully in the deterministic browserCorrelation metadata below (see
+// buildBrowserCorrelation()), the same "pick one, don't merge" contract
+// that already applies to any two Cypress browsers both failing. This
+// entry is not a real browser name - it is this workflow's own stable,
+// self-documenting identity for the single Playwright Chromium CI job
+// (never confused with a hypothetical future Cypress "chromium" entry,
+// and distinct from metadata.framework/metadata.browser, which are set
+// independently by the framework-neutral collector - see
+// collect-context.js's getMetadata()).
+const DEFAULT_BROWSER_PRIORITY = ["chrome", "edge", "firefox", "playwright-chromium"];
 
 function log(message) {
   process.stdout.write(`[ai:aggregate] ${message}\n`);
@@ -82,16 +127,26 @@ function readJsonIfExists(filePath) {
 // download failed, etc.) is simply left out of the returned list rather
 // than treated as a failure or a crash - the decision functions below only
 // ever reason about browsers we actually have a real outcome for.
+//
+// Roadmap #21G-C1: `framework` is read straight from the trusted
+// browser-result.json the workflow itself writes (a static literal known
+// to the workflow, never inferred by parsing `browser`/the directory
+// name - see the module comment). Its absence defaults to "cypress" only
+// for backward compatibility with the pre-#21G-C1 browser-result.json
+// shape (browser+outcome only, no framework field) - every job this
+// workflow actually runs today writes it explicitly, so this default is
+// never the source of truth in production, only a compatibility fallback.
 function readBrowserInputs(baseDir = DEFAULT_BROWSER_INPUTS_DIR, browsers = DEFAULT_BROWSER_PRIORITY) {
   const inputs = [];
 
-  for (const browser of browsers) {
-    const dir = path.join(baseDir, browser);
+  for (const id of browsers) {
+    const dir = path.join(baseDir, id);
     const result = readJsonIfExists(path.join(dir, "browser-result.json"));
     if (!result || (result.outcome !== "success" && result.outcome !== "failure")) continue;
 
     inputs.push({
-      browser: result.browser || browser,
+      browser: result.browser || id,
+      framework: result.framework || "cypress",
       outcome: result.outcome,
       context: readJsonIfExists(path.join(dir, "context.json")),
       history: readJsonIfExists(path.join(dir, "history.json")),
@@ -205,28 +260,73 @@ function buildBrowserCorrelation(browserInputs, primary, priorityOrder = DEFAULT
   };
 }
 
+// Roadmap #21G-C1: the priority order for frameworks themselves (which
+// framework's rollup appears first in frameworkCorrelation.outcomes) -
+// deliberately separate from DEFAULT_BROWSER_PRIORITY (which orders
+// individual browser/job entries within one framework's own
+// browserCorrelation). Cypress first, matching its own established
+// zero-configuration/default status (Roadmap #21E) everywhere else in
+// this codebase.
+const FRAMEWORK_PRIORITY = ["cypress", "playwright"];
+
+// Workflow-level, cross-framework rollup - deliberately NOT same-test
+// evidence (see the module comment's Roadmap #21G-C1 section). For each
+// distinct framework actually present in browserInputs, states only
+// whether ANY of that framework's jobs failed - never which test, never
+// an error message, never a path. Consumed by qa-agent-prompt.js under an
+// explicit rule instructing the model this is workflow-level evidence
+// only, never proof of equivalent test coverage.
+function buildFrameworkCorrelation(browserInputs, primaryFramework) {
+  const byFramework = new Map();
+  for (const input of browserInputs) {
+    const framework = input.framework || "cypress";
+    if (!byFramework.has(framework)) byFramework.set(framework, []);
+    byFramework.get(framework).push(input);
+  }
+
+  const orderedFrameworks = orderByPriority([...byFramework.keys()], FRAMEWORK_PRIORITY);
+  const outcomes = orderedFrameworks.map((framework) => ({
+    framework,
+    outcome: byFramework.get(framework).some((i) => i.outcome === "failure") ? "failure" : "success",
+  }));
+
+  return { primaryFramework, outcomes };
+}
+
 // Composes the decisions above into the one result main() (and tests)
 // actually need: whether to run at all, which browser is primary, which
-// other browsers also failed (logged only - never separately analyzed),
-// and the deterministic cross-browser correlation metadata to attach to
-// the primary context before it reaches the AI provider.
+// other SAME-FRAMEWORK browsers also failed (logged only - never
+// separately analyzed), the deterministic same-framework browser
+// correlation metadata, and the separate cross-framework rollup - to
+// attach to the primary context before it reaches the AI provider.
+//
+// Roadmap #21G-C1: browserCorrelation is built from ONLY the inputs that
+// share the selected primary's own framework - buildBrowserCorrelation()
+// itself is unchanged; it simply never sees a cross-framework entry, so
+// its sameFailureSignature/failureScope computations can never compare or
+// count across frameworks. frameworkCorrelation is built from the FULL,
+// unfiltered browserInputs, independently.
 function aggregateBrowserInputs(browserInputs, priorityOrder = DEFAULT_BROWSER_PRIORITY) {
   if (!shouldRunAiTriage(browserInputs)) {
-    return { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null };
+    return { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null, frameworkCorrelation: null };
   }
 
   const primary = selectPrimaryFailure(browserInputs, priorityOrder);
-  const otherFailedBrowsers = browserInputs
+  const primaryFramework = primary ? primary.framework || "cypress" : null;
+  const sameFrameworkInputs = browserInputs.filter((b) => (b.framework || "cypress") === primaryFramework);
+
+  const otherFailedBrowsers = sameFrameworkInputs
     .filter((b) => b.outcome === "failure" && (!primary || b.browser !== primary.browser))
     .map((b) => b.browser);
-  const correlation = buildBrowserCorrelation(browserInputs, primary, priorityOrder);
+  const correlation = buildBrowserCorrelation(sameFrameworkInputs, primary, priorityOrder);
+  const frameworkCorrelation = buildFrameworkCorrelation(browserInputs, primaryFramework);
 
-  return { shouldRun: true, primary, otherFailedBrowsers, correlation };
+  return { shouldRun: true, primary, otherFailedBrowsers, correlation, frameworkCorrelation };
 }
 
 function main() {
   const browserInputs = readBrowserInputs();
-  const { shouldRun, primary, otherFailedBrowsers, correlation } = aggregateBrowserInputs(browserInputs);
+  const { shouldRun, primary, otherFailedBrowsers, correlation, frameworkCorrelation } = aggregateBrowserInputs(browserInputs);
 
   if (!shouldRun) {
     log("No E2E failures detected; AI triage skipped.");
@@ -244,10 +344,13 @@ function main() {
   }
 
   // Still "pick one context" (primary.context's failedTests/relevantFiles/
-  // etc. are untouched) - only a new browserCorrelation field is added, so
-  // analyze-failure.js/qa-agent-prompt.js only need to opt into reading it,
-  // never to change how they read everything else already on context.json.
-  const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation };
+  // etc. are untouched) - only two new fields are added, so
+  // analyze-failure.js/qa-agent-prompt.js only need to opt into reading
+  // them, never to change how they read everything else already on
+  // context.json. browserCorrelation (same-framework only, see above) and
+  // frameworkCorrelation (cross-framework rollup, see above) are
+  // deliberately separate fields - never merged into one structure.
+  const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation, frameworkCorrelation };
 
   fs.mkdirSync(path.dirname(CONTEXT_FILE), { recursive: true });
   fs.writeFileSync(CONTEXT_FILE, JSON.stringify(contextWithCorrelation, null, 2));
@@ -271,5 +374,7 @@ module.exports = {
   selectPrimaryFailure,
   aggregateBrowserInputs,
   buildBrowserCorrelation,
+  buildFrameworkCorrelation,
   DEFAULT_BROWSER_PRIORITY,
+  FRAMEWORK_PRIORITY,
 };

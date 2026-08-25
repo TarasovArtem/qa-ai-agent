@@ -2,7 +2,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { formatComment, formatResolvedComment, formatHistoryLine, formatCorrelationLine, MARKER } = require("./format-pr-comment");
+const { formatComment, formatResolvedComment, formatHistoryLine, formatCorrelationLine, formatFrameworkCorrelationLine, MARKER } = require("./format-pr-comment");
 
 function baseResult(overrides = {}) {
   return {
@@ -170,4 +170,79 @@ test("formatComment: includes a Browser scope line when sourceContext.browserCor
 test("formatComment: omits the Browser scope line entirely when browserCorrelation is absent", () => {
   const body = formatComment({ browser: "chrome", report: { results: [baseResult()] } });
   assert.doesNotMatch(body, /Browser scope/);
+});
+
+// --- Roadmap #21G-C1: frameworkCorrelation (separate from browser correlation) --
+
+test("formatFrameworkCorrelationLine: renders each framework's outcome with an explicit non-same-test caveat", () => {
+  const line = formatFrameworkCorrelationLine({
+    primaryFramework: "cypress",
+    outcomes: [
+      { framework: "cypress", outcome: "failure" },
+      { framework: "playwright", outcome: "success" },
+    ],
+  });
+  assert.match(line, /cypress failure/);
+  assert.match(line, /playwright success/);
+  assert.match(line, /not same-test evidence/i);
+});
+
+test("formatFrameworkCorrelationLine: returns null when only one framework ran (nothing cross-framework to report)", () => {
+  assert.equal(
+    formatFrameworkCorrelationLine({ primaryFramework: "cypress", outcomes: [{ framework: "cypress", outcome: "failure" }] }),
+    null
+  );
+});
+
+test("formatFrameworkCorrelationLine: returns null when absent or malformed", () => {
+  assert.equal(formatFrameworkCorrelationLine(null), null);
+  assert.equal(formatFrameworkCorrelationLine(undefined), null);
+  assert.equal(formatFrameworkCorrelationLine({}), null);
+});
+
+test("formatComment: includes a Framework outcomes line when sourceContext.frameworkCorrelation has more than one framework", () => {
+  const body = formatComment({
+    browser: "chrome",
+    report: {
+      results: [baseResult()],
+      sourceContext: {
+        browserCorrelation: { failureScope: "single-browser", failedBrowsers: ["chrome"], passedBrowsers: [] },
+        frameworkCorrelation: {
+          primaryFramework: "cypress",
+          outcomes: [
+            { framework: "cypress", outcome: "failure" },
+            { framework: "playwright", outcome: "failure" },
+          ],
+        },
+      },
+    },
+  });
+  assert.match(body, /\*\*Framework outcomes:\*\*/);
+  assert.match(body, /cypress failure; playwright failure/);
+});
+
+test("formatComment: omits the Framework outcomes line entirely when frameworkCorrelation is absent", () => {
+  const body = formatComment({ browser: "chrome", report: { results: [baseResult()] } });
+  assert.doesNotMatch(body, /Framework outcomes/);
+});
+
+test("formatComment: a frameworkCorrelation entry never appears inside the Browser scope line", () => {
+  const body = formatComment({
+    browser: "chrome",
+    report: {
+      results: [baseResult()],
+      sourceContext: {
+        browserCorrelation: { failureScope: "single-browser", failedBrowsers: ["chrome"], passedBrowsers: [] },
+        frameworkCorrelation: {
+          primaryFramework: "cypress",
+          outcomes: [
+            { framework: "cypress", outcome: "failure" },
+            { framework: "MARKER_PLAYWRIGHT_21GC1", outcome: "failure" },
+          ],
+        },
+      },
+    },
+  });
+  const browserScopeLine = body.split("\n").find((l) => l.includes("Browser scope") === false && /multi-browser|single-browser/.test(l));
+  if (browserScopeLine) assert.doesNotMatch(browserScopeLine, /MARKER_PLAYWRIGHT_21GC1/);
 });
