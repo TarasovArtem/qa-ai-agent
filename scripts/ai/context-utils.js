@@ -114,6 +114,47 @@ function resolveRealPathSafe(absPath) {
   }
 }
 
+// Roadmap #21I-A (D21D-3): segment-aware root containment for two already
+// lexically/canonically resolved absolute path strings - deliberately NOT
+// `candidate.toLowerCase().startsWith(root.toLowerCase())` (or any other
+// bare string-prefix check), which cannot distinguish a genuine child from
+// a same-prefix sibling ("C:\Repo" vs "C:\Repo-evil") without separately
+// re-deriving the separator boundary. `path.win32.relative()`/
+// `path.posix.relative()` already own that boundary logic correctly (and,
+// on win32, already treat drive-letter and segment casing as equivalent -
+// verified empirically, not assumed), so this helper only interprets their
+// result: relative() returning a path outside root always either starts
+// with ".." (an ancestor step was needed) or is itself absolute (root and
+// candidate share no common ancestor at all, e.g. two different Windows
+// drive letters - relative() can't express that as a ".."-only path, so it
+// falls back to returning candidate's own absolute form).
+//
+// This fixes D21D-3 (a legitimate Windows repo-local path, canonicalized
+// with different case than REAL_ROOT's own casing - Node's fs.realpathSync
+// does NOT normalize case on Windows, confirmed empirically - was
+// previously false-rejected by the old bare case-sensitive `startsWith`
+// check) without weakening containment: a same-prefix sibling, a
+// different drive, or a traversal-derived path are all still correctly
+// classified as outside, on both platforms.
+//
+// `platform` defaults to the real running host (production always wants
+// actual host semantics: case-insensitive segment matching on real
+// Windows, case-sensitive on real POSIX) but can be overridden so this
+// pure function's Windows-specific behavior is independently, genuinely
+// testable on a POSIX CI host - never gated behind `process.platform ===
+// "win32"` in the tests themselves.
+function isCanonicalPathInsideRoot({ root, candidate, platform = process.platform }) {
+  if (typeof root !== "string" || typeof candidate !== "string") return false;
+
+  const pathModule = platform === "win32" ? path.win32 : path.posix;
+  const rel = pathModule.relative(root, candidate);
+
+  if (rel === "") return true; // candidate === root itself (existing contract: root is inside)
+  if (rel === ".." || rel.startsWith(".." + pathModule.sep)) return false;
+  if (pathModule.isAbsolute(rel)) return false; // no common ancestor at all (e.g. a different drive)
+  return true;
+}
+
 function stripLeadingDotSlash(raw) {
   let p = raw.replace(/\\/g, "/");
   while (p.startsWith("./")) p = p.slice(2);
@@ -153,7 +194,7 @@ function resolveSafeSpecPath(rawSpecPath) {
     // gate eligibility" convention) - a path lexically outside the
     // repository is rejected immediately, no filesystem access needed.
     const lexical = path.resolve(rawSpecPath);
-    if (lexical !== ROOT && !lexical.startsWith(ROOT + path.sep)) {
+    if (!isCanonicalPathInsideRoot({ root: ROOT, candidate: lexical })) {
       return { value: null, rejected: true };
     }
 
@@ -167,7 +208,7 @@ function resolveSafeSpecPath(rawSpecPath) {
     // proven-safe lexical location.
     const real = resolveRealPathSafe(lexical);
     if (real) {
-      if (real === REAL_ROOT || real.startsWith(REAL_ROOT + path.sep)) {
+      if (isCanonicalPathInsideRoot({ root: REAL_ROOT, candidate: real })) {
         const rel = path.relative(REAL_ROOT, real).split(path.sep).join("/");
         return { value: rel || null, rejected: false };
       }
@@ -217,7 +258,7 @@ function resolveSafeLocalAttachmentPath(rawPath) {
   const real = resolveRealPathSafe(candidateAbs);
   if (!real) return { value: null, rejected: false }; // does not exist / broken symlink
 
-  if (real !== REAL_ROOT && !real.startsWith(REAL_ROOT + path.sep)) {
+  if (!isCanonicalPathInsideRoot({ root: REAL_ROOT, candidate: real })) {
     return { value: null, rejected: true }; // outside repository, including via symlink
   }
 
@@ -237,6 +278,7 @@ module.exports = {
   normalizeSpecPath,
   PATH_KIND,
   classifyPathString,
+  isCanonicalPathInsideRoot,
   resolveSafeSpecPath,
   resolveSafeLocalAttachmentPath,
 };

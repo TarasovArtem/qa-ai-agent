@@ -9,6 +9,7 @@ const {
   normalizeSpecPath,
   PATH_KIND,
   classifyPathString,
+  isCanonicalPathInsideRoot,
   resolveSafeSpecPath,
   resolveSafeLocalAttachmentPath,
 } = require("./context-utils");
@@ -129,6 +130,108 @@ test("D21D-2 resolveSafeLocalAttachmentPath: malformed file:-URI-like values are
     assert.equal(result.value, null, `expected null value for ${raw}`);
     assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
   }
+});
+
+// --- isCanonicalPathInsideRoot (Roadmap #21I-A, D21D-3) ---------------------
+//
+// Deliberately host-independent: `platform` is always passed explicitly so
+// every assertion below holds identically regardless of which OS actually
+// runs this test file (this repository's CI runs on ubuntu-latest) - never
+// `if (process.platform === "win32")`-gated, per the D21D-3 closure
+// requirement that Windows path semantics must be genuinely exercised on a
+// non-Windows CI host, not silently skipped there.
+//
+// D21D-3 background: the pre-#21I-A code compared canonical paths with a
+// bare, case-sensitive `String.prototype.startsWith`. Node's
+// `fs.realpathSync()` does NOT normalize case on Windows (confirmed
+// empirically against a real Windows host during this fix's development -
+// it preserves whatever case was supplied, it does not correct it to the
+// actual on-disk casing), so a legitimate repo-local Windows path
+// canonicalized with different case than REAL_ROOT's own casing was
+// false-rejected. This helper fixes that by delegating the containment
+// decision to `path.win32.relative()`/`path.posix.relative()` (which
+// already treat Windows drive-letter/segment casing as equivalent,
+// verified empirically, not assumed) and interpreting the result via the
+// well-known safe idiom: outside iff the relative result starts with ".."
+// or is itself absolute (no common ancestor, e.g. a different drive) -
+// never a bare prefix/lowercase string comparison, which cannot
+// distinguish a genuine child from a same-prefix sibling without
+// separately re-deriving the separator boundary.
+
+test("W1 isCanonicalPathInsideRoot: Windows same-case child is inside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "C:\\Repo\\file.js", platform: "win32" }), true);
+});
+
+test("W2 isCanonicalPathInsideRoot: Windows differently-cased child is inside (the actual D21D-3 false-rejection case, now fixed)", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "c:\\repo\\file.js", platform: "win32" }), true);
+});
+
+test("W3 isCanonicalPathInsideRoot: Windows deeply-nested, fully case-mismatched child is inside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "C:\\REPO\\Sub\\File.js", platform: "win32" }), true);
+});
+
+test("W4 isCanonicalPathInsideRoot: a same-prefix sibling directory ('Repo-evil') is outside, even case-insensitively", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "c:\\repo-evil\\file.js", platform: "win32" }), false);
+});
+
+test("W5 isCanonicalPathInsideRoot: a different drive letter is outside - no drive-letter fallback", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "D:\\Repo\\file.js", platform: "win32" }), false);
+});
+
+test("W6 isCanonicalPathInsideRoot: a longer sibling name ('Repository') is outside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "C:\\Repository\\file.js", platform: "win32" }), false);
+});
+
+test("W7 isCanonicalPathInsideRoot: a numerically-suffixed sibling ('Repo2') is outside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "C:\\Repo2\\file.js", platform: "win32" }), false);
+});
+
+test("W8 isCanonicalPathInsideRoot: a traversal-derived candidate (pre-resolved to its lexical target) that escapes root is outside", () => {
+  const escaped = path.win32.resolve("C:\\Repo\\..\\Outside\\file.js");
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: escaped, platform: "win32" }), false);
+});
+
+test("isCanonicalPathInsideRoot: the root itself (same case or different case) is inside, matching the pre-existing 'root counts as inside' contract", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "C:\\Repo", platform: "win32" }), true);
+  assert.equal(isCanonicalPathInsideRoot({ root: "C:\\Repo", candidate: "c:\\repo", platform: "win32" }), true);
+});
+
+// --- POSIX matrix (host-independent, explicit platform) ---------------------
+
+test("P1 isCanonicalPathInsideRoot: POSIX child is inside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "/root/repo", candidate: "/root/repo/file", platform: "linux" }), true);
+});
+
+test("P2 isCanonicalPathInsideRoot: a same-prefix POSIX sibling ('repo-evil') is outside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "/root/repo", candidate: "/root/repo-evil/file", platform: "linux" }), false);
+});
+
+test("P3 isCanonicalPathInsideRoot: POSIX remains case-sensitive - a case-differing path is outside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "/root/repo", candidate: "/root/Repo/file", platform: "linux" }), false);
+});
+
+test("P4 isCanonicalPathInsideRoot: an unrelated POSIX path is outside", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: "/root/repo", candidate: "/etc/passwd", platform: "linux" }), false);
+});
+
+test("P5 isCanonicalPathInsideRoot: a traversal-derived POSIX candidate (pre-resolved) that escapes root is outside", () => {
+  const escaped = path.posix.resolve("/root/repo/../outside/file");
+  assert.equal(isCanonicalPathInsideRoot({ root: "/root/repo", candidate: escaped, platform: "linux" }), false);
+});
+
+test("isCanonicalPathInsideRoot: non-string root/candidate fails closed to false, never thrown", () => {
+  assert.equal(isCanonicalPathInsideRoot({ root: null, candidate: "/root/repo/file", platform: "linux" }), false);
+  assert.equal(isCanonicalPathInsideRoot({ root: "/root/repo", candidate: undefined, platform: "linux" }), false);
+  assert.equal(isCanonicalPathInsideRoot({ root: 42, candidate: "/root/repo/file", platform: "linux" }), false);
+});
+
+test("isCanonicalPathInsideRoot: defaults platform to the real running host when omitted", () => {
+  // Sanity only - proves the parameter is genuinely optional and produces a
+  // boolean either way; the actual cross-platform semantics are already
+  // fully proven above via explicit platform injection, never relying on
+  // this default in an assertion of WHICH platform's rules applied.
+  const result = isCanonicalPathInsideRoot({ root: ROOT, candidate: ROOT });
+  assert.equal(result, true);
 });
 
 // --- resolveSafeSpecPath (Roadmap #21D, R2) ---------------------------------
