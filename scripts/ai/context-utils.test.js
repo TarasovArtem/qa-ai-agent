@@ -238,3 +238,65 @@ test("resolveSafeLocalAttachmentPath: absent/empty input is null but not rejecte
   assert.deepEqual(resolveSafeLocalAttachmentPath(null), { value: null, rejected: false });
   assert.deepEqual(resolveSafeLocalAttachmentPath(""), { value: null, rejected: false });
 });
+
+// =========================================================================
+// D21D-1 (pre-#21G hardening): a dedicated, committed regression locking the
+// specific contract that was previously only "safe by implementation/probe"
+// - a genuinely relative attachment.path (the shape #21B's own real
+// Playwright reporter proof never actually produced, since it always
+// emitted absolute paths, but which resolveSafeLocalAttachmentPath() has
+// always handled via `path.join(ROOT, rawPath)`) is anchored to the
+// repository ROOT constant, never to whatever process.cwd() the caller
+// happens to be running from - proven here with a real, genuinely
+// separate child process, not an unsafe process.chdir() mutation shared
+// with every other test in this file.
+// =========================================================================
+
+const { execFileSync } = require("node:child_process");
+
+test("D21D-1 relative attachment.path resolves anchored to repository ROOT, accepted as canonical repo-relative text", (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-d21d1-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const absoluteFixture = path.join(tmpDir, "shot.png");
+  fs.writeFileSync(absoluteFixture, "");
+
+  const relativeFromRoot = path.relative(ROOT, absoluteFixture).split(path.sep).join("/");
+  const result = resolveSafeLocalAttachmentPath(relativeFromRoot);
+
+  assert.equal(result.rejected, false);
+  assert.equal(result.value, relativeFromRoot);
+  assert.equal(path.isAbsolute(result.value), false);
+  assert.equal(path.resolve(ROOT, result.value), fs.realpathSync(absoluteFixture));
+});
+
+test("D21D-1 relative attachment.path resolution is independent of the caller's process.cwd() (real child process, not process.chdir())", (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-d21d1-cwd-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const absoluteFixture = path.join(tmpDir, "shot.png");
+  fs.writeFileSync(absoluteFixture, "");
+  const relativeFromRoot = path.relative(ROOT, absoluteFixture).split(path.sep).join("/");
+
+  // Baseline: resolved from this process, whose cwd already happens to be
+  // the repo root (the standard `node --test` invocation convention this
+  // repository uses throughout).
+  const fromRepoRootCwd = resolveSafeLocalAttachmentPath(relativeFromRoot);
+  assert.equal(fromRepoRootCwd.rejected, false);
+  assert.ok(fromRepoRootCwd.value);
+
+  // A genuinely separate child process, with cwd deliberately set to OS
+  // temp (never the repo root, never any repo subdirectory) - proves the
+  // resolution is anchored to context-utils.js's own ROOT constant
+  // (path.resolve(__dirname, "..", "..")), never to the invoking
+  // process's own cwd.
+  const foreignCwd = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-d21d1-foreign-cwd-"));
+  t.after(() => fs.rmSync(foreignCwd, { recursive: true, force: true }));
+  const probeScript = `
+    const { resolveSafeLocalAttachmentPath } = require(${JSON.stringify(path.join(__dirname, "context-utils.js"))});
+    process.stdout.write(JSON.stringify(resolveSafeLocalAttachmentPath(${JSON.stringify(relativeFromRoot)})));
+  `;
+  const childOutput = execFileSync(process.execPath, ["-e", probeScript], { cwd: foreignCwd, encoding: "utf8" });
+  const fromForeignCwd = JSON.parse(childOutput);
+
+  assert.deepEqual(fromForeignCwd, fromRepoRootCwd, "resolution must be byte-identical regardless of the caller's cwd");
+  assert.notEqual(process.cwd(), foreignCwd, "sanity: the child's cwd was genuinely different from this process's own cwd");
+});
