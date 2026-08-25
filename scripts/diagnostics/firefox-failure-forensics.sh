@@ -19,6 +19,15 @@
 # Removal: delete this file and the two workflow steps in
 # .github/workflows/cypress.yml that reference it once Firefox root cause
 # is captured/confirmed, or the investigation is explicitly closed.
+#
+# Pre-#21G hardening correction: the disposable-output reset between
+# diagnostic re-runs below used to be an inline `rm -rf reports ...`, which
+# deleted FORENSICS_ROOT itself (reports/firefox-forensics lives under the
+# same bare "reports" parent) before the later diagnostic layers could
+# write into it - the pipeline always reported success while silently
+# capturing none of its own deep-diagnostic evidence. Extracted into
+# reset-cypress-runtime-outputs.sh (narrowly targets reports/cypress only)
+# so production and its offline regression invoke the identical behavior.
 set -uo pipefail
 
 FORENSICS_ROOT="reports/firefox-forensics"
@@ -69,7 +78,7 @@ echo "=== Runner/runtime identity (safe subset only, no secrets) ==="
 cat "${FORENSICS_ROOT}/metadata/runner-identity.txt"
 
 echo "=== Same-runner unchanged repeat (max 1 attempt, diagnostic only - does NOT affect production result) ==="
-rm -rf reports cypress/screenshots cypress/videos
+bash "$(dirname "${BASH_SOURCE[0]}")/reset-cypress-runtime-outputs.sh"
 set +e
 npx cypress run --spec "$SPEC" --headless --browser firefox >"${FORENSICS_ROOT}/same-runner-repeat.log" 2>&1
 REPEAT_CODE=$?
@@ -90,7 +99,7 @@ else
 fi
 
 echo "=== 15000ms requestTimeout diagnostic (max 1 attempt, CLI override only, cypress.config.js untouched) ==="
-rm -rf reports cypress/screenshots cypress/videos
+bash "$(dirname "${BASH_SOURCE[0]}")/reset-cypress-runtime-outputs.sh"
 set +e
 npx cypress run --spec "$SPEC" --headless --browser firefox --config requestTimeout=15000 >"${FORENSICS_ROOT}/request-timeout-15s.log" 2>&1
 TIMEOUT_CODE=$?
@@ -174,7 +183,7 @@ describe('TEMPORARY #19.7F-B4B forensic trace (not a permanent test)', () => {
 SPECEOF
 
 mkdir -p "${FORENSICS_ROOT}/resource-trace"
-rm -rf reports cypress/screenshots cypress/videos
+bash "$(dirname "${BASH_SOURCE[0]}")/reset-cypress-runtime-outputs.sh"
 set +e
 npx cypress run --spec "${TRACE_SPEC}" --headless --browser firefox >"${FORENSICS_ROOT}/resource-trace/terminal.log" 2>&1
 TRACE_RUN_CODE=$?
