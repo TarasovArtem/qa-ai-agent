@@ -606,12 +606,18 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     # contents: read for checkout; pull-requests: write to post/update the
-    # single triage PR comment below. No actions: read - this job never
-    # calls the GitHub Actions history API itself (collect-history.js only
-    # runs per-browser inside cypress-tests, unchanged by this PR).
+    # single triage PR comment below. Roadmap #21H: actions: read added -
+    # unlike Cypress (collect-history.js runs per-browser inside
+    # cypress-tests/firefox-tests, which already have this permission),
+    # Playwright's own job never runs ai:history itself (see "Collect
+    # Playwright context" above for why: only this centralized triage job
+    # does Playwright-specific AI evidence collection), so this job needs
+    # the same GitHub Actions history API access those jobs already have -
+    # reusing the exact same permission scope, not a broader one.
     permissions:
       contents: read
       pull-requests: write
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -724,6 +730,37 @@ jobs:
         run: |
           npm run ai:collect
           cp reports/ai/context.json reports/ai/browser-inputs/playwright-chromium/context.json
+
+      # Roadmap #21H: the same bounded, optional flaky-test signal Cypress's
+      # own "Collect run history for flaky-test reasoning" step already
+      # produces (see cypress-tests above), now also produced for
+      # Playwright - same semantic History contract, same collect-history.js
+      # producer, no separate schema. HISTORY_JOB_NAME is required because
+      # Playwright's real GitHub Actions job name ("Playwright Chromium") is
+      # a fixed string, not the Cypress - <browser> template collect-
+      # history.js falls back to when this env var is absent (every existing
+      # Cypress call site never sets it). QA_FRAMEWORK: playwright routes
+      # through the exact same selectRuntimeAdapter() resolution used
+      # everywhere else in this pipeline, so the written record's own
+      # `framework` field is "playwright", never a duplicated literal.
+      # Entirely optional and best-effort, exactly like Cypress's own step:
+      # any failure here (first-ever run, rate limit, API error) writes
+      # { available: false } and this step still succeeds - the downstream
+      # analysis works with or without it. Same job-status condition as
+      # "Collect Playwright context" above (only when Playwright's own run
+      # genuinely failed) - this never runs speculatively for a passing leg,
+      # and never triggers a second Playwright test execution (it only reads
+      # GitHub Actions run/job history via the API, not the SUT).
+      - name: Collect Playwright history (only if the Playwright job itself failed)
+        if: needs.playwright-tests.result == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TEST_BROWSER: playwright-chromium
+          HISTORY_JOB_NAME: "Playwright Chromium"
+          QA_FRAMEWORK: playwright
+        run: |
+          npm run ai:history
+          cp reports/ai/history.json reports/ai/browser-inputs/playwright-chromium/history.json
 
       # Reads every browser's browser-result.json, decides whether ANY E2E
       # failure happened, and if so, deterministically writes ONE browser's
