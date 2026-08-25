@@ -54,15 +54,31 @@ const HISTORY_FILE = path.join(ROOT, "reports", "ai", "history.json");
 
 // Matches the CI browsers declared in .github/workflows/cypress.yml
 // (cypress-tests' matrix: [chrome, edge], plus firefox-tests since
-// Roadmap #14C) - also doubles as the default priority order used to
-// deterministically pick a primary browser when more than one failed, so
-// the same input always yields the same choice. This is also the list
-// readBrowserInputs() below actually looks for artifact directories under
-// when main() calls it with no arguments (the real production path) - a
-// browser missing from this list is invisible to aggregation entirely,
-// not just deprioritized, regardless of whether that browser's job and
-// artifact upload actually ran.
-const DEFAULT_BROWSER_PRIORITY = ["chrome", "edge", "firefox"];
+// Roadmap #14C, plus playwright-tests since Roadmap #21G) - also doubles
+// as the default priority order used to deterministically pick a primary
+// browser when more than one failed, so the same input always yields the
+// same choice. This is also the list readBrowserInputs() below actually
+// looks for artifact directories under when main() calls it with no
+// arguments (the real production path) - a browser missing from this list
+// is invisible to aggregation entirely, not just deprioritized, regardless
+// of whether that browser's job and artifact upload actually ran.
+//
+// Roadmap #21G: "playwright-chromium" is deliberately last - Cypress
+// remains the zero-configuration/default framework (Roadmap #21E), so if
+// Cypress AND Playwright both fail in the same run, a Cypress browser is
+// still selected as primary, exactly as adding firefox last did not
+// change chrome/edge's own relative priority. Playwright's failure is
+// never silently dropped when it isn't primary - it is always represented
+// truthfully in the deterministic browserCorrelation metadata below (see
+// buildBrowserCorrelation()), the same "pick one, don't merge" contract
+// that already applies to any two Cypress browsers both failing. This
+// entry is not a real browser name - it is this workflow's own stable,
+// self-documenting identity for the single Playwright Chromium CI job
+// (never confused with a hypothetical future Cypress "chromium" entry,
+// and distinct from metadata.framework/metadata.browser, which are set
+// independently by the framework-neutral collector - see
+// collect-context.js's getMetadata()).
+const DEFAULT_BROWSER_PRIORITY = ["chrome", "edge", "firefox", "playwright-chromium"];
 
 function log(message) {
   process.stdout.write(`[ai:aggregate] ${message}\n`);

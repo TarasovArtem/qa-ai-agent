@@ -571,6 +571,222 @@ test("integration: multi-browser correlation reaches provider.analyze()'s userPr
   assert.deepEqual(report.sourceContext.browserCorrelation, correlation);
 });
 
+// --- Roadmap #21G: Playwright Chromium integration (4-entry scenarios) ---
+// Mirrors the #14C firefox additions above exactly: "playwright-chromium"
+// is not a real browser name, just this workflow's own stable identity for
+// the single Playwright Chromium CI job (see DEFAULT_BROWSER_PRIORITY's own
+// comment) - readBrowserInputs()/aggregateBrowserInputs()/
+// buildBrowserCorrelation() treat it as an opaque array entry exactly like
+// any Cypress browser, by construction (no chrome/edge/firefox-specific
+// branching anywhere in this module).
+
+test("PLAYWRIGHT_FAIL_ONLY: all Cypress browsers pass, Playwright fails -> playwright-chromium is primary", () => {
+  const inputs = [
+    browserInput("chrome", "success"),
+    browserInput("edge", "success"),
+    browserInput("firefox", "success"),
+    browserInput("playwright-chromium", "failure"),
+  ];
+  const { shouldRun, primary, otherFailedBrowsers, correlation } = aggregateBrowserInputs(inputs);
+
+  assert.equal(shouldRun, true);
+  assert.equal(primary.browser, "playwright-chromium");
+  assert.deepEqual(otherFailedBrowsers, []);
+  assert.deepEqual(correlation.failedBrowsers, ["playwright-chromium"]);
+  assert.deepEqual(correlation.passedBrowsers, ["chrome", "edge", "firefox"]);
+  assert.equal(correlation.failureScope, "single-browser");
+});
+
+test("CYPRESS_AND_PLAYWRIGHT_FAIL: Cypress AND Playwright both fail -> exactly one primary, Cypress wins (zero-config default), Playwright truthfully correlated", () => {
+  const inputs = [
+    browserInput("chrome", "failure"),
+    browserInput("edge", "success"),
+    browserInput("firefox", "success"),
+    browserInput("playwright-chromium", "failure"),
+  ];
+  const { shouldRun, primary, otherFailedBrowsers, correlation } = aggregateBrowserInputs(inputs);
+
+  assert.equal(shouldRun, true);
+  assert.equal(primary.browser, "chrome", "Cypress must remain canonical/primary when both frameworks fail");
+  assert.deepEqual(otherFailedBrowsers, ["playwright-chromium"]);
+  assert.deepEqual(correlation.failedBrowsers, ["chrome", "playwright-chromium"]);
+  assert.deepEqual(correlation.additionalFailedBrowsers, ["playwright-chromium"]);
+  assert.equal(correlation.failureScope, "multi-browser");
+  // Different frameworks/spec files never share a failure signature by
+  // construction (fakeContext() defaults specFile to a Cypress-shaped
+  // path) - proves this is a genuine, non-fabricated comparison, not a
+  // hardcoded true/false.
+  assert.equal(correlation.sameFailureSignature, false);
+});
+
+test("MULTIPLE_CYPRESS_FAIL_PLUS_PLAYWRIGHT: chrome+edge+playwright-chromium all fail, firefox passes -> chrome primary, both others truthfully correlated", () => {
+  const inputs = [
+    browserInput("chrome", "failure"),
+    browserInput("edge", "failure"),
+    browserInput("firefox", "success"),
+    browserInput("playwright-chromium", "failure"),
+  ];
+  const { primary, otherFailedBrowsers, correlation } = aggregateBrowserInputs(inputs);
+
+  assert.equal(primary.browser, "chrome");
+  assert.deepEqual(otherFailedBrowsers, ["edge", "playwright-chromium"]);
+  assert.deepEqual(correlation.failedBrowsers, ["chrome", "edge", "playwright-chromium"]);
+  assert.deepEqual(correlation.passedBrowsers, ["firefox"]);
+  assert.equal(correlation.failureScope, "multi-browser");
+});
+
+test("PLAYWRIGHT_SKIPPED: an unrecognized/non-success/non-failure outcome (e.g. GitHub Actions 'skipped') is excluded deterministically, never crashes", () => {
+  const inputs = [
+    browserInput("chrome", "success"),
+    browserInput("edge", "success"),
+    browserInput("firefox", "success"),
+    { browser: "playwright-chromium", outcome: "skipped", context: null, history: null },
+  ];
+  const result = aggregateBrowserInputs(inputs);
+  assert.equal(result.shouldRun, false);
+});
+
+// Unlike PLAYWRIGHT_SKIPPED above, this proves the filtering at the real
+// I/O boundary (readBrowserInputs()) rather than hand-constructing the
+// browserInputs array directly - in real production, a "cancelled" GitHub
+// Actions job outcome is filtered out by readBrowserInputs() itself
+// (result.outcome !== "success" && result.outcome !== "failure" -> skip)
+// BEFORE aggregateBrowserInputs()/buildBrowserCorrelation() ever see it,
+// so this is the layer that actually matters for the "never appears in
+// correlation" guarantee.
+test("PLAYWRIGHT_CANCELLED: a 'cancelled' outcome is filtered out by readBrowserInputs() itself, never reaching aggregation/correlation", () => {
+  withTempDir((dir) => {
+    const chromeDir = path.join(dir, "chrome");
+    fs.mkdirSync(chromeDir, { recursive: true });
+    fs.writeFileSync(path.join(chromeDir, "browser-result.json"), JSON.stringify({ browser: "chrome", outcome: "failure" }));
+    fs.writeFileSync(path.join(chromeDir, "context.json"), JSON.stringify(fakeContext("chrome")));
+
+    const pwDir = path.join(dir, "playwright-chromium");
+    fs.mkdirSync(pwDir, { recursive: true });
+    fs.writeFileSync(path.join(pwDir, "browser-result.json"), JSON.stringify({ browser: "playwright-chromium", outcome: "cancelled" }));
+
+    const inputs = readBrowserInputs(dir);
+    assert.equal(inputs.length, 1, "the cancelled playwright-chromium entry must never even reach the browserInputs array");
+    assert.equal(inputs[0].browser, "chrome");
+
+    const { primary, correlation } = aggregateBrowserInputs(inputs);
+    assert.equal(primary.browser, "chrome");
+    assert.ok(!correlation.browsers.includes("playwright-chromium"), "a cancelled Playwright run must not appear in correlation at all");
+  });
+});
+
+test("aggregateBrowserInputs: all four (chrome, edge, firefox, playwright-chromium) pass -> shouldRun false, no primary, no correlation", () => {
+  const inputs = [
+    browserInput("chrome", "success"),
+    browserInput("edge", "success"),
+    browserInput("firefox", "success"),
+    browserInput("playwright-chromium", "success"),
+  ];
+  const result = aggregateBrowserInputs(inputs);
+  assert.deepEqual(result, { shouldRun: false, primary: null, otherFailedBrowsers: [], correlation: null });
+});
+
+test("readBrowserInputs: called with NO explicit browser list discovers a playwright-chromium directory via the real production DEFAULT_BROWSER_PRIORITY", () => {
+  withTempDir((dir) => {
+    const pwDir = path.join(dir, "playwright-chromium");
+    fs.mkdirSync(pwDir, { recursive: true });
+    fs.writeFileSync(path.join(pwDir, "browser-result.json"), JSON.stringify({ browser: "playwright-chromium", outcome: "failure" }));
+    fs.writeFileSync(path.join(pwDir, "context.json"), JSON.stringify(fakeContext("playwright-chromium")));
+
+    const inputs = readBrowserInputs(dir);
+    const pwInput = inputs.find((i) => i.browser === "playwright-chromium");
+    assert.ok(pwInput, "readBrowserInputs() with no explicit browser list must discover playwright-chromium via DEFAULT_BROWSER_PRIORITY");
+    assert.equal(pwInput.outcome, "failure");
+    assert.ok(pwInput.context);
+  });
+});
+
+test("integration: Cypress-and-Playwright both failing still results in exactly one provider.analyze() call, Cypress remains the analyzed evidence", async () => {
+  const browserInputs = [
+    browserInput("chrome", "failure"),
+    browserInput("edge", "success"),
+    browserInput("firefox", "success"),
+    browserInput("playwright-chromium", "failure"),
+  ];
+  const { shouldRun, primary, otherFailedBrowsers } = aggregateBrowserInputs(browserInputs);
+
+  assert.equal(shouldRun, true);
+  assert.equal(primary.browser, "chrome");
+  assert.deepEqual(otherFailedBrowsers, ["playwright-chromium"]);
+
+  let analyzeCalls = 0;
+  const countingProvider = {
+    name: "mock",
+    analyze: async () => {
+      analyzeCalls += 1;
+      return JSON.stringify({
+        results: [
+          {
+            test: { title: primary.context.failedTests[0].title, specFile: primary.context.failedTests[0].specFile },
+            classification: "TEST_BUG",
+            confidence: 0.9,
+            summary: "Summary.",
+            rootCause: "Root cause.",
+            evidence: ["evidence"],
+            recommendedFix: { file: null, description: "Fix it." },
+            shouldCreateBug: false,
+            shouldRetry: false,
+          },
+        ],
+      });
+    },
+  };
+
+  const report = await buildFailureReport(primary.context, { provider: countingProvider, history: null });
+
+  assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once even when Cypress AND Playwright both fail");
+  assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
+  assert.equal(report.sourceContext.browser, "chrome");
+});
+
+test("integration: Playwright-only failure (all Cypress passes) still routes through the same single-call architecture", async () => {
+  const browserInputs = [
+    browserInput("chrome", "success"),
+    browserInput("edge", "success"),
+    browserInput("firefox", "success"),
+    browserInput("playwright-chromium", "failure"),
+  ];
+  const { shouldRun, primary, otherFailedBrowsers } = aggregateBrowserInputs(browserInputs);
+
+  assert.equal(shouldRun, true);
+  assert.equal(primary.browser, "playwright-chromium");
+  assert.deepEqual(otherFailedBrowsers, []);
+
+  let analyzeCalls = 0;
+  const countingProvider = {
+    name: "mock",
+    analyze: async () => {
+      analyzeCalls += 1;
+      return JSON.stringify({
+        results: [
+          {
+            test: { title: primary.context.failedTests[0].title, specFile: primary.context.failedTests[0].specFile },
+            classification: "TEST_BUG",
+            confidence: 0.9,
+            summary: "Summary.",
+            rootCause: "Root cause.",
+            evidence: ["evidence"],
+            recommendedFix: { file: null, description: "Fix it." },
+            shouldCreateBug: false,
+            shouldRetry: false,
+          },
+        ],
+      });
+    },
+  };
+
+  const report = await buildFailureReport(primary.context, { provider: countingProvider, history: null });
+
+  assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once for a Playwright-only failure");
+  assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
+  assert.equal(report.sourceContext.browser, "playwright-chromium");
+});
+
 test("integration: single-browser correlation (one pass, one fail) also reaches the prompt", async () => {
   const browserInputs = [browserInput("chrome", "failure"), browserInput("edge", "success")];
   const { primary, correlation } = aggregateBrowserInputs(browserInputs);

@@ -492,6 +492,91 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Playwright (Roadmap #21G): the first real Playwright execution in
+  # GitHub Actions. Deliberately its own job, not folded into cypress-tests'
+  # matrix - Playwright is an explicit, opt-in framework (Roadmap #21E),
+  # never Cypress's zero-configuration default, and mixing a
+  # QA_FRAMEWORK=playwright leg into a matrix whose other legs are
+  # implicitly Cypress would blur that boundary. Exactly one Chromium
+  # project, one worker, zero retries (see playwright.config.js) - no
+  # Firefox/WebKit, no browser matrix. Every step below mirrors
+  # cypress-tests'/firefox-tests' own continue-on-error/
+  # steps.run_tests.outcome contract, so a failing smoke still uploads its
+  # evidence and still fails this job.
+  playwright-tests:
+    name: Playwright Chromium
+    runs-on: ubuntu-latest
+    # contents: read for checkout only - this job never calls the GitHub
+    # Actions API and never needs a provider secret (AI_API_KEY is only
+    # ever passed to qa-ai-triage below, never here).
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Chromium only (Roadmap #21G invariant: no Firefox/WebKit, no
+      # browser matrix) - --with-deps installs the Linux system libraries
+      # Chromium needs on a bare ubuntu-latest runner, mirroring
+      # firefox-tests' own explicit-browser-install pattern (there is no
+      # existing Playwright container image already in use here, unlike
+      # cypress-tests' cypress/included).
+      - name: Install Playwright Chromium browser
+        run: npx playwright install --with-deps chromium
+
+      # G21G-1 (mandatory): explicit --config=playwright.config.js, never
+      # implicit discovery - Playwright's own config discovery is
+      # cwd-dependent when --config is absent. One project (chromium), one
+      # worker, zero retries are all locked in playwright.config.js itself
+      # (see its own module comment) - this command only locks the config
+      # file and project explicitly, it does not repeat those values.
+      #
+      # continue-on-error lets the job carry on into the evidence-upload
+      # steps below instead of stopping here - identical in spirit to
+      # cypress-tests'/firefox-tests' own "Run Cypress E2E tests" contract.
+      # steps.run_tests.outcome (unaffected by continue-on-error, which
+      # only overrides .conclusion) is what "Fail job on smoke failure"
+      # below actually checks.
+      - name: Run Playwright Chromium smoke
+        id: run_tests
+        continue-on-error: true
+        run: npm run test:e2e:playwright
+
+      # Evidence upload happens regardless of pass/fail (if: always()) so a
+      # failing smoke's report/screenshots are never lost - mirrors
+      # cypress-tests'/firefox-tests' own "Upload Cypress videos" contract.
+      # if-no-files-found: ignore means a setup/browser-install failure
+      # that never produced a report is not itself an upload error - only
+      # real evidence is ever uploaded here, nothing synthesized.
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            reports/playwright/report.json
+            reports/playwright/test-results
+          if-no-files-found: ignore
+
+      # The sole source of truth for this job's conclusion - identical
+      # contract to cypress-tests'/firefox-tests' own "Fail job on E2E
+      # failure" gate, depending only on the original smoke outcome, never
+      # on artifact upload success or the downstream triage job.
+      - name: Fail job on smoke failure
+        if: steps.run_tests.outcome == 'failure'
+        run: |
+          echo "Playwright Chromium smoke failed. See the playwright-report artifact for details."
+          exit 1
+
   # Runs downstream of the full Cypress matrix (chrome, edge, and - since
   # Roadmap #14C - firefox), at most once per workflow run - the whole
   # point of this job existing (see PR #23) is that a failure appearing in
@@ -517,7 +602,7 @@ jobs:
   # E2E failure" above, which this job has no influence over.
   qa-ai-triage:
     name: QA AI triage
-    needs: [cypress-tests, firefox-tests]
+    needs: [cypress-tests, firefox-tests, playwright-tests]
     if: always()
     runs-on: ubuntu-latest
     # contents: read for checkout; pull-requests: write to post/update the
@@ -568,6 +653,68 @@ jobs:
         with:
           name: qa-triage-input-firefox
           path: reports/ai/browser-inputs/firefox
+
+      # Roadmap #21G: Playwright's own outcome, recorded directly from
+      # needs.playwright-tests.result (a native GitHub Actions job
+      # conclusion: success/failure/cancelled/skipped) rather than an
+      # uploaded browser-result.json - the Playwright job itself never
+      # writes to reports/ai/ at all (see playwright-tests above), so
+      # there is nothing to download for this part. readBrowserInputs()
+      # already treats any outcome other than "success"/"failure" as
+      # absent data (see aggregate-browser-context.js), so a cancelled or
+      # skipped Playwright job is handled by the exact same pre-existing
+      # logic chrome/edge/firefox already rely on - no new filtering
+      # needed here.
+      - name: Record Playwright browser result
+        if: always()
+        run: |
+          mkdir -p reports/ai/browser-inputs/playwright-chromium
+          printf '{"browser": "playwright-chromium", "outcome": "%s"}' "${{ needs.playwright-tests.result }}" > reports/ai/browser-inputs/playwright-chromium/browser-result.json
+
+      # The RAW reporter artifact from playwright-tests, downloaded to
+      # exactly the adapter's own default path (reports/playwright/
+      # report.json - see playwright-adapter.js's DEFAULT_REPORT_FILE) so
+      # no reportFile override is ever needed. continue-on-error: true - a
+      # Playwright job that never reached its own upload step (setup
+      # failure, cancellation) simply leaves nothing here, handled safely
+      # by the next step's own "no report found" path, never a crash.
+      - name: Download Playwright report evidence
+        uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: playwright-report
+          path: reports/playwright
+
+      # Roadmap #21G: unlike Cypress's own per-browser legs, the
+      # Playwright job itself never runs ai:collect (see playwright-tests
+      # above) - only this centralized triage job does, and only when
+      # Playwright's own recorded outcome was a genuine failure, so this
+      # never runs twice and never runs speculatively for a passing leg.
+      # QA_FRAMEWORK=playwright routes through the exact same
+      # runtime-framework-selector.js -> playwright-adapter.js path any
+      # other QA_FRAMEWORK=playwright invocation uses (Roadmap #21E) -
+      # this step never sets metadata.framework directly. If the
+      # downloaded report is genuinely absent (a setup/browser-install
+      # failure before any test ran), the Playwright adapter already
+      # produces an honest testResults.found:false / failedTests:[]
+      # context (never fabricated evidence - see playwright-adapter.js's
+      # loadReport()), and analyze-failure.js's own main() already skips
+      # the AI provider entirely whenever failedTests is empty - so this
+      # can never cause a hallucinated Playwright test failure to reach
+      # the model. The cp below only populates this one browser's own
+      # input slot (reports/ai/browser-inputs/playwright-chromium/
+      # context.json) - it does not decide anything by itself; "Aggregate
+      # browser inputs" below still owns the actual pick-one decision and
+      # will overwrite reports/ai/context.json with whichever browser it
+      # actually selects.
+      - name: Collect Playwright context (only if the Playwright job itself failed)
+        if: needs.playwright-tests.result == 'failure'
+        env:
+          QA_FRAMEWORK: playwright
+          TEST_BROWSER: chromium
+        run: |
+          npm run ai:collect
+          cp reports/ai/context.json reports/ai/browser-inputs/playwright-chromium/context.json
 
       # Reads every browser's browser-result.json, decides whether ANY E2E
       # failure happened, and if so, deterministically writes ONE browser's
@@ -731,7 +878,7 @@ jobs:
             );
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
-            for (const browser of ['chrome', 'edge', 'firefox']) {
+            for (const browser of ['chrome', 'edge', 'firefox', 'playwright-chromium']) {
               const marker = MARKER(browser);
               try {
                 const existing = await findMarkedComment({
