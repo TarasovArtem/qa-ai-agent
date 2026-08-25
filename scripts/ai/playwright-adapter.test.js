@@ -946,13 +946,87 @@ test("loadReport: a top-level shape without a suites array is rejected with a wa
   assert.ok(warnings.some((w) => w.includes("unexpected shape")));
 });
 
-// --- default-path wiring (real, but always-absent, canonical path) ---------------
+// --- default-path wiring (D21T-1: isolated from real production report state) ---
+//
+// The original version of this coverage asserted collect() with no argument
+// returns found:false, which silently depended on reports/playwright/
+// report.json being ABSENT from the real production filesystem at test-run
+// time (D21T-1). A real local `npx playwright test` run - including the
+// one-purposeful-run pattern this repository's own review process uses for
+// Roadmap #21F/#21G - legitimately leaves that exact file behind, which
+// would fail this assertion with no code defect involved. Replaced with two
+// mechanisms that never depend on that file's real-world presence/absence:
+// an equivalence proof (works identically whether or not the real file
+// exists) and an isolated-path proof (a dedicated OS-temp path that can
+// never collide with the production default). Production adapter behavior
+// (collect()'s `reportFile = DEFAULT_REPORT_FILE` default parameter) is
+// completely unchanged - only this test's fixture strategy changed.
 
-test("collect(): with no argument, uses DEFAULT_REPORT_FILE and returns found:false since no real Playwright report exists in this repository", () => {
-  const out = collect();
+test("collect(): with no argument is equivalent to collect({reportFile: DEFAULT_REPORT_FILE}) - true regardless of whether a real report currently exists on disk", () => {
+  const withNoArgument = collect();
+  const withExplicitDefault = collect({ reportFile: DEFAULT_REPORT_FILE });
+  assert.deepEqual(withNoArgument, withExplicitDefault);
+});
+
+test("collect(): a genuinely missing report at an isolated OS-temp path (never the production default) returns found:false, empty failedTests, and the expected warning", (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-collect-missing-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const missingReportFile = path.join(tmpDir, "does-not-exist.json");
+
+  const out = collect({ reportFile: missingReportFile });
   assert.deepEqual(out.testResults, { found: false });
   assert.deepEqual(out.failedTests, []);
   assert.ok(out.warnings.some((w) => w.includes("No Playwright JSON report found")));
+});
+
+// D21T-1 adversarial proof: collect() with no argument must still resolve
+// correctly - reading the real content, not silently failing or picking up
+// stale state - while a legitimate reports/playwright/report.json genuinely
+// exists at the real production default path. Backs up and restores any
+// pre-existing real file exactly, so a developer's or CI's own leftover
+// report is never destroyed by running this test suite.
+test("collect(): with no argument still resolves correctly while a real report exists at the production default location (adversarial proof, exact backup/restore)", (t) => {
+  const backupPath = `${DEFAULT_REPORT_FILE}.d21t1-backup`;
+  const hadExisting = fs.existsSync(DEFAULT_REPORT_FILE);
+  if (hadExisting) fs.renameSync(DEFAULT_REPORT_FILE, backupPath);
+  t.after(() => {
+    fs.rmSync(DEFAULT_REPORT_FILE, { force: true });
+    if (hadExisting) fs.renameSync(backupPath, DEFAULT_REPORT_FILE);
+  });
+
+  fs.mkdirSync(path.dirname(DEFAULT_REPORT_FILE), { recursive: true });
+  const marker = "D21T1_ADVERSARIAL_MARKER";
+  fs.writeFileSync(
+    DEFAULT_REPORT_FILE,
+    JSON.stringify(
+      report({
+        suites: [
+          fileSuite({
+            title: marker,
+            file: "tests/d21t1-adversarial.spec.ts",
+            specs: [
+              spec({
+                title: "adversarial spec",
+                file: "tests/d21t1-adversarial.spec.ts",
+                tests: [logicalTest({ status: "expected", results: [result({ status: "passed", duration: 10 })] })],
+              }),
+            ],
+          }),
+        ],
+      })
+    )
+  );
+
+  const out = collect();
+  assert.equal(out.testResults.found, true);
+  assert.equal(out.testResults.totals.tests, 1);
+  assert.equal(out.testResults.totals.passed, 1);
+
+  // The isolated missing-report test above is unaffected by this real
+  // file's presence, since it always targets its own dedicated OS-temp
+  // path, never DEFAULT_REPORT_FILE - proven again here for good measure.
+  const missingResult = collect({ reportFile: path.join(os.tmpdir(), "d21t1-unrelated-missing-report.json") });
+  assert.deepEqual(missingResult.testResults, { found: false });
 });
 
 // --- real-reporter compatibility proof (Roadmap #21B) -----------------------
