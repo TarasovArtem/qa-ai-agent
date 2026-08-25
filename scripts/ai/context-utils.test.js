@@ -80,6 +80,57 @@ test("classifyPathString: non-string/empty input is INVALID", () => {
   assert.equal(classifyPathString(42), PATH_KIND.INVALID);
 });
 
+// --- D21D-2 (pre-#21G hardening): malformed file:-URI-like forms ------------
+//
+// URL_LIKE_PATTERN alone requires a full "scheme://" - a degenerate
+// file-URI-like reporter value carrying only one or zero slashes after the
+// colon used to fall all the way through to SAFE_RELATIVE (it matches
+// neither the Windows-drive nor the POSIX-absolute pattern either), which
+// would let it flow onward through resolveSafeSpecPath()/
+// resolveSafeLocalAttachmentPath() as if it were an ordinary safe relative
+// path. Every one of these forms must now classify as URL_LIKE and never
+// SAFE_RELATIVE.
+
+test("classifyPathString: malformed file:-URI-like forms (one or zero slashes) are URL_LIKE, never SAFE_RELATIVE", () => {
+  assert.equal(classifyPathString("file:C:\\foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("file:/tmp/foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("FILE:C:\\foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("FILE:/tmp/foo"), PATH_KIND.URL_LIKE);
+});
+
+test("classifyPathString: well-formed file:// URI forms remain URL_LIKE regardless of scheme casing", () => {
+  assert.equal(classifyPathString("file:///tmp/foo"), PATH_KIND.URL_LIKE);
+  assert.equal(classifyPathString("FiLe:///tmp/foo"), PATH_KIND.URL_LIKE);
+});
+
+test("classifyPathString: legitimate Windows drive paths are unaffected by the file:-scheme hardening", () => {
+  assert.equal(classifyPathString("C:\\foo"), PATH_KIND.WINDOWS_DRIVE_ABSOLUTE);
+  assert.equal(classifyPathString("C:/foo"), PATH_KIND.WINDOWS_DRIVE_ABSOLUTE);
+  assert.equal(classifyPathString("D:\\repo\\file.js"), PATH_KIND.WINDOWS_DRIVE_ABSOLUTE);
+});
+
+test("classifyPathString: normal relative reporter paths are unaffected by the file:-scheme hardening", () => {
+  assert.equal(classifyPathString("tests/smoke.spec.js"), PATH_KIND.SAFE_RELATIVE);
+  assert.equal(classifyPathString("playwright/tests/smoke.spec.js"), PATH_KIND.SAFE_RELATIVE);
+  assert.equal(classifyPathString("reports/playwright/test-results/foo.png"), PATH_KIND.SAFE_RELATIVE);
+});
+
+test("D21D-2 resolveSafeSpecPath: malformed file:-URI-like values are rejected, never preserved as a spec path", () => {
+  for (const raw of ["file:C:\\foo", "file:/tmp/foo", "FILE:C:\\foo", "FILE:/tmp/foo"]) {
+    const result = resolveSafeSpecPath(raw);
+    assert.equal(result.value, null, `expected null value for ${raw}`);
+    assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
+  }
+});
+
+test("D21D-2 resolveSafeLocalAttachmentPath: malformed file:-URI-like values are rejected, never resolved against the filesystem", () => {
+  for (const raw of ["file:C:\\foo", "file:/tmp/foo", "FILE:C:\\foo", "FILE:/tmp/foo"]) {
+    const result = resolveSafeLocalAttachmentPath(raw);
+    assert.equal(result.value, null, `expected null value for ${raw}`);
+    assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
+  }
+});
+
 // --- resolveSafeSpecPath (Roadmap #21D, R2) ---------------------------------
 
 test("PATH_1 resolveSafeSpecPath: a safe relative spec path is preserved, normalized to forward slashes", () => {
