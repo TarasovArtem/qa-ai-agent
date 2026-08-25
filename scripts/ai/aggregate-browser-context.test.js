@@ -9,6 +9,7 @@ const {
   readBrowserInputs,
   shouldRunAiTriage,
   selectPrimaryFailure,
+  classifyContextFrameworkValue,
   checkFrameworkIdentityConsistency,
   aggregateBrowserInputs,
   buildBrowserCorrelation,
@@ -1072,4 +1073,144 @@ test("bounded log message: identity mismatch log never includes full context, pa
   const serialized = JSON.stringify(identityMismatch);
   assert.ok(!serialized.includes("SENSITIVE_ERROR_TEXT_21H"));
   assert.deepEqual(Object.keys(identityMismatch).sort(), ["contextFramework", "descriptorFramework"]);
+});
+
+// =========================================================================
+// Roadmap #21J-A (D21H-1): ABSENT vs INVALID PRESENT metadata.framework.
+// Before this fix, checkFrameworkIdentityConsistency() classified any
+// non-string metadata.framework (0, true, {}, [], ...) identically to a
+// genuinely-missing property - both collapsed to "nothing to compare",
+// so a malformed adapter/context value was silently treated as agreeing
+// with the trusted descriptor rather than as unresolvable evidence. These
+// tests prove the fixed classifyContextFrameworkValue()/
+// checkFrameworkIdentityConsistency() now correctly distinguish the two.
+// =========================================================================
+
+function fakeContextWithRawFramework(rawFramework, browser, overrides = {}) {
+  const ctx = fakeContext(browser, overrides);
+  return { ...ctx, metadata: { ...ctx.metadata, framework: rawFramework } };
+}
+
+// --- classifyContextFrameworkValue direct unit tests ------------------
+
+test("classifyContextFrameworkValue: a genuinely missing framework property is ABSENT", () => {
+  assert.deepEqual(classifyContextFrameworkValue({ repository: "o/r" }), { state: "absent", value: null });
+  assert.deepEqual(classifyContextFrameworkValue(null), { state: "absent", value: null });
+  assert.deepEqual(classifyContextFrameworkValue(undefined), { state: "absent", value: null });
+});
+
+test("classifyContextFrameworkValue: a valid non-empty string is VALID", () => {
+  assert.deepEqual(classifyContextFrameworkValue({ framework: "cypress" }), { state: "valid", value: "cypress" });
+  assert.deepEqual(classifyContextFrameworkValue({ framework: "playwright" }), { state: "valid", value: "playwright" });
+});
+
+test("classifyContextFrameworkValue: present but non-string values are INVALID, never ABSENT", () => {
+  for (const rawFramework of [0, 1, true, false, {}, [], ["playwright"], null]) {
+    const result = classifyContextFrameworkValue({ framework: rawFramework });
+    assert.equal(result.state, "invalid", `expected INVALID for ${JSON.stringify(rawFramework)}, got ${result.state}`);
+  }
+});
+
+test("classifyContextFrameworkValue: an empty or whitespace-only string is INVALID, not a usable identity", () => {
+  assert.equal(classifyContextFrameworkValue({ framework: "" }).state, "invalid");
+  assert.equal(classifyContextFrameworkValue({ framework: "   " }).state, "invalid");
+});
+
+test("classifyContextFrameworkValue: the invalid state never echoes the raw value, only its typeof", () => {
+  const result = classifyContextFrameworkValue({ framework: { toString: () => "PRIVATE_CRAFTED_TOSTRING_21J" } });
+  assert.equal(result.state, "invalid");
+  assert.equal(result.rawType, "object");
+  assert.ok(!JSON.stringify(result).includes("PRIVATE_CRAFTED_TOSTRING_21J"));
+});
+
+// --- end-to-end checkFrameworkIdentityConsistency / aggregateBrowserInputs ---
+
+test("I7-I13 checkFrameworkIdentityConsistency: every present-but-malformed metadata.framework value fails closed (never 'nothing to compare')", () => {
+  const malformedValues = [0, 1, true, false, {}, [], ["playwright"]];
+  for (const rawFramework of malformedValues) {
+    const primary = { browser: "chrome", framework: "cypress", context: fakeContextWithRawFramework(rawFramework, "chrome") };
+    const result = checkFrameworkIdentityConsistency(primary);
+    assert.equal(result.consistent, false, `expected fail-closed for metadata.framework=${JSON.stringify(rawFramework)}`);
+    assert.equal(result.descriptorFramework, "cypress");
+    assert.match(result.contextFramework, /^<invalid:\w+>$/, "contextFramework must be a bounded type description, never the raw value");
+  }
+});
+
+test("I14 checkFrameworkIdentityConsistency: metadata.framework='' (present, empty string) fails closed", () => {
+  const primary = { browser: "chrome", framework: "cypress", context: fakeContextWithRawFramework("", "chrome") };
+  const result = checkFrameworkIdentityConsistency(primary);
+  assert.equal(result.consistent, false);
+  assert.equal(result.contextFramework, "<invalid:string>");
+});
+
+test("I15 checkFrameworkIdentityConsistency: an unsupported-but-well-typed metadata.framework string ('unknown') is compared normally, still fails closed against a mismatching descriptor", () => {
+  const primary = { browser: "chrome", framework: "cypress", context: fakeContextWithRawFramework("unknown", "chrome") };
+  const result = checkFrameworkIdentityConsistency(primary);
+  assert.equal(result.consistent, false);
+  assert.equal(result.contextFramework, "unknown");
+});
+
+test("D21H-1 end-to-end: aggregateBrowserInputs fails closed (primary:null, 0 provider calls possible) for every malformed metadata.framework value", () => {
+  for (const rawFramework of [0, true, {}, [], ""]) {
+    const inputs = [browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithRawFramework(rawFramework, "chrome") })];
+    const result = aggregateBrowserInputs(inputs);
+    assert.equal(result.shouldRun, true);
+    assert.equal(result.primary, null, `expected primary:null for metadata.framework=${JSON.stringify(rawFramework)}`);
+    assert.deepEqual(result.correlation, null);
+    assert.deepEqual(result.frameworkCorrelation, null);
+    assert.ok(result.identityMismatch, "identityMismatch must be populated");
+  }
+});
+
+test("D21H-1 bounded log privacy: a crafted object with a hostile toString() in metadata.framework never leaks into identityMismatch", () => {
+  const hostile = { toString: () => "PRIVATE_HOSTILE_TOSTRING_21J_MARKER" };
+  const inputs = [browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithRawFramework(hostile, "chrome") })];
+  const { identityMismatch } = aggregateBrowserInputs(inputs);
+  assert.ok(identityMismatch);
+  const serialized = JSON.stringify(identityMismatch);
+  assert.ok(!serialized.includes("PRIVATE_HOSTILE_TOSTRING_21J_MARKER"));
+  assert.equal(identityMismatch.contextFramework, "<invalid:object>");
+});
+
+// --- backward-compatibility regression (unchanged existing behavior) ---
+
+test("D21H-1 regression: valid Cypress identity is still accepted unchanged", () => {
+  const inputs = [browserInput("chrome", "failure", { framework: "cypress", context: fakeContextWithFramework("cypress", "chrome") })];
+  const result = aggregateBrowserInputs(inputs);
+  assert.equal(result.identityMismatch, null);
+  assert.ok(result.primary);
+});
+
+test("D21H-1 regression: valid Playwright identity is still accepted unchanged", () => {
+  const inputs = [
+    browserInput("playwright-chromium", "failure", { framework: "playwright", context: fakeContextWithFramework("playwright", "playwright-chromium") }),
+  ];
+  const result = aggregateBrowserInputs(inputs);
+  assert.equal(result.identityMismatch, null);
+  assert.ok(result.primary);
+});
+
+test("D21H-1 regression: a genuinely absent metadata.framework (legacy fixture, no property at all) still has nothing to compare", () => {
+  const primary = { browser: "chrome", framework: "cypress", context: fakeContext("chrome") };
+  assert.deepEqual(checkFrameworkIdentityConsistency(primary), { consistent: true, descriptorFramework: "cypress", contextFramework: null });
+});
+
+test("D21H-1 regression: context=null (genuine no-report failure) remains legitimate, never a fabricated malformed identity", () => {
+  const inputs = [{ browser: "playwright-chromium", framework: "playwright", outcome: "failure", context: null, history: null }];
+  const result = aggregateBrowserInputs(inputs);
+  assert.equal(result.identityMismatch, null);
+  assert.ok(result.primary);
+  assert.equal(result.primary.context, null);
+});
+
+test("D21H-1 regression: string mismatch (cypress vs playwright) still fails closed identically to before", () => {
+  const cToP = checkFrameworkIdentityConsistency({ browser: "chrome", framework: "cypress", context: fakeContextWithFramework("playwright", "chrome") });
+  assert.deepEqual(cToP, { consistent: false, descriptorFramework: "cypress", contextFramework: "playwright" });
+
+  const pToC = checkFrameworkIdentityConsistency({
+    browser: "playwright-chromium",
+    framework: "playwright",
+    context: fakeContextWithFramework("cypress", "playwright-chromium"),
+  });
+  assert.deepEqual(pToC, { consistent: false, descriptorFramework: "playwright", contextFramework: "cypress" });
 });

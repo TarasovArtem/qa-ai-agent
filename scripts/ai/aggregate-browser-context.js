@@ -314,6 +314,28 @@ function buildFrameworkCorrelation(browserInputs, primaryFramework) {
 // workflow/evidence contract violation, and the caller must refuse to
 // treat that evidence as analyzable - never silently prefer one identity
 // over the other.
+// Roadmap #21J-A (D21H-1): mirrors analyze-failure.js's own
+// classifyFrameworkId() ABSENT/INVALID/VALID vocabulary for the exact same
+// context.metadata.framework field (own-property check, never a bare
+// truthy/typeof check that would also swallow an explicitly-set falsy
+// value like 0/false/""). ABSENT means the property genuinely was never
+// set at all - nothing to compare, legacy-compatible. INVALID means the
+// property IS present but is not a usable non-empty string (e.g. 0, true,
+// {}, [], "") - this is comparable-but-untrustworthy evidence, never
+// "nothing to compare": #21G-R2/#21H's own check previously collapsed
+// both cases toward absent, meaning a present-but-malformed
+// metadata.framework was silently treated as if it agreed with whatever
+// the descriptor said, rather than as an unresolvable contradiction.
+function classifyContextFrameworkValue(metadata) {
+  const hasProperty = Boolean(metadata) && Object.prototype.hasOwnProperty.call(metadata, "framework");
+  if (!hasProperty) return { state: "absent", value: null };
+
+  const raw = metadata.framework;
+  if (typeof raw !== "string" || raw.trim().length === 0) return { state: "invalid", rawType: typeof raw };
+
+  return { state: "valid", value: raw };
+}
+
 function checkFrameworkIdentityConsistency(primary) {
   if (!primary) {
     return { consistent: true, descriptorFramework: null, contextFramework: null };
@@ -325,19 +347,24 @@ function checkFrameworkIdentityConsistency(primary) {
   // all (a setup/report failure before any test ran - see the existing
   // "no usable context.json" path in main()). That is absent evidence,
   // not contradictory evidence - nothing to compare, so this is never
-  // treated as a mismatch. Likewise, a context whose own metadata carries
-  // no usable framework string (a legacy/hand-built fixture predating
-  // explicit framework identity) has nothing comparable either.
-  const contextFramework =
-    primary.context && primary.context.metadata && typeof primary.context.metadata.framework === "string"
-      ? primary.context.metadata.framework
-      : null;
+  // treated as a mismatch.
+  const classification = classifyContextFrameworkValue(primary.context && primary.context.metadata);
 
-  if (contextFramework === null) {
+  if (classification.state === "absent") {
     return { consistent: true, descriptorFramework, contextFramework: null };
   }
 
-  return { consistent: descriptorFramework === contextFramework, descriptorFramework, contextFramework };
+  if (classification.state === "invalid") {
+    // Present but unusable evidence must never be treated as consistent -
+    // that would let a malformed adapter/context value silently pass as if
+    // it agreed with the trusted descriptor. contextFramework is
+    // deliberately a bounded type description here, never the raw value
+    // itself, so a crafted object/long string can never be echoed into
+    // this result and therefore into main()'s own bounded log line.
+    return { consistent: false, descriptorFramework, contextFramework: `<invalid:${classification.rawType}>` };
+  }
+
+  return { consistent: descriptorFramework === classification.value, descriptorFramework, contextFramework: classification.value };
 }
 
 // Composes the decisions above into the one result main() (and tests)
@@ -456,6 +483,7 @@ module.exports = {
   readBrowserInputs,
   shouldRunAiTriage,
   selectPrimaryFailure,
+  classifyContextFrameworkValue,
   checkFrameworkIdentityConsistency,
   aggregateBrowserInputs,
   buildBrowserCorrelation,
