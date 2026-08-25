@@ -164,6 +164,56 @@ test("buildUserPrompt: never inlines the raw list of historical runs, only aggre
   assert.doesNotMatch(prompt, /"runs"\s*:\s*\[/);
 });
 
+// Roadmap #21H (Stage H3.16): proves the three evidence dimensions History
+// added a third of (current-run failure, Playwright's own historical
+// aggregate, and the current workflow's Cypress frameworkCorrelation
+// outcome) render as textually distinct, non-overlapping JSON regions -
+// no cross-framework historical contamination bleeding into the wrong
+// section, even when a Playwright analysis and a Cypress workflow outcome
+// are both present in the same rendered prompt at once.
+test("buildUserPrompt: current-run failure, history, and frameworkCorrelation remain textually distinct with no cross-framework contamination", () => {
+  const context = {
+    metadata: { framework: "playwright" },
+    testResults: {},
+    failedTests: [{ title: "PLAYWRIGHT_CURRENT_FAILURE_MARKER", fullTitle: null, specFile: null, error: {} }],
+    relevantFiles: {},
+    // Playwright's own historical aggregate (readHistory()'s bounded
+    // output shape - see analyze-failure.js) - must never carry a
+    // "framework" field of its own into the prompt (only the four
+    // aggregate-count fields do), and must never be influenced by the
+    // Cypress frameworkCorrelation outcome below.
+    history: { runsConsidered: 10, passes: 6, failures: 4, retryPasses: 1 },
+    // The current workflow's own Cypress outcome, via frameworkCorrelation
+    // - workflow-level evidence about an unrelated framework's jobs, never
+    // temporal/historical evidence about Playwright.
+    frameworkCorrelation: { primaryFramework: "playwright", outcomes: [{ framework: "playwright", outcome: "failure" }, { framework: "cypress", outcome: "success" }] },
+  };
+  const prompt = buildUserPrompt(context);
+  const payload = JSON.parse(prompt.slice(prompt.indexOf("{"), prompt.lastIndexOf("}") + 1));
+
+  // Three separate, independently-projected top-level keys - never merged
+  // into one combined "evidence" blob.
+  assert.deepEqual(payload.history, { runsConsidered: 10, passes: 6, failures: 4, retryPasses: 1 });
+  assert.ok(!("framework" in payload.history), "history must never carry its own framework field into the prompt");
+  assert.deepEqual(payload.frameworkCorrelation, {
+    primaryFramework: "playwright",
+    outcomes: [
+      { framework: "playwright", outcome: "failure" },
+      { framework: "cypress", outcome: "success" },
+    ],
+  });
+  assert.equal(payload.failedTests[0].title, "PLAYWRIGHT_CURRENT_FAILURE_MARKER");
+
+  // The current-run failure marker must appear only inside failedTests,
+  // never leaking into history or frameworkCorrelation's own JSON regions.
+  assert.ok(!JSON.stringify(payload.history).includes("PLAYWRIGHT_CURRENT_FAILURE_MARKER"));
+  assert.ok(!JSON.stringify(payload.frameworkCorrelation).includes("PLAYWRIGHT_CURRENT_FAILURE_MARKER"));
+  // Cypress's presence in frameworkCorrelation must never leak into
+  // history - history is Playwright's own temporal aggregate only, never
+  // merged with another framework's current-workflow outcome.
+  assert.ok(!JSON.stringify(payload.history).includes("cypress"));
+});
+
 test("buildUserPrompt: includes knownProjectConstraints when present, empty array when absent", () => {
   const withConstraints = buildUserPrompt({
     metadata: {},
