@@ -616,11 +616,14 @@ test("O3-O7: an injected playwrightAdapter traverses the generic collector fully
   // Roadmap #21C: relevantFiles is now selected by the active framework's
   // own policy (adapter.id, here "playwright") - it never includes
   // cypress.config.js for a Playwright-produced context.json (the R1 defect
-  // this stage fixes). Only package.json survives: playwright.config.js is
-  // Playwright's own alwaysCollectFiles entry, but no root-level
-  // playwright.config.js exists in this repository yet (that is #21F's
-  // job), so it is attempted and correctly not found - never fabricated.
-  assert.deepEqual(Object.keys(written.relevantFiles).sort(), ["package.json"]);
+  // this stage fixes). Roadmap #21F: playwright.config.js now genuinely
+  // exists at the repo root (the real production config), so it is
+  // correctly collected alongside package.json - both are Playwright's own
+  // alwaysCollectFiles entries and both are now real, on-disk files. The
+  // synthetic "tests/orchestration.spec.ts" fixture spec still does not
+  // exist anywhere on disk (it is unrelated to the real smoke.spec.js), so
+  // it is still correctly attempted and not found, never fabricated.
+  assert.deepEqual(Object.keys(written.relevantFiles).sort(), ["package.json", "playwright.config.js"]);
   assert.ok(!("cypress.config.js" in written.relevantFiles));
   assert.ok(!("tests/orchestration.spec.ts" in written.relevantFiles));
 
@@ -697,11 +700,15 @@ test("P_RF_2: package.json is allowed under the Playwright policy (shared baseli
   assert.equal(isPathAllowed(path.join(ROOT, "package.json"), PLAYWRIGHT_RF_POLICY), true);
 });
 
-test("P_RF_3: playwright.config.js is allowed and collected when it genuinely exists at the repo root", (t) => {
+test("P_RF_3: playwright.config.js is allowed and collected when it genuinely exists at the repo root", () => {
+  // Roadmap #21F: the real production playwright.config.js now genuinely
+  // exists at the repo root - this test was updated from a synthetic
+  // create/delete fixture to exercise the real file directly (the same
+  // kind of narrow, justified strengthening #21C-C1 applied to its own
+  // "x.cy.js" -> real-file test correction), rather than continuing to
+  // assume no such file could exist.
   const configPath = path.join(ROOT, "playwright.config.js");
-  assert.ok(!fs.existsSync(configPath), "test precondition: no real playwright.config.js may already exist");
-  fs.writeFileSync(configPath, "module.exports = { testDir: 'playwright' };\n");
-  t.after(() => fs.rmSync(configPath, { force: true }));
+  assert.ok(fs.existsSync(configPath), "test precondition: the real production playwright.config.js (Roadmap #21F) must exist");
 
   assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY), true);
 
@@ -712,11 +719,15 @@ test("P_RF_3: playwright.config.js is allowed and collected when it genuinely ex
 });
 
 test("P_RF_4: a repo-relative playwright/tests/foo.spec.js failedTests specFile is collected directly", (t) => {
+  // Roadmap #21F: playwright/tests/ is now a real, permanent production
+  // directory (it also holds the real smoke.spec.js) - only this test's
+  // own uniquely-named fixture file is ever created/removed here, never
+  // the shared playwright/ or playwright/tests/ directories themselves.
   const specDir = path.join(ROOT, "playwright", "tests");
   const specPath = path.join(specDir, "p_rf_4.spec.js");
   fs.mkdirSync(specDir, { recursive: true });
   fs.writeFileSync(specPath, "// p_rf_4 fixture spec\n");
-  t.after(() => fs.rmSync(path.join(ROOT, "playwright"), { recursive: true, force: true }));
+  t.after(() => fs.rmSync(specPath, { force: true }));
 
   const warnings = [];
   const files = buildRelevantFiles([{ specFile: "playwright/tests/p_rf_4.spec.js" }], warnings, "playwright");
@@ -729,7 +740,7 @@ test("P_RF_5: a testDir-relative 'tests/foo.spec.js' specFile safely re-resolves
   const specPath = path.join(specDir, "p_rf_5.spec.js");
   fs.mkdirSync(specDir, { recursive: true });
   fs.writeFileSync(specPath, "// p_rf_5 fixture spec\n");
-  t.after(() => fs.rmSync(path.join(ROOT, "playwright"), { recursive: true, force: true }));
+  t.after(() => fs.rmSync(specPath, { force: true }));
 
   // No "playwright/" prefix - exactly the real reporter shape Roadmap #21B
   // observed (spec.file relative to Playwright's own testDir).
@@ -740,11 +751,14 @@ test("P_RF_5: a testDir-relative 'tests/foo.spec.js' specFile safely re-resolves
 });
 
 test("P_RF_6: a bare testDir-relative 'foo.spec.js' (no subdirectory) safely re-resolves under playwright/", (t) => {
+  // Roadmap #21F: playwright/ is now a real, permanent production
+  // directory - mkdirSync is a harmless no-op against it, and cleanup
+  // removes only this test's own fixture file, never the directory.
   const pwDir = path.join(ROOT, "playwright");
   const specPath = path.join(pwDir, "p_rf_6.spec.js");
   fs.mkdirSync(pwDir, { recursive: true });
   fs.writeFileSync(specPath, "// p_rf_6 fixture spec\n");
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(specPath, { force: true }));
 
   const warnings = [];
   const files = buildRelevantFiles([{ specFile: "p_rf_6.spec.js" }], warnings, "playwright");
@@ -808,7 +822,7 @@ test("P_RF_12: a denylisted filename under playwright/ is still rejected, exactl
   const secretPath = path.join(pwDir, ".env");
   fs.mkdirSync(pwDir, { recursive: true });
   fs.writeFileSync(secretPath, "SECRET=1\n");
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(secretPath, { force: true }));
 
   assert.equal(isPathAllowed(secretPath, PLAYWRIGHT_RF_POLICY), false);
   assert.equal(isPathAllowed(path.join(pwDir, "api.key"), PLAYWRIGHT_RF_POLICY), false);
@@ -833,7 +847,7 @@ test("P_RF_14: the Playwright per-file size cap matches Cypress's (MAX_FILE_BYTE
   const bigPath = path.join(pwDir, "p_rf_14.spec.js");
   fs.mkdirSync(pwDir, { recursive: true });
   fs.writeFileSync(bigPath, "x".repeat(25 * 1024)); // > 20 KB
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(bigPath, { force: true }));
 
   const warnings = [];
   const files = buildRelevantFiles([{ specFile: "playwright/p_rf_14.spec.js" }], warnings, "playwright");
@@ -938,10 +952,11 @@ test("S_RF_1: a Playwright direct-file symlink to a real file outside the reposi
 
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
-  fs.symlinkSync(outsideFile, path.join(pwDir, "s_rf_1_link.js"), "file");
+  const linkPath1 = path.join(pwDir, "s_rf_1_link.js");
+  t.after(() => fs.rmSync(linkPath1, { force: true }));
+  fs.symlinkSync(outsideFile, linkPath1, "file");
 
-  assert.equal(isPathAllowed(path.join(pwDir, "s_rf_1_link.js"), PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(linkPath1, PLAYWRIGHT_RF_POLICY), false);
 
   // Real pipeline, not just the internal helper (Roadmap #21C-C1 Phase 18) -
   // #21C-R reproduced the original bypass through buildRelevantFiles()
@@ -959,8 +974,8 @@ test("S_RF_2: a harmless-named Playwright symlink to a real .env file outside th
 
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
   const linkPath = path.join(pwDir, "s_rf_2_harmless.js");
+  t.after(() => fs.rmSync(linkPath, { force: true }));
   fs.symlinkSync(outsideEnv, linkPath, "file");
 
   assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY), false);
@@ -976,12 +991,15 @@ test("S_RF_2: a harmless-named Playwright symlink to a real .env file outside th
 test("S_RF_3: a harmless-named Playwright symlink to a real .env file INSIDE playwright/ is also rejected", (t) => {
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
 
   const MARK = "S_RF_3_MARK";
   const realEnv = path.join(pwDir, ".env");
-  fs.writeFileSync(realEnv, MARK);
   const linkPath = path.join(pwDir, "s_rf_3_harmless.js");
+  t.after(() => {
+    fs.rmSync(linkPath, { force: true });
+    fs.rmSync(realEnv, { force: true });
+  });
+  fs.writeFileSync(realEnv, MARK);
   fs.symlinkSync(realEnv, linkPath, "file");
 
   assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY), false);
@@ -1000,8 +1018,9 @@ test("S_RF_4: a Playwright symlinked PARENT DIRECTORY pointing outside the repos
 
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
-  fs.symlinkSync(outsideDir, path.join(pwDir, "link-dir"), "dir");
+  const linkDirPath = path.join(pwDir, "link-dir");
+  t.after(() => fs.rmSync(linkDirPath, { force: true }));
+  fs.symlinkSync(outsideDir, linkDirPath, "dir");
 
   // The final path component ("foo.js") is an ordinary file, never itself a
   // symlink - a final-component-only lstat check would miss this; only
@@ -1039,8 +1058,9 @@ test("S_RF_5: a Cypress symlink to a real file outside the repository is rejecte
 test("S_RF_6: an ordinary non-symlink Playwright file is still collected correctly (no regression)", (t) => {
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(pwDir, "s_rf_6_normal.spec.js"), "// ordinary file, no symlink");
+  const normalPath = path.join(pwDir, "s_rf_6_normal.spec.js");
+  t.after(() => fs.rmSync(normalPath, { force: true }));
+  fs.writeFileSync(normalPath, "// ordinary file, no symlink");
 
   const warnings = [];
   const files = buildRelevantFiles([{ specFile: "playwright/s_rf_6_normal.spec.js" }], warnings, "playwright");
@@ -1059,12 +1079,13 @@ test("S_RF_7: an ordinary non-symlink Cypress file is still collected correctly 
 test("S_RF_8: a broken (dangling) Playwright symlink fails safely - no throw, no crash, ordinary 'not found' warning", (t) => {
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
+  const brokenLinkPath = path.join(pwDir, "s_rf_8_broken.js");
+  t.after(() => fs.rmSync(brokenLinkPath, { force: true }));
   const nonExistentTarget = path.join(os.tmpdir(), `s-rf-8-does-not-exist-${Date.now()}.js`);
-  fs.symlinkSync(nonExistentTarget, path.join(pwDir, "s_rf_8_broken.js"), "file");
+  fs.symlinkSync(nonExistentTarget, brokenLinkPath, "file");
 
-  assert.doesNotThrow(() => isPathAllowed(path.join(pwDir, "s_rf_8_broken.js"), PLAYWRIGHT_RF_POLICY));
-  assert.equal(isPathAllowed(path.join(pwDir, "s_rf_8_broken.js"), PLAYWRIGHT_RF_POLICY), false);
+  assert.doesNotThrow(() => isPathAllowed(brokenLinkPath, PLAYWRIGHT_RF_POLICY));
+  assert.equal(isPathAllowed(brokenLinkPath, PLAYWRIGHT_RF_POLICY), false);
 
   const warnings = [];
   let files;
@@ -1076,12 +1097,23 @@ test("S_RF_8: a broken (dangling) Playwright symlink fails safely - no throw, no
 });
 
 test("Always-collect identity cannot be aliased via symlink: a symlinked playwright.config.js pointing at a different real in-repository file is rejected", (t) => {
+  // Roadmap #21F: playwright.config.js now genuinely exists as the real
+  // production config, so this test can no longer merely create a symlink
+  // at that path - it must temporarily replace the real file with the
+  // symlink under test, then restore the exact original bytes via
+  // t.after(), which runs even if an assertion above it fails.
   const configPath = path.join(ROOT, "playwright.config.js");
-  assert.ok(!fs.existsSync(configPath), "test precondition: no real playwright.config.js may already exist");
+  assert.ok(fs.existsSync(configPath), "test precondition: the real production playwright.config.js (Roadmap #21F) must exist");
+  const originalConfigContent = fs.readFileSync(configPath);
   const readmePath = path.join(ROOT, "README.md");
   assert.ok(fs.existsSync(readmePath), "test precondition: README.md must exist as the real, unrelated in-repo target");
+
+  t.after(() => {
+    fs.rmSync(configPath, { force: true });
+    fs.writeFileSync(configPath, originalConfigContent);
+  });
+  fs.rmSync(configPath, { force: true });
   fs.symlinkSync(readmePath, configPath, "file");
-  t.after(() => fs.rmSync(configPath, { force: true }));
 
   assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY), false);
 
@@ -1093,12 +1125,15 @@ test("Always-collect identity cannot be aliased via symlink: a symlinked playwri
 test("In-root symlink policy: a symlink whose REAL target independently satisfies the same framework policy is allowed (documents the chosen design)", (t) => {
   const pwDir = path.join(ROOT, "playwright");
   fs.mkdirSync(pwDir, { recursive: true });
-  t.after(() => fs.rmSync(pwDir, { recursive: true, force: true }));
 
   const MARK = "SAFE_INROOT_MARK";
   const realFile = path.join(pwDir, "real_target.js");
-  fs.writeFileSync(realFile, MARK);
   const linkFile = path.join(pwDir, "safe_link.js");
+  t.after(() => {
+    fs.rmSync(linkFile, { force: true });
+    fs.rmSync(realFile, { force: true });
+  });
+  fs.writeFileSync(realFile, MARK);
   fs.symlinkSync(realFile, linkFile, "file");
 
   // Allowed - not because "symlinks are fine," but because the REAL target
@@ -1116,7 +1151,7 @@ test("Future testDir contract (Roadmap #21C-C1): a testDir-relative 'tests/foo.s
   const specPath = path.join(specDir, "contract_check.spec.js");
   fs.mkdirSync(specDir, { recursive: true });
   fs.writeFileSync(specPath, "// contract check fixture, no symlink involved");
-  t.after(() => fs.rmSync(path.join(ROOT, "playwright"), { recursive: true, force: true }));
+  t.after(() => fs.rmSync(specPath, { force: true }));
 
   const warnings = [];
   const files = buildRelevantFiles([{ specFile: "tests/contract_check.spec.js" }], warnings, "playwright");
