@@ -822,3 +822,17 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 - **`ROADMAP_21_TECHNICAL_WORK`: COMPLETE** - every #21A-#21J-A stage is implemented, independently reviewed, and merged to `main`, including one real, independently-reviewed, controlled Playwright failure proof.
 - **`ROADMAP_21_DOCUMENTATION`: READY_FOR_FINAL_REVIEW** - this documentation update (#21J-B) is open for independent review (#21J-B-R) as of this writing; it changes no runtime code, workflow, or test.
 - **`ROADMAP_21_FORMAL_CLOSURE`: PENDING #21J-B-R AND MERGE** - Roadmap #21 is not yet formally `COMPLETE_ON_MAIN` until #21J-B's independent review passes, its PR is standard-merged, and natural post-merge CI is verified on the exact merge commit.
+
+## Roadmap #22/23-F0 — Shared QA Generation Foundation
+
+A shared, versioned, strictly validated `RequirementModel` / `TestCaseModel` /
+`AutomationCandidate` / `AutomationPlan` v1 contract layer
+(`scripts/ai/generation/`), frozen before the two future streams named above
+(`#22 AI Test Design`, `#23 AI Test Automation`) begin, so neither can
+independently invent an incompatible data model. See
+[docs/qa-generation-contracts-v1.md](docs/qa-generation-contracts-v1.md) for
+the full design: grounding/provenance, project isolation, cross-model
+reference validation, safe repository paths, and the v1 freeze policy. This
+foundation defines data contracts only - it calls no AI provider, runs no
+browser, and performs no filesystem mutation; it does not itself implement
+requirements ingestion, test design, or test automation.

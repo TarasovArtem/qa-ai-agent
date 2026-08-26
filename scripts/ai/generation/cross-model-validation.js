@@ -1,0 +1,169 @@
+/**
+ * Cross-model reference validation (Roadmap #22/23-F0, Stage F).
+ *
+ * Deterministically validates a full RequirementModel -> TestCaseModel ->
+ * AutomationCandidate[] -> AutomationPlan[] chain, entirely offline: no
+ * provider call, no network, no filesystem access, no browser. Every
+ * artifact is first validated in isolation by its own v1 validator (a
+ * chain can never be cross-model-valid if one of its own members isn't
+ * even v1-valid); only once every member individually passes does this
+ * function check the NEW invariants that only make sense across artifacts:
+ * project isolation, version consistency, and that every downstream
+ * reference (TestCaseModel.testCases[].requirementIds,
+ * AutomationCandidate.testCaseId/testCaseModelId,
+ * AutomationPlan.automationCandidateId/framework) actually resolves - fail
+ * closed, never a best-effort/first-match fallback, never a normalized
+ * (e.g. case-insensitive) identity comparison.
+ */
+
+"use strict";
+
+const { ERROR_CODES, err, ok, fail } = require("./errors");
+const { isPlainObject, collectDuplicateIdErrors } = require("./primitives");
+const { validateRequirementModel } = require("./requirement-model");
+const { validateTestCaseModel } = require("./test-case-model");
+const { validateAutomationCandidate } = require("./automation-candidate");
+const { validateAutomationPlan } = require("./automation-plan");
+
+// Re-labels a sub-validator's own "$"-rooted path onto its position in the
+// chain (e.g. "$.decision" on automationCandidates[1] becomes
+// "automationCandidates[1].decision") so every error in the aggregated
+// result is unambiguous about which artifact it came from.
+function rebase(errors, prefix) {
+  return errors.map((e) => ({ ...e, path: `${prefix}${e.path.slice(1)}` }));
+}
+
+function validateGenerationChain(chain, { expectedProjectId } = {}) {
+  if (!isPlainObject(chain)) {
+    return fail([err("$", ERROR_CODES.INVALID_TYPE, "chain must be an object")]);
+  }
+
+  const { requirementModel, testCaseModel } = chain;
+  const automationCandidates = Array.isArray(chain.automationCandidates) ? chain.automationCandidates : [];
+  const automationPlans = Array.isArray(chain.automationPlans) ? chain.automationPlans : [];
+
+  const errors = [];
+
+  const reqResult = validateRequirementModel(requirementModel, { expectedProjectId });
+  if (!reqResult.ok) errors.push(...rebase(reqResult.errors, "requirementModel"));
+
+  const tcResult = validateTestCaseModel(testCaseModel, { expectedProjectId });
+  if (!tcResult.ok) errors.push(...rebase(tcResult.errors, "testCaseModel"));
+
+  automationCandidates.forEach((candidate, i) => {
+    const r = validateAutomationCandidate(candidate, { expectedProjectId });
+    if (!r.ok) errors.push(...rebase(r.errors, `automationCandidates[${i}]`));
+  });
+
+  automationPlans.forEach((plan, i) => {
+    const r = validateAutomationPlan(plan, { expectedProjectId });
+    if (!r.ok) errors.push(...rebase(r.errors, `automationPlans[${i}]`));
+  });
+
+  // A member that isn't even individually v1-valid makes any further
+  // cross-reference check meaningless (garbage-in/garbage-out) - report
+  // only the individual failures first, exactly like requiring a single
+  // artifact's own fields to be well-formed before its cross-references
+  // are checked.
+  if (errors.length > 0) return fail(errors);
+
+  // --- F1/F2: project + schemaVersion isolation across the whole chain --
+  const projectId = expectedProjectId !== undefined ? expectedProjectId : requirementModel.projectId;
+  const allArtifacts = [
+    { artifact: requirementModel, label: "requirementModel" },
+    { artifact: testCaseModel, label: "testCaseModel" },
+    ...automationCandidates.map((a, i) => ({ artifact: a, label: `automationCandidates[${i}]` })),
+    ...automationPlans.map((a, i) => ({ artifact: a, label: `automationPlans[${i}]` })),
+  ];
+  for (const { artifact, label } of allArtifacts) {
+    if (artifact.projectId !== projectId) {
+      errors.push(err(`${label}.projectId`, ERROR_CODES.PROJECT_MISMATCH, `${label}.projectId does not match the chain's project identity`));
+    }
+    if (artifact.schemaVersion !== 1) {
+      errors.push(err(`${label}.schemaVersion`, ERROR_CODES.INVALID_VERSION, `${label} is not schemaVersion 1`));
+    }
+  }
+
+  // --- F3: TestCaseModel -> RequirementModel -----------------------------
+  if (testCaseModel.requirementModelId !== requirementModel.id) {
+    errors.push(err("testCaseModel.requirementModelId", ERROR_CODES.INVALID_REFERENCE, "testCaseModel.requirementModelId does not match requirementModel.id"));
+  }
+  // Roadmap #22/23-F0-C2: none of these cross-reference messages echo the
+  // actual dangling/unknown id value - the path already pinpoints exactly
+  // which array entry failed to resolve (e.g.
+  // "testCaseModel.testCases[0].requirementIds[2]"), which is what a
+  // caller needs to look the value up themselves; the value itself is
+  // producer-controlled content this foundation's error contract must
+  // never surface.
+  const requirementIds = new Set(requirementModel.requirements.map((r) => r.id));
+  testCaseModel.testCases.forEach((tc, i) => {
+    tc.requirementIds.forEach((reqId, j) => {
+      if (!requirementIds.has(reqId)) {
+        errors.push(err(`testCaseModel.testCases[${i}].requirementIds[${j}]`, ERROR_CODES.INVALID_REFERENCE, "unknown requirement id"));
+      }
+    });
+  });
+
+  // --- F4/F7: AutomationCandidate -> TestCaseModel -----------------------
+  const testCaseIds = new Set(testCaseModel.testCases.map((tc) => tc.id));
+  automationCandidates.forEach((candidate, i) => {
+    if (candidate.testCaseModelId !== testCaseModel.id) {
+      errors.push(err(`automationCandidates[${i}].testCaseModelId`, ERROR_CODES.INVALID_REFERENCE, "does not match testCaseModel.id"));
+    }
+    if (!testCaseIds.has(candidate.testCaseId)) {
+      errors.push(err(`automationCandidates[${i}].testCaseId`, ERROR_CODES.INVALID_REFERENCE, "unknown test case id"));
+    }
+  });
+  collectDuplicateIdErrors(automationCandidates, "id", "automationCandidates", errors);
+
+  // --- F5/F6/F7: AutomationPlan -> AutomationCandidate -------------------
+  const candidatesById = new Map(automationCandidates.map((c) => [c.id, c]));
+  automationPlans.forEach((plan, i) => {
+    const candidate = candidatesById.get(plan.automationCandidateId);
+    if (!candidate) {
+      errors.push(err(`automationPlans[${i}].automationCandidateId`, ERROR_CODES.INVALID_REFERENCE, "unknown automationCandidate id"));
+      return;
+    }
+    // Roadmap #22/23-F0-C1: an AutomationPlan is a proposed IMPLEMENTATION
+    // of a candidate's recommendation - it may only exist for a candidate
+    // whose decision is AUTOMATE. A DO_NOT_AUTOMATE or BLOCKED candidate
+    // explicitly says no implementation should proceed; a plan referencing
+    // either is a recommendation/plan contradiction, not a framework
+    // mismatch, so it is checked and rejected before framework
+    // compatibility is even considered. targetFrameworks may still be
+    // non-empty on a non-AUTOMATE candidate (it can legitimately record
+    // which frameworks were contemplated when the decision was made) - it
+    // never by itself authorizes a plan.
+    //
+    // Roadmap #22/23-F0-C2: the message is fully static - it no longer
+    // echoes the candidate id (arbitrary, producer-controlled) or the
+    // decision value. The path (automationPlans[i].automationCandidateId)
+    // plus the INVARIANT_VIOLATION code already convey exactly what is
+    // wrong; the specific candidate id is not needed to act on the error,
+    // and even though `decision` is drawn from a small closed enum, no
+    // interpolated value is echoed here anyway, for one consistent rule.
+    if (candidate.decision !== "AUTOMATE") {
+      errors.push(
+        err(
+          `automationPlans[${i}].automationCandidateId`,
+          ERROR_CODES.INVARIANT_VIOLATION,
+          "references a candidate whose decision is not AUTOMATE - a plan may only exist for an AUTOMATE candidate"
+        )
+      );
+      return;
+    }
+    // Roadmap #22/23-F0-C2: `plan.framework` is retained here (unlike
+    // candidate.id, which is removed) because it is a validated member of
+    // the small, closed SUPPORTED_FRAMEWORKS vocabulary, not arbitrary
+    // producer-controlled content - the same "closed enum values are safe
+    // to surface" allowance already applied elsewhere in this foundation.
+    if (!candidate.targetFrameworks.includes(plan.framework)) {
+      errors.push(err(`automationPlans[${i}].framework`, ERROR_CODES.INVALID_VALUE, `framework "${plan.framework}" is not among the candidate's target frameworks`));
+    }
+  });
+  collectDuplicateIdErrors(automationPlans, "id", "automationPlans", errors);
+
+  return errors.length === 0 ? ok() : fail(errors);
+}
+
+module.exports = { validateGenerationChain };
