@@ -84,7 +84,7 @@ function validateStep(step, path, errors, testCaseRequirementIds) {
   stepReqIds.forEach((reqId, i) => {
     if (!testCaseRequirementIds.has(reqId)) {
       errors.push(
-        err(`${path}.requirementIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `${path}.requirementIds[${i}] "${reqId}" is not declared in this test case's own requirementIds`)
+        err(`${path}.requirementIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `${path}.requirementIds[${i}] is not declared in this test case's own requirementIds`)
       );
     }
   });
@@ -109,7 +109,7 @@ function validatePriority(priority, path, errors, testCaseRequirementIds) {
   ids.forEach((reqId, i) => {
     if (!testCaseRequirementIds.has(reqId)) {
       errors.push(
-        err(`${path}.requirementIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `${path}.requirementIds[${i}] "${reqId}" is not declared in this test case's own requirementIds`)
+        err(`${path}.requirementIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `${path}.requirementIds[${i}] is not declared in this test case's own requirementIds`)
       );
     }
   });

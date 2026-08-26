@@ -19,7 +19,7 @@
 "use strict";
 
 const { ERROR_CODES, err, ok, fail } = require("./errors");
-const { isPlainObject } = require("./primitives");
+const { isPlainObject, collectDuplicateIdErrors } = require("./primitives");
 const { validateRequirementModel } = require("./requirement-model");
 const { validateTestCaseModel } = require("./test-case-model");
 const { validateAutomationCandidate } = require("./automation-candidate");
@@ -88,11 +88,18 @@ function validateGenerationChain(chain, { expectedProjectId } = {}) {
   if (testCaseModel.requirementModelId !== requirementModel.id) {
     errors.push(err("testCaseModel.requirementModelId", ERROR_CODES.INVALID_REFERENCE, "testCaseModel.requirementModelId does not match requirementModel.id"));
   }
+  // Roadmap #22/23-F0-C2: none of these cross-reference messages echo the
+  // actual dangling/unknown id value - the path already pinpoints exactly
+  // which array entry failed to resolve (e.g.
+  // "testCaseModel.testCases[0].requirementIds[2]"), which is what a
+  // caller needs to look the value up themselves; the value itself is
+  // producer-controlled content this foundation's error contract must
+  // never surface.
   const requirementIds = new Set(requirementModel.requirements.map((r) => r.id));
   testCaseModel.testCases.forEach((tc, i) => {
     tc.requirementIds.forEach((reqId, j) => {
       if (!requirementIds.has(reqId)) {
-        errors.push(err(`testCaseModel.testCases[${i}].requirementIds[${j}]`, ERROR_CODES.INVALID_REFERENCE, `unknown requirement id "${reqId}"`));
+        errors.push(err(`testCaseModel.testCases[${i}].requirementIds[${j}]`, ERROR_CODES.INVALID_REFERENCE, "unknown requirement id"));
       }
     });
   });
@@ -104,17 +111,17 @@ function validateGenerationChain(chain, { expectedProjectId } = {}) {
       errors.push(err(`automationCandidates[${i}].testCaseModelId`, ERROR_CODES.INVALID_REFERENCE, "does not match testCaseModel.id"));
     }
     if (!testCaseIds.has(candidate.testCaseId)) {
-      errors.push(err(`automationCandidates[${i}].testCaseId`, ERROR_CODES.INVALID_REFERENCE, `unknown test case id "${candidate.testCaseId}"`));
+      errors.push(err(`automationCandidates[${i}].testCaseId`, ERROR_CODES.INVALID_REFERENCE, "unknown test case id"));
     }
   });
-  reportDuplicateArtifactIds(automationCandidates, "automationCandidates", errors);
+  collectDuplicateIdErrors(automationCandidates, "id", "automationCandidates", errors);
 
   // --- F5/F6/F7: AutomationPlan -> AutomationCandidate -------------------
   const candidatesById = new Map(automationCandidates.map((c) => [c.id, c]));
   automationPlans.forEach((plan, i) => {
     const candidate = candidatesById.get(plan.automationCandidateId);
     if (!candidate) {
-      errors.push(err(`automationPlans[${i}].automationCandidateId`, ERROR_CODES.INVALID_REFERENCE, `unknown automationCandidate id "${plan.automationCandidateId}"`));
+      errors.push(err(`automationPlans[${i}].automationCandidateId`, ERROR_CODES.INVALID_REFERENCE, "unknown automationCandidate id"));
       return;
     }
     // Roadmap #22/23-F0-C1: an AutomationPlan is a proposed IMPLEMENTATION
@@ -127,38 +134,36 @@ function validateGenerationChain(chain, { expectedProjectId } = {}) {
     // non-empty on a non-AUTOMATE candidate (it can legitimately record
     // which frameworks were contemplated when the decision was made) - it
     // never by itself authorizes a plan.
+    //
+    // Roadmap #22/23-F0-C2: the message is fully static - it no longer
+    // echoes the candidate id (arbitrary, producer-controlled) or the
+    // decision value. The path (automationPlans[i].automationCandidateId)
+    // plus the INVARIANT_VIOLATION code already convey exactly what is
+    // wrong; the specific candidate id is not needed to act on the error,
+    // and even though `decision` is drawn from a small closed enum, no
+    // interpolated value is echoed here anyway, for one consistent rule.
     if (candidate.decision !== "AUTOMATE") {
       errors.push(
         err(
           `automationPlans[${i}].automationCandidateId`,
           ERROR_CODES.INVARIANT_VIOLATION,
-          `automationPlans[${i}] references candidate "${candidate.id}" whose decision is "${candidate.decision}", not AUTOMATE - a plan may only exist for an AUTOMATE candidate`
+          "references a candidate whose decision is not AUTOMATE - a plan may only exist for an AUTOMATE candidate"
         )
       );
       return;
     }
+    // Roadmap #22/23-F0-C2: `plan.framework` is retained here (unlike
+    // candidate.id, which is removed) because it is a validated member of
+    // the small, closed SUPPORTED_FRAMEWORKS vocabulary, not arbitrary
+    // producer-controlled content - the same "closed enum values are safe
+    // to surface" allowance already applied elsewhere in this foundation.
     if (!candidate.targetFrameworks.includes(plan.framework)) {
-      errors.push(err(`automationPlans[${i}].framework`, ERROR_CODES.INVALID_VALUE, `framework "${plan.framework}" is not among candidate "${candidate.id}"'s target frameworks`));
+      errors.push(err(`automationPlans[${i}].framework`, ERROR_CODES.INVALID_VALUE, `framework "${plan.framework}" is not among the candidate's target frameworks`));
     }
   });
-  reportDuplicateArtifactIds(automationPlans, "automationPlans", errors);
+  collectDuplicateIdErrors(automationPlans, "id", "automationPlans", errors);
 
   return errors.length === 0 ? ok() : fail(errors);
-}
-
-// F7 (chain scope): no two candidates/plans in the same chain may share an
-// id - exact string identity only, never a normalized/lower-cased match.
-function reportDuplicateArtifactIds(items, path, errors) {
-  const seen = new Set();
-  const reported = new Set();
-  for (const item of items) {
-    if (typeof item.id !== "string") continue;
-    if (seen.has(item.id) && !reported.has(item.id)) {
-      errors.push(err(path, ERROR_CODES.DUPLICATE_ID, `${path}: duplicate id "${item.id}"`));
-      reported.add(item.id);
-    }
-    seen.add(item.id);
-  }
 }
 
 module.exports = { validateGenerationChain };

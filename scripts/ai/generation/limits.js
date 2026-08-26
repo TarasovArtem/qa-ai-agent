@@ -42,6 +42,14 @@ const LIMITS = Object.freeze({
   MAX_PLANNED_CHANGES: 100,
   MAX_VALIDATION_STEPS: 50,
   MAX_RELATED_IDS: 50,
+
+  // Roadmap #22/23-F0-C2: an unrecognized object key name is itself
+  // caller-controlled content (unlike every other bounded id/text field,
+  // nothing upstream limits how long a JS object property name can be) -
+  // this bounds how much of it may ever be embedded into a structural
+  // error.path segment, so an adversarial key name can never become an
+  // unbounded value-smuggling channel through path construction.
+  UNKNOWN_KEY_PATH_SEGMENT_MAX_LENGTH: 64,
 });
 
 module.exports = { LIMITS };

@@ -102,18 +102,35 @@ function collectIdError(value, path, errors) {
   return true;
 }
 
+// Roadmap #22/23-F0-C2: an unrecognized object key name is caller-supplied
+// content, not application vocabulary - nothing upstream bounds how long a
+// JS property name may be. This truncates it before it is ever embedded
+// into a structural error.path segment, so a hostile/oversized key name can
+// never become an unbounded value-smuggling channel via path construction.
+// A key already within the bound passes through unchanged - this never
+// affects any ordinary, legitimately-short field name.
+function boundedKeySegment(key) {
+  if (key.length <= LIMITS.UNKNOWN_KEY_PATH_SEGMENT_MAX_LENGTH) return key;
+  return `${key.slice(0, LIMITS.UNKNOWN_KEY_PATH_SEGMENT_MAX_LENGTH)}...(truncated)`;
+}
+
 // Rejects any own-enumerable key on `obj` that isn't in `allowedKeys` - the
 // mission-wide "exact keys, reject unknown fields" invariant (A6),
 // preventing silent contract drift and provider/producer-added fields from
 // crossing a v1 boundary unnoticed. Own-property enumeration only (never
 // touches the prototype chain), matching qa-agent-prompt.js's
 // pickPromptMetadata()/projectPromptFailure() convention.
+//
+// Roadmap #22/23-F0-C2: `message` is fully static - the key name is never
+// echoed there. `path` still locates which field was unknown (that is
+// genuinely useful, structural information, not a leak), but only a
+// length-bounded form of the key ever reaches it (see boundedKeySegment()).
 function collectUnknownKeyErrors(obj, allowedKeys, path, errors) {
   if (!isPlainObject(obj)) return;
   const allowed = new Set(allowedKeys);
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) {
-      errors.push(err(`${path}.${key}`, ERROR_CODES.UNKNOWN_FIELD, `${path}: unknown field "${key}"`));
+      errors.push(err(`${path}.${boundedKeySegment(key)}`, ERROR_CODES.UNKNOWN_FIELD, `${path}: unknown field`));
     }
   }
 }
@@ -122,6 +139,13 @@ function collectUnknownKeyErrors(obj, allowedKeys, path, errors) {
 // that appears more than once in `items`. Ignores an item whose id itself
 // isn't a string - that is reported separately by the item's own shape
 // validation, never doubly reported here.
+//
+// Roadmap #22/23-F0-C2: `message` is fully static and never echoes the
+// duplicated value itself - `path` already identifies which array the
+// duplicate was found in, which is the information a caller actually needs
+// to act on the error; the specific colliding value is not required for
+// that and is exactly the kind of arbitrary, producer-controlled content
+// this foundation's error contract must never surface.
 function collectDuplicateIdErrors(items, idField, path, errors) {
   if (!Array.isArray(items)) return;
   const seen = new Set();
@@ -130,7 +154,7 @@ function collectDuplicateIdErrors(items, idField, path, errors) {
     const id = item && typeof item === "object" ? item[idField] : undefined;
     if (typeof id !== "string") continue;
     if (seen.has(id) && !reported.has(id)) {
-      errors.push(err(path, ERROR_CODES.DUPLICATE_ID, `${path}: duplicate id "${id}"`));
+      errors.push(err(path, ERROR_CODES.DUPLICATE_ID, `${path}: duplicate id`));
       reported.add(id);
     }
     seen.add(id);

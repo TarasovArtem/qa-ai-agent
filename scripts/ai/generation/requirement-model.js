@@ -80,7 +80,7 @@ function validateRequirement(requirement, path, errors, evidenceRefIds) {
     requirement.evidenceRefIds.forEach((refId, i) => {
       if (!collectIdError(refId, `${path}.evidenceRefIds[${i}]`, errors)) return;
       if (!evidenceRefIds.has(refId)) {
-        errors.push(err(`${path}.evidenceRefIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `${path}.evidenceRefIds[${i}] "${refId}" does not exist in evidenceRefs`));
+        errors.push(err(`${path}.evidenceRefIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `${path}.evidenceRefIds[${i}] does not exist in evidenceRefs`));
       }
     });
   }

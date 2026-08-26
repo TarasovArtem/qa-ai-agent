@@ -100,7 +100,7 @@ function validateAutomationCandidate(candidate, { expectedProjectId } = {}) {
         if (!collectIdError(refId, `$.rationaleEvidenceRefIds[${i}]`, errors)) return;
         if (!evidenceRefIds.has(refId)) {
           errors.push(
-            err(`$.rationaleEvidenceRefIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `$.rationaleEvidenceRefIds[${i}] "${refId}" does not exist in evidenceRefs`)
+            err(`$.rationaleEvidenceRefIds[${i}]`, ERROR_CODES.INVALID_REFERENCE, `$.rationaleEvidenceRefIds[${i}] does not exist in evidenceRefs`)
           );
         }
       });
