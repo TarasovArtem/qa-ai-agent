@@ -3,7 +3,17 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { generateRequirementModel, validateEvidenceBundle, checkCanonicalProvenance, MAX_PROVIDER_ATTEMPTS } = require("./requirement-model-generator");
+const {
+  generateRequirementModel,
+  validateEvidenceBundle,
+  checkCanonicalProvenance,
+  snapshotEvidenceBundle,
+  boundGenerationErrors,
+  MAX_PROVIDER_ATTEMPTS,
+  MAX_CORRECTION_ERRORS,
+  MAX_CORRECTION_DIAGNOSTIC_CHARS,
+  MAX_REQUIREMENT_MODEL_RESPONSE_CHARS,
+} = require("./requirement-model-generator");
 const { EVIDENCE_REF_KINDS } = require("../generation/primitives");
 const { ProviderError, PROVIDER_ERROR_CODES } = require("../providers/provider-error");
 
@@ -643,4 +653,278 @@ test("generation performs no filesystem, network, or child_process access of its
   for (const forbidden of [/require\(["']fs["']\)/, /require\(["']child_process["']\)/, /\bhttp\.request\(/, /\bhttps\.request\(/, /\bfetch\(/, /\bexec\(/, /\bspawn\(/]) {
     assert.ok(!forbidden.test(src), `requirement-model-generator.js must not match ${forbidden}`);
   }
+});
+
+// --- Roadmap #22C-C1: model <-> bundle project binding regression -----------
+
+test("a provider switching to a different project is rejected even when expectedProjectId is entirely omitted", async () => {
+  const bundle = validBundle({ projectId: "project-a" });
+  const hijack = validModel({ projectId: "project-b" });
+  const provider = jsonProvider(hijack);
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider, maxAttempts: 1 });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === "PROJECT_MISMATCH"));
+});
+
+test("expectedProjectId matrix: matching/mismatched/malformed values", async () => {
+  const cases = [
+    { label: "matching string", value: "proj-1", providerCalled: true, ok: true },
+    { label: "different valid string", value: "proj-2", providerCalled: false, ok: false },
+    { label: "number", value: 12345, providerCalled: false, ok: false },
+    { label: "boolean", value: true, providerCalled: false, ok: false },
+    { label: "object", value: { x: 1 }, providerCalled: false, ok: false },
+    { label: "array", value: ["proj-1"], providerCalled: false, ok: false },
+    { label: "empty string", value: "", providerCalled: false, ok: false },
+    { label: "whitespace", value: "   ", providerCalled: false, ok: false },
+    { label: "control char", value: "proj-1\x00", providerCalled: false, ok: false },
+    // Only `undefined` means "omitted, no cross-check" - an explicit `null`
+    // is a real (non-matching) value and fails closed like any other
+    // malformed expectedProjectId, per the frozen validateProjectId()'s
+    // strict `!== undefined` gate.
+    { label: "null", value: null, providerCalled: false, ok: false },
+  ];
+  for (const c of cases) {
+    const provider = jsonProvider(validModel());
+    const result = await generateRequirementModel({ evidenceBundle: validBundle(), provider, expectedProjectId: c.value });
+    assert.equal(provider.calls.length > 0, c.providerCalled, `${c.label}: providerCalled`);
+    assert.equal(result.ok, c.ok, `${c.label}: ok`);
+  }
+});
+
+test("expectedProjectId undefined behaves the same as omitting the option entirely", async () => {
+  const provider = jsonProvider(validModel());
+  const result = await generateRequirementModel({ evidenceBundle: validBundle(), provider, expectedProjectId: undefined });
+  assert.equal(result.ok, true);
+});
+
+// --- Roadmap #22C-C1: maxAttempts edge matrix --------------------------------
+
+test("maxAttempts edge matrix: never more than 2 calls, never 0 unexpected calls, never throws", async () => {
+  const edgeValues = [0, -1, NaN, Infinity, 1.5, "2", {}, null, 999999];
+  for (const value of edgeValues) {
+    const provider = makeQueueProvider(Array.from({ length: 5 }, () => ({ response: "not json" })));
+    const result = await generateRequirementModel({ evidenceBundle: validBundle(), provider, maxAttempts: value });
+    assert.ok(provider.calls.length >= 1 && provider.calls.length <= MAX_PROVIDER_ATTEMPTS, `maxAttempts=${value}: calls=${provider.calls.length}`);
+    assert.equal(result.ok, false);
+  }
+});
+
+test("maxAttempts of exactly 1 is honored (never rounded up to 2)", async () => {
+  const provider = makeQueueProvider([{ response: "not json" }, { response: JSON.stringify(validModel()) }]);
+  const result = await generateRequirementModel({ evidenceBundle: validBundle(), provider, maxAttempts: 1 });
+  assert.equal(result.ok, false);
+  assert.equal(provider.calls.length, 1);
+});
+
+// --- Roadmap #22C-C1: complete bundle snapshot / TOCTOU regression matrix ---
+
+test("snapshot: a projectId getter cannot present one value to validation and a different value to the prompt/model-binding", async () => {
+  let reads = 0;
+  const bundle = validBundle();
+  Object.defineProperty(bundle, "projectId", {
+    enumerable: true,
+    get() {
+      reads++;
+      return reads === 1 ? "legit-project" : "SWITCHED-PROJECT";
+    },
+  });
+  let capturedPrompt;
+  const provider = { name: "p", analyze: async (a) => { capturedPrompt = a.userPrompt; return JSON.stringify(validModel({ projectId: "legit-project" })); } };
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+  assert.equal(reads, 1, "projectId must be read exactly once");
+  assert.equal(result.ok, true);
+  assert.ok(capturedPrompt.includes("legit-project"));
+  assert.ok(!capturedPrompt.includes("SWITCHED-PROJECT"));
+});
+
+test("snapshot: an evidenceItems getter cannot present a small valid array to validation and a different array to the prompt", async () => {
+  let reads = 0;
+  const validItems = [{ evidenceRef: { id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }, text: "ok" }];
+  const forgedItems = Array.from({ length: 25 }, (_, i) => ({
+    evidenceRef: { id: `evidence-${String(i).padStart(4, "0")}`, kind: "user_input", sourceId: `user-input-${String(i).padStart(4, "0")}` },
+    text: `forged ${i}`,
+  }));
+  const bundle = { projectId: "proj-1" };
+  Object.defineProperty(bundle, "evidenceItems", {
+    enumerable: true,
+    get() {
+      reads++;
+      return reads === 1 ? validItems : forgedItems;
+    },
+  });
+  let capturedPrompt;
+  const provider = { name: "p", analyze: async (a) => { capturedPrompt = a.userPrompt; return JSON.stringify(modelReferencing({ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" })); } };
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+  assert.equal(reads, 1, "evidenceItems must be read exactly once");
+  assert.equal(result.ok, true);
+  assert.ok(!capturedPrompt.includes("forged"));
+  assert.equal((capturedPrompt.match(/evidence-\d{4}/g) || []).length, 1);
+});
+
+test("snapshot: a text getter cannot present short bounded text to validation and different/oversized text to the prompt", async () => {
+  let reads = 0;
+  const item = { evidenceRef: { id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" } };
+  Object.defineProperty(item, "text", {
+    enumerable: true,
+    get() {
+      reads++;
+      return reads === 1 ? "short valid text" : "MARKER_" + "x".repeat(5000);
+    },
+  });
+  const bundle = { projectId: "proj-1", evidenceItems: [item] };
+  let capturedPrompt;
+  const provider = { name: "p", analyze: async (a) => { capturedPrompt = a.userPrompt; return JSON.stringify(modelReferencing({ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" })); } };
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+  assert.equal(reads, 1, "text must be read exactly once");
+  assert.equal(result.ok, true);
+  assert.ok(capturedPrompt.includes("short valid text"));
+  assert.ok(!capturedPrompt.includes("MARKER_"));
+});
+
+test("snapshot: a text getter presenting an oversized value on its single read is rejected locally with 0 provider calls", async () => {
+  const item = { evidenceRef: { id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }, text: "a".repeat(5000) };
+  const bundle = { projectId: "proj-1", evidenceItems: [item] };
+  const provider = jsonProvider(validModel());
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+  assert.equal(result.ok, false);
+  assert.equal(provider.calls.length, 0);
+});
+
+test("snapshot: EvidenceRef id/kind/sourceId getters remain single-read-safe (no regression)", async () => {
+  let idReads = 0;
+  let sourceIdReads = 0;
+  const ref = { kind: "user_input" };
+  Object.defineProperty(ref, "id", { enumerable: true, get() { idReads++; return "evidence-0001"; } });
+  Object.defineProperty(ref, "sourceId", { enumerable: true, get() { sourceIdReads++; return sourceIdReads === 1 ? "user-input-0001" : "CHANGED"; } });
+  const bundle = { projectId: "proj-1", evidenceItems: [{ evidenceRef: ref, text: "ok" }] };
+  let capturedPrompt;
+  const provider = { name: "p", analyze: async (a) => { capturedPrompt = a.userPrompt; return JSON.stringify(modelReferencing({ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" })); } };
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+  assert.equal(idReads, 1);
+  assert.equal(sourceIdReads, 1);
+  assert.equal(result.ok, true);
+  assert.ok(capturedPrompt.includes("user-input-0001"));
+  assert.ok(!capturedPrompt.includes("CHANGED"));
+});
+
+test("snapshot: whole-bundle proof - multiple simultaneous hostile getters (projectId, evidenceItems, text, sourceId) never diverge between validation and use", async () => {
+  let projectReads = 0;
+  let itemsReads = 0;
+  let textReads = 0;
+  let sourceIdReads = 0;
+
+  const ref = { id: "evidence-0001", kind: "user_input" };
+  Object.defineProperty(ref, "sourceId", { enumerable: true, get() { sourceIdReads++; return sourceIdReads === 1 ? "user-input-0001" : "HOSTILE-SOURCE-ID"; } });
+
+  const item = { evidenceRef: ref };
+  Object.defineProperty(item, "text", { enumerable: true, get() { textReads++; return textReads === 1 ? "safe text" : "HOSTILE-TEXT"; } });
+
+  const validItemsArr = [item];
+  const forgedItemsArr = Array.from({ length: 25 }, (_, i) => ({ evidenceRef: { id: `evidence-${i}`, kind: "user_input", sourceId: `s-${i}` }, text: "forged" }));
+
+  const bundle = {};
+  Object.defineProperty(bundle, "projectId", { enumerable: true, get() { projectReads++; return projectReads === 1 ? "proj-1" : "HOSTILE-PROJECT"; } });
+  Object.defineProperty(bundle, "evidenceItems", { enumerable: true, get() { itemsReads++; return itemsReads === 1 ? validItemsArr : forgedItemsArr; } });
+
+  let capturedPrompt;
+  const provider = {
+    name: "p",
+    analyze: async (a) => {
+      capturedPrompt = a.userPrompt;
+      return JSON.stringify(modelReferencing({ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }));
+    },
+  };
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+
+  assert.equal(projectReads, 1, "projectId read count");
+  assert.equal(itemsReads, 1, "evidenceItems read count");
+  assert.equal(textReads, 1, "text read count");
+  assert.equal(sourceIdReads, 1, "sourceId read count");
+  assert.equal(result.ok, true);
+  for (const hostileValue of ["HOSTILE-PROJECT", "HOSTILE-SOURCE-ID", "HOSTILE-TEXT", "forged"]) {
+    assert.ok(!capturedPrompt.includes(hostileValue), `prompt must not contain "${hostileValue}"`);
+  }
+  assert.ok(capturedPrompt.includes("proj-1") && capturedPrompt.includes("safe text") && capturedPrompt.includes("user-input-0001"));
+});
+
+test("snapshotEvidenceBundle never throws for a non-object/null/array top-level bundle", () => {
+  for (const input of [null, undefined, 42, "str", true, []]) {
+    assert.doesNotThrow(() => snapshotEvidenceBundle(input));
+  }
+});
+
+// --- Roadmap #22C-C1: bounded correction diagnostics -------------------------
+
+test("boundGenerationErrors caps both count and total serialized size", () => {
+  const manyErrors = Array.from({ length: 5000 }, (_, i) => ({ path: `$.k${i}`, code: "UNKNOWN_FIELD", message: "$: unknown field" }));
+  const bounded = boundGenerationErrors(manyErrors);
+  assert.ok(bounded.length <= MAX_CORRECTION_ERRORS);
+  assert.ok(JSON.stringify(bounded).length <= MAX_CORRECTION_DIAGNOSTIC_CHARS);
+  for (const e of bounded) {
+    assert.equal(Object.keys(e).sort().join(","), "code,message,path");
+  }
+});
+
+test("boundGenerationErrors preserves deterministic (earliest-first) order and passes small arrays through unchanged", () => {
+  const small = [
+    { path: "$.a", code: "INVALID_TYPE", message: "m1" },
+    { path: "$.b", code: "INVALID_TYPE", message: "m2" },
+  ];
+  assert.deepEqual(boundGenerationErrors(small), small);
+});
+
+test("a ~100KB hostile response with thousands of unknown fields produces a bounded correction prompt, never resending the raw response", async () => {
+  const bundle = validBundle();
+  const hostileRequirement = { id: "r1", text: "t", evidenceRefIds: ["evidence-0001"] };
+  // Built with a single fixed key count rather than iteratively probing
+  // JSON.stringify().length in a loop (which is O(n^2) on the growing
+  // object and made this fixture take 10+ seconds) - 8000 short "kN":1
+  // keys comfortably stays under MAX_REQUIREMENT_MODEL_RESPONSE_CHARS while
+  // still being "well over a thousand" unknown fields.
+  const UNKNOWN_KEY_COUNT = 8000;
+  for (let i = 0; i < UNKNOWN_KEY_COUNT; i += 1) {
+    hostileRequirement["k" + i] = 1;
+  }
+  const responseStr = JSON.stringify(validModel({ requirements: [hostileRequirement] }));
+  assert.ok(responseStr.length < MAX_REQUIREMENT_MODEL_RESPONSE_CHARS, `fixture must stay under the response bound, got ${responseStr.length}`);
+
+  let secondPrompt;
+  let calls = 0;
+  const provider = {
+    name: "p",
+    analyze: async (a) => {
+      calls += 1;
+      if (calls === 2) secondPrompt = a.userPrompt;
+      return responseStr;
+    },
+  };
+  const result = await generateRequirementModel({ evidenceBundle: bundle, provider });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.length <= MAX_CORRECTION_ERRORS, `terminal errors must be bounded, got ${result.errors.length}`);
+  assert.ok(JSON.stringify(result.errors).length <= MAX_CORRECTION_DIAGNOSTIC_CHARS);
+  assert.ok(secondPrompt, "a second attempt must have been made");
+  assert.ok(secondPrompt.length < 10000, `second-attempt prompt must remain small, got ${secondPrompt.length} chars`);
+  // The raw hostile response text itself (its literal unknown-key names,
+  // "k0".."kN") must never be echoed into the correction prompt beyond the
+  // small number of bounded diagnostic entries actually kept.
+  const koccurrences = (secondPrompt.match(/"\$\.evidenceItems/g) || []).length;
+  assert.equal(koccurrences, 0);
+});
+
+test("normal retry regression: a single ordinary validation error still appears in the correction prompt", async () => {
+  const provider = makeQueueProvider([{ response: JSON.stringify(validModel({ schemaVersion: 2 })) }, { response: JSON.stringify(validModel()) }]);
+  const result = await generateRequirementModel({ evidenceBundle: validBundle(), provider });
+  assert.equal(result.ok, true);
+  assert.equal(result.providerAttempts, 2);
+  const { userPrompt } = provider.calls[1];
+  assert.ok(userPrompt.includes("INVALID_VERSION"));
+});
+
+test("normal retry regression: both attempts invalid yields a bounded failure with providerAttempts=2", async () => {
+  const provider = makeQueueProvider([{ response: JSON.stringify(validModel({ schemaVersion: 2 })) }, { response: JSON.stringify(validModel({ schemaVersion: 3 })) }]);
+  const result = await generateRequirementModel({ evidenceBundle: validBundle(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(result.providerAttempts, 2);
+  assert.ok(result.errors.length <= MAX_CORRECTION_ERRORS);
 });

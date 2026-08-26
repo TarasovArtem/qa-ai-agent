@@ -2,6 +2,7 @@
  * Provider-backed RequirementModel generation (Roadmap #22C).
  *
  * accepted #22B evidence bundle
+ *   -> single-read snapshot into a fresh #22C-owned plain-data tree
  *   -> independently re-validated bundle/canonical-evidence trust boundary
  *   -> bounded provider prompt (test-design-prompt.js)
  *   -> provider response
@@ -22,10 +23,20 @@
  * This module also does NOT trust that an object shaped like #22B's output
  * actually came from evidence-ingestion.js in-process (Roadmap #22B review
  * finding: PRODUCTION_EVIDENCE_VALIDATION was CONSTRUCTION_GUARANTEE_ONLY
- * there). validateEvidenceBundle() below independently re-validates bundle
- * shape/bounds, and every canonical EvidenceRef is re-checked against the
- * frozen scripts/ai/generation/primitives.js validateEvidenceRef() before
- * any provider call - closing that finding at this trust boundary.
+ * there). Nor does it trust that a caller-supplied bundle behaves like
+ * ordinary plain data at all (Roadmap #22C-R review finding:
+ * BUNDLE_SNAPSHOT_BOUNDARY was PARTIAL - a getter-backed projectId,
+ * evidenceItems array, or item text could diverge between what was
+ * validated and what was actually canonicalized/prompted). Every
+ * caller-owned property this module reads - evidenceBundle.projectId,
+ * evidenceBundle.evidenceItems, each item's evidenceRef/text, each ref's
+ * id/kind/sourceId - is read EXACTLY ONCE, up front, into a fresh, frozen,
+ * #22C-owned snapshot (see snapshotEvidenceBundle() below) before any
+ * validation runs at all. Validation, canonical-registry construction,
+ * prompt construction, and model-project binding all consume that one
+ * snapshot exclusively; evidenceBundle itself is never read again past that
+ * point. What is validated is therefore always exactly what is prompted and
+ * exactly what the accepted model is bound to.
  *
  * Pure orchestration otherwise: no filesystem, network, browser, git,
  * child_process, or repository mutation. The only external effect is a
@@ -62,6 +73,104 @@ const MAX_PROVIDER_ATTEMPTS = 2;
 // rejected before it is ever handed to JSON.parse.
 const MAX_REQUIREMENT_MODEL_RESPONSE_CHARS = 5 * EVIDENCE_LIMITS.MAX_AGGREGATE_TEXT_LENGTH;
 
+// Roadmap #22C-C1: closes the #22C-R review's CORRECTION_DIAGNOSTICS =
+// AMPLIFICATION_RISK finding. A single ~100000-char hostile/buggy provider
+// response can trigger one frozen-validator error per malformed/unknown
+// field - potentially thousands of entries from one bounded response. Both
+// caps apply together (count AND total serialized size), whichever is hit
+// first stops inclusion, so neither the correction retry prompt nor a
+// terminal failure result can balloon disproportionately to the response
+// that produced it. 20/8192 are small enough that a real, small, legitimate
+// error set is never truncated, while a pathological one is capped to a
+// low single-digit KB regardless of how malformed the response was.
+const MAX_CORRECTION_ERRORS = 20;
+const MAX_CORRECTION_DIAGNOSTIC_CHARS = 8192;
+
+// --- snapshot (Roadmap #22C-C1) ---------------------------------------------
+//
+// Reads every OWN enumerable key of `value` exactly once each into a fresh
+// plain object. Object.keys() itself never invokes a getter (enumeration is
+// a distinct operation from property access), so the loop below performs
+// the one and only [[Get]] for each key - a value read here is never read
+// again by this module. Unknown keys are preserved as-is (never filtered
+// to an allowlist), so downstream unknown-field detection keeps working
+// unchanged; only WHERE it reads from changes. Anything that isn't plain-
+// object-shaped is returned completely untouched (no property access at
+// all) so a non-object bundle/item can never throw here - that shape
+// mismatch is validateEvidenceBundle()'s job to report, not this
+// function's job to reject.
+function snapshotOwnProperties(value) {
+  if (!isPlainObject(value)) return value;
+  const snapshot = {};
+  for (const key of Object.keys(value)) {
+    snapshot[key] = value[key];
+  }
+  return snapshot;
+}
+
+// Reads the ENTIRE caller-supplied evidence bundle exactly once - top
+// level, every evidence item, every EvidenceRef - into a fresh, inert
+// plain-data tree. Once this function returns, nothing in this module ever
+// reads a property of `evidenceBundle` (or anything nested inside it)
+// again; every later step (validateEvidenceBundle, canonical registry
+// construction, prompt construction, model-project binding) consumes only
+// the returned snapshot. isPlainObject()/Array.isArray() here only ever
+// gate whether to recurse further - a malformed shape is captured as-is
+// and left for validateEvidenceBundle() to report structurally.
+function snapshotEvidenceBundle(evidenceBundle) {
+  const bundleSnapshot = snapshotOwnProperties(evidenceBundle);
+  if (!isPlainObject(bundleSnapshot) || !Array.isArray(bundleSnapshot.evidenceItems)) {
+    return bundleSnapshot;
+  }
+  bundleSnapshot.evidenceItems = bundleSnapshot.evidenceItems.map((rawItem) => {
+    const itemSnapshot = snapshotOwnProperties(rawItem);
+    if (isPlainObject(itemSnapshot) && isPlainObject(itemSnapshot.evidenceRef)) {
+      itemSnapshot.evidenceRef = snapshotOwnProperties(itemSnapshot.evidenceRef);
+    }
+    return itemSnapshot;
+  });
+  return bundleSnapshot;
+}
+
+// Deep-freezes a plain-data tree (the only shapes this module ever
+// produces, for both the internal bundle snapshot and the accepted
+// RequirementModel output) - never applied to a caller-owned object.
+function deepFreeze(value) {
+  if (Array.isArray(value)) {
+    value.forEach(deepFreeze);
+    return Object.freeze(value);
+  }
+  if (value !== null && typeof value === "object") {
+    Object.values(value).forEach(deepFreeze);
+    return Object.freeze(value);
+  }
+  return value;
+}
+
+// --- bounded generation diagnostics (Roadmap #22C-C1) -----------------------
+//
+// Projects a (possibly very large) validator error array down to at most
+// MAX_CORRECTION_ERRORS entries, never exceeding MAX_CORRECTION_DIAGNOSTIC_
+// CHARS once serialized - whichever limit is reached first stops further
+// inclusion. Preserves the validator's own deterministic error order
+// (earliest first), never samples. Applied uniformly to every error array
+// this module returns or forwards into a correction prompt, so neither
+// path can be used to amplify a bounded provider response into a
+// disproportionately large diagnostic payload.
+function boundGenerationErrors(errors) {
+  const bounded = [];
+  let serializedLength = 2; // "[]"
+  for (const e of errors) {
+    if (bounded.length >= MAX_CORRECTION_ERRORS) break;
+    const projected = { path: e.path, code: e.code, message: e.message };
+    const addedLength = JSON.stringify(projected).length + (bounded.length > 0 ? 1 : 0);
+    if (serializedLength + addedLength > MAX_CORRECTION_DIAGNOSTIC_CHARS) break;
+    bounded.push(projected);
+    serializedLength += addedLength;
+  }
+  return bounded;
+}
+
 // --- bundle trust boundary (Roadmap #22C Phase 6) --------------------------
 //
 // #22B's own output shape is not schemaVersion:1/frozen (see
@@ -75,6 +184,11 @@ const MAX_REQUIREMENT_MODEL_RESPONSE_CHARS = 5 * EVIDENCE_LIMITS.MAX_AGGREGATE_T
 // presence here means the bundle did not really come from #22B and is
 // treated as incoherent/forged, not merely as "an EvidenceRef with an extra
 // optional field".
+//
+// Operates exclusively on a snapshot already produced by
+// snapshotEvidenceBundle() - never on a live caller object - so every read
+// below is a plain-data read with no possibility of divergence between two
+// calls to the same accessor.
 
 const BUNDLE_TOP_LEVEL_ALLOWED_KEYS = Object.freeze(["projectId", "evidenceItems"]);
 const EVIDENCE_ITEM_ALLOWED_KEYS = Object.freeze(["evidenceRef", "text"]);
@@ -168,12 +282,10 @@ function validateEvidenceBundle(bundle, { expectedProjectId } = {}) {
 
 // --- canonical registry (Roadmap #22C Phases 7-9) --------------------------
 
-// Freshly constructed, frozen copies - never the caller's own live
-// objects - so a hostile bundle cannot alter what "canonical" means after
-// validation via a later mutation or a getter re-evaluated on a second
-// read (see module comment: caller-owned input is never trusted by
-// reference). Only ever called after validateEvidenceBundle() and every
-// per-item validateEvidenceRef() call below have both already passed.
+// Projects an already-snapshotted, already-validated evidenceItems array
+// (plain data, single-read-captured - see snapshotEvidenceBundle above)
+// into the canonical evidence shape this module hands to the prompt and
+// the provenance registry. No further caller-object reads happen here.
 function toCanonicalEvidence(evidenceItems) {
   return evidenceItems.map((item) => ({
     evidenceRef: Object.freeze({ id: item.evidenceRef.id, kind: item.evidenceRef.kind, sourceId: item.evidenceRef.sourceId }),
@@ -240,23 +352,6 @@ function summarizeProviderError(providerError) {
   return err("$.provider", providerError.code || PROVIDER_ERROR_CODES.UNKNOWN, message);
 }
 
-// --- output freeze (Roadmap #22C Phase 31) ----------------------------------
-//
-// Only ever called on `parsed` - a value JSON.parse just constructed fresh
-// for this call, never the caller's bundle/provider objects (FREEZE_
-// BOUNDARY = OUTPUT_ONLY, matching evidence-ingestion.js's own deepFreeze).
-function deepFreeze(value) {
-  if (Array.isArray(value)) {
-    value.forEach(deepFreeze);
-    return Object.freeze(value);
-  }
-  if (value !== null && typeof value === "object") {
-    Object.values(value).forEach(deepFreeze);
-    return Object.freeze(value);
-  }
-  return value;
-}
-
 function resolveMaxAttempts(maxAttempts) {
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) return MAX_PROVIDER_ATTEMPTS;
   return Math.min(maxAttempts, MAX_PROVIDER_ATTEMPTS);
@@ -268,11 +363,12 @@ function resolveMaxAttempts(maxAttempts) {
  *
  * Returns `{ ok: true, requirementModel, providerAttempts }` or
  * `{ ok: false, errors, providerAttempts }` - `errors` is always the
- * bounded `{path, code, message}` shape, never a raw provider response,
- * rejected value, or stack trace. `providerAttempts` is 0 whenever a local,
- * deterministic pre-provider gate failed (invalid provider object, invalid
- * evidence bundle, invalid canonical EvidenceRef) - those never consume a
- * provider call.
+ * bounded `{path, code, message}` shape (at most MAX_CORRECTION_ERRORS
+ * entries, never exceeding MAX_CORRECTION_DIAGNOSTIC_CHARS serialized),
+ * never a raw provider response, rejected value, or stack trace.
+ * `providerAttempts` is 0 whenever a local, deterministic pre-provider gate
+ * failed (invalid provider object, invalid evidence bundle, invalid
+ * canonical EvidenceRef) - those never consume a provider call.
  */
 async function generateRequirementModel({ evidenceBundle, provider, maxAttempts, expectedProjectId } = {}) {
   try {
@@ -281,37 +377,46 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
     return { ok: false, errors: [summarizeProviderError(normalizeProviderError(rawErr))], providerAttempts: 0 };
   }
 
-  const bundleErrors = validateEvidenceBundle(evidenceBundle, { expectedProjectId });
+  // Roadmap #22C-C1: the entire caller-controlled bundle is read exactly
+  // once, right here, into a fresh #22C-owned plain-data snapshot, then
+  // frozen. evidenceBundle is never read again below this line - every
+  // subsequent step (validation, canonical registry, prompt construction,
+  // model-project binding) consumes only `snapshot`. See
+  // snapshotEvidenceBundle()'s own comment for why this closes the #22C-R
+  // review's BUNDLE_SNAPSHOT_BOUNDARY finding for projectId, evidenceItems,
+  // and per-item text alike (EvidenceRef id/kind/sourceId were already
+  // single-read-safe before this change; that discipline is preserved).
+  const snapshot = deepFreeze(snapshotEvidenceBundle(evidenceBundle));
+
+  const bundleErrors = validateEvidenceBundle(snapshot, { expectedProjectId });
   if (bundleErrors.length > 0) {
-    return { ok: false, errors: bundleErrors, providerAttempts: 0 };
+    return { ok: false, errors: boundGenerationErrors(bundleErrors), providerAttempts: 0 };
   }
 
-  // Snapshot every id/kind/sourceId with exactly ONE property read each,
-  // into fresh frozen objects, before any further validation - not merely
-  // for freeze-boundary hygiene (see module comment), but so a hostile
-  // bundle cannot use a getter to present one value to validateEvidenceRef
-  // below and a DIFFERENT value to the registry/prompt afterward (a
-  // time-of-check-to-time-of-use gap). Whatever this snapshot captures is
-  // the only value ever validated, registered, or shown to the provider.
-  const canonicalEvidence = toCanonicalEvidence(evidenceBundle.evidenceItems);
+  const canonicalEvidence = toCanonicalEvidence(snapshot.evidenceItems);
 
   // MANDATORY before any provider call (Roadmap #22C Phase 7): every
   // canonical EvidenceRef is independently re-validated against the frozen
   // v1 validateEvidenceRef(), never trusted merely because
   // validateEvidenceBundle() above already checked this module's own
-  // narrower local shape. Validated on the snapshot itself (not the
-  // caller's original object) so this is exactly what becomes canonical.
+  // narrower local shape. Validated on the same snapshot everything else
+  // below consumes.
   const canonicalErrors = [];
   canonicalEvidence.forEach((item, i) => {
     validateEvidenceRef(item.evidenceRef, `$.evidenceItems[${i}].evidenceRef`, canonicalErrors);
   });
   if (canonicalErrors.length > 0) {
-    return { ok: false, errors: canonicalErrors, providerAttempts: 0 };
+    return { ok: false, errors: boundGenerationErrors(canonicalErrors), providerAttempts: 0 };
   }
 
+  // validateEvidenceBundle() above already rejected the whole bundle on any
+  // duplicate evidenceRef.id/sourceId within snapshot.evidenceItems - by
+  // construction, every id inserted below is already proven unique, so this
+  // Map can never silently collapse a genuine duplicate via "last write
+  // wins" semantics; there is no remaining duplicate for it to absorb.
   const registry = new Map(canonicalEvidence.map((item) => [item.evidenceRef.id, item.evidenceRef]));
 
-  const projectId = evidenceBundle.projectId;
+  const projectId = snapshot.projectId;
   const systemPrompt = buildRequirementModelSystemPrompt();
   const attempts = resolveMaxAttempts(maxAttempts);
 
@@ -362,7 +467,10 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
 
     const modelResult = validateRequirementModel(parsed, { expectedProjectId: projectId });
     if (!modelResult.ok) {
-      lastErrors = modelResult.errors;
+      // Roadmap #22C-C1: bounded here, not forwarded wholesale - see
+      // boundGenerationErrors()'s own comment. Applies to both the
+      // correction prompt (below) and a terminal failure result.
+      lastErrors = boundGenerationErrors(modelResult.errors);
       correctionErrors = lastErrors;
       if (attempt === attempts) return { ok: false, errors: lastErrors, providerAttempts };
       continue;
@@ -370,7 +478,7 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
 
     const provenanceErrors = checkCanonicalProvenance(parsed.evidenceRefs, registry);
     if (provenanceErrors.length > 0) {
-      lastErrors = provenanceErrors;
+      lastErrors = boundGenerationErrors(provenanceErrors);
       correctionErrors = lastErrors;
       if (attempt === attempts) return { ok: false, errors: lastErrors, providerAttempts };
       continue;
@@ -386,6 +494,10 @@ module.exports = {
   generateRequirementModel,
   validateEvidenceBundle,
   checkCanonicalProvenance,
+  snapshotEvidenceBundle,
+  boundGenerationErrors,
   MAX_PROVIDER_ATTEMPTS,
   MAX_REQUIREMENT_MODEL_RESPONSE_CHARS,
+  MAX_CORRECTION_ERRORS,
+  MAX_CORRECTION_DIAGNOSTIC_CHARS,
 };
