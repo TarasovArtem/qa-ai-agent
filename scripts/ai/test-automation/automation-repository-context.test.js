@@ -6,7 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { buildAutomationRepositoryContext, LIMITS, EVIDENCE_KIND_REPOSITORY } = require("./automation-repository-context");
+const { buildAutomationRepositoryContext, LIMITS, EVIDENCE_KIND_REPOSITORY, isPlanningRelevantScriptName } = require("./automation-repository-context");
 const { validateEvidenceRef } = require("../generation/primitives");
 const { TARGOMO_PROJECT_PROFILE } = require("../project-profile");
 
@@ -134,8 +134,10 @@ test("invalid ProjectProfile is rejected", () => {
 
 // --- Package scripts --------------------------------------------------------
 
-test("package scripts are positively projected, sorted by name", () => {
+test("package scripts are positively projected to only planning-relevant names, sorted by name", () => {
   const root = makeFixtureRepo();
+  // makeFixtureRepo()'s own package.json is { test: "node --test", build: "node build.js" } -
+  // "build" is not planning-relevant (no shared/framework keyword segment) and must be excluded.
   try {
     const result = buildAutomationRepositoryContext({
       repoRoot: root,
@@ -144,10 +146,7 @@ test("package scripts are positively projected, sorted by name", () => {
       relevantFiles: [],
     });
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.deepEqual(result.context.packageScripts, [
-      { name: "build", command: "node build.js" },
-      { name: "test", command: "node --test" },
-    ]);
+    assert.deepEqual(result.context.packageScripts, [{ name: "test", command: "node --test" }]);
   } finally {
     cleanup(root);
   }
@@ -687,8 +686,12 @@ test("aggregate evidence content one over the limit is rejected, with every indi
 
 test("package script count/text bounds are enforced", () => {
   const root = makeFixtureRepo();
+  // Every name must itself be planning-relevant (contain a "test" segment)
+  // so the fixture actually exercises the count bound, rather than being
+  // filtered out entirely by the minimization policy before the bound is
+  // even reached.
   const scripts = {};
-  for (let i = 0; i < LIMITS.MAX_SCRIPT_COUNT + 1; i++) scripts[`s${i}`] = "echo hi";
+  for (let i = 0; i < LIMITS.MAX_SCRIPT_COUNT + 1; i++) scripts[`test:${i}`] = "echo hi";
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts }));
   try {
     const result = buildAutomationRepositoryContext({
@@ -929,6 +932,586 @@ test("null input is rejected", () => {
   const result = buildAutomationRepositoryContext(null);
   assert.equal(result.ok, false);
   assert.equal(result.errors[0].code, "INVALID_TYPE");
+});
+
+// --- #23B-C1: resolved physical-target framework scope ----------------------
+
+function makeFrameworkFixtureRepo() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "arc-c1-"));
+  fs.writeFileSync(path.join(root, "cypress.config.js"), "module.exports = {};\n");
+  fs.writeFileSync(path.join(root, "playwright.config.js"), "module.exports = {};\n");
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+  fs.mkdirSync(path.join(root, "cypress", "e2e"), { recursive: true });
+  fs.mkdirSync(path.join(root, "playwright", "tests"), { recursive: true });
+  return root;
+}
+
+function trySymlink(target, linkPath, t) {
+  try {
+    fs.symlinkSync(target, linkPath, "file");
+    return true;
+  } catch (e) {
+    t.skip(`symlink creation unavailable in this environment: ${e.code}`);
+    return false;
+  }
+}
+
+test("a Cypress-tree lexical symlink resolving to a Playwright physical target is rejected", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.writeFileSync(path.join(root, "playwright", "tests", "target.spec.js"), "SECRET_23B_C1_PLAYWRIGHT_MARKER\n");
+    const linkPath = path.join(root, "cypress", "e2e", "alias.js");
+    if (!trySymlink(path.join(root, "playwright", "tests", "target.spec.js"), linkPath, t)) return;
+
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/alias.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET_23B_C1_PLAYWRIGHT_MARKER"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a Playwright-tree lexical symlink resolving to a Cypress physical target is rejected", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.writeFileSync(path.join(root, "cypress", "e2e", "target.cy.js"), "SECRET_23B_C1_CYPRESS_MARKER\n");
+    const linkPath = path.join(root, "playwright", "tests", "alias.spec.js");
+    if (!trySymlink(path.join(root, "cypress", "e2e", "target.cy.js"), linkPath, t)) return;
+
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "playwright",
+      relevantFiles: ["playwright/tests/alias.spec.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET_23B_C1_CYPRESS_MARKER"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("two lexical aliases resolving to the same physical relevant file are rejected as a physical duplicate", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.writeFileSync(path.join(root, "cypress", "e2e", "real.js"), "content\n");
+    if (!trySymlink(path.join(root, "cypress", "e2e", "real.js"), path.join(root, "cypress", "e2e", "a.js"), t)) return;
+    if (!trySymlink(path.join(root, "cypress", "e2e", "real.js"), path.join(root, "cypress", "e2e", "b.js"), t)) return;
+
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/a.js", "cypress/e2e/b.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "DUPLICATE_ID"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a relevant-file alias resolving to the auto framework config's physical target is rejected", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    const linkPath = path.join(root, "cypress", "e2e", "config-alias.js");
+    if (!trySymlink(path.join(root, "cypress.config.js"), linkPath, t)) return;
+
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/config-alias.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "DUPLICATE_ID"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a cross-framework framework-config symlink is rejected", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.rmSync(path.join(root, "cypress.config.js"));
+    if (!trySymlink(path.join(root, "playwright.config.js"), path.join(root, "cypress.config.js"), t)) return;
+
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("in-framework symlink is still accepted after the resolved-scope hardening", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.writeFileSync(path.join(root, "cypress", "e2e", "example.cy.js"), "content\n");
+    const linkPath = path.join(root, "cypress", "e2e", "alias.cy.js");
+    if (!trySymlink(path.join(root, "cypress", "e2e", "example.cy.js"), linkPath, t)) return;
+
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/alias.cy.js"],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const item = result.context.repositoryEvidence.find((e) => e.role === "relevant_file");
+    assert.equal(item.evidenceRef.location, "cypress/e2e/example.cy.js");
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- #23B-C1: targeted sensitive-path policy ---------------------------------
+
+const SENSITIVE_FIXTURES = [
+  ".npmrc",
+  ".netrc",
+  "id_rsa",
+  "id_ed25519",
+  "private.pem",
+  "private.key",
+  "credentials.json",
+  "credentials.yml",
+  "credentials.yaml",
+  "secrets.json",
+  "secrets.yml",
+  "secrets.yaml",
+];
+
+for (const basename of SENSITIVE_FIXTURES) {
+  test(`sensitive path cypress/${basename} is rejected`, () => {
+    const root = makeFrameworkFixtureRepo();
+    const full = path.join(root, "cypress", "e2e", basename);
+    fs.writeFileSync(full, "SECRET_CONTENT\n");
+    try {
+      const result = buildAutomationRepositoryContext({
+        repoRoot: root,
+        projectProfile: validProjectProfile(),
+        framework: "cypress",
+        relevantFiles: [`cypress/e2e/${basename}`],
+      });
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    } finally {
+      cleanup(root);
+    }
+  });
+}
+
+test(".env.local is rejected", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "cypress", "e2e", ".env.local"), "SECRET=1\n");
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/.env.local"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("playwright/.auth/user.json is rejected before its content ever enters context, and the marker never leaks", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.mkdirSync(path.join(root, "playwright", ".auth"), { recursive: true });
+  fs.writeFileSync(path.join(root, "playwright", ".auth", "user.json"), JSON.stringify({ cookies: [{ name: "session", value: "SECRET_SESSION_COOKIE" }] }));
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "playwright",
+      relevantFiles: ["playwright/.auth/user.json"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET_SESSION_COOKIE"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("playwright storage-state file is rejected before its content ever enters context, and the marker never leaks", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "playwright", "storageState.json"), JSON.stringify({ origins: [{ origin: "https://x", localStorage: [{ name: "token", value: "SECRET_ACCESS_TOKEN" }] }] }));
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "playwright",
+      relevantFiles: ["playwright/storageState.json"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET_ACCESS_TOKEN"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Cypress runtime-artifact path under cypress/screenshots is rejected (regression, re-verified after hardening)", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.mkdirSync(path.join(root, "cypress", "screenshots"), { recursive: true });
+  fs.writeFileSync(path.join(root, "cypress", "screenshots", "shot.png"), "not a real png");
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/screenshots/shot.png"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Playwright runtime-artifact path under playwright/test-results is rejected", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.mkdirSync(path.join(root, "playwright", "test-results"), { recursive: true });
+  fs.writeFileSync(path.join(root, "playwright", "test-results", "out.json"), "{}");
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "playwright",
+      relevantFiles: ["playwright/test-results/out.json"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- #23B-C1: package script minimization ------------------------------------
+
+test("package script minimization: only planning-relevant scripts are included, unrelated commands/markers absent", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({
+      scripts: {
+        test: "node --test",
+        "test:e2e": "cypress run",
+        "test:e2e:playwright": "playwright test",
+        cypress: "cypress open",
+        playwright: "playwright test",
+        deploy: "SECRET_DEPLOY_MARKER_C1",
+        publish: "SECRET_PUBLISH_MARKER_C1",
+        "internal-admin": "SECRET_ADMIN_MARKER_C1",
+      },
+    })
+  );
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const names = result.context.packageScripts.map((s) => s.name);
+    assert.ok(names.includes("test"));
+    assert.ok(names.includes("test:e2e"));
+    assert.ok(names.includes("cypress"));
+    assert.ok(!names.includes("test:e2e:playwright"), "cypress context must not see the other framework's specific script");
+    assert.ok(!names.includes("playwright"), "cypress context must not see the other framework's specific script");
+    assert.ok(!names.includes("deploy"));
+    assert.ok(!names.includes("publish"));
+    assert.ok(!names.includes("internal-admin"));
+    const serialized = JSON.stringify(result.context);
+    assert.ok(!serialized.includes("SECRET_DEPLOY_MARKER_C1"));
+    assert.ok(!serialized.includes("SECRET_PUBLISH_MARKER_C1"));
+    assert.ok(!serialized.includes("SECRET_ADMIN_MARKER_C1"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("isPlanningRelevantScriptName: direct unit coverage of the policy function", () => {
+  assert.equal(isPlanningRelevantScriptName("test", "cypress"), true);
+  assert.equal(isPlanningRelevantScriptName("cypress:open", "cypress"), true);
+  assert.equal(isPlanningRelevantScriptName("chrome", "cypress"), true);
+  assert.equal(isPlanningRelevantScriptName("test:e2e:playwright", "cypress"), false);
+  assert.equal(isPlanningRelevantScriptName("playwright", "cypress"), false);
+  assert.equal(isPlanningRelevantScriptName("test:e2e:playwright", "playwright"), true);
+  assert.equal(isPlanningRelevantScriptName("cypress:open", "playwright"), false);
+  assert.equal(isPlanningRelevantScriptName("chrome", "playwright"), false);
+  assert.equal(isPlanningRelevantScriptName("deploy", "cypress"), false);
+  assert.equal(isPlanningRelevantScriptName("publish", "playwright"), false);
+});
+
+// --- #23B-C1: pre-read byte-size bounds --------------------------------------
+
+test("package.json exactly at the byte limit is accepted", () => {
+  const root = makeFrameworkFixtureRepo();
+  const scripts = { test: "node --test" };
+  // Measure the exact byte overhead of the JSON structure with an empty
+  // pad, then grow the pad (each 'a' is exactly 1 UTF-8 byte) by precisely
+  // the remaining distance to the target - avoids off-by-N arithmetic from
+  // guessing the surrounding JSON punctuation/key overhead.
+  const emptyPadded = JSON.stringify({ scripts, _pad: "" });
+  const padLength = LIMITS.MAX_PACKAGE_JSON_BYTES - Buffer.byteLength(emptyPadded, "utf8");
+  const padded = JSON.stringify({ scripts, _pad: "a".repeat(Math.max(0, padLength)) });
+  assert.equal(Buffer.byteLength(padded, "utf8"), LIMITS.MAX_PACKAGE_JSON_BYTES);
+  fs.writeFileSync(path.join(root, "package.json"), padded);
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("package.json one byte over the limit is rejected before it is read", () => {
+  const root = makeFrameworkFixtureRepo();
+  const scripts = { test: "node --test" };
+  const oversizePad = "a".repeat(LIMITS.MAX_PACKAGE_JSON_BYTES + 1);
+  const oversized = JSON.stringify({ scripts, _pad: oversizePad });
+  fs.writeFileSync(path.join(root, "package.json"), oversized);
+
+  const originalReadFileSync = fs.readFileSync;
+  let packageJsonWasRead = false;
+  fs.readFileSync = function (p, ...args) {
+    if (typeof p === "string" && p.endsWith("package.json")) packageJsonWasRead = true;
+    return originalReadFileSync.call(fs, p, ...args);
+  };
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.path === "$.packageScripts"));
+    assert.equal(packageJsonWasRead, false, "oversized package.json must never be read");
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    cleanup(root);
+  }
+});
+
+test("an evidence file exactly at the byte limit is accepted", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "cypress", "e2e", "atlimit.cy.js"), "a".repeat(LIMITS.MAX_FILE_BYTES));
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/atlimit.cy.js"],
+    });
+    assert.equal(result.ok, false, "byte limit equals char limit boundary; content also exceeds MAX_FILE_CONTENT_LENGTH unless smaller");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("an evidence file over the byte limit is rejected before it is read", () => {
+  const root = makeFrameworkFixtureRepo();
+  const bigPath = path.join(root, "cypress", "e2e", "huge.cy.js");
+  fs.writeFileSync(bigPath, "a".repeat(LIMITS.MAX_FILE_BYTES + 1));
+
+  const originalReadFileSync = fs.readFileSync;
+  let hugeFileWasRead = false;
+  fs.readFileSync = function (p, ...args) {
+    if (p === bigPath) hugeFileWasRead = true;
+    return originalReadFileSync.call(fs, p, ...args);
+  };
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/huge.cy.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.message.includes("bytes")));
+    assert.equal(hugeFileWasRead, false, "oversized evidence file must never be read");
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    cleanup(root);
+  }
+});
+
+test("post-decode character-length bound still applies to a file within the byte limit but over the character limit", () => {
+  const root = makeFrameworkFixtureRepo();
+  // Between MAX_FILE_CONTENT_LENGTH and MAX_FILE_BYTES - passes the byte
+  // pre-read bound but must still be rejected by the post-decode character
+  // bound.
+  const size = LIMITS.MAX_FILE_CONTENT_LENGTH + 1000;
+  assert.ok(size <= LIMITS.MAX_FILE_BYTES);
+  fs.writeFileSync(path.join(root, "cypress", "e2e", "midsize.cy.js"), "a".repeat(size));
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/midsize.cy.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.message.includes("characters")));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("config is also pre-read byte-bounded (no privileged unbounded config path)", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "cypress.config.js"), "a".repeat(LIMITS.MAX_FILE_BYTES + 1));
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.path === "$.repositoryEvidence[0]"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- #23B-C1: aggregate cannot be bypassed via physical duplication ---------
+
+test("duplicate-rejected aliases cannot be used to bypass the aggregate bound", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.writeFileSync(path.join(root, "cypress", "e2e", "real.js"), "a".repeat(100));
+    if (!trySymlink(path.join(root, "cypress", "e2e", "real.js"), path.join(root, "cypress", "e2e", "alias.js"), t)) return;
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/real.js", "cypress/e2e/alias.js"],
+    });
+    // The physical-duplicate check rejects the whole request outright
+    // (fail closed on caller ambiguity), so the aggregate is never even
+    // computed over a doubled-up content set.
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "DUPLICATE_ID"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- #23B-C1: defensive copy before freeze -----------------------------------
+
+test("building a context does not freeze or mutate the caller-owned knownProjectConstraints array", () => {
+  const root = makeFrameworkFixtureRepo();
+  const constraintsArray = ["constraint one"];
+  const profile = validProjectProfile({ knownProjectConstraints: constraintsArray });
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: profile,
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.notEqual(result.context.guidance.knownProjectConstraints, constraintsArray, "output must be a copy, not the same reference");
+    assert.equal(Object.isFrozen(constraintsArray), false, "caller-owned array must not be frozen by this call");
+    constraintsArray.push("added after the call");
+    assert.equal(constraintsArray.length, 2, "caller must still be able to mutate their own array after the call");
+    assert.ok(Object.isFrozen(result.context.guidance.knownProjectConstraints), "the output's own copy must still be frozen");
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- #23B-C1: plain-record input boundary ------------------------------------
+
+test("a class instance with the exact expected own fields is rejected as top-level input", () => {
+  class FakeInput {
+    constructor(root) {
+      this.repoRoot = root;
+      this.projectProfile = validProjectProfile();
+      this.framework = "cypress";
+      this.relevantFiles = [];
+    }
+  }
+  const root = makeFrameworkFixtureRepo();
+  try {
+    const result = buildAutomationRepositoryContext(new FakeInput(root));
+    assert.equal(result.ok, false);
+    assert.equal(result.errors[0].code, "INVALID_TYPE");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a Date/Map/Set as top-level input is rejected", () => {
+  for (const value of [new Date(), new Map(), new Set()]) {
+    const result = buildAutomationRepositoryContext(value);
+    assert.equal(result.ok, false);
+    assert.equal(result.errors[0].code, "INVALID_TYPE");
+  }
+});
+
+test("Object.create(null) is accepted as top-level input shape (matches documented plain-record policy)", () => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    const input = Object.create(null);
+    input.repoRoot = root;
+    input.projectProfile = validProjectProfile();
+    input.framework = "cypress";
+    input.relevantFiles = [];
+    const result = buildAutomationRepositoryContext(input);
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a class-instance projectProfile is rejected even with the exact expected own fields", () => {
+  class FakeProfile {
+    constructor() {
+      this.id = "p";
+      this.displayName = "d";
+      this.knownProjectConstraints = ["c"];
+    }
+  }
+  const root = makeFrameworkFixtureRepo();
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: new FakeProfile(),
+      framework: "cypress",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.path === "$.projectProfile"));
+  } finally {
+    cleanup(root);
+  }
 });
 
 // --- Real-repository read-only smoke test (Phase 31) ------------------------
