@@ -171,6 +171,25 @@ const EXCLUDED_PATH_PREFIXES = Object.freeze([
 // context, applied to BOTH the lexically-requested path (cheap early
 // rejection) and the RESOLVED physical location (defense against a
 // benign-looking alias resolving to a sensitive physical file).
+//
+// #23B-C2: an independent adversarial re-review (#23B-C1-R) found this
+// policy was case-sensitive only - 12/12 adversarial case variants
+// (playwright/.AUTH/user.json, ID_RSA, Private.PEM, StorageState.JSON,
+// .NPMRC, etc.) bypassed it entirely. This is corrected with ONE
+// consistent normalization strategy: toSecurityComparable() lowercases a
+// canonical path purely for policy COMPARISON purposes - it is never used
+// to construct a filesystem path, and never replaces the true-case
+// canonical location actually stored on an accepted evidence entry (see
+// isSensitivePath()/isExcludedPath()'s callers below, which always operate
+// on and return the original, non-lowercased canonicalPath/
+// resolved.canonicalLocation). Every sensitive-basename/extension/prefix
+// constant below is written in lowercase and compared only against an
+// already-lowercased value - never a mix of "some checks normalize, some
+// checks rely on a regex case-insensitive flag".
+function toSecurityComparable(canonicalPath) {
+  return canonicalPath.toLowerCase();
+}
+
 const ENV_FILE_BASENAME_PATTERN = /^\.env(\..+)?$/;
 const SENSITIVE_EXTENSION_PATTERN = /\.(pem|key)$/;
 const SENSITIVE_EXACT_BASENAMES = new Set([
@@ -186,29 +205,31 @@ const SENSITIVE_EXACT_BASENAMES = new Set([
   "secrets.yaml",
   // Playwright's own conventional authentication/session-state file names
   // (both the camelCase and kebab-case spellings Playwright's own docs and
-  // ecosystem tooling use) - these commonly contain live cookies/tokens
-  // and must never become provider-bound evidence merely because they sit
-  // inside playwright/**.
-  "storageState.json",
+  // ecosystem tooling use, lowercased here since every comparison against
+  // this set is performed on an already-lowercased basename) - these
+  // commonly contain live cookies/tokens and must never become
+  // provider-bound evidence merely because they sit inside playwright/**.
+  "storagestate.json",
   "storage-state.json",
 ]);
 
 function isSensitivePath(canonicalPath) {
-  const segments = canonicalPath.split("/");
+  const segments = toSecurityComparable(canonicalPath).split("/");
   const basename = segments[segments.length - 1];
   if (ENV_FILE_BASENAME_PATTERN.test(basename)) return true;
   if (SENSITIVE_EXACT_BASENAMES.has(basename)) return true;
   if (SENSITIVE_EXTENSION_PATTERN.test(basename)) return true;
   // Covers playwright/.auth/** and playwright/**/.auth/** alike - any path
   // with a ".auth" directory segment anywhere, not just directly under
-  // playwright/.
+  // playwright/ - case-robust via the same lowercased segment list.
   if (segments.includes(".auth")) return true;
   return false;
 }
 
 function isExcludedPath(canonicalPath) {
-  if (canonicalPath === "package.json") return true;
-  if (EXCLUDED_PATH_PREFIXES.some((prefix) => canonicalPath.startsWith(prefix))) return true;
+  const comparable = toSecurityComparable(canonicalPath);
+  if (comparable === "package.json") return true;
+  if (EXCLUDED_PATH_PREFIXES.some((prefix) => comparable.startsWith(prefix))) return true;
   return isSensitivePath(canonicalPath);
 }
 
@@ -217,38 +238,39 @@ function isInFrameworkScope(canonicalPath, framework) {
   return canonicalPath.startsWith(FRAMEWORK_SOURCE_PREFIX[framework]);
 }
 
-// #23B-C1: deterministic, name-based, framework-aware planning-relevance
-// policy for package.json scripts - the correction for the original
-// all-scripts projection defect. Deliberately NOT a content/command scan
-// (the mission's own explicit guidance: unrelated command bodies, e.g. a
-// "deploy" script, must never be included merely because bounded, and a
-// script must never be included merely because its COMMAND happens to
-// mention a framework word - only its NAME is examined). Verified against
-// this repository's actual package.json script names (cypress:open,
-// test:e2e, chrome, firefox, edge, test:e2e:playwright, plus this
-// project's own ai:*/eval:*/test:unit tooling scripts, which contain
-// neither a shared nor a framework-specific keyword segment and are
-// therefore excluded exactly like deploy/publish/internal-admin would be).
-// Script names in this repository (and standard npm convention) use ":" as
-// a namespace separator; a name is planning-relevant when at least one of
-// its colon-delimited segments matches a shared test-execution keyword, or
-// a keyword specific to the framework this context is being built for -
-// and never relevant when a segment names the OTHER framework specifically
-// (so a Cypress context never sees "test:e2e:playwright", and a Playwright
-// context never sees "cypress:open"/"chrome"/"firefox"/"edge").
-const SHARED_PLANNING_KEYWORDS = Object.freeze(["test", "e2e"]);
-const FRAMEWORK_SPECIFIC_KEYWORDS = Object.freeze({
-  cypress: ["cypress", "chrome", "firefox", "edge"],
-  playwright: ["playwright"],
+// #23B-C1 introduced a "does any colon-delimited segment look relevant"
+// policy for package.json script names. #23B-C1-R found this
+// segment-overbroad: a single matching segment (e.g. "test") authorized
+// the ENTIRE remaining name/command regardless of what any other segment
+// said, so deceptively-named scripts like "test:deploy", "cypress:publish",
+// or "playwright:deploy" were all incorrectly included.
+//
+// #23B-C2: replaced with an exact positive allowlist per framework - a
+// script name is planning-relevant only when it EXACTLY equals one of a
+// small, fixed set of names, derived directly from this repository's own
+// real package.json (never invented, never inferred from a substring/
+// segment match). An unrecognized name is always omitted, never included
+// as a fallback - a future new script convention requires an explicit
+// addition here, not automatic inclusion (Roadmap #23B-C2, Phase 12: fail
+// closed on unknown script shapes rather than trying to infer meaning from
+// arbitrary prefixes). There is deliberately no "shared" name set: nothing
+// in this repository's actual package.json is genuinely useful to both
+// frameworks (test:e2e runs Cypress; test:e2e:playwright runs Playwright) -
+// a future genuinely-shared script would be added to both lists explicitly
+// rather than inferred.
+//
+// This positive list intentionally omits this repository's own ai:*/
+// eval:*/test:unit tooling scripts (irrelevant to Cypress/Playwright test
+// execution planning) exactly as it omits deploy/publish/release/
+// internal-admin-style scripts, for the same reason: neither is planning
+// evidence for automating a Cypress or Playwright test.
+const PLANNING_RELEVANT_SCRIPT_NAMES = Object.freeze({
+  cypress: Object.freeze(["cypress:open", "test:e2e", "chrome", "firefox", "edge"]),
+  playwright: Object.freeze(["test:e2e:playwright"]),
 });
 
 function isPlanningRelevantScriptName(name, framework) {
-  const segments = name.split(":");
-  const otherFramework = framework === "cypress" ? "playwright" : "cypress";
-  const otherFrameworkKeywords = FRAMEWORK_SPECIFIC_KEYWORDS[otherFramework];
-  if (segments.some((segment) => otherFrameworkKeywords.includes(segment))) return false;
-  const ownKeywords = FRAMEWORK_SPECIFIC_KEYWORDS[framework];
-  return segments.some((segment) => SHARED_PLANNING_KEYWORDS.includes(segment) || ownKeywords.includes(segment));
+  return PLANNING_RELEVANT_SCRIPT_NAMES[framework].includes(name);
 }
 
 const TOP_LEVEL_ALLOWED_KEYS = Object.freeze(["repoRoot", "projectProfile", "framework", "relevantFiles"]);

@@ -25,7 +25,10 @@ function makeFixtureRepo() {
   fs.writeFileSync(path.join(root, "playwright.config.js"), "module.exports = { testDir: './playwright' };\n");
   fs.writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({ name: "fixture", scripts: { test: "node --test", build: "node build.js" } }, null, 2)
+    // "test:e2e" mirrors this repository's own real, exact-allowlisted
+    // Cypress script name; "build" is deliberately irrelevant and must
+    // never be selected.
+    JSON.stringify({ name: "fixture", scripts: { "test:e2e": "cypress run", build: "node build.js" } }, null, 2)
   );
   fs.mkdirSync(path.join(root, "cypress", "e2e", "tests"), { recursive: true });
   fs.writeFileSync(path.join(root, "cypress", "e2e", "tests", "example.cy.js"), "describe('x', () => { it('y', () => {}); });\n");
@@ -134,10 +137,11 @@ test("invalid ProjectProfile is rejected", () => {
 
 // --- Package scripts --------------------------------------------------------
 
-test("package scripts are positively projected to only planning-relevant names, sorted by name", () => {
+test("package scripts are positively projected to only exact-allowlisted names, sorted by name", () => {
   const root = makeFixtureRepo();
-  // makeFixtureRepo()'s own package.json is { test: "node --test", build: "node build.js" } -
-  // "build" is not planning-relevant (no shared/framework keyword segment) and must be excluded.
+  // makeFixtureRepo()'s own package.json is { "test:e2e": "cypress run", build: "node build.js" } -
+  // "test:e2e" is exactly allowlisted for cypress; "build" is not in the
+  // allowlist at all and must be excluded.
   try {
     const result = buildAutomationRepositoryContext({
       repoRoot: root,
@@ -146,7 +150,7 @@ test("package scripts are positively projected to only planning-relevant names, 
       relevantFiles: [],
     });
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.deepEqual(result.context.packageScripts, [{ name: "test", command: "node --test" }]);
+    assert.deepEqual(result.context.packageScripts, [{ name: "test:e2e", command: "cypress run" }]);
   } finally {
     cleanup(root);
   }
@@ -684,15 +688,16 @@ test("aggregate evidence content one over the limit is rejected, with every indi
   }
 });
 
-test("package script count/text bounds are enforced", () => {
+test("package script command-length bound is enforced for an exact-allowlisted script", () => {
+  // #23B-C2: the exact positive allowlist (5 cypress names, 1 playwright
+  // name) makes MAX_SCRIPT_COUNT (60) structurally unreachable through
+  // realistic input - it is retained only as a defensive bound for a
+  // future larger allowlist (see the dedicated allowlist-size test below).
+  // The name/command-length and aggregate bounds remain directly
+  // reachable through the allowlisted subset, so this test now exercises
+  // the command-length bound on a genuinely relevant script name instead.
   const root = makeFixtureRepo();
-  // Every name must itself be planning-relevant (contain a "test" segment)
-  // so the fixture actually exercises the count bound, rather than being
-  // filtered out entirely by the minimization policy before the bound is
-  // even reached.
-  const scripts = {};
-  for (let i = 0; i < LIMITS.MAX_SCRIPT_COUNT + 1; i++) scripts[`test:${i}`] = "echo hi";
-  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts }));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { "test:e2e": "a".repeat(LIMITS.MAX_SCRIPT_COMMAND_LENGTH + 1) } }));
   try {
     const result = buildAutomationRepositoryContext({
       repoRoot: root,
@@ -705,6 +710,16 @@ test("package script count/text bounds are enforced", () => {
   } finally {
     cleanup(root);
   }
+});
+
+test("the exact per-framework script allowlists stay comfortably within MAX_SCRIPT_COUNT", () => {
+  // Documents why the count bound above is currently unreachable: both
+  // allowlists are tiny by design (positive selection, not a filter over
+  // an unbounded set).
+  const cypressCount = ["cypress:open", "test:e2e", "chrome", "firefox", "edge"].filter((n) => isPlanningRelevantScriptName(n, "cypress")).length;
+  const playwrightCount = ["test:e2e:playwright"].filter((n) => isPlanningRelevantScriptName(n, "playwright")).length;
+  assert.ok(cypressCount <= LIMITS.MAX_SCRIPT_COUNT);
+  assert.ok(playwrightCount <= LIMITS.MAX_SCRIPT_COUNT);
 });
 
 // --- Determinism -------------------------------------------------------------
@@ -1204,19 +1219,193 @@ test("Playwright runtime-artifact path under playwright/test-results is rejected
   }
 });
 
+// --- #23B-C2: case-robust sensitive/runtime-artifact policy -----------------
+
+const CASE_VARIANT_FIXTURES = [
+  [".AUTH/user.json", "playwright"],
+  [".Auth/user.json", "playwright"],
+];
+
+for (const [suffix, framework] of CASE_VARIANT_FIXTURES) {
+  test(`sensitive path case variant playwright/${suffix} is rejected`, () => {
+    const root = makeFrameworkFixtureRepo();
+    const full = path.join(root, "playwright", ...suffix.split("/"));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, "SECRET_CASE_C2\n");
+    try {
+      const result = buildAutomationRepositoryContext({
+        repoRoot: root,
+        projectProfile: validProjectProfile(),
+        framework,
+        relevantFiles: [`playwright/${suffix}`],
+      });
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+      assert.ok(!JSON.stringify(result.errors).includes("SECRET_CASE_C2"));
+    } finally {
+      cleanup(root);
+    }
+  });
+}
+
+const CASE_VARIANT_CYPRESS_FIXTURES = ["ID_RSA", "Id_Ed25519", "Private.PEM", "Client.KEY", "Credentials.JSON", "Secrets.YAML", ".NPMRC", ".NETRC"];
+for (const basename of CASE_VARIANT_CYPRESS_FIXTURES) {
+  test(`sensitive path case variant cypress/e2e/${basename} is rejected`, () => {
+    const root = makeFrameworkFixtureRepo();
+    const full = path.join(root, "cypress", "e2e", basename);
+    fs.writeFileSync(full, "SECRET_CASE_C2\n");
+    try {
+      const result = buildAutomationRepositoryContext({
+        repoRoot: root,
+        projectProfile: validProjectProfile(),
+        framework: "cypress",
+        relevantFiles: [`cypress/e2e/${basename}`],
+      });
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    } finally {
+      cleanup(root);
+    }
+  });
+}
+
+for (const basename of ["StorageState.JSON", "STORAGE-STATE.JSON"]) {
+  test(`storage-state case variant playwright/${basename} is rejected`, () => {
+    const root = makeFrameworkFixtureRepo();
+    fs.writeFileSync(path.join(root, "playwright", basename), "SECRET_CASE_C2\n");
+    try {
+      const result = buildAutomationRepositoryContext({
+        repoRoot: root,
+        projectProfile: validProjectProfile(),
+        framework: "playwright",
+        relevantFiles: [`playwright/${basename}`],
+      });
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    } finally {
+      cleanup(root);
+    }
+  });
+}
+
+test(".Env.Local (mixed-case dotenv variant) is rejected", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "cypress", "e2e", ".Env.Local"), "SECRET=1\n");
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/.Env.Local"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a mixed-case .auth target reached through a resolved symlink alias is rejected, marker absent", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.mkdirSync(path.join(root, "playwright", ".AUTH"), { recursive: true });
+    fs.writeFileSync(path.join(root, "playwright", ".AUTH", "user.json"), JSON.stringify({ token: "SECRET_CASE_ALIAS_C2" }));
+    const linkPath = path.join(root, "playwright", "tests", "helper.json");
+    try {
+      fs.symlinkSync(path.join(root, "playwright", ".AUTH", "user.json"), linkPath, "file");
+    } catch (e) {
+      t.skip(`symlink creation unavailable in this environment: ${e.code}`);
+      return;
+    }
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "playwright",
+      relevantFiles: ["playwright/tests/helper.json"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET_CASE_ALIAS_C2"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a mixed-case credential target reached through a resolved symlink alias is rejected", (t) => {
+  const root = makeFrameworkFixtureRepo();
+  try {
+    fs.writeFileSync(path.join(root, "cypress", "e2e", "ID_RSA"), "SECRET_KEY_C2\n");
+    const linkPath = path.join(root, "cypress", "e2e", "innocent-helper.js");
+    try {
+      fs.symlinkSync(path.join(root, "cypress", "e2e", "ID_RSA"), linkPath, "file");
+    } catch (e) {
+      t.skip(`symlink creation unavailable in this environment: ${e.code}`);
+      return;
+    }
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/innocent-helper.js"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET_KEY_C2"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("case-variant runtime-artifact path (Cypress/Screenshots) is rejected", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.mkdirSync(path.join(root, "cypress", "Screenshots"), { recursive: true });
+  fs.writeFileSync(path.join(root, "cypress", "Screenshots", "shot.png"), "x");
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/Screenshots/shot.png"],
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === "INVALID_PATH"));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("actual accepted evidence location retains its true case (security normalization never rewrites output)", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "cypress", "e2e", "MixedCase.cy.js"), "content\n");
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "cypress",
+      relevantFiles: ["cypress/e2e/MixedCase.cy.js"],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const item = result.context.repositoryEvidence.find((e) => e.role === "relevant_file");
+    assert.equal(item.evidenceRef.location, "cypress/e2e/MixedCase.cy.js");
+  } finally {
+    cleanup(root);
+  }
+});
+
 // --- #23B-C1: package script minimization ------------------------------------
 
-test("package script minimization: only planning-relevant scripts are included, unrelated commands/markers absent", () => {
+test("package script minimization: only exact-allowlisted scripts are included, unrelated commands/markers absent", () => {
   const root = makeFrameworkFixtureRepo();
   fs.writeFileSync(
     path.join(root, "package.json"),
     JSON.stringify({
       scripts: {
-        test: "node --test",
+        "cypress:open": "cypress open",
         "test:e2e": "cypress run",
+        chrome: "cypress run --browser chrome",
+        firefox: "cypress run --browser firefox",
+        edge: "cypress run --browser edge",
         "test:e2e:playwright": "playwright test",
-        cypress: "cypress open",
-        playwright: "playwright test",
         deploy: "SECRET_DEPLOY_MARKER_C1",
         publish: "SECRET_PUBLISH_MARKER_C1",
         "internal-admin": "SECRET_ADMIN_MARKER_C1",
@@ -1232,11 +1421,8 @@ test("package script minimization: only planning-relevant scripts are included, 
     });
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     const names = result.context.packageScripts.map((s) => s.name);
-    assert.ok(names.includes("test"));
-    assert.ok(names.includes("test:e2e"));
-    assert.ok(names.includes("cypress"));
+    assert.deepEqual(names.sort(), ["chrome", "cypress:open", "edge", "firefox", "test:e2e"]);
     assert.ok(!names.includes("test:e2e:playwright"), "cypress context must not see the other framework's specific script");
-    assert.ok(!names.includes("playwright"), "cypress context must not see the other framework's specific script");
     assert.ok(!names.includes("deploy"));
     assert.ok(!names.includes("publish"));
     assert.ok(!names.includes("internal-admin"));
@@ -1249,17 +1435,89 @@ test("package script minimization: only planning-relevant scripts are included, 
   }
 });
 
-test("isPlanningRelevantScriptName: direct unit coverage of the policy function", () => {
-  assert.equal(isPlanningRelevantScriptName("test", "cypress"), true);
+test("real repository package.json: exact planning-relevant scripts selected per framework", () => {
+  const realPkg = require("../../../package.json");
+  const names = Object.keys(realPkg.scripts);
+  const cypressSelected = names.filter((n) => isPlanningRelevantScriptName(n, "cypress")).sort();
+  const playwrightSelected = names.filter((n) => isPlanningRelevantScriptName(n, "playwright")).sort();
+  assert.deepEqual(cypressSelected, ["chrome", "cypress:open", "edge", "firefox", "test:e2e"]);
+  assert.deepEqual(playwrightSelected, ["test:e2e:playwright"]);
+  assert.ok(cypressSelected.length > 0, "selector must not accidentally return nothing for cypress");
+  assert.ok(playwrightSelected.length > 0, "selector must not accidentally return nothing for playwright");
+});
+
+test("isPlanningRelevantScriptName: exact allowlist semantics, deceptive names excluded", () => {
+  // Genuinely relevant, exact names.
   assert.equal(isPlanningRelevantScriptName("cypress:open", "cypress"), true);
+  assert.equal(isPlanningRelevantScriptName("test:e2e", "cypress"), true);
   assert.equal(isPlanningRelevantScriptName("chrome", "cypress"), true);
-  assert.equal(isPlanningRelevantScriptName("test:e2e:playwright", "cypress"), false);
-  assert.equal(isPlanningRelevantScriptName("playwright", "cypress"), false);
+  assert.equal(isPlanningRelevantScriptName("firefox", "cypress"), true);
+  assert.equal(isPlanningRelevantScriptName("edge", "cypress"), true);
   assert.equal(isPlanningRelevantScriptName("test:e2e:playwright", "playwright"), true);
+
+  // Cross-framework exact names must not leak.
+  assert.equal(isPlanningRelevantScriptName("test:e2e:playwright", "cypress"), false);
   assert.equal(isPlanningRelevantScriptName("cypress:open", "playwright"), false);
   assert.equal(isPlanningRelevantScriptName("chrome", "playwright"), false);
-  assert.equal(isPlanningRelevantScriptName("deploy", "cypress"), false);
-  assert.equal(isPlanningRelevantScriptName("publish", "playwright"), false);
+
+  // A plain, unqualified "test" was never a real script name in this
+  // repository and must not be invented as relevant.
+  assert.equal(isPlanningRelevantScriptName("test", "cypress"), false);
+  assert.equal(isPlanningRelevantScriptName("test", "playwright"), false);
+
+  // Deceptive/prefix-shaped names (#23B-C1-R's Phase 13 matrix) - a
+  // relevant-looking segment must never authorize the rest of the name.
+  for (const framework of ["cypress", "playwright"]) {
+    for (const name of [
+      "deploy",
+      "publish",
+      "release",
+      "internal-admin",
+      "test:deploy",
+      "test:publish",
+      "test:release",
+      "test:e2e:deploy",
+      "test:e2e:publish",
+      "test:e2e:release",
+      "playwright:deploy",
+      "playwright:publish",
+      "playwright:release",
+      "cypress:deploy",
+      "cypress:publish",
+      "cypress:release",
+      "pretest",
+      "posttest",
+      "contest",
+      "mytest",
+      "testproduction",
+      "playwright-production",
+      "cypress-release",
+    ]) {
+      assert.equal(isPlanningRelevantScriptName(name, framework), false, `${name} (${framework}) must be excluded`);
+    }
+  }
+});
+
+test("a legitimately-selected script may still contain a literal secret-shaped command - targeted minimization only, not a secret-free guarantee", () => {
+  const root = makeFrameworkFixtureRepo();
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { "test:e2e:playwright": "TOKEN=SECRET_RELEVANT_SCRIPT_C2 playwright test" } }));
+  try {
+    const result = buildAutomationRepositoryContext({
+      repoRoot: root,
+      projectProfile: validProjectProfile(),
+      framework: "playwright",
+      relevantFiles: [],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    // This module performs targeted NAME-based selection only - it never
+    // claims to detect or redact secret-shaped content inside a
+    // legitimately-selected command. That is documented, expected
+    // behavior, not a defect - see the module's PACKAGE_COMMAND_SECRET
+    // _BOUNDARY note.
+    assert.ok(JSON.stringify(result.context).includes("SECRET_RELEVANT_SCRIPT_C2"));
+  } finally {
+    cleanup(root);
+  }
 });
 
 // --- #23B-C1: pre-read byte-size bounds --------------------------------------
