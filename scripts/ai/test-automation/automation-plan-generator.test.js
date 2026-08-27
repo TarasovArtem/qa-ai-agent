@@ -999,3 +999,286 @@ test("PROVIDER_PROMPT_INPUT_BOUND: an outbound prompt beyond LIMITS.MAX_OUTBOUND
   assert.equal(result.ok, false);
   assert.equal(getCalls(), 0);
 });
+
+// =============================================================================
+// Roadmap #23C-C2: snapshot prototype safety + caller-independent array copy
+// =============================================================================
+
+// --- __proto__ prototype-injection matrix (Roadmap #23C-C1-R CRITICAL #1) ---
+
+test("full exploit: a candidate with NO own decision property cannot authorize generation via an own __proto__.decision", async () => {
+  const candidate = {
+    schemaVersion: 1,
+    kind: "AutomationCandidate",
+    id: "cand-1",
+    projectId: "proj-1",
+    testCaseModelId: "tcm-1",
+    testCaseId: "tc-1",
+    rationale: "Existing cypress infrastructure already covers this flow.",
+    evidenceRefs: [],
+    targetFrameworks: ["cypress"],
+  };
+  assert.equal(Object.prototype.hasOwnProperty.call(candidate, "decision"), false, "test assumption: candidate truly has no own decision property");
+  Object.defineProperty(candidate, "__proto__", { value: { decision: "AUTOMATE" }, enumerable: true, configurable: true });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false, "an inherited decision must never authorize generation");
+  assert.equal(getCalls(), 0);
+  assert.ok(result.errors.some((e) => e.path === "$.__proto__" && e.code === "UNKNOWN_FIELD"), "the __proto__ own key itself must be visible and rejectable");
+});
+
+test("snapshotOwnData makes an own __proto__ key an ordinary, visible own data property - never a prototype mutation", () => {
+  const evil = { a: 1 };
+  Object.defineProperty(evil, "__proto__", { value: { injected: "yes" }, enumerable: true, configurable: true });
+  const snap = snapshotOwnData(evil);
+  assert.equal(Object.prototype.hasOwnProperty.call(snap, "__proto__"), true);
+  assert.ok(Object.keys(snap).includes("__proto__"));
+  assert.equal(Object.getPrototypeOf(snap), Object.prototype, "the snapshot's actual prototype must remain the ordinary Object.prototype");
+  assert.equal(snap.injected, undefined, "the attacker-supplied prototype payload must never become reachable as an inherited property");
+});
+
+test("a JSON.parse-produced own __proto__ data property (no defineProperty needed by the caller) is rejected the same way", async () => {
+  const candidate = JSON.parse(
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: "AutomationCandidate",
+      id: "cand-1",
+      projectId: "proj-1",
+      testCaseModelId: "tcm-1",
+      testCaseId: "tc-1",
+      rationale: "x",
+      evidenceRefs: [],
+      targetFrameworks: ["cypress"],
+    }).replace("}", ',"__proto__":{"decision":"AUTOMATE"}}')
+  );
+  assert.equal(Object.prototype.hasOwnProperty.call(candidate, "__proto__"), true, "test assumption: JSON.parse produces an own __proto__ data property, not a prototype change");
+  assert.equal(Object.prototype.hasOwnProperty.call(candidate, "decision"), false);
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("context own __proto__ cannot inject projectId or framework when the real own fields are missing", async () => {
+  const context = {
+    guidance: { displayName: "T", knownProjectConstraints: [] },
+    packageScripts: [{ name: "test:e2e", command: "cypress run" }],
+    repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "cypress.config.js" }, role: "framework_config", content: "x" }],
+  };
+  Object.defineProperty(context, "__proto__", { value: { projectId: "proj-1", framework: "cypress" }, enumerable: true, configurable: true });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+for (const [label, buildContext] of [
+  [
+    "repositoryEvidence item",
+    () => {
+      const context = validContext();
+      Object.defineProperty(context.repositoryEvidence[0], "__proto__", { value: { content: "forged" }, enumerable: true, configurable: true });
+      return context;
+    },
+  ],
+  [
+    "evidenceRef",
+    () => {
+      const context = validContext();
+      Object.defineProperty(context.repositoryEvidence[0].evidenceRef, "__proto__", { value: { location: "forged.js" }, enumerable: true, configurable: true });
+      return context;
+    },
+  ],
+  [
+    "packageScripts item",
+    () => {
+      const context = validContext();
+      Object.defineProperty(context.packageScripts[0], "__proto__", { value: { name: "test:e2e" }, enumerable: true, configurable: true });
+      return context;
+    },
+  ],
+  [
+    "guidance",
+    () => {
+      const context = validContext();
+      Object.defineProperty(context.guidance, "__proto__", { value: { displayName: "forged" }, enumerable: true, configurable: true });
+      return context;
+    },
+  ],
+]) {
+  test(`nested __proto__ on ${label} is a visible own key and is rejected, zero provider calls`, async () => {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: buildContext(), provider });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+  });
+}
+
+test("constructor and prototype own keys are copied as ordinary fields and rejected as unknown, never special-cased away", async () => {
+  const candidate = validCandidate();
+  candidate.constructor = "evil";
+  candidate.prototype = "also-evil";
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.ok(result.errors.some((e) => e.path === "$.constructor" && e.code === "UNKNOWN_FIELD"));
+  assert.ok(result.errors.some((e) => e.path === "$.prototype" && e.code === "UNKNOWN_FIELD"));
+});
+
+// --- Caller-independent array snapshot (Roadmap #23C-C1-R CRITICAL #2) ------
+
+test('full exploit: targetFrameworks real indexed data ["cypress"] cannot be expanded to playwright via an overridden own .map', async () => {
+  const targetFrameworks = ["cypress"];
+  let mapCalls = 0;
+  targetFrameworks.map = (...args) => {
+    mapCalls += 1;
+    return ["cypress", "playwright"];
+  };
+  const candidate = validCandidate({ targetFrameworks });
+  const context = validContext({
+    framework: "playwright",
+    packageScripts: [{ name: "test:e2e:playwright", command: "npx playwright test" }],
+    repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "playwright.config.js" }, role: "framework_config", content: "x" }],
+  });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: context, provider });
+  assert.equal(mapCalls, 0, "the caller's own .map must never be invoked");
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+for (const [label, buildCandidate] of [
+  ["targetFrameworks.map", () => validCandidate({ targetFrameworks: Object.assign(["cypress"], { map: () => ["cypress", "playwright"] }) })],
+  ["evidenceRefs.map", () => validCandidate({ evidenceRefs: Object.assign([], { map: () => [{ id: "e1", kind: "repository", location: "x" }] }) })],
+]) {
+  test(`candidate array-method override "${label}" is never invoked and the array is rejected`, async () => {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: buildCandidate(), repositoryContext: validContext(), provider });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+  });
+}
+
+for (const [label, buildContext] of [
+  ["repositoryEvidence.map", () => validContext({ repositoryEvidence: Object.assign(validContext().repositoryEvidence, { map: () => [] }) })],
+  ["packageScripts.map", () => validContext({ packageScripts: Object.assign(validContext().packageScripts, { map: () => [] }) })],
+]) {
+  test(`context array-method override "${label}" is never invoked and the array is rejected`, async () => {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: buildContext(), provider });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+  });
+}
+
+test("an array with an overridden own .slice is never invoked and the array is rejected", () => {
+  const arr = ["cypress"];
+  let sliceCalls = 0;
+  arr.slice = () => {
+    sliceCalls += 1;
+    return ["cypress", "playwright"];
+  };
+  const snap = snapshotOwnData(arr);
+  assert.equal(sliceCalls, 0);
+  assert.equal(snap, null, "an array carrying an extra own key (slice) fails the dense-array policy");
+});
+
+test("an array with an overridden own .toJSON is never invoked and the array is rejected", () => {
+  const arr = ["cypress"];
+  let toJsonCalls = 0;
+  arr.toJSON = () => {
+    toJsonCalls += 1;
+    return ["forged"];
+  };
+  const snap = snapshotOwnData(arr);
+  assert.equal(toJsonCalls, 0);
+  assert.equal(snap, null);
+});
+
+test("extra enumerable own array keys (metadata/map/slice/toJSON) are rejected without silently ignoring them", () => {
+  for (const key of ["metadata", "map", "slice", "toJSON"]) {
+    const arr = ["cypress"];
+    arr[key] = key === "metadata" ? "x" : () => "x";
+    assert.equal(snapshotOwnData(arr), null, `array with extra own key "${key}" must be rejected`);
+  }
+});
+
+test("an own Symbol.iterator on an array is never invoked and the array is rejected", () => {
+  const arr = ["cypress"];
+  let iterCalls = 0;
+  arr[Symbol.iterator] = function () {
+    iterCalls += 1;
+    return [][Symbol.iterator]();
+  };
+  const snap = snapshotOwnData(arr);
+  assert.equal(iterCalls, 0);
+  assert.equal(snap, null, "an own Symbol-keyed property rejects the whole array");
+});
+
+test("a sparse array is rejected (fail-closed, never silently normalized)", () => {
+  const sparse = ["cypress"];
+  sparse[3] = "x"; // creates holes at indices 1-2
+  assert.equal(snapshotOwnData(sparse), null);
+});
+
+test("an Array subclass overriding map/slice/Symbol.iterator has none of its hooks invoked", () => {
+  class EvilArray extends Array {
+    map() {
+      throw new Error("SECRET_MAP_HOOK");
+    }
+    slice() {
+      throw new Error("SECRET_SLICE_HOOK");
+    }
+    [Symbol.iterator]() {
+      throw new Error("SECRET_ITERATOR_HOOK");
+    }
+  }
+  const evilArr = EvilArray.from(["cypress"]);
+  assert.equal(Array.isArray(evilArr), true);
+  const snap = snapshotOwnData(evilArr);
+  assert.deepEqual(snap, ["cypress"], "a subclass instance with no extra own keys and no own Symbol keys snapshots its real indexed data safely");
+});
+
+test("an array index value is read exactly once", () => {
+  const arr = [];
+  let reads = 0;
+  Object.defineProperty(arr, "0", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      reads += 1;
+      return "first";
+    },
+  });
+  Object.defineProperty(arr, "length", { value: 1 });
+  const snap = snapshotOwnData(arr);
+  assert.equal(reads, 1);
+  assert.deepEqual(snap, ["first"]);
+});
+
+test("a throwing array index getter produces a bounded, private failure with zero provider calls", async () => {
+  const arr = [];
+  Object.defineProperty(arr, "0", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      throw new Error("SECRET_INDEX_GETTER_DETAIL");
+    },
+  });
+  Object.defineProperty(arr, "length", { value: 1 });
+  const candidate = validCandidate({ targetFrameworks: arr });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.ok(!JSON.stringify(result).includes("SECRET_INDEX_GETTER_DETAIL"));
+});
+
+test("Object.create(null) top-level candidate/context still work exactly as before (Roadmap #23C-C1 behavior preserved)", async () => {
+  const nullProtoContext = Object.assign(Object.create(null), validContext());
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: nullProtoContext, provider, maxAttempts: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(getCalls(), 1);
+});

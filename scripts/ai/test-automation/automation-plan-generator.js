@@ -35,6 +35,19 @@
  * instance) is treated as `null` wherever a record is expected, matching
  * automation-repository-context.js's own `isPlainRecord()` convention.
  *
+ * Roadmap #23C-C1-R independently found that the #23C-C1 replacement
+ * snapshot still had two further CRITICAL authorization-bypass vectors,
+ * both now closed in #23C-C2: (1) copying a source key via plain
+ * `out[key] = value` let a caller-supplied own `"__proto__"` key change
+ * the snapshot's actual prototype instead of becoming a visible own
+ * field (defineOwnSnapshotProperty() below now uses
+ * Object.defineProperty, which always creates an own data property); and
+ * (2) copying an array via `value.map(...)` invoked a caller-overridden
+ * own `.map` property instead of the true built-in (snapshotArray()
+ * below now uses only `.length` and manual bracket-index reads, with a
+ * fail-closed dense-array + no-symbol-keys policy, never any
+ * source-resolved method or iteration protocol).
+ *
  * CONTEXT BOUND PARITY (Roadmap #23C-C1): the original implementation's
  * local AutomationRepositoryContext-shape validator used generous,
  * separately-maintained bounds (25 evidence items, 60 arbitrary script
@@ -177,6 +190,83 @@ function isPlainRecord(value) {
   return proto === Object.prototype || proto === null;
 }
 
+// Roadmap #23C-C2: defines `key` on `out` as an ordinary OWN DATA property
+// via [[DefineOwnProperty]] semantics - never a plain `out[key] = value`
+// assignment (which uses [[Set]] semantics instead). This distinction is
+// the entire fix for the #23C-C1-R CRITICAL "__proto__" finding: for a
+// plain `{}` destination, `out["__proto__"] = value` does not create an
+// own "__proto__" property at all - because `out` itself has no own
+// "__proto__" property yet, the assignment walks up to the inherited
+// `Object.prototype.__proto__` ACCESSOR and invokes its setter, which
+// changes `out`'s actual [[Prototype]] instead (exactly the mechanism
+// `JSON.parse('{"__proto__":1}')` avoids internally, since JSON.parse's
+// own object-building algorithm already uses CreateDataProperty -
+// [[DefineOwnProperty]] - for this exact reason). `Object.defineProperty`
+// unconditionally creates/redefines an own property, so a `"__proto__"`
+// (or `"constructor"`/`"prototype"`, which behave normally under a plain
+// assignment too but are copied the same way here for uniformity) source
+// key becomes an ordinary, visible, strictly-rejectable own field on the
+// snapshot - never a prototype mutation.
+function defineOwnSnapshotProperty(out, key, value) {
+  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+// Roadmap #23C-C2: a caller-independent array snapshot. The original
+// implementation copied arrays via `value.map(...)`, which resolves and
+// invokes whatever `.map` property actually exists on `value` at call
+// time - Roadmap #23C-C1-R found that an array whose own `.map` property
+// is overridden by the caller (an ordinary, easily-constructed own-
+// property override, no Proxy needed) could return entirely fabricated
+// contents (e.g. `targetFrameworks`'s real indexed data `["cypress"]"`,
+// but an overridden `.map` returning `["cypress","playwright"]`),
+// completely bypassing framework authorization. This never resolves or
+// invokes ANY property/method on `source` other than `.length` (a
+// non-configurable-as-accessor, spec-exotic property on a genuine Array -
+// safe to read directly) and manual bracket-index reads (`source[key]`,
+// each read exactly once) - no `.map`/`.slice`/`.filter`/`.reduce`/
+// `.flat`/`.flatMap`/`.concat`, no `Symbol.iterator` (no `for...of`, no
+// spread, no `Array.from`), so an Array subclass overriding any of those
+// methods/traps has nothing to hook.
+//
+// Fail-closed dense-array + plain-data policy (never silently normalized):
+// - any own Symbol-keyed property on `source` rejects the whole array
+//   (a legitimate AutomationCandidate/AutomationRepositoryContext array
+//   is plain JSON-like data and never legitimately carries one);
+// - the array must be dense: for a `.length` of N, `Object.keys(source)`
+//   must be EXACTLY the N strings "0".."N-1" (Object.keys() always lists
+//   an ordinary object's own integer-index keys in ascending numeric
+//   order first, per the ECMAScript [[OwnPropertyKeys]] ordering, so a
+//   length/key-count mismatch or any out-of-place key - a sparse hole, or
+//   an extra own key like "map"/"slice"/"toJSON"/"metadata"/"__proto__" -
+//   is caught before any element is ever read);
+// - a sparse array, or any extra own enumerable key beyond the dense
+//   index set, rejects the whole array rather than silently skipping or
+//   coercing it.
+// Returns `null` (the same "malformed input" sentinel `isPlainRecord`
+// failures already use) on any of the above - the caller's existing
+// `Array.isArray(...)` checks downstream then correctly reject it like
+// any other malformed value.
+function snapshotArray(source, ancestors) {
+  if (Object.getOwnPropertySymbols(source).length > 0) return null;
+
+  const length = source.length; // single read; a genuine Array's .length is a spec-exotic data property, never redefinable as an accessor
+  if (typeof length !== "number" || !Number.isInteger(length) || length < 0) return null;
+
+  const ownKeys = Object.keys(source); // own enumerable STRING keys only - never invokes anything
+  if (ownKeys.length !== length) return null; // catches both sparse holes and any extra own key in one bound check
+  for (let i = 0; i < length; i++) {
+    if (ownKeys[i] !== String(i)) return null; // catches a hole/extra-key combination that happened to keep the total count equal
+  }
+
+  const out = new Array(length);
+  for (let i = 0; i < length; i++) {
+    const key = String(i);
+    const captured = source[key]; // direct indexed read, exactly once - never a source-resolved method
+    defineOwnSnapshotProperty(out, key, snapshotOwnDataRecursive(captured, ancestors));
+  }
+  return out;
+}
+
 // The recursive walk behind snapshotOwnData() below. `ancestors` tracks
 // the current recursion chain (added on entry, removed on exit) so a
 // genuine circular reference is replaced with `null` (never a live
@@ -190,11 +280,12 @@ function snapshotOwnDataRecursive(value, ancestors) {
   if (ancestors.has(value)) return null;
   if (Array.isArray(value)) {
     ancestors.add(value);
-    const out = value.map((item) => snapshotOwnDataRecursive(item, ancestors));
+    const out = snapshotArray(value, ancestors);
     ancestors.delete(value);
     return out;
   }
   if (!isPlainRecord(value)) return null; // Date/Map/Set/class instance
+  if (Object.getOwnPropertySymbols(value).length > 0) return null; // fail-closed plain-data policy - see snapshotArray()'s own comment
   ancestors.add(value);
   const out = {};
   // Object.keys(): own enumerable STRING-keyed properties only, exactly
@@ -208,9 +299,13 @@ function snapshotOwnDataRecursive(value, ancestors) {
   // pass) - the key is copied into `out` via a direct property read
   // (`value[key]`, at most once), so it remains visible to strict
   // unknown-field validation even though its value will never itself be
-  // usable as semantic content.
+  // usable as semantic content. A key literally named "__proto__" (or
+  // "constructor"/"prototype") is copied via defineOwnSnapshotProperty()
+  // - see its own comment - never a plain `out[key] = ...` assignment, so
+  // it always becomes an ordinary, visible own field, never a prototype
+  // mutation.
   for (const key of Object.keys(value)) {
-    out[key] = snapshotOwnDataRecursive(value[key], ancestors);
+    defineOwnSnapshotProperty(out, key, snapshotOwnDataRecursive(value[key], ancestors));
   }
   ancestors.delete(value);
   return out;
