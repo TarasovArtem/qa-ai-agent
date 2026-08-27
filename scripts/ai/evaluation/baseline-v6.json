@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "datasetVersion": 6,
+  "samples": {
+    "TD-V6-001": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-002": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "not_applicable",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-003": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "not_applicable",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-004": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-005": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "partial",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-006": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "fail",
+      "frameworkQuality": "fail",
+      "evidenceQuality": "not_applicable",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-007": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "fail",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-008": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "fail",
+      "reviewAlignment": "not_applicable"
+    },
+    "TD-V6-009": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "fail"
+    }
+  }
+}
