@@ -47,6 +47,7 @@
 
 const { ERROR_CODES, err } = require("../generation/errors");
 const { isPlainObject } = require("../generation/primitives");
+const { LIMITS } = require("../generation/limits");
 const { validateRequirementModel } = require("../generation/requirement-model");
 const { validateGenerationChain } = require("../generation/cross-model-validation");
 const { validateProvider, validateProviderResponse } = require("../providers/provider-contract");
@@ -59,17 +60,64 @@ const { buildTestCaseModelSystemPrompt, buildTestCaseModelUserPrompt } = require
 // raised past it. Mirrors #22C's own retry policy exactly.
 const MAX_PROVIDER_ATTEMPTS = 2;
 
-// A realistic accepted RequirementModel (itself grounded in at most
-// scripts/ai/test-design/evidence-ingestion.js's MAX_SOURCES=20 sources /
-// MAX_AGGREGATE_TEXT_LENGTH=20000 chars of raw material - see #22C) carries
-// far fewer than the frozen v1 theoretical ceiling of MAX_REQUIREMENTS=200
-// requirements. A well-formed TestCaseModel derived from such a model - on
-// the order of dozens of test cases, a handful of steps each - comfortably
-// fits well under this bound; a runaway/hostile response is rejected before
-// it is ever handed to JSON.parse. This is a parse/retention bound applied
-// after provider.analyze() already resolved with the full string in memory,
-// not a network-transport byte limit.
-const MAX_TEST_CASE_MODEL_RESPONSE_CHARS = 200000;
+// Roadmap #22D-C1: replaces an undersized fixed 200000 guess (#22D-R found a
+// structurally-valid frozen v1 TestCaseModel - 200 test cases, 5 modest
+// steps each - that already serialized past it). This is a formula derived
+// from the actual frozen scripts/ai/generation/limits.js maxima, not a
+// "realistic output" guess: every bounded string field TestCaseModel v1
+// permits (isBoundedText/isValidId) may legitimately contain a quote,
+// backslash, tab, newline, or carriage return - none of which either
+// validator forbids - and JSON.stringify expands each of those to exactly
+// 2 output characters, so a 2x escaping factor per character-limited field
+// is EXACT, not merely conservative. A fixed per-string/per-object
+// allowance covers JSON structural characters (quotes/colons/commas/
+// braces/field-name keys). Empirically verified against an actual maxed-out
+// (escape-heavy) valid TestCaseModel: real serialized size ~238,055,887
+// chars, safely under this formula's ~307,903,352. This is a post-provider
+// parse/retention guard, never a network-transport byte limit.
+const JSON_ESCAPE_FACTOR = 2;
+const STRUCTURAL_OVERHEAD_PER_STRING = 8; // quotes + comma + margin
+const STRUCTURAL_OVERHEAD_PER_OBJECT = 96; // field-name keys + braces/commas, generous
+
+function maxIdFieldSize() {
+  return LIMITS.ID_MAX_LENGTH * JSON_ESCAPE_FACTOR + STRUCTURAL_OVERHEAD_PER_STRING;
+}
+function maxIdListFieldSize(count) {
+  return count * maxIdFieldSize();
+}
+function maxTextFieldSize(maxLength) {
+  return maxLength * JSON_ESCAPE_FACTOR + STRUCTURAL_OVERHEAD_PER_STRING;
+}
+
+const MAX_STEP_SIZE =
+  maxTextFieldSize(LIMITS.LONG_TEXT_MAX_LENGTH) + // action
+  maxTextFieldSize(LIMITS.LONG_TEXT_MAX_LENGTH) + // expectedResult
+  maxIdListFieldSize(LIMITS.MAX_RELATED_IDS) + // requirementIds
+  STRUCTURAL_OVERHEAD_PER_OBJECT;
+
+const MAX_PRIORITY_SIZE =
+  32 + // level (short, closed enum)
+  maxTextFieldSize(LIMITS.LONG_TEXT_MAX_LENGTH) + // rationale
+  maxIdListFieldSize(LIMITS.MAX_RELATED_IDS) + // requirementIds
+  STRUCTURAL_OVERHEAD_PER_OBJECT;
+
+const MAX_TEST_CASE_SIZE =
+  maxIdFieldSize() + // id
+  maxTextFieldSize(LIMITS.SHORT_TEXT_MAX_LENGTH) + // title
+  maxTextFieldSize(LIMITS.LONG_TEXT_MAX_LENGTH) + // objective
+  maxIdListFieldSize(LIMITS.MAX_RELATED_IDS) + // requirementIds
+  LIMITS.MAX_TEST_STEPS * maxTextFieldSize(LIMITS.SHORT_TEXT_MAX_LENGTH) + // preconditions (bounded by MAX_TEST_STEPS per test-case-model.js)
+  LIMITS.MAX_TEST_STEPS * MAX_STEP_SIZE + // steps
+  MAX_PRIORITY_SIZE +
+  STRUCTURAL_OVERHEAD_PER_OBJECT;
+
+const MAX_TOP_LEVEL_OVERHEAD =
+  maxIdFieldSize() * 2 + // id, requirementModelId
+  maxIdFieldSize() + // projectId (validateProjectId -> isValidId, bounded by ID_MAX_LENGTH too)
+  64 + // schemaVersion, kind
+  STRUCTURAL_OVERHEAD_PER_OBJECT;
+
+const MAX_TEST_CASE_MODEL_RESPONSE_CHARS = MAX_TOP_LEVEL_OVERHEAD + LIMITS.MAX_TEST_CASES * MAX_TEST_CASE_SIZE;
 
 // Roadmap #22D: closes the #22C-C1 diagnostic-amplification lesson from the
 // start rather than discovering it after the fact. Both caps apply together
@@ -79,34 +127,99 @@ const MAX_TEST_CASE_MODEL_RESPONSE_CHARS = 200000;
 const MAX_CORRECTION_ERRORS = 20;
 const MAX_CORRECTION_DIAGNOSTIC_CHARS = 8192;
 
-// --- snapshot (Roadmap #22D, applying the #22C-C1 lesson from the start) ---
+// --- snapshot (Roadmap #22D; hardened in #22D-C1) ---------------------------
 //
-// Reads every OWN enumerable key of `value` exactly once each into a fresh
-// plain object. Object.keys() itself never invokes a getter (enumeration is
-// a distinct operation from property access), so the loop below performs
-// the one and only [[Get]] for each key - a value read here is never read
-// again by this module. Unknown keys are preserved as-is (never filtered to
-// an allowlist), so downstream unknown-field detection keeps working
-// unchanged; only WHERE it reads from changes. Anything that isn't plain-
-// object-shaped is returned completely untouched (no property access at
-// all) so a non-object input can never throw here - that shape mismatch is
-// validateRequirementModel()'s job to report, not this function's job to
-// reject. Deliberately NOT JSON.stringify/JSON.parse: that would invoke a
+// #22D-C1 closes two defects #22D-R found in the original implementation:
+//
+// (1) copying an array via a caller-RESOLVED instance method
+//     (`array.map(...)`/`array.slice(...)`) lets a caller whose array has
+//     an OWN `map`/`slice` property substitute entirely forged content,
+//     since method lookup walks the prototype chain and an own property
+//     shadows the real Array.prototype method - confirmed to let forged
+//     requirement text reach the actual provider prompt.
+// (2) copying a caller's own "__proto__" key via plain bracket assignment
+//     into a `{}` destination (`snapshot[key] = value[key]`) invokes the
+//     legacy Object.prototype.__proto__ SETTER instead of creating an own
+//     data property - a classic prototype-pollution-via-object-copy
+//     pattern. The key silently vanishes from Object.keys() and the
+//     snapshot's actual [[Prototype]] becomes attacker-controlled.
+//
+// Both helpers below only ever perform plain property reads (Object.keys()
+// enumeration + bracket [[Get]], never a method resolved from the caller
+// object) and write into a null-prototype destination via
+// Object.defineProperty, so a literal "__proto__" key can never trigger the
+// legacy setter regardless of destination prototype.
+
+// Reads every OWN enumerable key of `value` exactly once each into a fresh,
+// NULL-PROTOTYPE object. A key literally named "__proto__" (however the
+// caller created it - direct assignment, Object.defineProperty, even
+// JSON.parse) always becomes an ordinary own data property here - null
+// prototype destinations have no inherited "__proto__" accessor to trigger,
+// and Object.defineProperty never invokes one regardless. Unknown keys
+// (including "__proto__"/"constructor"/"prototype") are preserved as
+// ordinary own keys, so downstream unknown-field detection keeps working
+// unchanged. Anything that isn't plain-object-shaped is returned completely
+// untouched (no property access at all) so a non-object input can never
+// throw here - that shape mismatch is validateRequirementModel()'s job to
+// report. Deliberately NOT JSON.stringify/JSON.parse: that would invoke a
 // caller-supplied toJSON, drop undefined/function/symbol-valued keys before
-// fail-closed validation ever saw them, and coerce NaN/Infinity - all of
-// which would silently rewrite trusted input ahead of validation.
+// fail-closed validation ever saw them, and coerce NaN/Infinity.
 function snapshotOwnProperties(value) {
   if (!isPlainObject(value)) return value;
-  const snapshot = {};
+  const snapshot = Object.create(null);
   for (const key of Object.keys(value)) {
-    snapshot[key] = value[key];
+    const propertyValue = value[key];
+    Object.defineProperty(snapshot, key, { value: propertyValue, enumerable: true, writable: true, configurable: true });
   }
   return snapshot;
 }
 
-function snapshotArrayOfObjects(value) {
+// Copies a caller-supplied array's own content into a fresh native Array
+// WITHOUT ever calling any method resolved from that array (no .map,
+// .slice, spread, for...of, Array.from - all of which dispatch through the
+// prototype chain or the iterator protocol and can be shadowed by an own
+// property or an Array subclass override). `.length` is read once - safe,
+// because a genuine Array exotic object's `length` is a special,
+// non-configurable-as-accessor own data property the spec forbids
+// redefining as a getter (Array.isArray() above already confirmed `value`
+// is a genuine, possibly-subclassed, Array). Every element is read exactly
+// once via plain indexed [[Get]] (`value[i]`), which never invokes
+// Symbol.iterator or any overridden instance method.
+//
+// Any OTHER own enumerable key on the array - an attached "map"/"slice"/
+// "toJSON"/arbitrary metadata property, or a missing index (a sparse-array
+// hole) - makes the array incoherent/forged plain data and is rejected by
+// throwing, caught by generateTestCaseModel()'s own snapshot try/catch and
+// reported as the same bounded, static, privacy-safe diagnostic used for
+// any other unreadable input, with zero provider calls. Sparse arrays are
+// deliberately rejected outright (never silently filled with an invented
+// value for the missing index).
+function snapshotArray(value, snapshotItem) {
   if (!Array.isArray(value)) return value;
-  return value.map((item) => snapshotOwnProperties(item));
+  const length = value.length;
+  const ownKeys = Object.keys(value);
+  for (const key of ownKeys) {
+    const index = Number(key);
+    if (!Number.isInteger(index) || index < 0 || index >= length || String(index) !== key) {
+      throw new Error("array carries an unexpected own property");
+    }
+  }
+  if (ownKeys.length !== length) {
+    throw new Error("sparse array is not valid plain data");
+  }
+  const fresh = new Array(length);
+  for (let i = 0; i < length; i += 1) {
+    fresh[i] = snapshotItem(value[i]);
+  }
+  return fresh;
+}
+
+function snapshotArrayOfObjects(value) {
+  return snapshotArray(value, (item) => snapshotOwnProperties(item));
+}
+
+function snapshotArrayOfPrimitives(value) {
+  return snapshotArray(value, (item) => item);
 }
 
 // Reads the ENTIRE caller-supplied RequirementModel exactly once - top
@@ -115,18 +228,15 @@ function snapshotArrayOfObjects(value) {
 // module ever reads a property of `requirementModel` (or anything nested
 // inside it) again; every later step (upstream validation, prompt
 // projection, cross-model check) consumes only the returned snapshot.
-// requirement.evidenceRefIds is an array of plain id STRINGS (never
-// objects), so a single .slice() (itself one [[Get]] per index) is enough -
-// there is no further nested object to snapshot inside it.
 function snapshotRequirementModel(requirementModel) {
   const modelSnapshot = snapshotOwnProperties(requirementModel);
   if (!isPlainObject(modelSnapshot)) return modelSnapshot;
 
   if (Array.isArray(modelSnapshot.requirements)) {
-    modelSnapshot.requirements = modelSnapshot.requirements.map((requirement) => {
+    modelSnapshot.requirements = snapshotArray(modelSnapshot.requirements, (requirement) => {
       const requirementSnapshot = snapshotOwnProperties(requirement);
       if (isPlainObject(requirementSnapshot) && Array.isArray(requirementSnapshot.evidenceRefIds)) {
-        requirementSnapshot.evidenceRefIds = requirementSnapshot.evidenceRefIds.slice();
+        requirementSnapshot.evidenceRefIds = snapshotArrayOfPrimitives(requirementSnapshot.evidenceRefIds);
       }
       return requirementSnapshot;
     });
