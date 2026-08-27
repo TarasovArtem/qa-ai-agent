@@ -1,27 +1,55 @@
 /**
  * Regression comparison + CLI for Test Design Quality Evaluation v6
- * (Roadmap #22G). Mirrors regression-v5.js's shape/conventions (per-sample,
- * per-dimension comparison against a committed baseline; a single
- * regression anywhere outweighs any number of simultaneous improvements;
- * `not_applicable` sits outside the pass/partial/fail ordering).
+ * (Roadmap #22G, hardened in #22G-C1). Mirrors regression-v5.js's shape/
+ * conventions (per-sample, per-dimension comparison against a committed
+ * baseline; `not_applicable` sits outside the pass/partial/fail ordering).
  *
- * DELIBERATE DEVIATION FROM v1-v5's EXIT-CODE POLICY (read before changing
- * this): regression.js/regression-v2..v5.js always exit 0 even when
- * `status === "REGRESSED"` - explicitly documented there as informational-
- * only, with "a later CI integration may map REGRESSED to a non-zero exit;
- * that mapping is deliberately not made yet." #22G is that later
- * integration, for the Test Design domain specifically: `run()` below
- * returns `exitCode: 1` when `status === "REGRESSED"`, so a genuine
- * regression fails natural PR CI (Roadmap #22G Section 51/134 - "v6 should
- * fail CI when actual evaluator result != committed expected regression
- * result... Diagnose... Fix only with evidence", never silently rewrite the
- * baseline to turn CI green). This does NOT fail CI for an intentionally
- * negative sentinel scoring poorly - a sentinel's committed baseline
- * already records its expected fail/partial status, so its "unchanged"
- * comparison contributes zero regressions (Roadmap #22G Section 49/169-170,
- * "qualityGatePassed" vs "regressionPassed" are deliberately distinct - see
- * scoring-v6.js's own qualityGatePassed, which the sentinel legitimately
- * fails while regressionPassed here stays true).
+ * V6 POLICY (Roadmap #22G-C1, closes G-2 - read before changing this):
+ * v6 is a STRICT REVIEWED-BASELINE DRIFT GATE, not merely "regressions
+ * fail CI while improvements pass freely." The committed baseline-v6.json
+ * represents an exact, human-reviewed semantic expectation for every
+ * scorable case. ANY divergence from that expectation - in either
+ * direction - means the evaluator's actual behavior no longer matches
+ * what was last reviewed, and requires a human to look at it before it
+ * can be trusted again:
+ *
+ *   UNCHANGED         -> exitCode 0  (actual output exactly matches the
+ *                                      reviewed baseline)
+ *   REGRESSED         -> exitCode 1  (a dimension got worse)
+ *   IMPROVED          -> exitCode 1  (a dimension got better - NOT
+ *                                      necessarily bad, but it means the
+ *                                      evaluator's real behavior no longer
+ *                                      matches what was committed as
+ *                                      "reviewed", and the only way to
+ *                                      make it green again is an explicit,
+ *                                      human-reviewed baseline-v6.json
+ *                                      update in a normal, diff-visible
+ *                                      commit - never an automatic rewrite)
+ *   BASELINE_MISMATCH -> exitCode 1  (case set/schema itself diverged)
+ *
+ * This directly replaces #22G's original, narrower policy (only
+ * `REGRESSED` exited 1) after independent review (finding G-2) proved
+ * every one of the six critical dimension scorers could be silently
+ * broken - via an "always return the best possible status" mutation - and
+ * still exit 0, either because no negative sentinel existed for that
+ * dimension (status stayed `UNCHANGED`) or because breaking the sentinel's
+ * own expected weak status happened to read as an "improvement" (which the
+ * old policy treated as a free pass). Under the new policy, both of those
+ * mutation shapes now exit 1: `directional status` (REGRESSED/IMPROVED/
+ * UNCHANGED/BASELINE_MISMATCH) remains available in the report for
+ * diagnosis, but only `UNCHANGED` is safe to merge without a human
+ * re-reviewing and re-committing the baseline.
+ *
+ * `baselineMatched` (on the returned comparison object) is the
+ * unambiguous boolean form of this: `true` iff `status === "UNCHANGED"`.
+ * There is no automatic baseline-rewrite mechanism anywhere in this
+ * module or evaluate-v6.js - updating baseline-v6.json to accept an
+ * intentional, reviewed improvement is always a manual, human-authored,
+ * normally-diffed Git commit.
+ *
+ * v1-v5's own historical policy (regression.js/regression-v2..v5.js -
+ * always exit 0, fully informational) is completely unchanged by this -
+ * #22G-C1 touches v6 only.
  */
 
 "use strict";
@@ -52,6 +80,16 @@ function compareQualityTernary(baselineValue, currentValue) {
   return "unchanged";
 }
 
+// Boolean mirror of compareQualityTernary, for qualityGatePassed - same
+// true/false-only pattern v1-v5 already use for shouldRetryCorrect/
+// shouldCreateBugCorrect (Roadmap #22G-C1, closes G-1's baseline-tracking
+// requirement).
+function compareGateStatus(baselineValue, currentValue) {
+  if (baselineValue === true && currentValue === false) return "regression";
+  if (baselineValue === false && currentValue === true) return "improvement";
+  return "unchanged";
+}
+
 function compareEvaluationToBaselineV6(currentEvaluation, baseline) {
   const baselineIds = Object.keys(baseline.samples).sort();
   const scorableCurrentSamples = currentEvaluation.samples.filter((s) => !s.invalidInput);
@@ -65,6 +103,7 @@ function compareEvaluationToBaselineV6(currentEvaluation, baseline) {
     const missingFromBaseline = currentIds.filter((id) => !baselineIds.includes(id));
     return {
       status: "BASELINE_MISMATCH",
+      baselineMatched: false,
       errors: [
         ...missingFromCurrent.map((id) => `sample "${id}" is in the baseline but missing from the current (scorable) evaluation`),
         ...missingFromBaseline.map((id) => `sample "${id}" is in the current evaluation but missing from the baseline`),
@@ -96,19 +135,27 @@ function compareEvaluationToBaselineV6(currentEvaluation, baseline) {
       tally(dimensionChanges[dimension]);
     }
 
+    const gateChange = compareGateStatus(baselineSample.qualityGatePassed, currentSample.qualityGatePassed);
+    tally(gateChange);
+
     const dimensionsOut = {};
     for (const dimension of DIMENSIONS) {
       dimensionsOut[dimension] = { baseline: baselineSample[dimension], current: currentSample.dimensions[dimension].status, change: dimensionChanges[dimension] };
     }
 
-    samples.push({ id: currentSample.id, dimensions: dimensionsOut });
+    samples.push({
+      id: currentSample.id,
+      dimensions: dimensionsOut,
+      qualityGatePassed: { baseline: baselineSample.qualityGatePassed, current: currentSample.qualityGatePassed, change: gateChange },
+    });
   }
 
-  // Precedence identical to v1-v5: any single regression anywhere
-  // outweighs any number of simultaneous improvements.
+  // Directional status remains available for diagnostics - see this
+  // module's own header comment for why BOTH "REGRESSED" and "IMPROVED"
+  // now require review (exitCode 1) under the strict drift policy.
   const status = regressions > 0 ? "REGRESSED" : improvements > 0 ? "IMPROVED" : "UNCHANGED";
 
-  return { status, summary: { improvements, regressions, unchanged, informational }, samples };
+  return { status, baselineMatched: status === "UNCHANGED", summary: { improvements, regressions, unchanged, informational }, samples };
 }
 
 function formatRegressionReportV6(comparison) {
@@ -120,7 +167,16 @@ function formatRegressionReportV6(comparison) {
     return lines.join("\n");
   }
 
-  lines.push(`Status: ${comparison.status}`, "", "Improvements:", `  ${comparison.summary.improvements}`, "", "Regressions:", `  ${comparison.summary.regressions}`);
+  lines.push(
+    `Status: ${comparison.status}`,
+    `Baseline matched (exact reviewed expectation): ${comparison.baselineMatched}`,
+    "",
+    "Improvements:",
+    `  ${comparison.summary.improvements}`,
+    "",
+    "Regressions:",
+    `  ${comparison.summary.regressions}`
+  );
 
   const regressionDetails = [];
   const improvementDetails = [];
@@ -135,6 +191,9 @@ function formatRegressionReportV6(comparison) {
         knownWeaknesses.push(`${sample.id} ${dimension} (${entry.baseline})`);
       }
     }
+    const gate = sample.qualityGatePassed;
+    if (gate.change === "regression") regressionDetails.push(`${sample.id} qualityGatePassed`);
+    if (gate.change === "improvement") improvementDetails.push(`${sample.id} qualityGatePassed`);
   }
 
   if (regressionDetails.length > 0) {
@@ -142,7 +201,7 @@ function formatRegressionReportV6(comparison) {
     for (const detail of regressionDetails) lines.push(`  - ${detail}`);
   }
   if (improvementDetails.length > 0) {
-    lines.push("", "Improvement details:");
+    lines.push("", "Improvement details (still requires a reviewed baseline update - see this module's own header comment):");
     for (const detail of improvementDetails) lines.push(`  - ${detail}`);
   }
   if (knownWeaknesses.length > 0) {
@@ -171,13 +230,10 @@ function run(datasetPath, baselinePath) {
   const currentEvaluation = evaluateDatasetV6(dataset);
   const comparison = compareEvaluationToBaselineV6(currentEvaluation, baseline);
 
-  if (comparison.status === "BASELINE_MISMATCH") {
-    return { exitCode: 1, output: formatRegressionReportV6(comparison) };
-  }
-
-  // Deliberate v6 enhancement over v1-v5's informational-only policy - see
-  // this module's own header comment.
-  const exitCode = comparison.status === "REGRESSED" ? 1 : 0;
+  // Strict drift policy (Roadmap #22G-C1, closes G-2): only an exact
+  // match to the committed, reviewed baseline is safe - see this module's
+  // own header comment.
+  const exitCode = comparison.baselineMatched ? 0 : 1;
   return { exitCode, output: formatRegressionReportV6(comparison) };
 }
 
@@ -195,4 +251,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { compareEvaluationToBaselineV6, formatRegressionReportV6, run, compareQualityTernary };
+module.exports = { compareEvaluationToBaselineV6, formatRegressionReportV6, run, compareQualityTernary, compareGateStatus };

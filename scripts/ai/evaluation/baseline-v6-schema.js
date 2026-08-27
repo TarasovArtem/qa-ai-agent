@@ -15,6 +15,13 @@
  * dataset (that stays regression-v6.js's job, same separation of concerns
  * v1-v5 use) - this file only checks that baseline-v6.json is internally
  * well-formed.
+ *
+ * Roadmap #22G-C1 (closes G-1): every sample entry now also carries its
+ * own committed `qualityGatePassed` boolean, alongside the seven
+ * dimension statuses - the gate's aggregate outcome is exact-baseline-
+ * tracked exactly like every individual dimension, closing the gap where
+ * a broken/no-op qualityGatePassed computation had zero automated
+ * protection at either the unit or regression layer.
  */
 
 "use strict";
@@ -24,12 +31,18 @@ const { DIMENSIONS, QUALITY_TERNARY_VALUES } = require("./scoring-v6");
 const SUPPORTED_VERSIONS = [1];
 const SUPPORTED_DATASET_VERSION = 6;
 
+const SAMPLE_ALLOWED_KEYS = [...DIMENSIONS, "qualityGatePassed"];
+
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isBoolean(value) {
+  return typeof value === "boolean";
 }
 
 function collectSampleStatusErrors(sampleStatus, errors, path) {
@@ -42,8 +55,11 @@ function collectSampleStatusErrors(sampleStatus, errors, path) {
       errors.push(`${path}.${dimension}: must be one of ${QUALITY_TERNARY_VALUES.join(", ")}`);
     }
   }
+  if (!isBoolean(sampleStatus.qualityGatePassed)) {
+    errors.push(`${path}.qualityGatePassed: must be a boolean`);
+  }
   for (const key of Object.keys(sampleStatus)) {
-    if (!DIMENSIONS.includes(key)) errors.push(`${path}.${key}: unknown field`);
+    if (!SAMPLE_ALLOWED_KEYS.includes(key)) errors.push(`${path}.${key}: unknown field`);
   }
 }
 

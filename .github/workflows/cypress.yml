@@ -70,13 +70,21 @@ jobs:
   #
   # v6 (Roadmap #22G, Test Design quality evaluation - a different subject
   # than v1-v5, see scoring-v6.js's own header comment) is a deliberate
-  # exception: regression-v6.js's run() returns exitCode 1 when its
-  # comparison status is REGRESSED, so a genuine Test Design quality
-  # regression DOES fail this job - it is not merely informational for v6.
-  # A negative/sentinel case scoring poorly is NOT a regression by itself
-  # (its committed baseline-v6.json entry already records that expected
-  # weak status; only a DIVERGENCE from that committed expectation exits
-  # non-zero).
+  # exception, hardened in #22G-C1: v6 is a STRICT REVIEWED-BASELINE DRIFT
+  # GATE, not merely "regressions fail while improvements pass freely."
+  # regression-v6.js's run() returns exitCode 1 for REGRESSED, IMPROVED,
+  # AND BASELINE_MISMATCH alike - only an exact match to the committed,
+  # human-reviewed baseline-v6.json (status UNCHANGED) exits 0. An
+  # "improvement" still requires a human to review and explicitly update
+  # the committed baseline in a normal, diffed commit - it is never an
+  # automatic pass, because an always-pass scorer mutation can look
+  # identical to a genuine content improvement from the comparator's own
+  # point of view (see regression-v6.js's own header comment for the full
+  # rationale). A negative/sentinel case scoring poorly is NOT itself a
+  # regression (its committed baseline-v6.json entry already records that
+  # expected weak status, so it compares as UNCHANGED against itself); only
+  # a DIVERGENCE from that committed expectation, in either direction,
+  # exits non-zero.
   #
   # For every version, a technical failure (invalid dataset/baseline, a
   # runtime crash, an unexpected non-zero exit) always fails this job via

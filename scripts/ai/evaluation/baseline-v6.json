@@ -9,7 +9,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "pass",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": true
     },
     "TD-V6-002": {
       "requirementGrounding": "pass",
@@ -18,7 +19,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "not_applicable",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": true
     },
     "TD-V6-003": {
       "requirementGrounding": "pass",
@@ -27,7 +29,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "not_applicable",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": true
     },
     "TD-V6-004": {
       "requirementGrounding": "pass",
@@ -36,7 +39,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "pass",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": true
     },
     "TD-V6-005": {
       "requirementGrounding": "pass",
@@ -45,7 +49,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "pass",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": false
     },
     "TD-V6-006": {
       "requirementGrounding": "pass",
@@ -54,7 +59,8 @@
       "automationDecision": "fail",
       "frameworkQuality": "fail",
       "evidenceQuality": "not_applicable",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": false
     },
     "TD-V6-007": {
       "requirementGrounding": "pass",
@@ -63,7 +69,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "fail",
       "evidenceQuality": "pass",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": false
     },
     "TD-V6-008": {
       "requirementGrounding": "pass",
@@ -72,7 +79,8 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "fail",
-      "reviewAlignment": "not_applicable"
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": false
     },
     "TD-V6-009": {
       "requirementGrounding": "pass",
@@ -81,7 +89,28 @@
       "automationDecision": "pass",
       "frameworkQuality": "pass",
       "evidenceQuality": "pass",
-      "reviewAlignment": "fail"
+      "reviewAlignment": "fail",
+      "qualityGatePassed": true
+    },
+    "TD-V6-010": {
+      "requirementGrounding": "pass",
+      "requirementCoverage": "partial",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": false
+    },
+    "TD-V6-011": {
+      "requirementGrounding": "fail",
+      "requirementCoverage": "pass",
+      "traceability": "pass",
+      "automationDecision": "pass",
+      "frameworkQuality": "pass",
+      "evidenceQuality": "pass",
+      "reviewAlignment": "not_applicable",
+      "qualityGatePassed": false
     }
   }
 }

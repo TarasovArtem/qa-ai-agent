@@ -13,8 +13,22 @@
           "kind": "RequirementModel",
           "id": "rm-001",
           "projectId": "proj-td-v6-001",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
           "openQuestions": []
         },
@@ -29,8 +43,18 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -44,24 +68,73 @@
             "testCaseId": "tc-1",
             "decision": "AUTOMATE",
             "rationale": "Deterministic UI flow, clearly grounded, well suited for Cypress automation.",
-            "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-            "rationaleEvidenceRefIds": ["evidence-0001"],
-            "targetFrameworks": ["cypress"]
+            "evidenceRefs": [
+              {
+                "id": "evidence-0001",
+                "kind": "user_input",
+                "sourceId": "user-input-0001"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-001", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-001",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }],
-        "candidateEvidence": [{ "testCaseId": "tc-1", "expectedEvidenceRefIds": ["evidence-0001"], "expectedRationaleEvidenceRefIds": ["evidence-0001"] }],
-        "reviewOutcome": null
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
       },
-      "metadata": { "expectedWeakDimensions": [] }
+      "metadata": {
+        "expectedWeakDimensions": []
+      }
     },
     {
       "id": "TD-V6-002",
@@ -75,8 +148,22 @@
           "kind": "RequirementModel",
           "id": "rm-002",
           "projectId": "proj-td-v6-002",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The map markers must be visually distinguishable by category color.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The map markers must be visually distinguishable by category color.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
           "openQuestions": []
         },
@@ -91,8 +178,18 @@
               "id": "tc-1",
               "title": "Markers are visually distinguishable by color",
               "objective": "Verify marker colors are visually distinct per category.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Select multiple categories on the map.", "expectedResult": "Markers appear in visually distinct colors per category.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Select multiple categories on the map.",
+                  "expectedResult": "Markers appear in visually distinct colors per category.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -111,19 +208,48 @@
             "targetFrameworks": []
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-002", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-002",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "DO_NOT_AUTOMATE", "targetFrameworks": [] }],
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "DO_NOT_AUTOMATE",
+            "targetFrameworks": []
+          }
+        ],
         "candidateEvidence": [],
-        "reviewOutcome": null
+        "reviewOutcome": null,
+        "notApplicableDimensions": [
+          "evidenceQuality"
+        ]
       },
-      "metadata": { "expectedWeakDimensions": [] }
+      "metadata": {
+        "expectedWeakDimensions": []
+      }
     },
     {
       "id": "TD-V6-003",
@@ -137,10 +263,31 @@
           "kind": "RequirementModel",
           "id": "rm-003",
           "projectId": "proj-td-v6-003",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The export feature must produce a report in an unspecified downstream format.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The export feature must produce a report in an unspecified downstream format.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
-          "openQuestions": [{ "id": "oq-1", "type": "OPEN_QUESTION", "description": "Which downstream format is required?", "reason": "Not specified anywhere in the supplied requirement text." }]
+          "openQuestions": [
+            {
+              "id": "oq-1",
+              "type": "OPEN_QUESTION",
+              "description": "Which downstream format is required?",
+              "reason": "Not specified anywhere in the supplied requirement text."
+            }
+          ]
         },
         "testCaseModel": {
           "schemaVersion": 1,
@@ -153,8 +300,18 @@
               "id": "tc-1",
               "title": "Export produces a report",
               "objective": "Verify the export feature produces a report.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Trigger the export.", "expectedResult": "A report is produced.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Trigger the export.",
+                  "expectedResult": "A report is produced.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -173,19 +330,48 @@
             "targetFrameworks": []
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-003", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-003",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "BLOCKED", "targetFrameworks": [] }],
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "BLOCKED",
+            "targetFrameworks": []
+          }
+        ],
         "candidateEvidence": [],
-        "reviewOutcome": null
+        "reviewOutcome": null,
+        "notApplicableDimensions": [
+          "evidenceQuality"
+        ]
       },
-      "metadata": { "expectedWeakDimensions": [] }
+      "metadata": {
+        "expectedWeakDimensions": []
+      }
     },
     {
       "id": "TD-V6-004",
@@ -200,12 +386,32 @@
           "id": "rm-004",
           "projectId": "proj-td-v6-004",
           "evidenceRefs": [
-            { "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" },
-            { "id": "evidence-0002", "kind": "user_input", "sourceId": "user-input-0002" }
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            },
+            {
+              "id": "evidence-0002",
+              "kind": "user_input",
+              "sourceId": "user-input-0002"
+            }
           ],
           "requirements": [
-            { "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] },
-            { "id": "req-2", "text": "The logout action must clear the active session.", "evidenceRefIds": ["evidence-0002"] }
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            },
+            {
+              "id": "req-2",
+              "text": "The logout action must clear the active session.",
+              "evidenceRefIds": [
+                "evidence-0002"
+              ]
+            }
           ],
           "assumptions": [],
           "openQuestions": []
@@ -221,15 +427,35 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             },
             {
               "id": "tc-2",
               "title": "Logout clears session",
               "objective": "Verify the session is cleared after logout.",
-              "requirementIds": ["req-2"],
-              "steps": [{ "action": "Log out.", "expectedResult": "The session is cleared.", "requirementIds": ["req-2"] }]
+              "requirementIds": [
+                "req-2"
+              ],
+              "steps": [
+                {
+                  "action": "Log out.",
+                  "expectedResult": "The session is cleared.",
+                  "requirementIds": [
+                    "req-2"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -243,9 +469,19 @@
             "testCaseId": "tc-1",
             "decision": "AUTOMATE",
             "rationale": "Deterministic UI flow, well grounded.",
-            "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-            "rationaleEvidenceRefIds": ["evidence-0001"],
-            "targetFrameworks": ["cypress"]
+            "evidenceRefs": [
+              {
+                "id": "evidence-0001",
+                "kind": "user_input",
+                "sourceId": "user-input-0001"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
           },
           {
             "schemaVersion": 1,
@@ -256,33 +492,99 @@
             "testCaseId": "tc-2",
             "decision": "AUTOMATE",
             "rationale": "Deterministic session-state flow, well grounded.",
-            "evidenceRefs": [{ "id": "evidence-0002", "kind": "user_input", "sourceId": "user-input-0002" }],
-            "rationaleEvidenceRefIds": ["evidence-0002"],
-            "targetFrameworks": ["cypress"]
+            "evidenceRefs": [
+              {
+                "id": "evidence-0002",
+                "kind": "user_input",
+                "sourceId": "user-input-0002"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0002"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-004", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-004",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1", "req-2"],
-        "requirementGrounding": [
-          { "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] },
-          { "requirementId": "req-2", "expectedEvidenceRefIds": ["evidence-0002"] }
+        "expectedRequirementIds": [
+          "req-1",
+          "req-2"
         ],
-        "traceability": [{ "requirementId": "req-1" }, { "requirementId": "req-2" }],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          },
+          {
+            "requirementId": "req-2",
+            "expectedEvidenceRefIds": [
+              "evidence-0002"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          },
+          {
+            "requirementId": "req-2"
+          }
+        ],
         "decisions": [
-          { "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] },
-          { "testCaseId": "tc-2", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          },
+          {
+            "testCaseId": "tc-2",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
         ],
         "candidateEvidence": [
-          { "testCaseId": "tc-1", "expectedEvidenceRefIds": ["evidence-0001"], "expectedRationaleEvidenceRefIds": ["evidence-0001"] },
-          { "testCaseId": "tc-2", "expectedEvidenceRefIds": ["evidence-0002"], "expectedRationaleEvidenceRefIds": ["evidence-0002"] }
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          },
+          {
+            "testCaseId": "tc-2",
+            "expectedEvidenceRefIds": [
+              "evidence-0002"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0002"
+            ]
+          }
         ],
-        "reviewOutcome": null
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
       },
-      "metadata": { "expectedWeakDimensions": [] }
+      "metadata": {
+        "expectedWeakDimensions": []
+      }
     },
     {
       "id": "TD-V6-005",
@@ -297,12 +599,32 @@
           "id": "rm-005",
           "projectId": "proj-td-v6-005",
           "evidenceRefs": [
-            { "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" },
-            { "id": "evidence-0002", "kind": "user_input", "sourceId": "user-input-0002" }
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            },
+            {
+              "id": "evidence-0002",
+              "kind": "user_input",
+              "sourceId": "user-input-0002"
+            }
           ],
           "requirements": [
-            { "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] },
-            { "id": "req-2", "text": "The password reset flow must send a confirmation email.", "evidenceRefIds": ["evidence-0002"] }
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            },
+            {
+              "id": "req-2",
+              "text": "The password reset flow must send a confirmation email.",
+              "evidenceRefIds": [
+                "evidence-0002"
+              ]
+            }
           ],
           "assumptions": [],
           "openQuestions": []
@@ -318,8 +640,18 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -333,24 +665,79 @@
             "testCaseId": "tc-1",
             "decision": "AUTOMATE",
             "rationale": "Deterministic UI flow, well grounded.",
-            "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-            "rationaleEvidenceRefIds": ["evidence-0001"],
-            "targetFrameworks": ["cypress"]
+            "evidenceRefs": [
+              {
+                "id": "evidence-0001",
+                "kind": "user_input",
+                "sourceId": "user-input-0001"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-005", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-005",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1", "req-2"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }, { "requirementId": "req-2" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }],
-        "candidateEvidence": [{ "testCaseId": "tc-1", "expectedEvidenceRefIds": ["evidence-0001"], "expectedRationaleEvidenceRefIds": ["evidence-0001"] }],
-        "reviewOutcome": null
+        "expectedRequirementIds": [
+          "req-1",
+          "req-2"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          },
+          {
+            "requirementId": "req-2"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
       },
-      "metadata": { "expectedWeakDimensions": ["traceability"] }
+      "metadata": {
+        "expectedWeakDimensions": [
+          "traceability"
+        ]
+      }
     },
     {
       "id": "TD-V6-006",
@@ -364,8 +751,22 @@
           "kind": "RequirementModel",
           "id": "rm-006",
           "projectId": "proj-td-v6-006",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
           "openQuestions": []
         },
@@ -380,8 +781,18 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -400,19 +811,53 @@
             "targetFrameworks": []
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-006", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-006",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }],
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
         "candidateEvidence": [],
-        "reviewOutcome": null
+        "reviewOutcome": null,
+        "notApplicableDimensions": [
+          "evidenceQuality"
+        ]
       },
-      "metadata": { "expectedWeakDimensions": ["automationDecision", "frameworkQuality"] }
+      "metadata": {
+        "expectedWeakDimensions": [
+          "automationDecision",
+          "frameworkQuality"
+        ]
+      }
     },
     {
       "id": "TD-V6-007",
@@ -426,8 +871,22 @@
           "kind": "RequirementModel",
           "id": "rm-007",
           "projectId": "proj-td-v6-007",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
           "openQuestions": []
         },
@@ -442,8 +901,18 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -457,24 +926,76 @@
             "testCaseId": "tc-1",
             "decision": "AUTOMATE",
             "rationale": "Deterministic UI flow, well grounded.",
-            "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-            "rationaleEvidenceRefIds": ["evidence-0001"],
-            "targetFrameworks": ["playwright"]
+            "evidenceRefs": [
+              {
+                "id": "evidence-0001",
+                "kind": "user_input",
+                "sourceId": "user-input-0001"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "targetFrameworks": [
+              "playwright"
+            ]
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-007", "supportedFrameworks": ["cypress", "playwright"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-007",
+          "supportedFrameworks": [
+            "cypress",
+            "playwright"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }],
-        "candidateEvidence": [{ "testCaseId": "tc-1", "expectedEvidenceRefIds": ["evidence-0001"], "expectedRationaleEvidenceRefIds": ["evidence-0001"] }],
-        "reviewOutcome": null
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
       },
-      "metadata": { "expectedWeakDimensions": ["frameworkQuality"] }
+      "metadata": {
+        "expectedWeakDimensions": [
+          "frameworkQuality"
+        ]
+      }
     },
     {
       "id": "TD-V6-008",
@@ -488,8 +1009,22 @@
           "kind": "RequirementModel",
           "id": "rm-008",
           "projectId": "proj-td-v6-008",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
           "openQuestions": []
         },
@@ -504,8 +1039,18 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -521,22 +1066,65 @@
             "rationale": "Deterministic UI flow, judged suitable for automation.",
             "evidenceRefs": [],
             "rationaleEvidenceRefIds": [],
-            "targetFrameworks": ["cypress"]
+            "targetFrameworks": [
+              "cypress"
+            ]
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-008", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-008",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": null,
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }],
-        "candidateEvidence": [{ "testCaseId": "tc-1", "expectedEvidenceRefIds": ["evidence-0001"], "expectedRationaleEvidenceRefIds": ["evidence-0001"] }],
-        "reviewOutcome": null
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
       },
-      "metadata": { "expectedWeakDimensions": ["evidenceQuality"] }
+      "metadata": {
+        "expectedWeakDimensions": [
+          "evidenceQuality"
+        ]
+      }
     },
     {
       "id": "TD-V6-009",
@@ -550,8 +1138,22 @@
           "kind": "RequirementModel",
           "id": "rm-009",
           "projectId": "proj-td-v6-009",
-          "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-          "requirements": [{ "id": "req-1", "text": "The login page must show an error on invalid credentials.", "evidenceRefIds": ["evidence-0001"] }],
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-1",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
           "assumptions": [],
           "openQuestions": []
         },
@@ -566,8 +1168,18 @@
               "id": "tc-1",
               "title": "Invalid login shows error",
               "objective": "Verify an error is shown on invalid credentials.",
-              "requirementIds": ["req-1"],
-              "steps": [{ "action": "Submit invalid credentials.", "expectedResult": "An error message is displayed.", "requirementIds": ["req-1"] }]
+              "requirementIds": [
+                "req-1"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-1"
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -581,28 +1193,369 @@
             "testCaseId": "tc-1",
             "decision": "AUTOMATE",
             "rationale": "Deterministic UI flow, well grounded.",
-            "evidenceRefs": [{ "id": "evidence-0001", "kind": "user_input", "sourceId": "user-input-0001" }],
-            "rationaleEvidenceRefIds": ["evidence-0001"],
-            "targetFrameworks": ["cypress"]
+            "evidenceRefs": [
+              {
+                "id": "evidence-0001",
+                "kind": "user_input",
+                "sourceId": "user-input-0001"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
           }
         ],
-        "frameworkCapability": { "projectId": "proj-td-v6-009", "supportedFrameworks": ["cypress"] },
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-009",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
         "projectProfile": null
       },
       "reviewDecisions": [
-        { "target": "RequirementModel", "decision": "APPROVE" },
-        { "target": "TestCaseModel", "decision": "APPROVE" },
-        { "target": "AutomationCandidate", "testCaseId": "tc-1", "decision": "APPROVE" }
+        {
+          "target": "RequirementModel",
+          "decision": "APPROVE"
+        },
+        {
+          "target": "TestCaseModel",
+          "decision": "APPROVE"
+        },
+        {
+          "target": "AutomationCandidate",
+          "testCaseId": "tc-1",
+          "decision": "APPROVE"
+        }
       ],
       "gold": {
-        "expectedRequirementIds": ["req-1"],
-        "requirementGrounding": [{ "requirementId": "req-1", "expectedEvidenceRefIds": ["evidence-0001"] }],
-        "traceability": [{ "requirementId": "req-1" }],
-        "decisions": [{ "testCaseId": "tc-1", "decision": "AUTOMATE", "targetFrameworks": ["cypress"] }],
-        "candidateEvidence": [{ "testCaseId": "tc-1", "expectedEvidenceRefIds": ["evidence-0001"], "expectedRationaleEvidenceRefIds": ["evidence-0001"] }],
-        "reviewOutcome": "CHANGES_REQUESTED"
+        "expectedRequirementIds": [
+          "req-1"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-1"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "reviewOutcome": "CHANGES_REQUESTED",
+        "notApplicableDimensions": []
       },
-      "metadata": { "expectedWeakDimensions": ["reviewAlignment"] }
+      "metadata": {
+        "expectedWeakDimensions": [
+          "reviewAlignment"
+        ]
+      }
+    },
+    {
+      "id": "TD-V6-010",
+      "scenario": "missing-requirement-coverage",
+      "description": "NEGATIVE SENTINEL. Gold expects two requirements (req-A, req-B); the accepted RequirementModel legitimately contains only req-A. Structurally valid (nothing requires every gold-expected id to exist), and every other dimension is correct - only requirementCoverage should be affected.",
+      "projectId": "proj-td-v6-010",
+      "kind": "negative",
+      "artifacts": {
+        "requirementModel": {
+          "schemaVersion": 1,
+          "kind": "RequirementModel",
+          "id": "rm-010",
+          "projectId": "proj-td-v6-010",
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-A",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0001"
+              ]
+            }
+          ],
+          "assumptions": [],
+          "openQuestions": []
+        },
+        "testCaseModel": {
+          "schemaVersion": 1,
+          "kind": "TestCaseModel",
+          "id": "tcm-010",
+          "projectId": "proj-td-v6-010",
+          "requirementModelId": "rm-010",
+          "testCases": [
+            {
+              "id": "tc-1",
+              "title": "Invalid login shows error",
+              "objective": "Verify an error is shown on invalid credentials.",
+              "requirementIds": [
+                "req-A"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-A"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "automationCandidates": [
+          {
+            "schemaVersion": 1,
+            "kind": "AutomationCandidate",
+            "id": "ac-010",
+            "projectId": "proj-td-v6-010",
+            "testCaseModelId": "tcm-010",
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "rationale": "Deterministic UI flow, well grounded.",
+            "evidenceRefs": [
+              {
+                "id": "evidence-0001",
+                "kind": "user_input",
+                "sourceId": "user-input-0001"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-010",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
+        "projectProfile": null
+      },
+      "reviewDecisions": null,
+      "gold": {
+        "expectedRequirementIds": [
+          "req-A",
+          "req-B"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-A",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-A"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
+      },
+      "metadata": {
+        "expectedWeakDimensions": [
+          "requirementCoverage"
+        ]
+      }
+    },
+    {
+      "id": "TD-V6-011",
+      "scenario": "wrong-requirement-grounding",
+      "description": "NEGATIVE SENTINEL. Gold expects req-A to be grounded in evidence-0001; the accepted RequirementModel instead grounds it in evidence-0002 - a different, itself-valid evidence reference. Structurally valid (evidence-0002 genuinely exists in the model), and every other dimension is correct - only requirementGrounding should be affected.",
+      "projectId": "proj-td-v6-011",
+      "kind": "negative",
+      "artifacts": {
+        "requirementModel": {
+          "schemaVersion": 1,
+          "kind": "RequirementModel",
+          "id": "rm-011",
+          "projectId": "proj-td-v6-011",
+          "evidenceRefs": [
+            {
+              "id": "evidence-0001",
+              "kind": "user_input",
+              "sourceId": "user-input-0001"
+            },
+            {
+              "id": "evidence-0002",
+              "kind": "user_input",
+              "sourceId": "user-input-0002"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "req-A",
+              "text": "The login page must show an error on invalid credentials.",
+              "evidenceRefIds": [
+                "evidence-0002"
+              ]
+            }
+          ],
+          "assumptions": [],
+          "openQuestions": []
+        },
+        "testCaseModel": {
+          "schemaVersion": 1,
+          "kind": "TestCaseModel",
+          "id": "tcm-011",
+          "projectId": "proj-td-v6-011",
+          "requirementModelId": "rm-011",
+          "testCases": [
+            {
+              "id": "tc-1",
+              "title": "Invalid login shows error",
+              "objective": "Verify an error is shown on invalid credentials.",
+              "requirementIds": [
+                "req-A"
+              ],
+              "steps": [
+                {
+                  "action": "Submit invalid credentials.",
+                  "expectedResult": "An error message is displayed.",
+                  "requirementIds": [
+                    "req-A"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "automationCandidates": [
+          {
+            "schemaVersion": 1,
+            "kind": "AutomationCandidate",
+            "id": "ac-011",
+            "projectId": "proj-td-v6-011",
+            "testCaseModelId": "tcm-011",
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "rationale": "Deterministic UI flow, well grounded.",
+            "evidenceRefs": [
+              {
+                "id": "evidence-0002",
+                "kind": "user_input",
+                "sourceId": "user-input-0002"
+              }
+            ],
+            "rationaleEvidenceRefIds": [
+              "evidence-0002"
+            ],
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "frameworkCapability": {
+          "projectId": "proj-td-v6-011",
+          "supportedFrameworks": [
+            "cypress"
+          ]
+        },
+        "projectProfile": null
+      },
+      "reviewDecisions": null,
+      "gold": {
+        "expectedRequirementIds": [
+          "req-A"
+        ],
+        "requirementGrounding": [
+          {
+            "requirementId": "req-A",
+            "expectedEvidenceRefIds": [
+              "evidence-0001"
+            ]
+          }
+        ],
+        "traceability": [
+          {
+            "requirementId": "req-A"
+          }
+        ],
+        "decisions": [
+          {
+            "testCaseId": "tc-1",
+            "decision": "AUTOMATE",
+            "targetFrameworks": [
+              "cypress"
+            ]
+          }
+        ],
+        "candidateEvidence": [
+          {
+            "testCaseId": "tc-1",
+            "expectedEvidenceRefIds": [
+              "evidence-0002"
+            ],
+            "expectedRationaleEvidenceRefIds": [
+              "evidence-0002"
+            ]
+          }
+        ],
+        "reviewOutcome": null,
+        "notApplicableDimensions": []
+      },
+      "metadata": {
+        "expectedWeakDimensions": [
+          "requirementGrounding"
+        ]
+      }
     }
   ]
 }

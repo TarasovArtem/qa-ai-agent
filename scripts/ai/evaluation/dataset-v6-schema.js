@@ -30,13 +30,46 @@
  * same division of labor v1-v5's own dataset schemas already use (they
  * validate dataset shape, not whether a human curator's classification
  * judgment was "correct").
+ *
+ * EXPLICIT NOT-APPLICABLE CONTRACT (Roadmap #22G-C1, closes finding G-3):
+ * an empty gold expectation array (e.g. `gold.candidateEvidence: []`) is
+ * structurally indistinguishable, on its own, from "the curator forgot to
+ * populate this dimension's labels" - and scoring-v6.js's own
+ * `if (entries.length === 0) return "not_applicable"` pattern means an
+ * accidental omission would silently satisfy the quality gate exactly
+ * like a genuine, intentional inapplicability. `gold.notApplicableDimensions`
+ * closes that gap at the DATASET layer (never inside scoring-v6.js itself,
+ * which keeps its existing, unmodified formulas - this is dataset
+ * completeness validation only, not a scoring semantics change): every
+ * one of the six CRITICAL_DIMENSIONS must be EITHER populated with at
+ * least one gold expectation, OR explicitly listed in
+ * `notApplicableDimensions` - never left ambiguously empty. A dimension
+ * declared not_applicable whose underlying gold array is nonetheless
+ * non-empty is rejected as a contradiction (fail-closed), and
+ * `automationDecision`/`frameworkQuality` - which both derive from the
+ * single shared `gold.decisions` array - must be declared not_applicable
+ * together, never just one of the two, since declaring only one would be
+ * self-contradictory about the same underlying array.
  */
 
 "use strict";
 
 const { DECISIONS } = require("../generation/automation-candidate");
 const { STATUSES: REVIEW_STATUSES, DECISIONS: REVIEW_DECISIONS } = require("../test-design/test-design-review-record");
-const { DIMENSIONS } = require("./scoring-v6");
+const { DIMENSIONS, CRITICAL_DIMENSIONS } = require("./scoring-v6");
+
+// Maps each critical dimension to the gold field whose emptiness its
+// notApplicableDimensions declaration must agree with. automationDecision
+// and frameworkQuality intentionally share "decisions" - see this module's
+// own docstring.
+const DIMENSION_GOLD_FIELD = {
+  requirementCoverage: "expectedRequirementIds",
+  requirementGrounding: "requirementGrounding",
+  traceability: "traceability",
+  automationDecision: "decisions",
+  frameworkQuality: "decisions",
+  evidenceQuality: "candidateEvidence",
+};
 
 const SUPPORTED_VERSIONS = [6];
 
@@ -205,9 +238,56 @@ function collectGoldErrors(sample, errors, path) {
     errors.push(`${goldPath}.reviewOutcome: must be null or one of ${REVIEW_STATUSES.join(", ")}`);
   }
 
-  const allowedGoldKeys = ["expectedRequirementIds", "requirementGrounding", "traceability", "decisions", "candidateEvidence", "reviewOutcome"];
+  collectNotApplicableDimensionErrors(gold, errors, goldPath);
+
+  const allowedGoldKeys = ["expectedRequirementIds", "requirementGrounding", "traceability", "decisions", "candidateEvidence", "reviewOutcome", "notApplicableDimensions"];
   for (const key of Object.keys(gold)) {
     if (!allowedGoldKeys.includes(key)) errors.push(`${goldPath}.${key}: unknown field`);
+  }
+}
+
+// Roadmap #22G-C1 (closes G-3): every critical dimension must be either
+// populated with at least one gold expectation, or explicitly declared
+// not_applicable - never left ambiguously empty. See this module's own
+// docstring for the automationDecision/frameworkQuality shared-field
+// nuance.
+function collectNotApplicableDimensionErrors(gold, errors, goldPath) {
+  const naPath = `${goldPath}.notApplicableDimensions`;
+  if (!isStringArray(gold.notApplicableDimensions)) {
+    errors.push(`${naPath}: must be an array of strings`);
+    return;
+  }
+  const notApplicable = gold.notApplicableDimensions;
+  notApplicable.forEach((d, i) => {
+    if (!CRITICAL_DIMENSIONS.includes(d)) {
+      errors.push(`${naPath}[${i}]: unknown or non-critical dimension "${d}" - only ${CRITICAL_DIMENSIONS.join(", ")} may be declared not_applicable`);
+    }
+  });
+  if (new Set(notApplicable).size !== notApplicable.length) {
+    errors.push(`${naPath}: must not contain duplicate dimension names`);
+  }
+
+  // automationDecision/frameworkQuality share gold.decisions - declaring
+  // only one of the pair would contradict the other, since they can only
+  // ever agree on whether that one shared array is empty.
+  const declaresAutomationDecision = notApplicable.includes("automationDecision");
+  const declaresFrameworkQuality = notApplicable.includes("frameworkQuality");
+  if (declaresAutomationDecision !== declaresFrameworkQuality) {
+    errors.push(`${naPath}: "automationDecision" and "frameworkQuality" share gold.decisions and must be declared not_applicable together, never only one`);
+  }
+
+  for (const dimension of CRITICAL_DIMENSIONS) {
+    const field = DIMENSION_GOLD_FIELD[dimension];
+    const fieldValue = gold[field];
+    if (!Array.isArray(fieldValue)) continue; // already reported by the field's own shape check above
+    const isEmpty = fieldValue.length === 0;
+    const declaredNotApplicable = notApplicable.includes(dimension);
+    if (declaredNotApplicable && !isEmpty) {
+      errors.push(`${goldPath}: dimension "${dimension}" is declared not_applicable but gold.${field} is non-empty (contradiction)`);
+    }
+    if (!declaredNotApplicable && isEmpty) {
+      errors.push(`${goldPath}: dimension "${dimension}" has an empty gold.${field} but is not declared in notApplicableDimensions (ambiguous: intentional vs. forgotten label)`);
+    }
   }
 }
 
@@ -225,6 +305,12 @@ function collectMetadataErrors(sample, errors, path) {
         errors.push(`${path}.metadata.expectedWeakDimensions[${i}]: unknown dimension "${d}"`);
       }
     });
+    // Roadmap #22G-C1 (closes G-4): a duplicate entry would double-count
+    // the same weakness in evaluateDatasetV6()'s weaknessDetection summary
+    // - reject rather than silently deduplicate.
+    if (new Set(metadata.expectedWeakDimensions).size !== metadata.expectedWeakDimensions.length) {
+      errors.push(`${path}.metadata.expectedWeakDimensions: must not contain duplicate dimension names`);
+    }
   }
   const allowedKeys = ["expectedWeakDimensions"];
   for (const key of Object.keys(metadata)) {
