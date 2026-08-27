@@ -10,16 +10,45 @@
  * never runs a browser. AutomationPlan v1 (scripts/ai/generation/
  * automation-plan.js) remains frozen and unmodified.
  *
- * INPUT SNAPSHOT: both `automationCandidate` and `repositoryContext` are
- * read exactly once, at the very start, via a single JSON round-trip
- * (snapshotPlainData() below) into fresh, #23-owned plain data. Every
- * later step - validation, project/framework binding, positive
- * projection, prompting - operates only on that snapshot, never on the
- * caller's original objects again. This closes the class of bug where a
- * caller-supplied getter could legitimately answer a validation check
- * differently than a later semantic read (a project id that validates
- * correctly, then answers differently when the generator "reads it again"
- * to build the prompt).
+ * INPUT SNAPSHOT (Roadmap #23C-C1): both `automationCandidate` and
+ * `repositoryContext` are read exactly once, at the very start, via
+ * snapshotOwnData() below into fresh, #23-owned plain data. Every later
+ * step - validation, project/framework binding, positive projection,
+ * prompting - operates only on that snapshot, never on the caller's
+ * original objects again.
+ *
+ * The original #23C implementation built this snapshot via
+ * `JSON.parse(JSON.stringify(value))`. Roadmap #23C-R found that this gave
+ * a caller-supplied `toJSON()` full authority to substitute the entire
+ * semantic content validation and generation act upon (a candidate whose
+ * actual own `decision` property is "BLOCKED" but whose `toJSON()` returns
+ * "AUTOMATE" was validated and acted upon as AUTOMATE), and that the same
+ * round-trip silently dropped unknown own keys whose value happened to be
+ * `undefined`/a function/a symbol before strict unknown-field validation
+ * ever saw them. snapshotOwnData() instead walks the caller's own
+ * enumerable string-keyed properties directly - it never invokes a
+ * caller-supplied `toJSON` (a `toJSON` own property is captured as an
+ * ordinary, unrecognized own key, then rejected by strict allowlist
+ * validation like any other), never coerces NaN/Infinity/Date through a
+ * serialization step, and never drops a key merely because its value
+ * isn't JSON-representable. A non-plain-record object (Date/Map/Set/class
+ * instance) is treated as `null` wherever a record is expected, matching
+ * automation-repository-context.js's own `isPlainRecord()` convention.
+ *
+ * CONTEXT BOUND PARITY (Roadmap #23C-C1): the original implementation's
+ * local AutomationRepositoryContext-shape validator used generous,
+ * separately-maintained bounds (25 evidence items, 60 arbitrary script
+ * names, no per-item/aggregate evidence content bound at all) that
+ * Roadmap #23C-R found were materially wider than automation-
+ * repository-context.js's real producible output (~21 evidence items, a
+ * small per-framework script-name allowlist, 8000/40000-char content
+ * bounds) - a forged 25-item/5MB-each context was shown to produce a
+ * 131,077,801-character provider prompt with zero local rejection. Every
+ * bound below is now either imported directly from that module's own
+ * exported LIMITS/isPlanningRelevantScriptName (so the two modules can
+ * never silently drift apart) or reuses scripts/ai/generation/
+ * primitives.js's frozen validateEvidenceRef, rather than a separately
+ * duplicated constant.
  *
  * PROVIDER PROJECTION: the provider never receives repositoryContext (or
  * automationCandidate) serialized wholesale. buildPositiveProjection()
@@ -46,11 +75,17 @@
 "use strict";
 
 const { ERROR_CODES, err } = require("../generation/errors");
-const { isPlainObject, isValidId, isBoundedText, collectUnknownKeyErrors, collectDuplicateIdErrors, validateProjectId } = require("../generation/primitives");
+const { isPlainObject, isValidId, isBoundedText, collectUnknownKeyErrors, collectDuplicateIdErrors, validateProjectId, validateEvidenceRef } = require("../generation/primitives");
 const { validateAutomationCandidate } = require("../generation/automation-candidate");
 const { validateAutomationPlan } = require("../generation/automation-plan");
 const { normalizeProviderError } = require("../providers/provider-error");
 const { buildAutomationPlanSystemPrompt, buildAutomationPlanUserPrompt, buildAutomationPlanCorrectionPrompt } = require("./automation-plan-prompt");
+// Roadmap #23C-C1: exact-parity reuse of #23B's own real output contract -
+// never a separately-maintained "generous headroom" duplicate. Both
+// LIMITS and isPlanningRelevantScriptName are that module's own public
+// exports (read-only reuse; this file never modifies
+// automation-repository-context.js).
+const { LIMITS: REPO_CONTEXT_LIMITS, isPlanningRelevantScriptName, EVIDENCE_KIND_REPOSITORY } = require("./automation-repository-context");
 
 // #23-owned bounds - deliberately local to this module, never added to
 // scripts/ai/generation/limits.js (that file bounds the frozen v1
@@ -75,14 +110,37 @@ const LIMITS = Object.freeze({
   // an unbounded validator error list.
   MAX_CORRECTION_ERRORS: 20,
   MAX_CORRECTION_DIAGNOSTIC_CHARS: 8192,
-  // Defensive bounds for the #23-owned AutomationRepositoryContext-shape
-  // validator below - generous headroom above #23B's own bounds
-  // (MAX_SCRIPT_COUNT: 60; 20 relevant files + 1 auto config = 21 total
-  // repositoryEvidence entries), since this module trusts but still
-  // validates a context object that may not genuinely have come from
-  // #23B's own builder.
-  MAX_AVAILABLE_TEST_SCRIPTS: 60,
-  MAX_REPOSITORY_EVIDENCE_ITEMS: 25,
+  // Roadmap #23C-C1: derived directly from automation-repository-context.
+  // js's own LIMITS.MAX_RELEVANT_FILES rather than a separately-maintained
+  // constant - +1 accounts for the single, always-present framework-config
+  // evidence entry that module's own buildAutomationRepositoryContext()
+  // unconditionally prepends (see its evidenceTargets construction; never
+  // more than one, never zero for a successfully-built context).
+  MAX_REPOSITORY_EVIDENCE_ITEMS: REPO_CONTEXT_LIMITS.MAX_RELEVANT_FILES + 1,
+  MAX_EVIDENCE_CONTENT_LENGTH: REPO_CONTEXT_LIMITS.MAX_FILE_CONTENT_LENGTH,
+  MAX_AGGREGATE_EVIDENCE_LENGTH: REPO_CONTEXT_LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH,
+  // Roadmap #23C-C1: package script name/command SHAPE bounds, reused from
+  // #23B's own contract (Phase 16: a RepositoryContext may legitimately
+  // carry a command body since #23B itself preserves one - #23C's own
+  // trust boundary is that it is never provider-visible, enforced by
+  // buildPositiveProjection() below, not by refusing to validate its
+  // shape).
+  MAX_SCRIPT_NAME_LENGTH: REPO_CONTEXT_LIMITS.MAX_SCRIPT_NAME_LENGTH,
+  MAX_SCRIPT_COMMAND_LENGTH: REPO_CONTEXT_LIMITS.MAX_SCRIPT_COMMAND_LENGTH,
+  // Roadmap #23C-C1: a final, #23C-owned defensive outbound-prompt
+  // character cap. Every other projected field is already individually
+  // bounded by the checks above, except context.guidance.
+  // knownProjectConstraints, which has no upper bound anywhere upstream -
+  // not even in scripts/ai/project-profile.js's own ProjectProfile
+  // validator this ultimately traces back to (isNonEmptyStringArray()
+  // there bounds neither array length nor per-entry length). This is a
+  // last-resort net for that one remaining unbounded field (and any other
+  // future unbounded field), generous enough that no legitimate
+  // #23B-produced context could ever approach it, checked on every
+  // attempt's ACTUAL outbound prompt (including the correction prompt,
+  // which adds a bounded diagnostics block on top of the same projection)
+  // before any provider call for that attempt.
+  MAX_OUTBOUND_PROMPT_CHARS: 100000,
 });
 
 const SUPPORTED_FRAMEWORKS = Object.freeze(["cypress", "playwright"]);
@@ -104,24 +162,74 @@ const CONTEXT_TOP_LEVEL_ALLOWED_KEYS = Object.freeze(["projectId", "framework", 
 const GUIDANCE_ALLOWED_KEYS = Object.freeze(["displayName", "knownProjectConstraints"]);
 const PACKAGE_SCRIPT_ALLOWED_KEYS = Object.freeze(["name", "command"]);
 const EVIDENCE_ITEM_ALLOWED_KEYS = Object.freeze(["evidenceRef", "role", "content"]);
-const EVIDENCE_REF_ALLOWED_KEYS = Object.freeze(["id", "kind", "location"]);
 const EVIDENCE_ROLES = Object.freeze(["framework_config", "relevant_file"]);
 
-// Single JSON round-trip: every own-enumerable property (including one
-// backed by a getter) is read exactly once during JSON.stringify's
-// serialization pass, and the parsed result is a fully independent plain
-// object/array/primitive tree with no live reference back to the
-// caller's original value. Functions/symbols/undefined are silently
-// dropped by JSON.stringify itself (never survive into the snapshot);
-// a value that cannot be serialized at all (a circular reference, a
-// BigInt) yields `null`, which the caller's own isPlainObject-based
-// validation then rejects like any other malformed input - this function
-// itself never throws.
-function snapshotPlainData(value) {
+// Roadmap #23C-C1: the #23-local "plain record" boundary - identical in
+// principle to automation-repository-context.js's own isPlainRecord() (not
+// imported - that module's is private): only a genuine object literal
+// ({...}) or an Object.create(null) record is accepted; a Date, Map, Set,
+// or class instance (any object whose prototype isn't Object.prototype or
+// null) is rejected wherever a record is expected, regardless of what
+// own fields it happens to carry.
+function isPlainRecord(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+// The recursive walk behind snapshotOwnData() below. `ancestors` tracks
+// the current recursion chain (added on entry, removed on exit) so a
+// genuine circular reference is replaced with `null` (never a live
+// back-reference) while two independent, non-cyclic references to the
+// same shared object (a DAG, not a cycle) are still each snapshotted
+// correctly on their own - the same distinction JSON.stringify itself
+// draws between "circular" (throws) and "shared, acyclic" (serializes
+// fine, once per occurrence).
+function snapshotOwnDataRecursive(value, ancestors) {
+  if (value === null || typeof value !== "object") return value; // primitives (including bigint), functions, symbols, undefined pass through unchanged - never invoked, never coerced, never a source of a thrown exception here
+  if (ancestors.has(value)) return null;
+  if (Array.isArray(value)) {
+    ancestors.add(value);
+    const out = value.map((item) => snapshotOwnDataRecursive(item, ancestors));
+    ancestors.delete(value);
+    return out;
+  }
+  if (!isPlainRecord(value)) return null; // Date/Map/Set/class instance
+  ancestors.add(value);
+  const out = {};
+  // Object.keys(): own enumerable STRING-keyed properties only, exactly
+  // matching every frozen v1 validator's own "own properties, never the
+  // prototype chain" convention. A property named `toJSON` is just
+  // another own key here - never invoked, never given any special
+  // meaning - so it reaches strict allowlist validation downstream as an
+  // ordinary, unrecognized field. A key whose VALUE is `undefined`, a
+  // function, or a symbol still appears in this list (Object.keys() does
+  // not filter by value type, unlike JSON.stringify's own serialization
+  // pass) - the key is copied into `out` via a direct property read
+  // (`value[key]`, at most once), so it remains visible to strict
+  // unknown-field validation even though its value will never itself be
+  // usable as semantic content.
+  for (const key of Object.keys(value)) {
+    out[key] = snapshotOwnDataRecursive(value[key], ancestors);
+  }
+  ancestors.delete(value);
+  return out;
+}
+
+// Roadmap #23C-C1: the owned-snapshot trust boundary (replaces the
+// original JSON.stringify/JSON.parse round-trip - see this module's own
+// docstring for why). Reads every own enumerable property in `value`'s
+// object graph at most once, directly (never via a caller-supplied
+// `toJSON`), into a fresh, #23-owned plain-data tree with no live
+// reference back to the caller's original structure. Never throws: a
+// hostile getter (or any other own-property access) that throws anywhere
+// in the graph is caught here and the whole snapshot becomes `null` for
+// this call - exactly like a non-plain-record top-level value, downstream
+// `isPlainObject`/`isPlainRecord` checks then reject it as a bounded,
+// structural error, never a raw exception.
+function snapshotOwnData(value) {
   try {
-    const json = JSON.stringify(value);
-    if (typeof json !== "string") return null;
-    return JSON.parse(json);
+    return snapshotOwnDataRecursive(value, new Set());
   } catch {
     return null;
   }
@@ -159,9 +267,12 @@ function boundCorrectionErrors(errors) {
 // automation-repository-context.js is #23-owned and unversioned) - #23C
 // must not assume an arbitrary object handed to it genuinely came from
 // that module's own builder, so this independently re-validates the
-// shape it depends on: bounded, positively-keyed, deterministic. It does
-// not re-scan the filesystem or re-derive path safety - that is #23B's
-// own job and already done by the time this module ever sees a context.
+// shape it depends on: bounded, positively-keyed, deterministic, and
+// (Roadmap #23C-C1) at parity with or stricter than that module's own
+// real producible output - never a separately-maintained wider bound. It
+// does not re-scan the filesystem or re-derive path safety - that is
+// #23B's own job and already done by the time this module ever sees a
+// context.
 function validateRepositoryContextSnapshot(context, { expectedProjectId } = {}) {
   const errors = [];
   if (!isPlainObject(context)) {
@@ -171,7 +282,8 @@ function validateRepositoryContextSnapshot(context, { expectedProjectId } = {}) 
   collectUnknownKeyErrors(context, CONTEXT_TOP_LEVEL_ALLOWED_KEYS, "$.repositoryContext", errors);
   validateProjectId(context.projectId, "$.repositoryContext.projectId", errors, { expectedProjectId });
 
-  if (!SUPPORTED_FRAMEWORKS.includes(context.framework)) {
+  const frameworkValid = SUPPORTED_FRAMEWORKS.includes(context.framework);
+  if (!frameworkValid) {
     errors.push(err("$.repositoryContext.framework", ERROR_CODES.INVALID_ENUM, `$.repositoryContext.framework must be one of ${SUPPORTED_FRAMEWORKS.join(", ")}`));
   }
 
@@ -189,8 +301,8 @@ function validateRepositoryContextSnapshot(context, { expectedProjectId } = {}) 
 
   if (!Array.isArray(context.packageScripts)) {
     errors.push(err("$.repositoryContext.packageScripts", ERROR_CODES.INVALID_TYPE, "$.repositoryContext.packageScripts must be an array"));
-  } else if (context.packageScripts.length > LIMITS.MAX_AVAILABLE_TEST_SCRIPTS) {
-    errors.push(err("$.repositoryContext.packageScripts", ERROR_CODES.INVALID_VALUE, `$.repositoryContext.packageScripts exceeds the maximum of ${LIMITS.MAX_AVAILABLE_TEST_SCRIPTS}`));
+  } else if (context.packageScripts.length > REPO_CONTEXT_LIMITS.MAX_SCRIPT_COUNT) {
+    errors.push(err("$.repositoryContext.packageScripts", ERROR_CODES.INVALID_VALUE, `$.repositoryContext.packageScripts exceeds the maximum of ${REPO_CONTEXT_LIMITS.MAX_SCRIPT_COUNT}`));
   } else {
     context.packageScripts.forEach((s, i) => {
       const p = `$.repositoryContext.packageScripts[${i}]`;
@@ -199,13 +311,27 @@ function validateRepositoryContextSnapshot(context, { expectedProjectId } = {}) 
         return;
       }
       collectUnknownKeyErrors(s, PACKAGE_SCRIPT_ALLOWED_KEYS, p, errors);
-      if (typeof s.name !== "string" || s.name.length === 0) {
-        errors.push(err(`${p}.name`, ERROR_CODES.INVALID_TYPE, `${p}.name must be a non-empty string`));
+      if (typeof s.name !== "string" || s.name.length === 0 || s.name.length > LIMITS.MAX_SCRIPT_NAME_LENGTH) {
+        errors.push(err(`${p}.name`, ERROR_CODES.INVALID_TYPE, `${p}.name must be a non-empty, bounded string`));
+      } else if (frameworkValid && !isPlanningRelevantScriptName(s.name, context.framework)) {
+        // Roadmap #23C-C1: #23B never SELECTS a script name outside its
+        // own per-framework planning-relevant allowlist (currently 5
+        // names for cypress, 1 for playwright) - a forged context
+        // claiming a name #23B's real builder could never have produced
+        // is rejected here, by direct reuse of #23B's own exported
+        // allowlist check, never a separately-maintained duplicate list.
+        errors.push(err(`${p}.name`, ERROR_CODES.INVALID_VALUE, `${p}.name is not one of #23B's planning-relevant script names for this framework`));
       }
-      if (typeof s.command !== "string" || s.command.length === 0) {
-        errors.push(err(`${p}.command`, ERROR_CODES.INVALID_TYPE, `${p}.command must be a non-empty string`));
+      if (typeof s.command !== "string" || s.command.length === 0 || s.command.length > LIMITS.MAX_SCRIPT_COMMAND_LENGTH) {
+        errors.push(err(`${p}.command`, ERROR_CODES.INVALID_TYPE, `${p}.command must be a non-empty, bounded string`));
       }
     });
+    collectDuplicateIdErrors(
+      context.packageScripts.map((s) => (isPlainObject(s) && typeof s.name === "string" ? { id: s.name } : { id: undefined })),
+      "id",
+      "$.repositoryContext.packageScripts",
+      errors
+    );
   }
 
   if (!Array.isArray(context.repositoryEvidence) || context.repositoryEvidence.length === 0) {
@@ -213,6 +339,15 @@ function validateRepositoryContextSnapshot(context, { expectedProjectId } = {}) 
   } else if (context.repositoryEvidence.length > LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS) {
     errors.push(err("$.repositoryContext.repositoryEvidence", ERROR_CODES.INVALID_VALUE, `$.repositoryContext.repositoryEvidence exceeds the maximum of ${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS}`));
   } else {
+    // Roadmap #23C-C1: aggregate content length, accumulated only from
+    // items whose own per-item bound already passed - mirrors
+    // automation-repository-context.js's own "per-item bound first,
+    // aggregate bound second" structure. `.length` on a JS string is an
+    // O(1) property read (strings carry their own length), never a
+    // re-scan/re-serialization of the content, so this adds no additional
+    // materialization cost regardless of how large a rejected item's
+    // content string is.
+    let aggregateLength = 0;
     context.repositoryEvidence.forEach((item, i) => {
       const p = `$.repositoryContext.repositoryEvidence[${i}]`;
       if (!isPlainObject(item)) {
@@ -223,24 +358,35 @@ function validateRepositoryContextSnapshot(context, { expectedProjectId } = {}) 
       if (!EVIDENCE_ROLES.includes(item.role)) {
         errors.push(err(`${p}.role`, ERROR_CODES.INVALID_ENUM, `${p}.role must be one of ${EVIDENCE_ROLES.join(", ")}`));
       }
-      if (typeof item.content !== "string" || item.content.length === 0) {
-        errors.push(err(`${p}.content`, ERROR_CODES.INVALID_TYPE, `${p}.content must be a non-empty string`));
+      if (!isBoundedText(item.content, LIMITS.MAX_EVIDENCE_CONTENT_LENGTH)) {
+        errors.push(err(`${p}.content`, ERROR_CODES.INVALID_VALUE, `${p}.content must be a non-empty string of at most ${LIMITS.MAX_EVIDENCE_CONTENT_LENGTH} characters`));
+      } else {
+        aggregateLength += item.content.length;
       }
       if (!isPlainObject(item.evidenceRef)) {
         errors.push(err(`${p}.evidenceRef`, ERROR_CODES.INVALID_TYPE, `${p}.evidenceRef must be an object`));
       } else {
-        collectUnknownKeyErrors(item.evidenceRef, EVIDENCE_REF_ALLOWED_KEYS, `${p}.evidenceRef`, errors);
-        if (!isValidId(item.evidenceRef.id)) {
-          errors.push(err(`${p}.evidenceRef.id`, ERROR_CODES.INVALID_TYPE, `${p}.evidenceRef.id must be a bounded string id`));
-        }
-        if (item.evidenceRef.kind !== "repository") {
+        // Roadmap #23C-C1: reuse the frozen F0 EvidenceRef validator
+        // directly (scripts/ai/generation/primitives.js) rather than a
+        // separately-maintained local shape check - this restores the
+        // exact id-bound and location-bound (LIMITS.SHORT_TEXT_MAX_LENGTH)
+        // semantics without a second copy that could silently drift out
+        // of parity. validateEvidenceRef's own allowed-keys list also
+        // permits an optional `sourceId` that #23B's real repository
+        // evidence never produces; a bounded, unused, valid-id-shaped
+        // sourceId on a forged context is harmless here, since
+        // buildPositiveProjection() below never reads it. `kind` is
+        // additionally restricted to exactly "repository" - the frozen
+        // validator alone would accept any of its own 5-value enum.
+        validateEvidenceRef(item.evidenceRef, `${p}.evidenceRef`, errors);
+        if (item.evidenceRef.kind !== EVIDENCE_KIND_REPOSITORY) {
           errors.push(err(`${p}.evidenceRef.kind`, ERROR_CODES.INVALID_ENUM, `${p}.evidenceRef.kind must be "repository"`));
-        }
-        if (typeof item.evidenceRef.location !== "string" || item.evidenceRef.location.length === 0) {
-          errors.push(err(`${p}.evidenceRef.location`, ERROR_CODES.INVALID_TYPE, `${p}.evidenceRef.location must be a non-empty string`));
         }
       }
     });
+    if (aggregateLength > LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH) {
+      errors.push(err("$.repositoryContext.repositoryEvidence", ERROR_CODES.INVALID_VALUE, `repositoryEvidence aggregate content exceeds the maximum of ${LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH} characters`));
+    }
     collectDuplicateIdErrors(
       context.repositoryEvidence.map((item) => (isPlainObject(item) && isPlainObject(item.evidenceRef) ? { id: item.evidenceRef.id } : { id: undefined })),
       "id",
@@ -332,22 +478,28 @@ function buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework
  * having to equal each other) - the same optional cross-check convention
  * every frozen v1 validator already accepts.
  *
- * `maxAttempts` bounds the total number of provider calls (default and
- * maximum 2: one initial attempt, at most one bounded correction attempt
- * informed by the first attempt's own validation errors). Any locally-
- * detected invalid input (malformed candidate, non-AUTOMATE decision,
- * project/framework mismatch, malformed repository context) makes zero
- * provider calls.
+ * `maxAttempts` bounds the total number of provider calls. Only
+ * `undefined` (defaulting to 2), `1`, and `2` are accepted (Roadmap
+ * #23C-C1: strict `!==` identity checks, never a numeric range comparison
+ * - a numeric range check using `<`/`>` silently accepts `NaN`, since
+ * every comparison against `NaN` is false). Any other value (including
+ * `NaN`, `Infinity`, `1.5`, a numeric string, `null`, or a plain
+ * object/array) is rejected with a non-empty bounded error before any
+ * provider call. Any locally-detected invalid input (malformed candidate,
+ * non-AUTOMATE decision, project/framework mismatch, malformed repository
+ * context, an outbound prompt that exceeds LIMITS.MAX_OUTBOUND_PROMPT_CHARS)
+ * also makes zero provider calls for that attempt.
  *
  * Returns { ok: true, automationPlan, providerAttempts } or { ok: false,
  * errors: [{path,code,message}, ...], providerAttempts } - never the raw
  * provider response, the prompt, the repository context, or any caller
  * object.
  */
-async function generateAutomationPlan({ automationCandidate, repositoryContext, provider, expectedProjectId, maxAttempts = 2 } = {}) {
-  if (typeof maxAttempts !== "number" || maxAttempts < 1 || maxAttempts > 2) {
-    return { ok: false, errors: [err("$.maxAttempts", ERROR_CODES.INVALID_VALUE, "maxAttempts must be 1 or 2")], providerAttempts: 0 };
+async function generateAutomationPlan({ automationCandidate, repositoryContext, provider, expectedProjectId, maxAttempts } = {}) {
+  if (maxAttempts !== undefined && maxAttempts !== 1 && maxAttempts !== 2) {
+    return { ok: false, errors: [err("$.maxAttempts", ERROR_CODES.INVALID_VALUE, "maxAttempts must be exactly 1 or 2 (or omitted for the default of 2)")], providerAttempts: 0 };
   }
+  const effectiveMaxAttempts = maxAttempts === undefined ? 2 : maxAttempts;
   if (expectedProjectId !== undefined && !isValidId(expectedProjectId)) {
     return { ok: false, errors: [err("$.expectedProjectId", ERROR_CODES.INVALID_TYPE, "expectedProjectId must be a bounded string id")], providerAttempts: 0 };
   }
@@ -355,12 +507,13 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
     return { ok: false, errors: [err("$.provider", ERROR_CODES.INVALID_TYPE, "provider.analyze must be a function")], providerAttempts: 0 };
   }
 
-  // Phase 6/7: snapshot caller-controlled inputs exactly once, before any
-  // validation or semantic read. Everything below reads only these two
-  // frozen local values - never automationCandidate/repositoryContext
-  // again.
-  const candidateSnapshot = deepFreeze(snapshotPlainData(automationCandidate));
-  const contextSnapshot = deepFreeze(snapshotPlainData(repositoryContext));
+  // Phase 6/7 (Roadmap #23C-C1): snapshot caller-controlled inputs exactly
+  // once, before any validation or semantic read, via the owned-data
+  // boundary above - never JSON.stringify/JSON.parse. Everything below
+  // reads only these two frozen local values - never automationCandidate/
+  // repositoryContext again.
+  const candidateSnapshot = deepFreeze(snapshotOwnData(automationCandidate));
+  const contextSnapshot = deepFreeze(snapshotOwnData(repositoryContext));
 
   const candidateResult = validateAutomationCandidate(candidateSnapshot, { expectedProjectId });
   const contextErrors = validateRepositoryContextSnapshot(contextSnapshot, { expectedProjectId });
@@ -404,9 +557,24 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
   let providerAttempts = 0;
   let lastErrors = [];
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    providerAttempts = attempt;
+  for (let attempt = 1; attempt <= effectiveMaxAttempts; attempt++) {
     const userPrompt = attempt === 1 ? buildAutomationPlanUserPrompt(projection) : buildAutomationPlanCorrectionPrompt(projection, boundCorrectionErrors(lastErrors));
+
+    // Roadmap #23C-C1: a final, defensive outbound-prompt bound, checked
+    // per attempt (the correction prompt on attempt 2 embeds the same
+    // projection plus a bounded diagnostics block, so it must be checked
+    // independently rather than assumed safe merely because attempt 1
+    // passed) - see LIMITS.MAX_OUTBOUND_PROMPT_CHARS's own comment. No
+    // provider call is made for an attempt whose own prompt exceeds this.
+    if (userPrompt.length > LIMITS.MAX_OUTBOUND_PROMPT_CHARS) {
+      return {
+        ok: false,
+        errors: [err("$.repositoryContext", ERROR_CODES.INVALID_VALUE, `provider prompt exceeds the maximum of ${LIMITS.MAX_OUTBOUND_PROMPT_CHARS} characters`)],
+        providerAttempts,
+      };
+    }
+
+    providerAttempts = attempt;
 
     let rawResponse;
     try {
@@ -414,7 +582,7 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
     } catch (rawError) {
       const providerError = normalizeProviderError(rawError);
       lastErrors = [err("$.provider", ERROR_CODES.INVALID_VALUE, "provider call failed")];
-      if (attempt === maxAttempts || !providerError.retryable) {
+      if (attempt === effectiveMaxAttempts || !providerError.retryable) {
         return { ok: false, errors: lastErrors, providerAttempts };
       }
       continue;
@@ -422,12 +590,12 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
 
     if (typeof rawResponse !== "string" || rawResponse.trim().length === 0) {
       lastErrors = [err("$.provider", ERROR_CODES.INVALID_VALUE, "provider returned an empty or non-string response")];
-      if (attempt === maxAttempts) return { ok: false, errors: lastErrors, providerAttempts };
+      if (attempt === effectiveMaxAttempts) return { ok: false, errors: lastErrors, providerAttempts };
       continue;
     }
     if (rawResponse.length > LIMITS.MAX_AUTOMATION_PLAN_RESPONSE_CHARS) {
       lastErrors = [err("$.provider", ERROR_CODES.INVALID_VALUE, `provider response exceeds the maximum of ${LIMITS.MAX_AUTOMATION_PLAN_RESPONSE_CHARS} characters`)];
-      if (attempt === maxAttempts) return { ok: false, errors: lastErrors, providerAttempts };
+      if (attempt === effectiveMaxAttempts) return { ok: false, errors: lastErrors, providerAttempts };
       continue;
     }
 
@@ -436,7 +604,7 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
       parsedPlan = JSON.parse(rawResponse.trim());
     } catch {
       lastErrors = [err("$.provider", ERROR_CODES.INVALID_VALUE, "provider response was not valid JSON")];
-      if (attempt === maxAttempts) return { ok: false, errors: lastErrors, providerAttempts };
+      if (attempt === effectiveMaxAttempts) return { ok: false, errors: lastErrors, providerAttempts };
       continue;
     }
 
@@ -449,7 +617,7 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
     }
 
     lastErrors = allErrors;
-    if (attempt === maxAttempts) {
+    if (attempt === effectiveMaxAttempts) {
       return { ok: false, errors: lastErrors, providerAttempts };
     }
   }
@@ -463,5 +631,5 @@ module.exports = {
   generateAutomationPlan,
   LIMITS,
   buildPositiveProjection,
-  snapshotPlainData,
+  snapshotOwnData,
 };

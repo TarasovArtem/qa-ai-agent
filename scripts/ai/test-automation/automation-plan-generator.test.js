@@ -3,8 +3,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { generateAutomationPlan, LIMITS, buildPositiveProjection, snapshotPlainData } = require("./automation-plan-generator");
+const { generateAutomationPlan, LIMITS, buildPositiveProjection, snapshotOwnData } = require("./automation-plan-generator");
 const { validateAutomationPlan } = require("../generation/automation-plan");
+const { isPlanningRelevantScriptName } = require("./automation-repository-context");
+const { LIMITS: F0_LIMITS } = require("../generation/limits");
 
 function validCandidate(overrides = {}) {
   return {
@@ -552,12 +554,21 @@ test("errors are the bounded {path,code,message} shape only", async () => {
 
 // --- Side effects / read-only -------------------------------------------------
 
-test("snapshotPlainData never throws on hostile input and produces null for non-serializable values", () => {
+test("snapshotOwnData never throws on hostile input and preserves actual own-property values/types (Roadmap #23C-C1)", () => {
   const circular = {};
   circular.self = circular;
-  assert.equal(snapshotPlainData(circular), null);
-  assert.equal(snapshotPlainData(undefined), null);
-  assert.equal(snapshotPlainData(function () {}), null);
+  // The cyclic branch becomes null (never a live back-reference); the
+  // rest of the object graph still snapshots normally - a stricter, more
+  // precise replacement for the old JSON-round-trip implementation, which
+  // could only fail the WHOLE value on any internal cycle.
+  assert.deepEqual(snapshotOwnData(circular), { self: null });
+  // undefined/a function now pass through as themselves - no longer
+  // coerced to null - since neither is ever invoked or serialized;
+  // downstream isPlainObject()/isPlainRecord() checks reject both exactly
+  // like any other non-record value.
+  assert.equal(snapshotOwnData(undefined), undefined);
+  const fn = function () {};
+  assert.equal(snapshotOwnData(fn), fn);
 });
 
 test("production module contains no filesystem/child_process/network/provider-instantiation code", () => {
@@ -572,4 +583,419 @@ test("production module contains no filesystem/child_process/network/provider-in
   }
   assert.ok(!src.includes('require("../providers/groq-provider")'));
   assert.ok(!src.includes('require("../providers/gemini-provider")'));
+});
+
+// =============================================================================
+// Roadmap #23C-C1: owned-snapshot trust boundary + context bound parity
+// =============================================================================
+
+// --- toJSON must never execute / never rewrite validated semantics ----------
+
+test("candidate toJSON is never invoked and never rewrites the validated decision (Roadmap #23C-R finding)", async () => {
+  let toJsonCalls = 0;
+  const candidate = validCandidate({ decision: "BLOCKED" });
+  candidate.toJSON = () => {
+    toJsonCalls += 1;
+    return validCandidate({ decision: "AUTOMATE" });
+  };
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider, maxAttempts: 1 });
+  assert.equal(toJsonCalls, 0, "toJSON must never be invoked");
+  assert.equal(getCalls(), 0, "a candidate whose real own decision is BLOCKED must never reach the provider");
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.toJSON" && e.code === "UNKNOWN_FIELD"), "toJSON must be treated as an ordinary unrecognized own field");
+});
+
+test("repositoryContext toJSON is never invoked and never rewrites the validated framework/projectId", async () => {
+  let toJsonCalls = 0;
+  const context = validContext({ framework: "cypress" });
+  context.toJSON = () => {
+    toJsonCalls += 1;
+    return validContext({ framework: "playwright", projectId: "other-project" });
+  };
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(toJsonCalls, 0);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.repositoryContext.toJSON" && e.code === "UNKNOWN_FIELD"));
+});
+
+test("a nested repositoryEvidence item's toJSON is never invoked", async () => {
+  let toJsonCalls = 0;
+  const context = validContext();
+  context.repositoryEvidence[0].toJSON = () => {
+    toJsonCalls += 1;
+    return { evidenceRef: { id: "e1", kind: "repository", location: "cypress.config.js" }, role: "framework_config", content: "forged via nested toJSON" };
+  };
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(toJsonCalls, 0);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.ok, false);
+});
+
+test("a nested EvidenceRef's toJSON is never invoked", async () => {
+  let toJsonCalls = 0;
+  const context = validContext();
+  context.repositoryEvidence[0].evidenceRef.toJSON = () => {
+    toJsonCalls += 1;
+    return { id: "e1", kind: "repository", location: "cypress.config.js" };
+  };
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(toJsonCalls, 0);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.ok, false);
+});
+
+test("a nested packageScripts item's toJSON is never invoked", async () => {
+  let toJsonCalls = 0;
+  const context = validContext();
+  context.packageScripts[0].toJSON = () => {
+    toJsonCalls += 1;
+    return { name: "test:e2e", command: "cypress run" };
+  };
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(toJsonCalls, 0);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.ok, false);
+});
+
+// --- Unknown field value-type matrix: the key must not disappear -------------
+
+for (const [label, value] of [
+  ["a string", "x"],
+  ["undefined", undefined],
+  ["a function", function () {}],
+  ["a symbol", Symbol("x")],
+]) {
+  test(`candidate unknown field with value type "${label}" is rejected as UNKNOWN_FIELD, zero provider calls`, async () => {
+    const candidate = validCandidate();
+    candidate.unknownField = value;
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+    assert.ok(result.errors.some((e) => e.path === "$.unknownField" && e.code === "UNKNOWN_FIELD"), `expected UNKNOWN_FIELD for value type "${label}", got ${JSON.stringify(result.errors)}`);
+  });
+
+  test(`repositoryContext unknown field with value type "${label}" is rejected as UNKNOWN_FIELD, zero provider calls`, async () => {
+    const context = validContext();
+    context.unknownField = value;
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+    assert.ok(result.errors.some((e) => e.path === "$.repositoryContext.unknownField" && e.code === "UNKNOWN_FIELD"));
+  });
+}
+
+// --- Non-plain records: Date/Map/Set/class instance rejected, null-proto ok --
+
+test("a Date as a top-level candidate is rejected", async () => {
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: new Date(), repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("a Map/Set as top-level repositoryContext is rejected", async () => {
+  for (const value of [new Map(), new Set()]) {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: value, provider });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+  }
+});
+
+test("a class instance candidate with exactly the right own fields is still rejected (not a plain record)", async () => {
+  class FakeCandidate {
+    constructor(fields) {
+      Object.assign(this, fields);
+    }
+  }
+  const candidate = new FakeCandidate(validCandidate());
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("a nested guidance built as a class instance is rejected", async () => {
+  class FakeGuidance {
+    constructor(fields) {
+      Object.assign(this, fields);
+    }
+  }
+  const context = validContext({ guidance: new FakeGuidance({ displayName: "T", knownProjectConstraints: [] }) });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("Object.create(null) is accepted as top-level repositoryContext when otherwise valid", async () => {
+  const nullProtoContext = Object.assign(Object.create(null), validContext());
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: nullProtoContext, provider, maxAttempts: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(getCalls(), 1);
+});
+
+// --- Snapshot exception privacy -----------------------------------------------
+
+test("a throwing getter on the candidate produces a bounded, private failure with zero provider calls", async () => {
+  const candidate = validCandidate();
+  Object.defineProperty(candidate, "rationale", {
+    enumerable: true,
+    get() {
+      throw new Error("SECRET_GETTER_DETAIL");
+    },
+  });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: candidate, repositoryContext: validContext(), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes("SECRET_GETTER_DETAIL"));
+  for (const e of result.errors) {
+    assert.deepEqual(Object.keys(e).sort(), ["code", "message", "path"]);
+  }
+});
+
+test("a throwing toJSON on the context produces a bounded, private failure with zero provider calls", async () => {
+  const context = validContext();
+  context.toJSON = () => {
+    throw new Error("SECRET_TOJSON_DETAIL");
+  };
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.ok(!JSON.stringify(result).includes("SECRET_TOJSON_DETAIL"));
+});
+
+// --- Context count parity: exact #23B-derived maximum -------------------------
+
+test(`exactly LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS (${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS}) evidence items are accepted`, async () => {
+  const perItem = Math.floor(LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH / LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS);
+  const evidence = Array.from({ length: LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS }, (_, i) => ({
+    evidenceRef: { id: `repo-evidence-${i}`, kind: "repository", location: `cypress/e2e/f${i}.cy.js` },
+    role: "relevant_file",
+    content: "x".repeat(perItem),
+  }));
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext({ repositoryEvidence: evidence }), provider, maxAttempts: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(getCalls(), 1);
+});
+
+test(`LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1 (${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1}) evidence items are rejected, zero provider calls`, async () => {
+  const evidence = Array.from({ length: LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1 }, (_, i) => ({
+    evidenceRef: { id: `repo-evidence-${i}`, kind: "repository", location: `cypress/e2e/f${i}.cy.js` },
+    role: "relevant_file",
+    content: "x",
+  }));
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext({ repositoryEvidence: evidence }), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+// --- Package script allowlist parity with #23B --------------------------------
+
+test("every real #23B cypress planning-relevant script name is individually accepted", async () => {
+  const cypressNames = ["cypress:open", "test:e2e", "chrome", "firefox", "edge"];
+  for (const name of cypressNames) {
+    assert.ok(isPlanningRelevantScriptName(name, "cypress"), `expected "${name}" to be #23B-allowlisted for cypress`);
+    const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+    const result = await generateAutomationPlan({
+      automationCandidate: validCandidate(),
+      repositoryContext: validContext({ packageScripts: [{ name, command: "x" }] }),
+      provider,
+      maxAttempts: 1,
+    });
+    assert.equal(result.ok, true, `script "${name}" should be accepted: ${JSON.stringify(result.errors)}`);
+    assert.equal(getCalls(), 1);
+  }
+});
+
+test("the real #23B playwright-only script name is rejected in a cypress context, zero provider calls", async () => {
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({
+    automationCandidate: validCandidate(),
+    repositoryContext: validContext({ packageScripts: [{ name: "test:e2e:playwright", command: "x" }] }),
+    provider,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("the real #23B cypress-only script names are rejected in a playwright context, zero provider calls", async () => {
+  for (const name of ["cypress:open", "chrome", "firefox", "edge"]) {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({
+      automationCandidate: validCandidate({ targetFrameworks: ["playwright"] }),
+      repositoryContext: validContext({
+        framework: "playwright",
+        packageScripts: [{ name, command: "x" }],
+        repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "playwright.config.js" }, role: "framework_config", content: "x" }],
+      }),
+      provider,
+    });
+    assert.equal(result.ok, false, `expected "${name}" to be rejected in a playwright context`);
+    assert.equal(getCalls(), 0);
+  }
+});
+
+for (const deceptive of ["deploy", "test:deploy", "random", "internal-admin", "ai:triage", "eval:run"]) {
+  test(`deceptive/unrelated script name "${deceptive}" is rejected, zero provider calls`, async () => {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({
+      automationCandidate: validCandidate(),
+      repositoryContext: validContext({ packageScripts: [{ name: deceptive, command: "x" }] }),
+      provider,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0);
+  });
+}
+
+test("60 arbitrary forged script names never reach the provider (Roadmap #23C-R finding)", async () => {
+  const packageScripts = Array.from({ length: 60 }, (_, i) => ({ name: `forged-${i}`, command: "x" }));
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext({ packageScripts }), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+// --- Evidence content bounds (per-item and aggregate) --------------------------
+
+test(`evidence content exactly at LIMITS.MAX_EVIDENCE_CONTENT_LENGTH (${LIMITS.MAX_EVIDENCE_CONTENT_LENGTH}) is accepted`, async () => {
+  const context = validContext({
+    repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "cypress/e2e/f.cy.js" }, role: "relevant_file", content: "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH) }],
+  });
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider, maxAttempts: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(getCalls(), 1);
+});
+
+test(`evidence content one char over LIMITS.MAX_EVIDENCE_CONTENT_LENGTH (${LIMITS.MAX_EVIDENCE_CONTENT_LENGTH + 1}) is rejected, zero provider calls`, async () => {
+  const context = validContext({
+    repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "cypress/e2e/f.cy.js" }, role: "relevant_file", content: "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH + 1) }],
+  });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+// Split across multiple items (never exceeding the per-item bound on any
+// single one) so the aggregate bound - not the per-item bound - is what's
+// actually being exercised at its own exact boundary.
+test(`aggregate evidence content exactly at LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH (${LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH}) is accepted`, async () => {
+  const itemCount = LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH / LIMITS.MAX_EVIDENCE_CONTENT_LENGTH;
+  assert.ok(Number.isInteger(itemCount) && itemCount <= LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS, "test assumption: aggregate bound divides evenly into per-item-bound-sized chunks within the item-count bound");
+  const repositoryEvidence = Array.from({ length: itemCount }, (_, i) => ({
+    evidenceRef: { id: `e${i}`, kind: "repository", location: `cypress/e2e/f${i}.cy.js` },
+    role: "relevant_file",
+    content: "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH),
+  }));
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext({ repositoryEvidence }), provider, maxAttempts: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(getCalls(), 1);
+});
+
+test(`aggregate evidence content one char over LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH is rejected, zero provider calls`, async () => {
+  const itemCount = LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH / LIMITS.MAX_EVIDENCE_CONTENT_LENGTH;
+  const repositoryEvidence = Array.from({ length: itemCount }, (_, i) => ({
+    evidenceRef: { id: `e${i}`, kind: "repository", location: `cypress/e2e/f${i}.cy.js` },
+    role: "relevant_file",
+    content: "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH),
+  }));
+  // One extra, small item pushes the aggregate one character past the
+  // bound without touching the per-item bound.
+  repositoryEvidence.push({ evidenceRef: { id: "extra", kind: "repository", location: "cypress/e2e/extra.cy.js" }, role: "relevant_file", content: "z" });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext({ repositoryEvidence }), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("a forged 25-item x 5MB-each context is rejected locally with zero provider calls (Roadmap #23C-R extreme case)", async () => {
+  const bigContent = "A".repeat(5 * 1024 * 1024);
+  const evidence = Array.from({ length: 25 }, (_, i) => ({
+    evidenceRef: { id: `e${i}`, kind: "repository", location: `cypress/e2e/f${i}.cy.js` },
+    role: "relevant_file",
+    content: bigContent,
+  }));
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const start = Date.now();
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext({ repositoryEvidence: evidence }), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.ok(Date.now() - start < 500, "rejection must be fast - no full-context serialization before the bound check");
+});
+
+// --- EvidenceRef.location bound (reused from frozen validateEvidenceRef) -----
+
+test("a normal, bounded EvidenceRef.location is accepted", async () => {
+  const context = validContext({
+    repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "cypress/e2e/some/nested/path/spec.cy.js" }, role: "relevant_file", content: "x" }],
+  });
+  const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider, maxAttempts: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(getCalls(), 1);
+});
+
+test(`an EvidenceRef.location over the frozen SHORT_TEXT_MAX_LENGTH (${F0_LIMITS.SHORT_TEXT_MAX_LENGTH}) is rejected, zero provider calls`, async () => {
+  const context = validContext({
+    repositoryEvidence: [{ evidenceRef: { id: "e1", kind: "repository", location: "cypress/" + "x".repeat(F0_LIMITS.SHORT_TEXT_MAX_LENGTH) + ".cy.js" }, role: "relevant_file", content: "x" }],
+  });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+// --- maxAttempts strict option matrix ------------------------------------------
+
+for (const value of [undefined, 1, 2]) {
+  test(`maxAttempts=${JSON.stringify(value)} is accepted`, async () => {
+    const { provider, getCalls } = fakeProvider([JSON.stringify(validPlan())]);
+    const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext(), provider, maxAttempts: value });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(getCalls() >= 1);
+  });
+}
+
+for (const value of [0, -1, 3, 9999, NaN, Infinity, 1.5, "2", null, {}, []]) {
+  test(`maxAttempts=${String(value)} is rejected pre-provider with a non-empty bounded error`, async () => {
+    const { provider, getCalls } = fakeProvider(["should not be called"]);
+    const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: validContext(), provider, maxAttempts: value });
+    assert.equal(result.ok, false);
+    assert.equal(getCalls(), 0, `maxAttempts=${String(value)} must never reach the provider`);
+    assert.equal(result.providerAttempts, 0);
+    assert.ok(result.errors.length > 0, `maxAttempts=${String(value)} must produce a non-empty errors array, not a silent empty failure`);
+    assert.ok(result.errors.every((e) => e.path && e.code && e.message));
+  });
+}
+
+// --- Provider prompt input bound -----------------------------------------------
+
+test("PROVIDER_PROMPT_INPUT_BOUND: an outbound prompt beyond LIMITS.MAX_OUTBOUND_PROMPT_CHARS is rejected before any provider call", async () => {
+  // guidance.knownProjectConstraints has no upstream bound (see LIMITS.
+  // MAX_OUTBOUND_PROMPT_CHARS's own comment) - this is the one remaining
+  // field this defensive final cap exists to catch.
+  const hugeConstraints = Array.from({ length: 2000 }, (_, i) => `constraint number ${i} `.repeat(20));
+  const context = validContext({ guidance: { displayName: "T", knownProjectConstraints: hugeConstraints } });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateAutomationPlan({ automationCandidate: validCandidate(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
 });
