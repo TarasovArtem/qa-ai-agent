@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const { buildTestDesignReviewPackage } = require("./test-design-review-package");
 const { buildTestDesignReviewRecord, validateApprovedTestDesignReview, recomputeRecordDigest, DECISIONS, STATUSES, KIND, SCHEMA_VERSION } = require("./test-design-review-record");
+const { computeDigest } = require("./test-design-review-canonical");
 const { ERROR_CODES } = require("../generation/errors");
 
 const PROJECT_ID = "proj-1";
@@ -418,4 +419,156 @@ test("this module performs no filesystem/network/child_process/provider access (
   assert.ok(!/require\(["']node:child_process["']\)/.test(src));
   assert.ok(!/require\(["']child_process["']\)/.test(src));
   assert.ok(!/require\(["']node:https?["']\)/.test(src));
+});
+
+// --- source-integrity regression (#22F-C1 / finding S-1) -------------------------------
+//
+// A prior revision of this file contained two literal NUL bytes inside its
+// internal reviewTargetKey() helper (an accidental corruption, not a design
+// choice) - Git and GitHub's own PR diff view both treat a file containing a
+// NUL byte as binary, which made this file's diff unreviewable on GitHub.
+// This test reads the module's own source as raw bytes and permanently
+// guards against that regression recurring, in this file or any other #22F
+// source file.
+
+test("SOURCE INTEGRITY: this module's own source file contains zero NUL bytes and is plain, GitHub-diffable text", () => {
+  const fs = require("node:fs");
+  const buf = fs.readFileSync(require.resolve("./test-design-review-record.js"));
+  const nulCount = buf.filter((b) => b === 0).length;
+  assert.equal(nulCount, 0, "a NUL byte anywhere in this source file makes Git/GitHub treat the whole file as binary, defeating PR review");
+  // every byte must be a printable/whitespace ASCII character - this module
+  // is plain JS source, never binary or extended-charset content.
+  const hasUnexpectedControlByte = buf.some((b) => b < 32 && b !== 9 && b !== 10 && b !== 13);
+  assert.equal(hasUnexpectedControlByte, false, "an unexpected control byte was found in this source file");
+});
+
+test("SOURCE INTEGRITY: every sibling #22F source file also contains zero NUL bytes", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  for (const name of ["test-design-review-canonical.js", "test-design-review-package.js", "test-design-review-record.js"]) {
+    const buf = fs.readFileSync(path.join(__dirname, name));
+    assert.equal(buf.filter((b) => b === 0).length, 0, `${name} must contain zero NUL bytes`);
+  }
+});
+
+// --- key-encoding collision safety (#22F-C1 / finding S-1 correction) ------------------
+//
+// reviewTargetKey() is an internal (unexported) helper, so these tests
+// exercise it only through the public buildTestDesignReviewRecord() API,
+// per the same "do not expand the public API merely to test a private
+// helper" convention used throughout this codebase. A hand-assembled but
+// digest-self-consistent TestDesignReviewPackage-shaped object lets these
+// tests supply artifactKind/artifactId pairs that would collide under a
+// naive, delimiter-free string concatenation - proving the actual encoding
+// used in production does NOT collide.
+
+const COLLISION_DIGEST = "sha256:" + "1".repeat(64);
+
+function syntheticPackage(reviewTargets) {
+  const content = {
+    schemaVersion: 1,
+    kind: "TestDesignReviewPackage",
+    projectId: PROJECT_ID,
+    requirementModel: {},
+    testCaseModel: {},
+    automationCandidates: [],
+    frameworkCapability: { projectId: PROJECT_ID, supportedFrameworks: [] },
+    projectProfile: null,
+    reviewTargets,
+  };
+  return { ...content, reviewPackageDigest: computeDigest("test-design-review-package:v1", content) };
+}
+
+test("KEY COLLISION SAFETY: (kind='ab', id='c') and (kind='a', id='bc') - which collide under naive concatenation - are treated as distinct review targets", () => {
+  const targetA = { artifactKind: "ab", artifactId: "c", artifactDigest: COLLISION_DIGEST };
+  const targetB = { artifactKind: "a", artifactId: "bc", artifactDigest: COLLISION_DIGEST };
+  const pkg = syntheticPackage([targetA, targetB]);
+
+  // approving ONLY target A must still report target B as missing - if the
+  // internal key encoding collided, B would be incorrectly satisfied by A's
+  // decision and this record would be accepted.
+  const onlyA = buildTestDesignReviewRecord({
+    reviewPackage: pkg,
+    reviewerId: "reviewer-1",
+    reviewedAt: REVIEWED_AT,
+    decisions: [{ artifactKind: "ab", artifactId: "c", artifactDigest: COLLISION_DIGEST, decision: "APPROVE" }],
+  });
+  assert.equal(onlyA.ok, false);
+  assert.ok(onlyA.errors.some((e) => e.code === ERROR_CODES.MISSING_FIELD));
+
+  // approving both distinct targets succeeds normally.
+  const both = buildTestDesignReviewRecord({
+    reviewPackage: pkg,
+    reviewerId: "reviewer-1",
+    reviewedAt: REVIEWED_AT,
+    decisions: [
+      { artifactKind: "ab", artifactId: "c", artifactDigest: COLLISION_DIGEST, decision: "APPROVE" },
+      { artifactKind: "a", artifactId: "bc", artifactDigest: COLLISION_DIGEST, decision: "APPROVE" },
+    ],
+  });
+  assert.equal(both.ok, true);
+  assert.equal(both.reviewRecord.status, "APPROVED");
+});
+
+test("KEY COLLISION SAFETY: a second boundary split ('a','bcd' vs 'ab','cd' vs 'abc','d') also produces three distinct targets, none satisfying another", () => {
+  const targets = [
+    { artifactKind: "a", artifactId: "bcd", artifactDigest: COLLISION_DIGEST },
+    { artifactKind: "ab", artifactId: "cd", artifactDigest: COLLISION_DIGEST },
+    { artifactKind: "abc", artifactId: "d", artifactDigest: COLLISION_DIGEST },
+  ];
+  const pkg = syntheticPackage(targets);
+
+  // approving only the first of the three must leave the other two missing.
+  const onlyFirst = buildTestDesignReviewRecord({
+    reviewPackage: pkg,
+    reviewerId: "reviewer-1",
+    reviewedAt: REVIEWED_AT,
+    decisions: [{ artifactKind: "a", artifactId: "bcd", artifactDigest: COLLISION_DIGEST, decision: "APPROVE" }],
+  });
+  assert.equal(onlyFirst.ok, false);
+  assert.ok(onlyFirst.errors.some((e) => e.code === ERROR_CODES.MISSING_FIELD));
+
+  const allThree = buildTestDesignReviewRecord({
+    reviewPackage: pkg,
+    reviewerId: "reviewer-1",
+    reviewedAt: REVIEWED_AT,
+    decisions: targets.map((t) => ({ artifactKind: t.artifactKind, artifactId: t.artifactId, artifactDigest: t.artifactDigest, decision: "APPROVE" })),
+  });
+  assert.equal(allThree.ok, true);
+  assert.equal(allThree.reviewRecord.status, "APPROVED");
+});
+
+// --- S-2: plain digest is integrity, not provenance (documented, non-blocking) ---------
+//
+// This test intentionally demonstrates, and documents, an ACCEPTED
+// domain-layer limitation (see this module's own docstring,
+// FUTURE_HUMAN_DECISION_PROVENANCE_GUARD): computeDigest()/canonicalStringify()
+// are plain, unkeyed SHA-256 - not an HMAC or signature - so a caller with
+// access to this module's exported primitives can hand-construct a
+// structurally valid, digest-self-consistent TestDesignReviewRecord without
+// ever going through buildTestDesignReviewRecord(). validateApprovedTestDesignReview()
+// therefore proves CONTENT INTEGRITY (the record was not altered after this
+// exact shape was serialized) and STALE-APPROVAL PROTECTION (an approval is
+// bound to one exact reviewPackage content), but it does NOT and cannot
+// prove that a human, or the buildTestDesignReviewRecord() completeness
+// checks, ever produced the record. This is expected and accepted at the
+// domain layer for #22F; provenance/authentication is explicitly deferred
+// to a future, authenticated orchestration layer (FUTURE_HUMAN_DECISION_PROVENANCE_GUARD).
+
+test("DOCUMENTED LIMITATION: a hand-constructed record with a correctly recomputed digest passes validateApprovedTestDesignReview() - this is expected integrity-only behavior, not a bypass of any #22F claim", () => {
+  const pkg = buildPackage();
+  const forgedContent = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: KIND,
+    projectId: pkg.projectId,
+    reviewPackageDigest: pkg.reviewPackageDigest,
+    reviewerId: "hand-constructed-reviewer-id",
+    reviewedAt: REVIEWED_AT,
+    decisions: approveAllDecisions(pkg).map((d) => ({ ...d, comment: null })),
+    status: "APPROVED",
+  };
+  const forgedRecord = { ...forgedContent, recordDigest: computeDigest("test-design-review-record:v1", forgedContent) };
+
+  const approval = validateApprovedTestDesignReview(pkg, forgedRecord, { expectedProjectId: PROJECT_ID });
+  assert.equal(approval.ok, true, "a self-consistent digest proves integrity, not provenance - see FUTURE_HUMAN_DECISION_PROVENANCE_GUARD");
 });
