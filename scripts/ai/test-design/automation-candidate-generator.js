@@ -43,6 +43,49 @@
  * exclusively; neither caller object is ever read again past that point,
  * and neither is ever mutated or frozen.
  *
+ * PROJECT-SCOPED FRAMEWORK AUTHORIZATION (Roadmap #22E-R1): a senior review
+ * of the original implementation found that AutomationCandidate v1's own
+ * targetFrameworks check only enforces the GLOBAL, project-agnostic
+ * SUPPORTED_FRAMEWORKS vocabulary ("cypress"/"playwright") - it has no
+ * notion of which framework(s) a SPECIFIC project actually supports. A
+ * provider could therefore recommend "playwright" for a project whose real
+ * trusted capability is "cypress only", and the frozen schema alone would
+ * accept it (both names are individually valid enum members). No
+ * authoritative per-project framework-capability data source exists
+ * anywhere else in this repository (confirmed by direct search: ProjectProfile
+ * has no such field, and scripts/ai/test-automation/automation-repository-
+ * context.js - #23B - is architecturally off-limits as a dependency here,
+ * since #22E must never depend on #23). `frameworkCapability` (see
+ * generateAutomationCandidate()'s own parameter doc below) is therefore a
+ * new, REQUIRED, #22E-local, project-bound generator input - the narrowest
+ * safe addition consistent with the existing ProjectProfile pattern (a
+ * plain, caller-supplied, safely-snapshotted object) - never a change to
+ * any frozen v1 contract. The global SUPPORTED_FRAMEWORKS enum remains
+ * exactly what it always was: schema VOCABULARY (which strings are
+ * well-formed framework names at all), never AUTHORIZATION (which of those
+ * names this specific project may actually use) - the two checks are now
+ * layered, never merged, and the project-specific check always runs in
+ * addition to, never instead of, the frozen schema's own enum check.
+ *
+ * EVIDENCE PROVENANCE BINDING (Roadmap #22E-R1): the same review found that
+ * candidate.evidenceRefs was validated only for internal structural
+ * consistency (id/kind/locator bounds) and that candidate.
+ * rationaleEvidenceRefIds was checked only against that SAME
+ * provider-authored array - a provider could invent an entirely fabricated,
+ * syntactically valid evidence entry and then "cite" its own fabrication,
+ * with nothing external ever checked. Every candidate.evidenceRefs entry is
+ * now required to match - by full canonical identity (id AND kind AND
+ * sourceId AND location, exactly as scripts/ai/generation/primitives.js's
+ * own validateEvidenceRef treats those fields) - an entry that genuinely
+ * exists in the accepted RequirementModel's own evidenceRefs registry
+ * (see buildTrustedEvidenceRegistry()/validateEvidenceProvenance() below).
+ * This is the only trusted, already-available evidence source #22E has
+ * without adding a new upstream ingestion dependency (which would be a
+ * redesign, not a narrow hardening fix) - it is also now positively
+ * projected into the prompt (as plain id/kind/sourceId/location pointers,
+ * never raw evidence content) so a well-behaved provider has a genuine,
+ * quotable menu to cite from instead of inventing one.
+ *
  * Pure orchestration otherwise: no filesystem, network, browser, git,
  * child_process, or repository mutation. The only external effect is a
  * bounded number of provider.analyze() calls through the existing,
@@ -54,7 +97,7 @@
 "use strict";
 
 const { ERROR_CODES, err } = require("../generation/errors");
-const { isPlainObject, isValidId } = require("../generation/primitives");
+const { isPlainObject, isValidId, SUPPORTED_FRAMEWORKS } = require("../generation/primitives");
 const { LIMITS } = require("../generation/limits");
 const { validateGenerationChain } = require("../generation/cross-model-validation");
 const { validateProvider, validateProviderResponse } = require("../providers/provider-contract");
@@ -261,6 +304,22 @@ function snapshotProjectProfile(projectProfile) {
   return snapshot;
 }
 
+// Roadmap #22E-R1: reads a caller-supplied project-specific framework
+// capability object exactly once, via the exact same safe mechanism as
+// every other snapshot in this module - a caller-owned `.map`/`.slice`
+// override on `supportedFrameworks`, an own "__proto__" key, an own Symbol
+// key, a sparse array, or a getter mutation are all closed by the shared
+// snapshotOwnProperties()/snapshotArrayOfPrimitives() machinery, never a
+// second, weaker copy.
+function snapshotFrameworkCapability(frameworkCapability) {
+  const snapshot = snapshotOwnProperties(frameworkCapability);
+  if (!isPlainObject(snapshot)) return snapshot;
+  if (Array.isArray(snapshot.supportedFrameworks)) {
+    snapshot.supportedFrameworks = snapshotArrayOfPrimitives(snapshot.supportedFrameworks);
+  }
+  return snapshot;
+}
+
 // Deep-freezes a plain-data tree (the only shapes this module ever
 // produces) - never applied to a caller-owned object.
 function deepFreeze(value) {
@@ -317,8 +376,14 @@ function resolveMaxAttempts(maxAttempts) {
 // the model) plus the requirements it actually references, plus the whole
 // model's assumptions/openQuestions (both are model-scoped, not tied to a
 // specific requirement in RequirementModel v1's own schema, so partial
-// filtering would be arbitrary) and optional ProjectProfile guidance.
-function buildPositiveProjection({ requirementModelSnapshot, testCaseModelSnapshot, testCaseSnapshot, projectProfileSnapshot }) {
+// filtering would be arbitrary), optional ProjectProfile guidance, the
+// project-specific authorized framework set (Roadmap #22E-R1 H1), and the
+// trusted evidence registry the provider may cite from (Roadmap #22E-R1
+// H2) - projected as plain id/kind/sourceId/location POINTERS only, never
+// raw evidence content, matching scripts/ai/generation/primitives.js's own
+// EvidenceRef design ("pointers, never a container for the evidence's own
+// raw content").
+function buildPositiveProjection({ requirementModelSnapshot, testCaseModelSnapshot, testCaseSnapshot, projectProfileSnapshot, frameworkCapabilitySnapshot }) {
   const referencedRequirementIds = new Set(testCaseSnapshot.requirementIds);
   return {
     projectId: requirementModelSnapshot.projectId,
@@ -336,6 +401,8 @@ function buildPositiveProjection({ requirementModelSnapshot, testCaseModelSnapsh
     assumptions: (requirementModelSnapshot.assumptions || []).map((a) => ({ id: a.id, text: a.text, rationale: a.rationale })),
     openQuestions: (requirementModelSnapshot.openQuestions || []).map((q) => ({ id: q.id, type: q.type, description: q.description, reason: q.reason })),
     projectProfile: projectProfileSnapshot && isPlainObject(projectProfileSnapshot) ? { displayName: projectProfileSnapshot.displayName, knownProjectConstraints: projectProfileSnapshot.knownProjectConstraints } : null,
+    authorizedFrameworks: frameworkCapabilitySnapshot.supportedFrameworks,
+    availableEvidence: requirementModelSnapshot.evidenceRefs.map((e) => ({ id: e.id, kind: e.kind, sourceId: e.sourceId, location: e.location })),
   };
 }
 
@@ -356,6 +423,125 @@ function validateCandidateBinding(candidate, requestedTestCaseId) {
   return [];
 }
 
+// --- H1: project-scoped framework authorization (Roadmap #22E-R1) ----------
+
+const FRAMEWORK_CAPABILITY_ALLOWED_KEYS = Object.freeze(["projectId", "supportedFrameworks"]);
+
+// Validates the #22E-local `frameworkCapability` snapshot shape and binds
+// it to the same project as the upstream artifacts - a mismatched or
+// malformed capability object is rejected here, before any provider call,
+// exactly like every other pre-provider gate in this module. `expectedProjectId`
+// here is always the SNAPSHOT's own already-validated projectId (see
+// generateAutomationCandidate() below), never the caller's raw, unvalidated
+// parameter - the same "intrinsic binding, optional external cross-check is
+// additive only" posture Roadmap #23C's own generator established.
+function validateFrameworkCapabilitySnapshot(capability, { expectedProjectId }) {
+  const errors = [];
+  if (!isPlainObject(capability)) {
+    return [err("$.frameworkCapability", ERROR_CODES.INVALID_TYPE, "frameworkCapability must be a plain object")];
+  }
+  for (const key of Object.keys(capability)) {
+    if (!FRAMEWORK_CAPABILITY_ALLOWED_KEYS.includes(key)) {
+      errors.push(err(`$.frameworkCapability.${key}`, ERROR_CODES.UNKNOWN_FIELD, "$.frameworkCapability: unknown field"));
+    }
+  }
+  if (!isValidId(capability.projectId)) {
+    errors.push(err("$.frameworkCapability.projectId", ERROR_CODES.INVALID_TYPE, "$.frameworkCapability.projectId must be a bounded string id"));
+  } else if (expectedProjectId !== undefined && capability.projectId !== expectedProjectId) {
+    errors.push(err("$.frameworkCapability.projectId", ERROR_CODES.PROJECT_MISMATCH, "$.frameworkCapability.projectId does not match the accepted upstream project"));
+  }
+  if (!Array.isArray(capability.supportedFrameworks)) {
+    errors.push(err("$.frameworkCapability.supportedFrameworks", ERROR_CODES.MISSING_FIELD, "$.frameworkCapability.supportedFrameworks must be an array"));
+  } else if (capability.supportedFrameworks.length > SUPPORTED_FRAMEWORKS.length) {
+    errors.push(err("$.frameworkCapability.supportedFrameworks", ERROR_CODES.INVALID_VALUE, `$.frameworkCapability.supportedFrameworks exceeds the maximum of ${SUPPORTED_FRAMEWORKS.length}`));
+  } else {
+    // Roadmap #22E-R1: every project-specific authorized framework must
+    // ITSELF already be a member of the closed global vocabulary - the
+    // global enum remains schema VOCABULARY (which names are well-formed
+    // framework identifiers at all); this project-specific array is the
+    // AUTHORIZATION layer on top of it, never a replacement or a second,
+    // independent vocabulary a caller could use to smuggle a name the
+    // frozen v1 schema itself would never accept.
+    capability.supportedFrameworks.forEach((fw, i) => {
+      if (!SUPPORTED_FRAMEWORKS.includes(fw)) {
+        errors.push(err(`$.frameworkCapability.supportedFrameworks[${i}]`, ERROR_CODES.INVALID_ENUM, `$.frameworkCapability.supportedFrameworks[${i}] must be one of ${SUPPORTED_FRAMEWORKS.join(", ")}`));
+      }
+    });
+    if (new Set(capability.supportedFrameworks).size !== capability.supportedFrameworks.length) {
+      errors.push(err("$.frameworkCapability.supportedFrameworks", ERROR_CODES.DUPLICATE_ID, "$.frameworkCapability.supportedFrameworks must not contain duplicate frameworks"));
+    }
+  }
+  return errors;
+}
+
+// Roadmap #22E-R1 (H1): applied to EVERY accepted candidate regardless of
+// `decision` - the frozen v1 schema explicitly permits a non-empty
+// targetFrameworks on DO_NOT_AUTOMATE/BLOCKED (recording which frameworks
+// were merely considered), so this must not be gated to AUTOMATE only. Every
+// entry in the provider's own targetFrameworks array must be a member of
+// THIS project's authorized set - the frozen validator's own enum check
+// already proved each entry is a well-formed GLOBAL framework name; this is
+// the separate, additional, project-specific AUTHORIZATION check.
+function validateFrameworkAuthorization(candidate, authorizedFrameworks) {
+  if (!isPlainObject(candidate) || !Array.isArray(candidate.targetFrameworks)) return [];
+  const authorizedSet = new Set(authorizedFrameworks);
+  const errors = [];
+  candidate.targetFrameworks.forEach((fw, i) => {
+    if (!authorizedSet.has(fw)) {
+      errors.push(err(`$.targetFrameworks[${i}]`, ERROR_CODES.INVARIANT_VIOLATION, `$.targetFrameworks[${i}] is not an authorized framework for this project`));
+    }
+  });
+  return errors;
+}
+
+// --- H2: evidence provenance binding (Roadmap #22E-R1) ---------------------
+
+// Builds the trusted evidence registry from the accepted RequirementModel
+// snapshot - a Map keyed by evidenceRef id, values holding the FULL
+// canonical identity (kind, sourceId, location) needed for exact-match
+// comparison below. `undefined` is used (not omitted) for an absent
+// sourceId/location so a candidate entry that also omits that same field
+// compares as a genuine match, while one that INVENTS a value where the
+// trusted entry has none is correctly caught as a mismatch.
+function buildTrustedEvidenceRegistry(requirementModelSnapshot) {
+  const registry = new Map();
+  for (const evidenceRef of requirementModelSnapshot.evidenceRefs) {
+    if (isPlainObject(evidenceRef) && typeof evidenceRef.id === "string") {
+      registry.set(evidenceRef.id, { id: evidenceRef.id, kind: evidenceRef.kind, sourceId: evidenceRef.sourceId, location: evidenceRef.location });
+    }
+  }
+  return registry;
+}
+
+// Roadmap #22E-R1 (H2): every candidate.evidenceRefs entry must resolve, by
+// FULL canonical identity, to a genuine entry in the trusted registry - an
+// unknown id, or a known id whose kind/sourceId/location has been altered
+// from the trusted entry, is rejected. This closes the "provider invents
+// evidence AND its own citation" class the original implementation had: a
+// provider proposing a syntactically-valid-but-fabricated evidenceRefs
+// entry (whether a brand-new id, or a known id with an altered sourceId/
+// kind/location) is rejected here, BEFORE the existing (and still useful)
+// rationaleEvidenceRefIds-resolves-within-evidenceRefs check ever runs -
+// the full chain is now trusted registry -> candidate.evidenceRefs ->
+// rationaleEvidenceRefIds, never merely candidate.evidenceRefs ->
+// rationaleEvidenceRefIds in isolation.
+function validateEvidenceProvenance(candidate, trustedEvidenceRegistry) {
+  if (!isPlainObject(candidate) || !Array.isArray(candidate.evidenceRefs)) return [];
+  const errors = [];
+  candidate.evidenceRefs.forEach((ref, i) => {
+    if (!isPlainObject(ref) || typeof ref.id !== "string") return; // already reported by the frozen validator's own shape check
+    const trusted = trustedEvidenceRegistry.get(ref.id);
+    if (!trusted) {
+      errors.push(err(`$.evidenceRefs[${i}].id`, ERROR_CODES.INVALID_REFERENCE, `$.evidenceRefs[${i}] does not correspond to any supplied trusted evidence`));
+      return;
+    }
+    if (ref.kind !== trusted.kind || ref.sourceId !== trusted.sourceId || ref.location !== trusted.location) {
+      errors.push(err(`$.evidenceRefs[${i}]`, ERROR_CODES.INVALID_REFERENCE, `$.evidenceRefs[${i}] does not match the trusted evidence entry's canonical identity`));
+    }
+  });
+  return errors;
+}
+
 /**
  * Generates a grounded AutomationCandidate v1 for ONE test case inside an
  * accepted TestCaseModel v1, grounded in an accepted RequirementModel v1,
@@ -370,6 +556,16 @@ function validateCandidateBinding(candidate, requestedTestCaseId) {
  * scripts/ai/project-profile.js shape (`displayName`,
  * `knownProjectConstraints`).
  *
+ * `frameworkCapability` (Roadmap #22E-R1) is REQUIRED: `{projectId,
+ * supportedFrameworks}`, the project-specific set of frameworks this
+ * candidate's targetFrameworks may draw from. It must belong to the same
+ * project as `requirementModel`/`testCaseModel` (checked intrinsically
+ * against the accepted snapshot's own projectId, regardless of whether
+ * `expectedProjectId` was also supplied) and every entry must already be a
+ * member of the frozen v1 SUPPORTED_FRAMEWORKS vocabulary - this input
+ * narrows that global vocabulary down to what THIS project actually
+ * supports, it can never widen it.
+ *
  * Returns `{ ok: true, automationCandidate, providerAttempts }` or
  * `{ ok: false, errors, providerAttempts }` - `errors` is always the
  * bounded `{path, code, message}` shape (at most MAX_CORRECTION_ERRORS
@@ -377,9 +573,10 @@ function validateCandidateBinding(candidate, requestedTestCaseId) {
  * never a raw provider response, rejected value, or stack trace.
  * `providerAttempts` is 0 whenever a local, deterministic pre-provider gate
  * failed (invalid provider object, invalid/unreadable upstream artifact,
- * unknown testCaseId) - those never consume a provider call.
+ * unknown testCaseId, invalid/mismatched frameworkCapability) - those never
+ * consume a provider call.
  */
-async function generateAutomationCandidate({ requirementModel, testCaseModel, testCaseId, provider, maxAttempts, expectedProjectId, projectProfile } = {}) {
+async function generateAutomationCandidate({ requirementModel, testCaseModel, testCaseId, frameworkCapability, provider, maxAttempts, expectedProjectId, projectProfile } = {}) {
   try {
     validateProvider(provider);
   } catch (rawErr) {
@@ -399,10 +596,12 @@ async function generateAutomationCandidate({ requirementModel, testCaseModel, te
   let requirementModelSnapshot;
   let testCaseModelSnapshot;
   let projectProfileSnapshot;
+  let frameworkCapabilitySnapshot;
   try {
     requirementModelSnapshot = deepFreeze(snapshotRequirementModel(requirementModel));
     testCaseModelSnapshot = deepFreeze(snapshotTestCaseModel(testCaseModel));
     projectProfileSnapshot = projectProfile === undefined ? undefined : deepFreeze(snapshotProjectProfile(projectProfile));
+    frameworkCapabilitySnapshot = deepFreeze(snapshotFrameworkCapability(frameworkCapability));
   } catch {
     return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "upstream artifacts could not be read")], providerAttempts: 0 };
   }
@@ -424,13 +623,29 @@ async function generateAutomationCandidate({ requirementModel, testCaseModel, te
     return { ok: false, errors: boundGenerationErrors(upstreamResult.errors), providerAttempts: 0 };
   }
 
+  const projectId = requirementModelSnapshot.projectId;
+
+  // Roadmap #22E-R1 (H1): the project-specific framework capability is
+  // validated and bound to the SAME project as the upstream artifacts here,
+  // before any provider call - a malformed or cross-project capability
+  // object is rejected with zero provider calls, exactly like every other
+  // pre-provider gate in this function.
+  const frameworkCapabilityErrors = validateFrameworkCapabilitySnapshot(frameworkCapabilitySnapshot, { expectedProjectId: projectId });
+  if (frameworkCapabilityErrors.length > 0) {
+    return { ok: false, errors: boundGenerationErrors(frameworkCapabilityErrors), providerAttempts: 0 };
+  }
+
   const testCaseSnapshot = isPlainObject(testCaseModelSnapshot) && Array.isArray(testCaseModelSnapshot.testCases) ? testCaseModelSnapshot.testCases.find((tc) => isPlainObject(tc) && tc.id === testCaseId) : undefined;
   if (!testCaseSnapshot) {
     return { ok: false, errors: [err("$.testCaseId", ERROR_CODES.INVALID_REFERENCE, "unknown test case id")], providerAttempts: 0 };
   }
 
-  const projectId = requirementModelSnapshot.projectId;
-  const projection = deepFreeze(buildPositiveProjection({ requirementModelSnapshot, testCaseModelSnapshot, testCaseSnapshot, projectProfileSnapshot }));
+  // Roadmap #22E-R1 (H2): the trusted evidence registry a provider may cite
+  // from is derived here, from the accepted RequirementModel snapshot only
+  // - never from anything the provider will later produce.
+  const trustedEvidenceRegistry = buildTrustedEvidenceRegistry(requirementModelSnapshot);
+
+  const projection = deepFreeze(buildPositiveProjection({ requirementModelSnapshot, testCaseModelSnapshot, testCaseSnapshot, projectProfileSnapshot, frameworkCapabilitySnapshot }));
   const systemPrompt = buildAutomationCandidateSystemPrompt();
   const attempts = resolveMaxAttempts(maxAttempts);
 
@@ -479,27 +694,37 @@ async function generateAutomationCandidate({ requirementModel, testCaseModel, te
       continue;
     }
 
-    // CRITICAL POST-PROVIDER GATE (Roadmap #22E): the frozen cross-model
-    // validator both (a) individually validates the parsed
-    // AutomationCandidate against its own v1 schema (schemaVersion/kind/id/
-    // projectId/testCaseModelId/testCaseId/decision/rationale/evidenceRefs/
-    // targetFrameworks shape, unknown-field rejection, decision/framework
-    // invariant, dangling rationaleEvidenceRefIds rejection) and (b) checks
-    // it against the accepted upstream snapshots: project + schemaVersion
-    // consistency across every artifact, candidate.testCaseModelId ===
-    // testCaseModel.id, and candidate.testCaseId resolves to a real test
-    // case in that model - fail closed, never a best-effort resolution.
-    // Reused exactly as scripts/ai/generation/cross-model-validation.js
-    // already implements it - never a second, locally reimplemented
-    // cross-reference check. Framework authorization is likewise never
-    // reimplemented: validateAutomationCandidate's own targetFrameworks
-    // check already restricts every entry to the fixed v1
-    // SUPPORTED_FRAMEWORKS vocabulary, so a provider can never propose a
-    // framework outside cypress/playwright regardless of what its response
-    // claims.
+    // CRITICAL POST-PROVIDER GATE (Roadmap #22E, hardened #22E-R1): the
+    // frozen cross-model validator both (a) individually validates the
+    // parsed AutomationCandidate against its own v1 schema (schemaVersion/
+    // kind/id/projectId/testCaseModelId/testCaseId/decision/rationale/
+    // evidenceRefs/targetFrameworks shape, unknown-field rejection,
+    // decision/framework invariant, dangling rationaleEvidenceRefIds
+    // rejection) and (b) checks it against the accepted upstream snapshots:
+    // project + schemaVersion consistency across every artifact,
+    // candidate.testCaseModelId === testCaseModel.id, and
+    // candidate.testCaseId resolves to a real test case in that model -
+    // fail closed, never a best-effort resolution. Reused exactly as
+    // scripts/ai/generation/cross-model-validation.js already implements
+    // it - never a second, locally reimplemented cross-reference check.
+    // validateAutomationCandidate's own targetFrameworks check restricts
+    // every entry to the fixed v1 SUPPORTED_FRAMEWORKS VOCABULARY (which
+    // names are well-formed at all) - validateFrameworkAuthorization()
+    // below is the separate, additional, project-specific AUTHORIZATION
+    // layer (Roadmap #22E-R1 H1) on top of it, applied regardless of
+    // `decision` (the frozen schema permits non-empty targetFrameworks on
+    // DO_NOT_AUTOMATE/BLOCKED too). validateEvidenceProvenance() (Roadmap
+    // #22E-R1 H2) closes the evidence-fabrication gap: every
+    // candidate.evidenceRefs entry must match a genuine trusted registry
+    // entry by full canonical identity, checked BEFORE the frozen
+    // validator's own (still useful, but no longer sufficient alone)
+    // rationaleEvidenceRefIds-within-evidenceRefs check is treated as
+    // meaningful.
     const chainResult = validateGenerationChain({ requirementModel: requirementModelSnapshot, testCaseModel: testCaseModelSnapshot, automationCandidates: [parsed] }, { expectedProjectId: projectId });
     const bindingErrors = validateCandidateBinding(parsed, testCaseId);
-    const allErrors = [...(chainResult.ok ? [] : chainResult.errors), ...bindingErrors];
+    const frameworkAuthorizationErrors = validateFrameworkAuthorization(parsed, frameworkCapabilitySnapshot.supportedFrameworks);
+    const evidenceProvenanceErrors = validateEvidenceProvenance(parsed, trustedEvidenceRegistry);
+    const allErrors = [...(chainResult.ok ? [] : chainResult.errors), ...bindingErrors, ...frameworkAuthorizationErrors, ...evidenceProvenanceErrors];
 
     if (allErrors.length > 0) {
       lastErrors = boundGenerationErrors(allErrors);
@@ -518,8 +743,12 @@ module.exports = {
   generateAutomationCandidate,
   snapshotRequirementModel,
   snapshotTestCaseModel,
+  snapshotFrameworkCapability,
   boundGenerationErrors,
   buildPositiveProjection,
+  buildTrustedEvidenceRegistry,
+  validateFrameworkAuthorization,
+  validateEvidenceProvenance,
   MAX_PROVIDER_ATTEMPTS,
   MAX_AUTOMATION_CANDIDATE_RESPONSE_CHARS,
   MAX_CORRECTION_ERRORS,

@@ -24,6 +24,8 @@ function projection(overrides = {}) {
     assumptions: [],
     openQuestions: [],
     projectProfile: null,
+    authorizedFrameworks: ["cypress"],
+    availableEvidence: [{ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001", location: undefined }],
     ...overrides,
   };
 }
@@ -118,4 +120,37 @@ test("user prompt excludes fields not present in the projection (no repoRoot/env
   const prompt = buildAutomationCandidateUserPrompt(projection());
   assert.ok(!prompt.includes("repoRoot"));
   assert.ok(!prompt.includes(process.env.PATH || "__no_path__"));
+});
+
+// --- Roadmap #22E-R1: project-scoped framework authorization + evidence provenance in the prompt ---
+
+test("system prompt states that targetFrameworks must come from authorizedFrameworks, not merely the global vocabulary", () => {
+  const prompt = buildAutomationCandidateSystemPrompt();
+  assert.ok(/authorizedFrameworks/.test(prompt));
+  assert.ok(/never propose a framework outside "authorizedFrameworks"/i.test(prompt) || /never propose a framework outside authorizedframeworks/i.test(prompt));
+});
+
+test("system prompt states that evidenceRefs must be copied exactly from availableEvidence, never invented", () => {
+  const prompt = buildAutomationCandidateSystemPrompt();
+  assert.ok(/availableEvidence/.test(prompt));
+  assert.ok(/copied EXACTLY/.test(prompt));
+  assert.ok(/may NOT invent a new evidence entry/i.test(prompt));
+});
+
+test("user prompt embeds authorizedFrameworks as the exact supplied set, not the full global vocabulary", () => {
+  const prompt = buildAutomationCandidateUserPrompt(projection({ authorizedFrameworks: ["cypress"] }));
+  assert.ok(prompt.includes('"authorizedFrameworks": [\n    "cypress"\n  ]') || /"authorizedFrameworks":\s*\[\s*"cypress"\s*\]/.test(prompt));
+  assert.ok(!prompt.includes('"playwright"'), "a project authorized only for cypress must never see playwright mentioned in its own data block");
+});
+
+test("user prompt embeds availableEvidence as plain id/kind/sourceId/location pointers", () => {
+  const prompt = buildAutomationCandidateUserPrompt(projection({ availableEvidence: [{ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001", location: undefined }] }));
+  assert.ok(prompt.includes("evidence-0001"));
+  assert.ok(prompt.includes("user-input-0001"));
+});
+
+test("user prompt DATA-boundary reminder covers authorizedFrameworks and availableEvidence", () => {
+  const prompt = buildAutomationCandidateUserPrompt(projection());
+  assert.ok(/authorizedFrameworks/.test(prompt));
+  assert.ok(/availableEvidence/.test(prompt));
 });
