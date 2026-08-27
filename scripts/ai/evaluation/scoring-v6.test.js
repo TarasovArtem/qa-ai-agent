@@ -212,9 +212,17 @@ test("scoreReviewAlignment: disagreement -> fail, never rewrites the record, pur
 });
 
 // --- scoreSampleV6 / qualityGatePassed --------------------------------------
+//
+// Roadmap #22G-C1 (closes G-1): independent review proved the ORIGINAL
+// version of this section never actually exercised the qualityGatePassed
+// === false branch at all - the one test present here asserted only
+// qualityGatePassed === true (for a non-critical-only failure), and its
+// misleading name was the entire reason a `const qualityGatePassed = true`
+// mutation survived all 35 tests. Both branches are now independently,
+// explicitly asserted below.
 
-test("scoreSampleV6: qualityGatePassed is false when any CRITICAL dimension fails, even if reviewAlignment (non-critical) also fails", () => {
-  const sample = {
+function fullyPassingSample(overrides = {}) {
+  return {
     artifacts: {
       requirementModel: { requirements: [{ id: "req-1", evidenceRefIds: ["e1"] }] },
       testCaseModel: { testCases: [{ requirementIds: ["req-1"] }] },
@@ -228,10 +236,31 @@ test("scoreSampleV6: qualityGatePassed is false when any CRITICAL dimension fail
       candidateEvidence: [{ testCaseId: "tc-1", expectedEvidenceRefIds: ["e1"], expectedRationaleEvidenceRefIds: ["e1"] }],
       reviewOutcome: "APPROVED",
     },
+    ...overrides,
   };
-  const scored = scoreSampleV6(sample, "REJECTED");
+}
+
+test("scoreSampleV6: qualityGatePassed is TRUE when every critical dimension passes, even if reviewAlignment (non-critical) fails", () => {
+  const scored = scoreSampleV6(fullyPassingSample(), "REJECTED");
   assert.equal(scored.dimensions.reviewAlignment.status, "fail");
   assert.equal(scored.qualityGatePassed, true, "a non-critical reviewAlignment failure must not fail the quality gate");
+});
+
+test("scoreSampleV6: qualityGatePassed is FALSE when a single critical dimension (traceability) is only partial, even with every other dimension passing", () => {
+  const sample = fullyPassingSample();
+  sample.gold.traceability = [{ requirementId: "req-1" }, { requirementId: "req-2" }]; // req-2 is not covered by any test case
+  const scored = scoreSampleV6(sample, null);
+  assert.equal(scored.dimensions.traceability.status, "partial");
+  assert.equal(scored.qualityGatePassed, false, "a single failing critical dimension must fail the entire quality gate");
+});
+
+test("scoreSampleV6: qualityGatePassed is FALSE when frameworkQuality fails, isolated from every other (still-passing) dimension", () => {
+  const sample = fullyPassingSample();
+  sample.gold.decisions = [{ testCaseId: "tc-1", decision: "AUTOMATE", targetFrameworks: ["playwright"] }]; // actual candidate targets cypress
+  const scored = scoreSampleV6(sample, null);
+  assert.equal(scored.dimensions.frameworkQuality.status, "fail");
+  assert.equal(scored.dimensions.requirementCoverage.status, "pass");
+  assert.equal(scored.qualityGatePassed, false);
 });
 
 // --- evaluateDatasetV6: determinism, ordering, invalid-input classification --

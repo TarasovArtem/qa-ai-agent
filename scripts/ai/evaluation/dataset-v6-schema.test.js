@@ -27,6 +27,7 @@ function validSample(overrides = {}) {
       decisions: [],
       candidateEvidence: [],
       reviewOutcome: null,
+      notApplicableDimensions: ["requirementCoverage", "requirementGrounding", "traceability", "automationDecision", "frameworkQuality", "evidenceQuality"],
     },
     metadata: { expectedWeakDimensions: [] },
     ...overrides,
@@ -149,4 +150,67 @@ test("null is rejected", () => {
 
 test("array instead of dataset object is rejected", () => {
   assert.equal(validateDatasetV6([]).valid, false);
+});
+
+// --- explicit not-applicable contract (Roadmap #22G-C1, closes G-3) --------
+
+test("an empty critical-dimension gold array WITHOUT a matching notApplicableDimensions declaration is rejected (ambiguous: intentional vs. forgotten label)", () => {
+  const sample = validSample({ gold: { expectedRequirementIds: [], requirementGrounding: [], traceability: [], decisions: [], candidateEvidence: [], reviewOutcome: null, notApplicableDimensions: ["requirementGrounding", "traceability", "automationDecision", "frameworkQuality", "evidenceQuality"] } });
+  // requirementCoverage's own gold.expectedRequirementIds is empty but NOT declared not_applicable
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("requirementCoverage") && e.includes("not declared")));
+});
+
+test("a populated critical-dimension gold array declared not_applicable is rejected as a contradiction", () => {
+  const sample = validSample();
+  sample.gold.expectedRequirementIds = ["req-1"]; // non-empty, but requirementCoverage is still declared not_applicable in the base fixture
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("requirementCoverage") && e.includes("contradiction")));
+});
+
+test("notApplicableDimensions rejects an unknown/non-critical dimension name (e.g. reviewAlignment, which is not critical, or a made-up name)", () => {
+  const sample = validSample();
+  sample.gold.notApplicableDimensions = [...sample.gold.notApplicableDimensions, "reviewAlignment"];
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, false);
+});
+
+test("notApplicableDimensions rejects duplicate entries", () => {
+  const sample = validSample();
+  sample.gold.notApplicableDimensions = [...sample.gold.notApplicableDimensions, "requirementCoverage"];
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, false);
+});
+
+test("automationDecision and frameworkQuality (sharing gold.decisions) must be declared not_applicable together, never only one", () => {
+  const sample = validSample();
+  sample.gold.notApplicableDimensions = sample.gold.notApplicableDimensions.filter((d) => d !== "frameworkQuality");
+  // now automationDecision is declared not_applicable but frameworkQuality is not, while gold.decisions is still empty
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, false);
+});
+
+test("a genuinely applicable dimension (non-empty gold array, not declared not_applicable) is accepted", () => {
+  const sample = validSample();
+  sample.gold.expectedRequirementIds = ["req-1"];
+  sample.gold.notApplicableDimensions = sample.gold.notApplicableDimensions.filter((d) => d !== "requirementCoverage");
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+// --- duplicate expectedWeakDimensions (Roadmap #22G-C1, closes G-4) --------
+
+test("metadata.expectedWeakDimensions rejects duplicate entries (would double-count in the weakness-detection summary)", () => {
+  const sample = validSample({ metadata: { expectedWeakDimensions: ["traceability", "traceability"] } });
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("duplicate")));
+});
+
+test("metadata.expectedWeakDimensions accepts distinct entries, including two different weaknesses for the same case", () => {
+  const sample = validSample({ metadata: { expectedWeakDimensions: ["automationDecision", "frameworkQuality"] } });
+  const result = validateSampleV6(sample);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
 });

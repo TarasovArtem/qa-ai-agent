@@ -14,6 +14,7 @@ function validSampleStatus() {
     frameworkQuality: "pass",
     evidenceQuality: "pass",
     reviewAlignment: "not_applicable",
+    qualityGatePassed: true,
   };
 }
 
@@ -65,4 +66,26 @@ test("null is rejected", () => {
 
 test("non-object samples is rejected", () => {
   assert.equal(validateBaselineV6({ version: 1, datasetVersion: 6, samples: [] }).valid, false);
+});
+
+// --- qualityGatePassed baseline tracking (Roadmap #22G-C1, closes G-1) ------
+
+test("missing qualityGatePassed is rejected", () => {
+  const status = validSampleStatus();
+  delete status.qualityGatePassed;
+  const result = validateBaselineV6({ version: 1, datasetVersion: 6, samples: { "TD-V6-001": status } });
+  assert.equal(result.valid, false);
+});
+
+test("non-boolean qualityGatePassed is rejected", () => {
+  const status = validSampleStatus();
+  status.qualityGatePassed = "true";
+  const result = validateBaselineV6({ version: 1, datasetVersion: 6, samples: { "TD-V6-001": status } });
+  assert.equal(result.valid, false);
+});
+
+test("qualityGatePassed: false is accepted (a negative sentinel's own committed gate outcome)", () => {
+  const status = { ...validSampleStatus(), qualityGatePassed: false };
+  const result = validateBaselineV6({ version: 1, datasetVersion: 6, samples: { "TD-V6-005": status } });
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
 });

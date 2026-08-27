@@ -18,7 +18,7 @@ test("run() with --json produces valid, parseable JSON metrics", () => {
   const result = run(DATASET_PATH, { json: true });
   assert.equal(result.exitCode, 0);
   const parsed = JSON.parse(result.output);
-  assert.equal(parsed.totalSamples, 9);
+  assert.equal(parsed.totalSamples, 11);
   assert.equal(parsed.invalidInputCount, 0);
 });
 
