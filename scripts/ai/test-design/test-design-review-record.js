@@ -1,0 +1,363 @@
+/**
+ * TestDesignReviewRecord v1 (Roadmap #22F).
+ *
+ * The deterministic, non-generative human decision made about ONE
+ * TestDesignReviewPackage v1 - one decision (APPROVE / REQUEST_CHANGES /
+ * REJECT) for every entry in that package's own `reviewTargets`, an
+ * overall `status` DERIVED from those decisions (never trusted from the
+ * caller), and a binding back to the exact package content that was
+ * reviewed via `reviewPackageDigest`.
+ *
+ * STALE-APPROVAL PROTECTION (the core security property of this module,
+ * together with test-design-review-package.js's own digest): a record
+ * approves ONE specific, immutable snapshot of reviewed content - if a
+ * candidate, the requirement text, or anything else in the package
+ * changes after a human approved it (even if every artifact keeps the
+ * same id), the newly-built package gets a different
+ * `reviewPackageDigest`, and `validateApprovedTestDesignReview()` below
+ * will correctly refuse to treat the OLD record as approval for the NEW
+ * package. An id match alone is never sufficient for approval - only an
+ * exact digest match is.
+ *
+ * TAMPER DETECTION: `recordDigest` is a content digest of the record's
+ * own decision/status/reviewer content (mirroring
+ * `reviewPackageDigest`/`recomputePackageDigest()`). A record whose
+ * `status` or `decisions` were altered after construction - without
+ * going back through `buildTestDesignReviewRecord()` - will fail
+ * `recomputeRecordDigest()` verification.
+ *
+ * INTEGRITY IS NOT AUTHENTICITY (read this before relying on
+ * `validateApprovedTestDesignReview()` for anything beyond what it
+ * actually proves): `computeDigest()`/`canonicalStringify()`
+ * (test-design-review-canonical.js) are a PLAIN, UNKEYED SHA-256 hash -
+ * not an HMAC, not a digital signature, and not bound to any secret. A
+ * matching `recordDigest` proves only that this exact object's fields
+ * have not been altered since being serialized in this shape. It does
+ * NOT prove:
+ *   - that `reviewerId` identifies a real, authenticated reviewer;
+ *   - that `buildTestDesignReviewRecord()` (and therefore its
+ *     completeness/business-rule checks) ever actually ran;
+ *   - that any human produced these `decisions` at all.
+ * Concretely: any caller with require-access to this module's exported
+ * `computeDigest`/`DIGEST_LABEL_RECORD` (or an independent SHA-256
+ * reimplementation of the same canonicalization) can hand-construct an
+ * arbitrary `TestDesignReviewRecord`-shaped object - fabricated
+ * `decisions`, an arbitrary `status`, any `reviewerId` - and compute a
+ * `recordDigest` that will pass `recomputeRecordDigest()` and therefore
+ * `validateApprovedTestDesignReview()`, entirely bypassing
+ * `buildTestDesignReviewRecord()`. This was directly demonstrated during
+ * #22F's independent review and is preserved as a permanent, intentional
+ * test in this module's own test file (see "DOCUMENTED LIMITATION").
+ * `validateApprovedTestDesignReview()` therefore proves CONTENT INTEGRITY
+ * and STALE-APPROVAL PROTECTION only - never that a real human, via a
+ * real review flow, produced the record it is validating.
+ *
+ * HUMAN IDENTITY BOUNDARY (FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD,
+ * carried forward from #22E-R1's H1-F1 in the same spirit): `reviewerId`
+ * is an opaque, caller-supplied identifier. This module binds a decision
+ * set and a status to that identifier and makes both tamper-evident, but
+ * it does NOT authenticate the reviewer, verify they hold reviewer
+ * authority over this project, or provide non-repudiation - the same
+ * trust-boundary limitation `frameworkCapability` already carries in
+ * automation-candidate-generator.js (#22E) and test-design-review-
+ * package.js (#22F). Establishing real reviewer authentication/
+ * authorization is explicitly out of scope for #22F.
+ *
+ * FUTURE_HUMAN_DECISION_PROVENANCE_GUARD (distinct from the reviewer-
+ * identity guard above - that one asks "who is the reviewer?"; this one
+ * asks "did this decision set actually originate from an authenticated,
+ * authorized human-review interaction at all?"): future orchestration
+ * MUST create/accept `TestDesignReviewRecord` decisions only through an
+ * authenticated and authorized human-principal interaction path (e.g. a
+ * gated UI or API that itself calls `buildTestDesignReviewRecord()` on
+ * the reviewer's behalf and never accepts a pre-built record object from
+ * an untrusted caller). A recomputable SHA-256 digest MUST NOT be treated
+ * by any future integration as proof that a human produced or authorized
+ * the review record - that guarantee does not exist at this layer and is
+ * not implemented by #22F.
+ *
+ * This module never calls an AI provider, never touches the filesystem,
+ * network, git, or child_process, and never mutates the repository - it
+ * returns data only.
+ */
+
+"use strict";
+
+const { ERROR_CODES, err } = require("../generation/errors");
+const { isPlainObject, isValidId, isBoundedText } = require("../generation/primitives");
+const { LIMITS } = require("../generation/limits");
+const { snapshotOwnData, deepFreeze, computeDigest } = require("./test-design-review-canonical");
+const { recomputePackageDigest } = require("./test-design-review-package");
+
+const KIND = "TestDesignReviewRecord";
+const SCHEMA_VERSION = 1;
+
+const DECISIONS = Object.freeze(["APPROVE", "REQUEST_CHANGES", "REJECT"]);
+const STATUSES = Object.freeze(["APPROVED", "CHANGES_REQUESTED", "REJECTED"]);
+
+const DIGEST_LABEL_RECORD = "test-design-review-record:v1";
+
+// Roadmap #22F: reuses the existing LONG_TEXT bound rather than inventing
+// a new limit - a review comment is free-form human prose, the same
+// shape/size class as a RequirementModel requirement's own "text" field.
+const MAX_COMMENT_LENGTH = LIMITS.LONG_TEXT_MAX_LENGTH;
+
+// UTC-only ISO-8601 timestamp (e.g. "2026-08-27T10:15:00.000Z") - a fixed,
+// unambiguous, sortable audit-log timestamp shape. A caller-supplied local
+// offset or a bare date is deliberately rejected rather than silently
+// reinterpreted.
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
+function isValidTimestamp(value) {
+  return typeof value === "string" && ISO_TIMESTAMP_PATTERN.test(value);
+}
+
+const DECISION_ENTRY_ALLOWED_KEYS = Object.freeze(["artifactKind", "artifactId", "artifactDigest", "decision", "comment"]);
+
+function reviewTargetKey(target) {
+  return `${target.artifactKind.length}:${target.artifactKind}${target.artifactId.length}:${target.artifactId}${target.artifactDigest.length}:${target.artifactDigest}`;
+}
+
+/**
+ * Builds one TestDesignReviewRecord v1 recording a human reviewer's
+ * decision for every entry in `reviewPackage.reviewTargets`.
+ *
+ * `decisions` must contain exactly one entry per `reviewTargets` entry,
+ * matched by the FULL `{artifactKind, artifactId, artifactDigest}` triple
+ * (never by id alone) - a decision entry naming a stale digest for an
+ * artifact that has since changed is rejected exactly like a missing one.
+ *
+ * `status` is never accepted from the caller: it is always derived here
+ * as REJECTED if any decision is REJECT, else CHANGES_REQUESTED if any
+ * decision is REQUEST_CHANGES, else APPROVED.
+ *
+ * Returns `{ ok: true, reviewRecord }` or `{ ok: false, errors }`.
+ */
+function buildTestDesignReviewRecord({ reviewPackage, reviewerId, reviewedAt, decisions } = {}) {
+  let reviewPackageSnapshot;
+  let reviewerIdSnapshot;
+  let reviewedAtSnapshot;
+  let decisionsSnapshot;
+  try {
+    reviewPackageSnapshot = deepFreeze(snapshotOwnData(reviewPackage));
+    reviewerIdSnapshot = snapshotOwnData(reviewerId);
+    reviewedAtSnapshot = snapshotOwnData(reviewedAt);
+    decisionsSnapshot = deepFreeze(snapshotOwnData(decisions));
+  } catch {
+    return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "inputs could not be read")] };
+  }
+
+  const errors = [];
+
+  if (!isPlainObject(reviewPackageSnapshot) || reviewPackageSnapshot.kind !== "TestDesignReviewPackage" || reviewPackageSnapshot.schemaVersion !== 1 || !Array.isArray(reviewPackageSnapshot.reviewTargets)) {
+    return { ok: false, errors: [err("$.reviewPackage", ERROR_CODES.INVALID_TYPE, "$.reviewPackage must be a valid TestDesignReviewPackage v1")] };
+  }
+  // Roadmap #22F: a record must never be built for a reviewPackage object
+  // that does not even match its own stored digest - this catches a
+  // tampered/hand-assembled package at record-creation time, not only
+  // later at validateApprovedTestDesignReview().
+  const recomputedPackageDigest = recomputePackageDigest(reviewPackageSnapshot);
+  if (recomputedPackageDigest === null || recomputedPackageDigest !== reviewPackageSnapshot.reviewPackageDigest) {
+    return { ok: false, errors: [err("$.reviewPackage.reviewPackageDigest", ERROR_CODES.INVALID_VALUE, "$.reviewPackage content does not match its own stored digest")] };
+  }
+
+  if (!isValidId(reviewerIdSnapshot)) {
+    errors.push(err("$.reviewerId", ERROR_CODES.INVALID_TYPE, "$.reviewerId must be a bounded string id"));
+  }
+  if (!isValidTimestamp(reviewedAtSnapshot)) {
+    errors.push(err("$.reviewedAt", ERROR_CODES.INVALID_TYPE, "$.reviewedAt must be a UTC ISO-8601 timestamp"));
+  }
+  if (!Array.isArray(decisionsSnapshot)) {
+    errors.push(err("$.decisions", ERROR_CODES.MISSING_FIELD, "$.decisions must be an array"));
+  } else if (decisionsSnapshot.length > LIMITS.MAX_TEST_CASES) {
+    errors.push(err("$.decisions", ERROR_CODES.INVALID_VALUE, `$.decisions exceeds the maximum of ${LIMITS.MAX_TEST_CASES}`));
+  }
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  decisionsSnapshot.forEach((entry, i) => {
+    const path = `$.decisions[${i}]`;
+    if (!isPlainObject(entry)) {
+      errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be a plain object`));
+      return;
+    }
+    for (const key of Object.keys(entry)) {
+      if (!DECISION_ENTRY_ALLOWED_KEYS.includes(key)) {
+        errors.push(err(`${path}.${key}`, ERROR_CODES.UNKNOWN_FIELD, `${path}: unknown field`));
+      }
+    }
+    if (!isValidId(entry.artifactKind)) {
+      errors.push(err(`${path}.artifactKind`, ERROR_CODES.INVALID_TYPE, `${path}.artifactKind must be a bounded string id`));
+    }
+    if (!isValidId(entry.artifactId)) {
+      errors.push(err(`${path}.artifactId`, ERROR_CODES.INVALID_TYPE, `${path}.artifactId must be a bounded string id`));
+    }
+    if (typeof entry.artifactDigest !== "string" || entry.artifactDigest.length === 0) {
+      errors.push(err(`${path}.artifactDigest`, ERROR_CODES.INVALID_TYPE, `${path}.artifactDigest must be a string`));
+    }
+    if (!DECISIONS.includes(entry.decision)) {
+      errors.push(err(`${path}.decision`, ERROR_CODES.INVALID_ENUM, `${path}.decision must be one of ${DECISIONS.join(", ")}`));
+    }
+    if (entry.comment !== undefined) {
+      if (!isBoundedText(entry.comment, MAX_COMMENT_LENGTH)) {
+        errors.push(err(`${path}.comment`, ERROR_CODES.INVALID_VALUE, `${path}.comment must be a bounded string of at most ${MAX_COMMENT_LENGTH} characters`));
+      }
+    } else if (entry.decision === "REQUEST_CHANGES" || entry.decision === "REJECT") {
+      errors.push(err(`${path}.comment`, ERROR_CODES.MISSING_FIELD, `${path}.comment is required when decision is REQUEST_CHANGES or REJECT`));
+    }
+  });
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  // Completeness + exact-binding (Roadmap #22F): every reviewTargets entry
+  // requires exactly one decisions[] entry matching its full
+  // {artifactKind, artifactId, artifactDigest} triple - never matched by
+  // id alone, so a decision recorded against a since-changed artifact
+  // digest is treated as absent, identically to a genuinely missing one.
+  const targetKeys = new Set(reviewPackageSnapshot.reviewTargets.map(reviewTargetKey));
+  const decisionKeyCounts = new Map();
+  decisionsSnapshot.forEach((entry) => {
+    const key = reviewTargetKey(entry);
+    decisionKeyCounts.set(key, (decisionKeyCounts.get(key) || 0) + 1);
+  });
+
+  for (const key of decisionKeyCounts.keys()) {
+    if (!targetKeys.has(key)) {
+      errors.push(err("$.decisions", ERROR_CODES.INVALID_REFERENCE, "a decision entry does not match any reviewTargets entry in this reviewPackage (unknown artifact, or a stale/mismatched artifactDigest)"));
+    }
+  }
+  for (const [key, count] of decisionKeyCounts.entries()) {
+    if (targetKeys.has(key) && count > 1) {
+      errors.push(err("$.decisions", ERROR_CODES.DUPLICATE_ID, "more than one decision entry for the same reviewTargets artifact"));
+    }
+  }
+  for (const key of targetKeys) {
+    if (!decisionKeyCounts.has(key)) {
+      errors.push(err("$.decisions", ERROR_CODES.MISSING_FIELD, "every reviewPackage.reviewTargets entry requires exactly one matching decision entry; at least one is missing"));
+    }
+  }
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  // Canonical order (Roadmap #22F): mirrors reviewTargets' own order,
+  // never the caller-supplied decisions[] order.
+  const decisionsByKey = new Map(decisionsSnapshot.map((entry) => [reviewTargetKey(entry), entry]));
+  const orderedDecisions = reviewPackageSnapshot.reviewTargets.map((target) => {
+    const entry = decisionsByKey.get(reviewTargetKey(target));
+    return { artifactKind: entry.artifactKind, artifactId: entry.artifactId, artifactDigest: entry.artifactDigest, decision: entry.decision, comment: entry.comment === undefined ? null : entry.comment };
+  });
+
+  // status is DERIVED, never accepted as caller input (Roadmap #22F -
+  // "an internally-derived, never-caller-trusted status").
+  let status;
+  if (orderedDecisions.some((d) => d.decision === "REJECT")) {
+    status = "REJECTED";
+  } else if (orderedDecisions.some((d) => d.decision === "REQUEST_CHANGES")) {
+    status = "CHANGES_REQUESTED";
+  } else {
+    status = "APPROVED";
+  }
+
+  const recordContent = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: KIND,
+    projectId: reviewPackageSnapshot.projectId,
+    reviewPackageDigest: reviewPackageSnapshot.reviewPackageDigest,
+    reviewerId: reviewerIdSnapshot,
+    reviewedAt: reviewedAtSnapshot,
+    decisions: orderedDecisions,
+    status,
+  };
+
+  const recordDigest = computeDigest(DIGEST_LABEL_RECORD, recordContent);
+
+  return { ok: true, reviewRecord: deepFreeze({ ...recordContent, recordDigest }) };
+}
+
+/**
+ * Recomputes a review record's digest from its own content (never
+ * trusting the stored `recordDigest` field) and returns whether it
+ * matches - detects direct tampering with `decisions`/`status`/
+ * `reviewerId`/`reviewedAt` after construction.
+ */
+function recomputeRecordDigest(reviewRecord) {
+  if (!isPlainObject(reviewRecord)) return null;
+  const { recordDigest, ...rest } = reviewRecord;
+  try {
+    return computeDigest(DIGEST_LABEL_RECORD, rest);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The single deterministic approval gate: returns `{ ok: true }` only when
+ * `reviewRecord` is an untampered, APPROVED record produced for EXACTLY
+ * this `reviewPackage`'s current content (never a stale approval of
+ * earlier content, never a cross-project or cross-package replay).
+ *
+ * Both `reviewPackage` and `reviewRecord` are re-verified against their
+ * own stored digests here - this function never merely trusts that a
+ * caller-supplied pair is internally consistent.
+ */
+function validateApprovedTestDesignReview(reviewPackage, reviewRecord, { expectedProjectId } = {}) {
+  if (!isPlainObject(reviewPackage) || reviewPackage.kind !== "TestDesignReviewPackage" || reviewPackage.schemaVersion !== 1) {
+    return { ok: false, errors: [err("$.reviewPackage", ERROR_CODES.INVALID_TYPE, "$.reviewPackage must be a valid TestDesignReviewPackage v1")] };
+  }
+  if (!isPlainObject(reviewRecord) || reviewRecord.kind !== KIND || reviewRecord.schemaVersion !== SCHEMA_VERSION) {
+    return { ok: false, errors: [err("$.reviewRecord", ERROR_CODES.INVALID_TYPE, "$.reviewRecord must be a valid TestDesignReviewRecord v1")] };
+  }
+
+  const errors = [];
+
+  const freshPackageDigest = recomputePackageDigest(reviewPackage);
+  if (freshPackageDigest === null || freshPackageDigest !== reviewPackage.reviewPackageDigest) {
+    errors.push(err("$.reviewPackage.reviewPackageDigest", ERROR_CODES.INVALID_VALUE, "$.reviewPackage content does not match its own stored digest"));
+  }
+  const freshRecordDigest = recomputeRecordDigest(reviewRecord);
+  if (freshRecordDigest === null || freshRecordDigest !== reviewRecord.recordDigest) {
+    errors.push(err("$.reviewRecord.recordDigest", ERROR_CODES.INVALID_VALUE, "$.reviewRecord content does not match its own stored digest"));
+  }
+  if (errors.length > 0) return { ok: false, errors };
+
+  // STALE-APPROVAL / cross-package replay: the record must have been
+  // produced for exactly this package's current content.
+  if (reviewRecord.reviewPackageDigest !== reviewPackage.reviewPackageDigest) {
+    errors.push(err("$.reviewRecord.reviewPackageDigest", ERROR_CODES.INVALID_REFERENCE, "reviewRecord was not produced for this exact reviewPackage content (stale approval, tampered content, or mismatched/replayed record)"));
+  }
+  // cross-project replay, checked independently on both sides plus their
+  // own mutual agreement - never inferred from the digest match alone.
+  if (reviewRecord.projectId !== reviewPackage.projectId) {
+    errors.push(err("$.reviewRecord.projectId", ERROR_CODES.PROJECT_MISMATCH, "reviewRecord.projectId does not match reviewPackage.projectId"));
+  }
+  if (expectedProjectId !== undefined) {
+    if (reviewPackage.projectId !== expectedProjectId) {
+      errors.push(err("$.reviewPackage.projectId", ERROR_CODES.PROJECT_MISMATCH, "reviewPackage.projectId does not match the expected project"));
+    }
+    if (reviewRecord.projectId !== expectedProjectId) {
+      errors.push(err("$.reviewRecord.projectId", ERROR_CODES.PROJECT_MISMATCH, "reviewRecord.projectId does not match the expected project"));
+    }
+  }
+  if (errors.length > 0) return { ok: false, errors };
+
+  if (reviewRecord.status !== "APPROVED") {
+    return { ok: false, errors: [err("$.reviewRecord.status", ERROR_CODES.INVALID_VALUE, "reviewRecord.status is not APPROVED")] };
+  }
+
+  return { ok: true, errors: [] };
+}
+
+module.exports = {
+  KIND,
+  SCHEMA_VERSION,
+  DECISIONS,
+  STATUSES,
+  DIGEST_LABEL_RECORD,
+  buildTestDesignReviewRecord,
+  recomputeRecordDigest,
+  validateApprovedTestDesignReview,
+  isValidTimestamp,
+};
