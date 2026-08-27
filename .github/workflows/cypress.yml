@@ -64,11 +64,23 @@ jobs:
   # own job with no `needs:` on Cypress or qa-ai-triage - it only reads
   # repository files (dataset.json, baseline-v1.json) and Node dependencies,
   # so it starts immediately and runs in parallel with them, exactly like
-  # unit-tests above. A REGRESSED result is currently informational only
-  # (see regression.js's run()/formatRegressionReport()) and must not fail
-  # this job - only a technical failure (invalid dataset/baseline, a
-  # runtime crash, an unexpected non-zero exit) does, via each npm script's
-  # own exit code - no continue-on-error is used, so that stays true.
+  # unit-tests above. For v1-v5 (QA-failure-triage evaluation), a REGRESSED
+  # result is informational only (see regression*.js's run()/
+  # formatRegressionReport*()) and must not fail this job.
+  #
+  # v6 (Roadmap #22G, Test Design quality evaluation - a different subject
+  # than v1-v5, see scoring-v6.js's own header comment) is a deliberate
+  # exception: regression-v6.js's run() returns exitCode 1 when its
+  # comparison status is REGRESSED, so a genuine Test Design quality
+  # regression DOES fail this job - it is not merely informational for v6.
+  # A negative/sentinel case scoring poorly is NOT a regression by itself
+  # (its committed baseline-v6.json entry already records that expected
+  # weak status; only a DIVERGENCE from that committed expectation exits
+  # non-zero).
+  #
+  # For every version, a technical failure (invalid dataset/baseline, a
+  # runtime crash, an unexpected non-zero exit) always fails this job via
+  # each npm script's own exit code - no continue-on-error is used.
   # Fully offline: no GROQ_API_KEY/AI_API_KEY, no AI_PROVIDER/AI_MODEL, no
   # AI provider or network call of any kind.
   qa-agent-evaluation:
@@ -120,6 +132,12 @@ jobs:
 
       - name: Run QA Agent regression comparison v5
         run: npm run eval:regression:v5
+
+      - name: Run Test Design quality evaluation v6
+        run: npm run eval:ai:v6
+
+      - name: Run Test Design quality regression comparison v6
+        run: npm run eval:regression:v6
 
   cypress-tests:
     name: Cypress - ${{ matrix.browser }}
