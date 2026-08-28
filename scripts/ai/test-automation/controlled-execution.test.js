@@ -543,6 +543,45 @@ async function listPlaywrightTests(fixtureRoot, targets) {
   return result;
 }
 
+// TEMPORARY #23G-C3 ROOT-CAUSE DIAGNOSTIC - not a permanent test, removed
+// before this mission's final commit. Determines empirically, on whichever
+// real platform runs it (this is specifically meant to be read from a
+// natural Linux CI log), which of several candidate match subjects the
+// real installed Playwright binary's positional filter actually compares
+// against, so the real #23G-C3 fix can be built on evidence rather than
+// another guess. Never hard-fails (diagnostic only) so it does not block
+// other CI jobs while this evidence is being gathered.
+test("TEMP DIAGNOSTIC: which anchored pattern variant does Playwright actually match on this platform", async (t) => {
+  const root = makePlaywrightFixture({ "foo.spec.js": "target" });
+  try {
+    const relTarget = "playwright/tests/foo.spec.js";
+    const absTarget = path.resolve(root, "playwright/tests/foo.spec.js").split(path.sep).join("/");
+    let realAbsTarget = absTarget;
+    try { realAbsTarget = fs.realpathSync(path.resolve(root, "playwright/tests/foo.spec.js")).split(path.sep).join("/"); } catch { /* best effort */ }
+    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const variants = {
+      anchored_relative: `^${escape(relTarget)}$`,
+      anchored_absolute_resolve: `^${escape(absTarget)}$`,
+      anchored_absolute_realpath: `^${escape(realAbsTarget)}$`,
+      anchored_testdir_relative: `^tests/foo\\.spec\\.js$`,
+      unanchored_relative: escape(relTarget),
+    };
+    for (const [label, pattern] of Object.entries(variants)) {
+      const args = ["test", "--config=playwright.config.js", "--project=chromium", "--list", pattern];
+      const result = await runBoundedProcess(playwrightBinaryPath(), args, { cwd: root, timeoutMs: 30000, env: fixtureEnv() });
+      if (result.spawnError && process.platform === "win32") { t.skip("Windows EINVAL, see other tests"); return; }
+      console.log(`### DIAG[${label}] pattern=${JSON.stringify(pattern)} exitCode=${result.exitCode} selected="${result.stdout.text.includes("foo.spec.js")}" stdout=${JSON.stringify(result.stdout.text)} stderr=${JSON.stringify(result.stderr.text)}`);
+    }
+    assert.ok(true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function playwrightBinaryPath() {
+  return path.join(REAL_REPO_ROOT, "node_modules", ".bin", process.platform === "win32" ? "playwright.cmd" : "playwright");
+}
+
 // KNOWN, PRE-EXISTING, WINDOWS-SPECIFIC LIMITATION (discovered while writing
 // these tests, unrelated to the regex-collision fix they verify): Node.js
 // hardened child_process.spawn() to refuse spawning a .cmd/.bat file
