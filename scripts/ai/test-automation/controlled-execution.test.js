@@ -799,7 +799,30 @@ test("CYPRESS_SAFE_TARGET_PATH: accepts this repository's own real spec-naming c
 });
 
 test("CYPRESS_SAFE_TARGET_PATH: rejects every character with minimatch/extglob significance, including the ones #23G-C2's denylist missed", () => {
-  for (const bad of ["cypress/e2e/tests/a,b.cy.js", "cypress/e2e/tests/a*.cy.js", "cypress/e2e/tests/a?.cy.js", "cypress/e2e/tests/a[b].cy.js", "cypress/e2e/tests/a{b}.cy.js", "cypress/e2e/tests/a!(b).cy.js", "cypress/e2e/tests/a+b.cy.js", "cypress/e2e/tests/a@b.cy.js", "cypress/e2e/tests/a(b).cy.js", "cypress/e2e/tests/a|b.cy.js"]) {
+  // Each decoy isolates exactly ONE unsafe character (never bundled with
+  // another) so a mutation weakening the allowlist to admit any single one
+  // of them is independently caught here - a decoy combining several (e.g.
+  // the extglob form "a!(b)") would still be rejected by "(" or ")" alone
+  // even if "!" itself were mistakenly let back in, masking that specific
+  // regression (caught during #23G-C3's own mutation-testing pass: adding
+  // "!" alone back to the allowlist did not fail this test until isolated).
+  for (const bad of [
+    "cypress/e2e/tests/a,b.cy.js",
+    "cypress/e2e/tests/a*.cy.js",
+    "cypress/e2e/tests/a?.cy.js",
+    "cypress/e2e/tests/a[b.cy.js",
+    "cypress/e2e/tests/a]b.cy.js",
+    "cypress/e2e/tests/a{b.cy.js",
+    "cypress/e2e/tests/a}b.cy.js",
+    "cypress/e2e/tests/a!b.cy.js",
+    "cypress/e2e/tests/a!(b).cy.js",
+    "cypress/e2e/tests/a+b.cy.js",
+    "cypress/e2e/tests/a@b.cy.js",
+    "cypress/e2e/tests/a(b.cy.js",
+    "cypress/e2e/tests/a)b.cy.js",
+    "cypress/e2e/tests/a(b).cy.js",
+    "cypress/e2e/tests/a|b.cy.js",
+  ]) {
     assert.equal(CYPRESS_SAFE_TARGET_PATH.test(bad), false, bad);
   }
 });
