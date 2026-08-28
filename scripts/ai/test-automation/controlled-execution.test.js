@@ -395,13 +395,23 @@ test("runBoundedProcess: stderr is captured", async () => {
 });
 
 test("runBoundedProcess: stdout exceeding the byte bound is truncated, never grown unbounded", async () => {
-  const r = await runBoundedProcess(process.execPath, ["-e", `process.stdout.write("x".repeat(${MAX_STDOUT_BYTES + 50000})); process.exit(0)`], { cwd: process.cwd(), timeoutMs: 10000 });
+  // `fs.writeSync` (a blocking syscall) is used instead of
+  // `process.stdout.write()` + `process.exit()`: on POSIX platforms a
+  // pipe-backed stdout write is asynchronous, so calling `process.exit()`
+  // immediately afterward can terminate the child before the OS finishes
+  // flushing the pipe, truncating what the parent actually receives before
+  // this test's own oversized payload was even fully sent. `writeSync`
+  // blocks until the write completes, making the fixture itself
+  // deterministic across platforms (this bit the Linux CI runner while
+  // passing locally on Windows, where pipe writes are effectively
+  // synchronous).
+  const r = await runBoundedProcess(process.execPath, ["-e", `require("fs").writeSync(1, "x".repeat(${MAX_STDOUT_BYTES + 50000}))`], { cwd: process.cwd(), timeoutMs: 10000 });
   assert.equal(r.stdout.truncated, true);
   assert.ok(Buffer.byteLength(r.stdout.text, "utf8") <= MAX_STDOUT_BYTES);
 });
 
 test("runBoundedProcess: stderr exceeding the byte bound is truncated", async () => {
-  const r = await runBoundedProcess(process.execPath, ["-e", `process.stderr.write("y".repeat(${MAX_STDERR_BYTES + 50000})); process.exit(1)`], { cwd: process.cwd(), timeoutMs: 10000 });
+  const r = await runBoundedProcess(process.execPath, ["-e", `require("fs").writeSync(2, "y".repeat(${MAX_STDERR_BYTES + 50000}))`], { cwd: process.cwd(), timeoutMs: 10000 });
   assert.equal(r.stderr.truncated, true);
   assert.ok(Buffer.byteLength(r.stderr.text, "utf8") <= MAX_STDERR_BYTES);
 });
