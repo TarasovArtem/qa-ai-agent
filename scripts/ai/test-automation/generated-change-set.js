@@ -78,6 +78,16 @@ const { ERROR_CODES, err } = require("../generation/errors");
 const { isPlainObject, isValidId, collectUnknownKeyErrors } = require("../generation/primitives");
 const { LIMITS: GENERATION_LIMITS } = require("../generation/limits");
 const { validateAutomationPlan, OPERATIONS, isSafeRepoRelativePath, isCanonicalPlanPath } = require("../generation/automation-plan");
+// Roadmap #23D-C1 (closes 23D-R-1): repositoryEvidence bound parity with
+// this module's own real producible output - read-only reuse of the same
+// exported LIMITS object automation-plan-generator.js's own
+// validateRepositoryContextSnapshot() already derives its
+// MAX_REPOSITORY_EVIDENCE_ITEMS/MAX_EVIDENCE_CONTENT_LENGTH/
+// MAX_AGGREGATE_EVIDENCE_LENGTH from - never a separately-maintained
+// duplicate that could silently drift out of parity (the exact class of
+// gap #23D-R-1 found: this module's own context validator previously
+// enforced no bound at all).
+const { LIMITS: REPO_CONTEXT_LIMITS } = require("./automation-repository-context");
 
 const KIND = "GeneratedChangeSet";
 const SCHEMA_VERSION = 1;
@@ -94,6 +104,15 @@ const LIMITS = Object.freeze({
   MAX_PATH_LENGTH: GENERATION_LIMITS.SHORT_TEXT_MAX_LENGTH,
   MAX_FILE_CONTENT_LENGTH: 50000,
   MAX_TOTAL_CONTENT_LENGTH: 1000000,
+  // Roadmap #23D-C1 (closes 23D-R-1): +1 accounts for the single, always-
+  // present framework-config evidence entry automation-repository-
+  // context.js's own buildAutomationRepositoryContext() unconditionally
+  // prepends (never more than one, never zero for a successfully-built
+  // context) - identical derivation to automation-plan-generator.js's own
+  // MAX_REPOSITORY_EVIDENCE_ITEMS.
+  MAX_REPOSITORY_EVIDENCE_ITEMS: REPO_CONTEXT_LIMITS.MAX_RELEVANT_FILES + 1,
+  MAX_EVIDENCE_CONTENT_LENGTH: REPO_CONTEXT_LIMITS.MAX_FILE_CONTENT_LENGTH,
+  MAX_AGGREGATE_EVIDENCE_LENGTH: REPO_CONTEXT_LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH,
 });
 
 const FRAMEWORK_PATH_PREFIX = Object.freeze({ cypress: "cypress/", playwright: "playwright/" });
@@ -294,13 +313,55 @@ function validateRepositoryContextSnapshot(context, path, errors, { expectedProj
     errors.push(err(`${path}.repositoryEvidence`, ERROR_CODES.MISSING_FIELD, `${path}.repositoryEvidence must be an array`));
     return false;
   }
+  // Roadmap #23D-C1 (closes 23D-R-1): array-length bound checked BEFORE any
+  // per-item content is ever read - a grossly oversized array is rejected
+  // in O(1) without ever touching a single item's content, matching
+  // automation-plan-generator.js's own "fail fast before doing O(n) work"
+  // structure for the identical attack shape (Roadmap #23C-R's forged
+  // 25-item x 5MB-each context).
+  if (context.repositoryEvidence.length > LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS) {
+    errors.push(err(`${path}.repositoryEvidence`, ERROR_CODES.INVALID_VALUE, `${path}.repositoryEvidence exceeds the maximum of ${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS} items`));
+    return false;
+  }
+  // Roadmap #23D-C1 (closes 23D-R-2): evidenceRef.location is this
+  // context's identity key for CREATE/MODIFY existence and
+  // baseContentDigest lookups (see evidenceByPath in
+  // buildGeneratedChangeSet()/generate-change-set.js) - a repeated
+  // location is ambiguous (which content is authoritative?) and is
+  // rejected outright, fail-closed. Never first-write-wins, never
+  // last-write-wins: identical rejection regardless of whether the
+  // duplicate pair has the same or different content, and regardless of
+  // array order (the same unordered Set-membership check either way).
+  const seenLocations = new Set();
+  // Roadmap #23D-C1 (closes 23D-R-1): aggregate content length,
+  // accumulated only from items whose own shape/per-item-bound/duplicate
+  // checks already passed - mirrors automation-plan-generator.js's own
+  // "per-item bound first, aggregate bound second" structure.
+  let aggregateLength = 0;
   context.repositoryEvidence.forEach((entry, i) => {
     const entryPath = `${path}.repositoryEvidence[${i}]`;
     if (!isPlainRecord(entry) || !isPlainRecord(entry.evidenceRef) || typeof entry.evidenceRef.location !== "string" || typeof entry.content !== "string") {
       errors.push(err(entryPath, ERROR_CODES.INVALID_TYPE, `${entryPath} must be {evidenceRef:{location:string,...}, content:string, ...}`));
       valid = false;
+      return;
     }
+    if (entry.content.length > LIMITS.MAX_EVIDENCE_CONTENT_LENGTH) {
+      errors.push(err(`${entryPath}.content`, ERROR_CODES.INVALID_VALUE, `${entryPath}.content exceeds the maximum of ${LIMITS.MAX_EVIDENCE_CONTENT_LENGTH} characters`));
+      valid = false;
+      return;
+    }
+    if (seenLocations.has(entry.evidenceRef.location)) {
+      errors.push(err(`${entryPath}.evidenceRef.location`, ERROR_CODES.DUPLICATE_ID, `${entryPath}.evidenceRef.location is a duplicate within repositoryEvidence`));
+      valid = false;
+      return;
+    }
+    seenLocations.add(entry.evidenceRef.location);
+    aggregateLength += entry.content.length;
   });
+  if (aggregateLength > LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH) {
+    errors.push(err(`${path}.repositoryEvidence`, ERROR_CODES.INVALID_VALUE, `${path}.repositoryEvidence aggregate content exceeds the maximum of ${LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH} characters`));
+    valid = false;
+  }
   return valid;
 }
 
