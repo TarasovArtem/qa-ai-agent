@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { generateChangeSet, LIMITS, buildPositiveProjection, validateProviderChangesShape, deriveChangesWithBaseDigests } = require("./generate-change-set");
-const { validateGeneratedChangeSet, LABEL_FILE_CONTENT, computeDigest } = require("./generated-change-set");
+const { validateGeneratedChangeSet, LABEL_FILE_CONTENT, computeDigest, LIMITS: CONTEXT_LIMITS } = require("./generated-change-set");
 
 function validPlan(overrides = {}) {
   return {
@@ -363,6 +363,59 @@ test("deriveChangesWithBaseDigests: MODIFY with no matching evidence yields null
   const contextSnapshot = { repositoryEvidence: [] };
   const derived = deriveChangesWithBaseDigests([{ operation: "MODIFY", path: "cypress/e2e/tests/x.cy.js", content: "y" }], contextSnapshot);
   assert.equal(derived[0].baseContentDigest, null);
+});
+
+// =============================================================================
+// Roadmap #23D-C1: invalid (oversized/ambiguous) repositoryContext is a
+// local input error, never provider-correctable - closes 23D-R-1/23D-R-2
+// at the generator boundary (bound-parity/duplicate-location rejection
+// itself lives in generated-change-set.js's validateRepositoryContextSnapshot,
+// reused here; these tests prove the generator correctly treats that
+// rejection as a zero-provider-call local failure, never an invalid-
+// provider-response retry).
+// =============================================================================
+
+test("oversized repositoryEvidence count makes zero provider calls (closes 23D-R-1 at the generator boundary)", async () => {
+  const evidence = Array.from({ length: CONTEXT_LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1 }, (_, i) => ({ evidenceRef: { location: `cypress/e2e/f${i}.cy.js` }, content: "x" }));
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateChangeSet({ automationPlan: validPlan(), repositoryContext: validContext({ repositoryEvidence: evidence }), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.providerAttempts, 0);
+});
+
+test("oversized per-item evidence content makes zero provider calls (closes 23D-R-1 at the generator boundary)", async () => {
+  const context = validContext({ repositoryEvidence: [{ evidenceRef: { location: "cypress/e2e/f0.cy.js" }, content: "x".repeat(CONTEXT_LIMITS.MAX_EVIDENCE_CONTENT_LENGTH + 1) }] });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateChangeSet({ automationPlan: validPlan(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.providerAttempts, 0);
+});
+
+test("oversized aggregate evidence content makes zero provider calls (closes 23D-R-1 at the generator boundary)", async () => {
+  const itemCount = CONTEXT_LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH / CONTEXT_LIMITS.MAX_EVIDENCE_CONTENT_LENGTH;
+  const repositoryEvidence = Array.from({ length: itemCount }, (_, i) => ({ evidenceRef: { location: `cypress/e2e/f${i}.cy.js` }, content: "x".repeat(CONTEXT_LIMITS.MAX_EVIDENCE_CONTENT_LENGTH) }));
+  repositoryEvidence.push({ evidenceRef: { location: "cypress/e2e/extra.cy.js" }, content: "z" });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateChangeSet({ automationPlan: validPlan(), repositoryContext: validContext({ repositoryEvidence }), provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+});
+
+test("duplicate evidenceRef.location makes zero provider calls (closes 23D-R-2 at the generator boundary)", async () => {
+  const plan = modifyPlan();
+  const context = validContext({
+    repositoryEvidence: [
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "FIRST" },
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "SECOND" },
+    ],
+  });
+  const { provider, getCalls } = fakeProvider(["should not be called"]);
+  const result = await generateChangeSet({ automationPlan: plan, repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(getCalls(), 0);
+  assert.equal(result.providerAttempts, 0);
 });
 
 // --- side effects / read-only ---------------------------------------------------

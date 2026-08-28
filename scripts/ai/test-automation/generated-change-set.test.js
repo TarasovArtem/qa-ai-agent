@@ -550,6 +550,188 @@ test("aggregate content exactly at MAX_TOTAL_CONTENT_LENGTH is accepted; one cha
   assert.ok(overResult.errors.some((e) => e.message.includes("total")));
 });
 
+// =============================================================================
+// Roadmap #23D-C1: repositoryEvidence bound parity (closes 23D-R-1) and
+// duplicate evidenceRef.location fail-closed rejection (closes 23D-R-2)
+// =============================================================================
+
+function evidenceArray(count, contentPerItem = "x") {
+  return Array.from({ length: count }, (_, i) => ({ evidenceRef: { location: `cypress/e2e/f${i}.cy.js` }, content: contentPerItem }));
+}
+
+// --- array-length bound (LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS) -------------
+
+test(`exactly LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS - 1 (${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS - 1}) evidence items are accepted`, () => {
+  const context = validContext({ repositoryEvidence: evidenceArray(LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS - 1) });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test(`exactly LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS (${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS}) evidence items are accepted`, () => {
+  const context = validContext({ repositoryEvidence: evidenceArray(LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS) });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test(`LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1 (${LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1}) evidence items are rejected (closes 23D-R-1)`, () => {
+  const context = validContext({ repositoryEvidence: evidenceArray(LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1) });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.message.includes("items")));
+});
+
+test("a grossly oversized evidence count (10x the maximum) is rejected fast, and each item's content getter is read AT MOST once (TOCTOU-safe snapshot, never re-read during validation)", () => {
+  const reads = new Map();
+  const evidence = Array.from({ length: LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS * 10 }, (_, i) => {
+    const entry = { evidenceRef: { location: `cypress/e2e/f${i}.cy.js` } };
+    Object.defineProperty(entry, "content", {
+      enumerable: true,
+      get() {
+        reads.set(i, (reads.get(i) || 0) + 1);
+        return "x";
+      },
+    });
+    return entry;
+  });
+  const context = validContext({ repositoryEvidence: evidence });
+  const start = Date.now();
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, false);
+  assert.ok(Date.now() - start < 500, "rejection must be fast - the snapshot pass reads each property reference once, never re-scans string content");
+  for (const count of reads.values()) {
+    assert.ok(count <= 1, "each content getter must be read at most once (snapshot-once trust boundary), never re-read by the array-length bound check");
+  }
+});
+
+// --- per-item content bound (LIMITS.MAX_EVIDENCE_CONTENT_LENGTH) -----------
+
+test(`a single evidence item's content exactly at LIMITS.MAX_EVIDENCE_CONTENT_LENGTH (${LIMITS.MAX_EVIDENCE_CONTENT_LENGTH}) is accepted`, () => {
+  const context = validContext({ repositoryEvidence: [{ evidenceRef: { location: "cypress/e2e/f0.cy.js" }, content: "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH) }] });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test(`a single evidence item's content one char over LIMITS.MAX_EVIDENCE_CONTENT_LENGTH (${LIMITS.MAX_EVIDENCE_CONTENT_LENGTH + 1}) is rejected (closes 23D-R-1)`, () => {
+  const context = validContext({ repositoryEvidence: [{ evidenceRef: { location: "cypress/e2e/f0.cy.js" }, content: "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH + 1) }] });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path.includes("content") && e.message.includes("8000")));
+});
+
+// --- aggregate content bound (LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH) --------
+//
+// Split across multiple items (never exceeding the per-item bound on any
+// single one) so the aggregate bound - not the per-item bound - is what's
+// actually being exercised at its own exact boundary.
+
+test(`aggregate evidence content exactly at LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH (${LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH}) is accepted`, () => {
+  const itemCount = LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH / LIMITS.MAX_EVIDENCE_CONTENT_LENGTH;
+  assert.ok(Number.isInteger(itemCount) && itemCount <= LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS, "test assumption: aggregate bound divides evenly into per-item-bound-sized chunks within the item-count bound");
+  const repositoryEvidence = evidenceArray(itemCount, "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH));
+  const context = validContext({ repositoryEvidence });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test("aggregate evidence content one char over LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH is rejected (closes 23D-R-1), zero-content-loss from the small extra item", () => {
+  const itemCount = LIMITS.MAX_AGGREGATE_EVIDENCE_LENGTH / LIMITS.MAX_EVIDENCE_CONTENT_LENGTH;
+  const repositoryEvidence = evidenceArray(itemCount, "x".repeat(LIMITS.MAX_EVIDENCE_CONTENT_LENGTH));
+  repositoryEvidence.push({ evidenceRef: { location: "cypress/e2e/extra.cy.js" }, content: "z" });
+  const context = validContext({ repositoryEvidence });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.message.includes("aggregate")));
+});
+
+// --- 25x5MB extreme case (Roadmap #23C-R shape, closes 23D-R-1's exact
+// reproduction from the independent review) --------------------------------
+
+test("a forged 25-item x 5MB-each context is rejected locally, fast, without ever touching per-item content bounds (array-length bound fires first)", () => {
+  const bigContent = "A".repeat(5 * 1024 * 1024);
+  const evidence = Array.from({ length: 25 }, (_, i) => ({ evidenceRef: { location: `cypress/e2e/f${i}.cy.js` }, content: bigContent }));
+  const context = validContext({ repositoryEvidence: evidence });
+  const start = Date.now();
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, false);
+  assert.ok(Date.now() - start < 500, "rejection must be fast - no full-context digesting before the bound check");
+});
+
+// --- duplicate evidenceRef.location fail-closed (closes 23D-R-2) -----------
+
+test("duplicate evidenceRef.location with identical content is rejected (never silently canonicalized)", () => {
+  const plan = existingModifyPlan();
+  const context = validContext({
+    repositoryEvidence: [
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "same content" },
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "same content" },
+    ],
+  });
+  const digest = computeDigest(LABEL_FILE_CONTENT, "same content");
+  const result = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes: [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: digest, content: "new" }] });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === "DUPLICATE_ID"));
+});
+
+test("duplicate evidenceRef.location with different content is rejected regardless of which digest the caller targets - no first-write-wins, no last-write-wins", () => {
+  const plan = existingModifyPlan();
+  const digestFirst = computeDigest(LABEL_FILE_CONTENT, "FIRST_VERSION");
+  const digestSecond = computeDigest(LABEL_FILE_CONTENT, "SECOND_VERSION");
+  const context = validContext({
+    repositoryEvidence: [
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "FIRST_VERSION" },
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "SECOND_VERSION" },
+    ],
+  });
+  const resultFirst = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes: [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: digestFirst, content: "new" }] });
+  const resultSecond = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes: [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: digestSecond, content: "new" }] });
+  assert.equal(resultFirst.ok, false, "must reject regardless of which sibling digest the caller happens to target");
+  assert.equal(resultSecond.ok, false, "must reject even for the digest that a naive last-write-wins Map would have accepted");
+});
+
+test("duplicate location rejection is order-independent (reversed array order rejects identically)", () => {
+  const plan = existingModifyPlan();
+  const contextAB = validContext({
+    repositoryEvidence: [
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "A" },
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "B" },
+    ],
+  });
+  const contextBA = validContext({
+    repositoryEvidence: [
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "B" },
+      { evidenceRef: { location: "cypress/e2e/tests/existing_spec.cy.js" }, content: "A" },
+    ],
+  });
+  const digestA = computeDigest(LABEL_FILE_CONTENT, "A");
+  const resultAB = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: contextAB, changes: [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: digestA, content: "new" }] });
+  const resultBA = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: contextBA, changes: [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: digestA, content: "new" }] });
+  assert.equal(resultAB.ok, false);
+  assert.equal(resultBA.ok, false);
+});
+
+test("distinct locations (no duplicate) are unaffected by the duplicate-location check", () => {
+  const context = validContext({
+    repositoryEvidence: [
+      { evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" },
+      { evidenceRef: { location: "cypress/e2e/tests/other.cy.js" }, content: "describe('other', () => {});" },
+    ],
+  });
+  const result = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes: [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }] });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+// --- validateGeneratedChangeSet independently enforces the same bounds -----
+
+test("validateGeneratedChangeSet rejects an already-valid GeneratedChangeSet when revalidated against a now-oversized context", () => {
+  const context = validContext();
+  const changes = [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "x" }];
+  const built = buildGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, changes });
+  assert.equal(built.ok, true);
+  const oversizedContext = validContext({ repositoryEvidence: evidenceArray(LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1) });
+  const check = validateGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: oversizedContext, generatedChangeSet: built.generatedChangeSet });
+  assert.equal(check.ok, false);
+});
+
 // --- production source hygiene -------------------------------------------------
 
 test("production module contains no filesystem/child_process/network code", () => {
