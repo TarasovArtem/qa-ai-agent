@@ -15,14 +15,28 @@
  *     NOT prove syntax validity, test correctness, runtime safety, or any
  *     execution/Git/provider/commit/push/merge authorization. This module
  *     establishes its own independent execution gate.
- *   - GENERATED CODE IS UNTRUSTED: the files this module may cause a test
- *     runner to load can, in principle, execute arbitrary JavaScript with
- *     the permissions of that runner process. The safety boundary this
- *     module provides is: (a) exactly which reviewed/applied bytes are
- *     eligible, (b) which trusted, repository-owned runner may be invoked,
- *     and (c) under what resource bounds - it is NOT a complete OS sandbox.
- *     Do not describe this as "sandboxed execution" anywhere - it is
- *     controlled, bounded, allowlisted child-process execution.
+ *   - TWO-LAYER AUTHORITY MODEL (Roadmap #23G-C1, closes 23G-RV-6 - read
+ *     this distinction carefully, it is the single most important fact in
+ *     this file): the ORCHESTRATOR (this module's own code, up to and
+ *     including the `spawn()` call) has NO shell authority, NO Git/GitHub
+ *     authority, NO network authority, NO provider authority, and NO
+ *     repository-source-write authority. But the CODE THIS MODULE LAUNCHES
+ *     - any Node-side test/support/plugin file the selected framework loads
+ *     (a Playwright test body always; a Cypress support/plugin file always;
+ *     see EXECUTION_TARGET_CLASSIFIERS below for exactly which applied
+ *     paths this module will ever pass to the runner as a direct target) -
+ *     runs as ordinary Node.js code with the FULL filesystem-read,
+ *     filesystem-write, network, and `child_process` (hence, transitively,
+ *     shell/git/gh-invocation) authority of the OS process it runs in,
+ *     bounded only by whatever environment this module chooses to grant it
+ *     (see EXECUTION ENVIRONMENT below). GENERATED CODE IS UNTRUSTED: even
+ *     though #23E already required a human to review it, this module does
+ *     NOT provide an OS sandbox, and never describes itself as one -
+ *     "controlled execution" means (a) exactly which reviewed/applied bytes
+ *     are eligible, (b) which trusted, repository-owned runner may be
+ *     invoked, (c) under what resource bounds, and (d) under what reduced
+ *     environment - it does NOT mean the launched code's own capabilities
+ *     are contained.
  *   - EXECUTION-TIME APPLIED-STATE REVALIDATION: files may change between
  *     #23F's own application and this module's later execution attempt.
  *     Before ever spawning a process, every `appliedChangeSetRecord.changes[]`
@@ -32,16 +46,47 @@
  *     discipline #23F itself established (Roadmap #23F-C1), reusing its
  *     own exported, already-reviewed primitives rather than a second,
  *     weaker reimplementation.
- *   - EXECUTION FRAMEWORK IS A CLOSED VOCABULARY: the framework and the
- *     exact command invoked are derived ONLY from an already-validated
- *     AutomationPlan (via a fixed, repository-owned {framework -> npm
- *     script} mapping) - never from a caller-supplied free-form framework
- *     name, never from `AutomationPlan.validationPlan`'s own descriptive
- *     text (which is human-readable prose, never a shell command), and
- *     never from any GeneratedChangeSet/provider/execution-failure content.
+ *   - EXECUTION IS TARGET-SCOPED (Roadmap #23G-C1, closes 23G-RV-2): this
+ *     module never runs "the whole suite". The exact set of files passed to
+ *     the runner as direct targets is derived ONLY from the already
+ *     execution-time-revalidated `appliedChangeSetRecord.changes[]` paths,
+ *     filtered through a closed, framework-specific, repository-convention
+ *     classifier (EXECUTION_TARGET_CLASSIFIERS) that recognizes only real
+ *     executable spec-file paths for that framework - never an unrelated
+ *     pre-existing spec, and never a caller-supplied path. A changeset with
+ *     zero recognized executable targets (e.g. one that only touches a
+ *     support/helper file) is rejected before any spawn - it never silently
+ *     falls back to running everything.
+ *   - EXECUTION FRAMEWORK IS A CLOSED VOCABULARY: the framework is derived
+ *     ONLY from an already-validated AutomationPlan (via a fixed,
+ *     repository-owned {framework -> local CLI binary} mapping) - never
+ *     from a caller-supplied free-form framework name, never from
+ *     `AutomationPlan.validationPlan`'s own descriptive text (which is
+ *     human-readable prose, never a shell command), and never from any
+ *     GeneratedChangeSet/provider/execution-failure content. The runner
+ *     binary itself is resolved directly from this repository's own
+ *     `node_modules/.bin/` (never via a package.json script whose own
+ *     baked-in arguments could otherwise ambiguously interact with a
+ *     caller-appended target flag) - see resolveLocalBinary() below.
  *   - NO SHELL: every child process is spawned with `shell: false` and a
  *     fixed executable + argument array - no caller/provider-controlled
- *     text is ever concatenated into command syntax.
+ *     text is ever concatenated into command syntax. This applies to the
+ *     ORCHESTRATOR's own spawn call only - see TWO-LAYER AUTHORITY MODEL.
+ *   - EXECUTION ENVIRONMENT IS A CLOSED ALLOWLIST (Roadmap #23G-C1, closes
+ *     23G-RV-4): the child process is never given this module's own full
+ *     `process.env`. Only a small, explicitly justified, OS/runtime-level
+ *     allowlist (PATH-like/temp/home/profile/CI variables the runner and
+ *     browser genuinely need to start) is copied - see ENV_ALLOWLIST below.
+ *     Every application-level secret this repository itself defines
+ *     (`AI_API_KEY`, `GITHUB_TOKEN`, etc. - see scripts/ai/config.js and
+ *     scripts/ai/collect-history.js) is excluded by construction, because
+ *     the allowlist is POSITIVE (only listed names are ever copied), not a
+ *     denylist of known secret names. This is defense-in-depth alongside
+ *     the provider-side redaction regenerate-change-set.js itself applies -
+ *     neither is a complete guarantee against a launched process choosing
+ *     to read and exfiltrate one of the few variables it IS given (e.g.
+ *     PATH is not secret, but nothing stops generated code from reading
+ *     files it can already reach given its own full filesystem authority).
  *   - BOUNDED, NOT UNBOUNDED: every execution has a hard timeout and hard
  *     stdout/stderr byte bounds - the process is terminated and the result
  *     reported as TIMED_OUT/truncated rather than allowed to run or
@@ -58,22 +103,33 @@
  * OUT OF SCOPE FOR #23G v1 EXECUTION (deliberately, not an oversight):
  *   - No provider/AI call of any kind (see regenerate-change-set.js for the
  *     separate, provider-backed regeneration path - never this module).
- *   - No Git read or write of any kind, no GitHub call of any kind.
+ *   - No Git read or write of any kind, no GitHub call of any kind, BY THIS
+ *     MODULE'S OWN ORCHESTRATOR CODE - see TWO-LAYER AUTHORITY MODEL above
+ *     for what the code it launches may still be able to do on its own.
  *   - No standalone execution of generated source (no `require`/`import`/
  *     `eval`/`new Function`/`vm.runIn...` of a generated path) - only a
- *     fixed, repository-owned test-framework command may ever run, exactly
- *     as an ordinary `npm run <script>` invocation already would.
- *   - No arbitrary command execution of any kind - the command is selected
- *     from a closed, hardcoded map, never caller-supplied text.
- *   - No repository source write authority (child test frameworks may
- *     write their own runtime artifacts - screenshots/videos/reports -
- *     according to their own EXISTING, unmodified configuration; this
- *     module itself writes nothing to repository source).
+ *     fixed, repository-owned test-framework binary may ever be spawned,
+ *     targeted only at the exact revalidated applied file(s).
+ *   - No arbitrary command execution of any kind - the runner and its base
+ *     arguments are selected from a closed, hardcoded map, never
+ *     caller-supplied text; only the already-validated target path(s) vary.
+ *   - No repository source write authority BY THIS MODULE - child test
+ *     frameworks may still write their own runtime artifacts
+ *     (screenshots/videos/reports) per their own EXISTING, unmodified
+ *     configuration, and (per TWO-LAYER AUTHORITY MODEL) generated Node-side
+ *     code loaded by the runner has its own, separate, full filesystem
+ *     authority this module does not and cannot constrain beyond the
+ *     environment it is launched with.
+ *   - No OS sandbox, no process-tree containment beyond best-effort direct-
+ *     child termination on timeout, no secret-detection guarantee (the
+ *     environment allowlist and provider-side redaction are both
+ *     best-effort defense-in-depth, never a claimed complete DLP control).
  */
 
 "use strict";
 
 const childProcess = require("node:child_process");
+const path = require("node:path");
 
 const { ERROR_CODES, err } = require("../generation/errors");
 const { isValidId } = require("../generation/primitives");
@@ -99,15 +155,154 @@ const {
   buildAutomationExecutionRecord,
 } = require("./automation-execution-record");
 
-// Roadmap #23G Section 12/20/43: the ONLY execution authority this module
-// grants - a fixed, repository-owned {framework -> npm script} mapping,
-// verified directly against this repository's own real package.json
-// scripts (never invented, never speculative). Adding a framework/command
-// here is itself a reviewed source change, never a runtime decision.
-const FRAMEWORK_COMMANDS = Object.freeze({
-  cypress: Object.freeze({ npmScript: "chrome" }),
-  playwright: Object.freeze({ npmScript: "test:e2e:playwright" }),
+// Roadmap #23G-C1 Section 12: the closed vocabulary of local runner
+// binaries - each resolved directly from this repository's own
+// `node_modules/.bin/`, never via PATH and never via a package.json script
+// (whose own baked-in `--spec 'cypress/e2e/**'`/similar arguments could
+// otherwise ambiguously interact with a caller-appended target flag -
+// closes 23G-RV-2 at the command-construction level, not merely at the
+// target-selection level). Adding a framework/binary here is itself a
+// reviewed source change, never a runtime decision.
+const FRAMEWORK_BINARIES = Object.freeze({
+  cypress: "cypress",
+  playwright: "playwright",
 });
+
+// Roadmap #23G-C1 (closes 23G-RV-2): which already execution-time-
+// revalidated applied paths are ever passed to the runner as a direct
+// target, derived from this repository's OWN real, established test-file
+// conventions (verified directly - see cypress.config.js's implicit
+// default spec pattern and the repository's actual cypress/e2e/tests/*.cy.js
+// files; and playwright.config.js's locked `testDir: "./playwright"`
+// contract from Roadmap #21C-C1 plus this repository's actual
+// playwright/tests/*.spec.js file) - never a guess, never a caller-supplied
+// pattern. A support/plugin/config/fixture file that happens to live under
+// the same framework directory intentionally does NOT match either
+// classifier below, and is therefore never a direct runner target (it may
+// still be naturally imported/loaded by a matching spec file, exactly as
+// it would be if a human ran the suite locally).
+const EXECUTION_TARGET_CLASSIFIERS = Object.freeze({
+  cypress: (relPath) => relPath.startsWith("cypress/e2e/") && relPath.endsWith(".cy.js"),
+  playwright: (relPath) => relPath.startsWith("playwright/") && relPath.endsWith(".spec.js"),
+});
+
+// Roadmap #23G-C1 (closes 23G-RV-4A): a POSITIVE allowlist only - nothing
+// not explicitly named here is ever copied into the child's environment,
+// regardless of what this process's own env otherwise contains. This
+// necessarily and by construction excludes every application-level secret
+// this repository defines (AI_API_KEY/AI_PROVIDER/AI_MODEL - see
+// scripts/ai/config.js; GITHUB_TOKEN - see scripts/ai/collect-history.js),
+// since none of those names appear below. Matched case-insensitively when
+// copying (Windows environment-block key casing is inconsistent across
+// hosts - e.g. "Path" vs "PATH" - while POSIX env is case-sensitive and
+// canonically uppercase; a case-insensitive match is therefore strictly
+// more permissive than exact-case matching and never less safe, since the
+// allowlist is still a fixed, closed set of NAMES). Every entry exists for
+// a concrete, documented reason a locally-installed Cypress/Playwright/
+// Chromium launch actually needs:
+//   PATH        - resolving `node` itself from the npm-generated .bin shim
+//                 (a Windows .cmd shim / POSIX shebang script both need
+//                 this), and any OS-level browser-discovery Cypress/
+//                 Playwright perform internally.
+//   SystemRoot,
+//   windir      - required by many Win32 APIs/child processes on Windows;
+//                 commonly needed by Node/Chrome internals even when not
+//                 obviously so.
+//   TEMP, TMP   - Cypress/Playwright/Chromium all write scratch/profile
+//                 data to the OS temp directory.
+//   HOME,
+//   USERPROFILE - some npm/Node/Chrome internals resolve caches or profile
+//                 defaults relative to the user home directory.
+//   APPDATA,
+//   LOCALAPPDATA - Chrome/Edge profile and cache locations on Windows.
+//   CI          - a non-secret boolean-ish flag; Cypress/Playwright both
+//                 branch minor behavior (report verbosity, auto-open) on
+//                 its presence, and it carries no application secret.
+const ENV_ALLOWLIST = Object.freeze([
+  "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "CI",
+]);
+
+// Roadmap #23G-C1 (closes 23G-RV-4A): builds a NEW, minimal environment
+// object from `sourceEnv` - only names on ENV_ALLOWLIST (matched
+// case-insensitively) are ever copied, each under its ORIGINAL key casing
+// and value. `sourceEnv` is read via `Object.keys`/own-property access only
+// (never trusts a caller-supplied object's own iteration/getter behavior
+// beyond that).
+function buildExecutionEnvironment(sourceEnv) {
+  const result = {};
+  if (typeof sourceEnv !== "object" || sourceEnv === null) return result;
+  for (const key of Object.keys(sourceEnv)) {
+    if (ENV_ALLOWLIST.includes(key.toUpperCase())) {
+      result[key] = sourceEnv[key];
+    }
+  }
+  return result;
+}
+
+// Roadmap #23G-C1 Section 13: `shell:false` always; resolves a runner
+// binary directly from THIS repository's own `node_modules/.bin/` (never
+// PATH, never a package.json script) - a fixed, repository-root-relative,
+// platform-derived (never caller-derived) path. On Windows, npm generates a
+// `.cmd` shim there (Node's non-shell spawn cannot resolve an extensionless
+// POSIX shebang script via PATHEXT the way a real shell would); on POSIX,
+// the extensionless shebang script itself is directly executable.
+function resolveLocalBinary(realRoot, binaryName) {
+  const ext = process.platform === "win32" ? ".cmd" : "";
+  return path.join(realRoot, "node_modules", ".bin", `${binaryName}${ext}`);
+}
+
+// Roadmap #23G-C1 (closes 23G-RV-2): derives the exact, ordered list of
+// executable target paths for `framework` from `changes` (the ALREADY
+// execution-time-revalidated `appliedChangeSetRecord.changes[]` array) -
+// never from any other source. A path that does not match the framework's
+// own EXECUTION_TARGET_CLASSIFIERS entry (e.g. a support/helper/config
+// file) is silently excluded from the returned target list - it is not an
+// error for a changeset to also touch such a file, only for a changeset to
+// contain ZERO recognized targets (checked by this function's caller).
+function deriveExecutionTargets(framework, changes) {
+  const classifier = EXECUTION_TARGET_CLASSIFIERS[framework];
+  if (!classifier) return [];
+  return changes.filter((change) => classifier(change.path)).map((change) => change.path);
+}
+
+// Roadmap #23G-C1 (closes 23G-RV-2): the SOLE command-selection function -
+// takes only an already-validated framework enum value, the resolved real
+// repository root, and the already-derived, already-revalidated target path
+// list, and returns a fixed executable + argument array whose ONLY variable
+// component is that exact target list. Never accepts or interpolates any
+// caller/provider-supplied string into the returned command.
+function selectExecutionCommand(framework, realRoot, targets) {
+  if (!FRAMEWORK_BINARIES[framework]) return { ok: false };
+  if (!Array.isArray(targets) || targets.length === 0) return { ok: false, noTargets: true };
+
+  const executable = resolveLocalBinary(realRoot, FRAMEWORK_BINARIES[framework]);
+  if (framework === "cypress") {
+    return {
+      ok: true,
+      executable,
+      // Cypress's own documented multi-spec syntax is a single
+      // comma-joined --spec value - still exactly ONE argv entry, so this
+      // remains a plain data value passed to spawn() with shell:false,
+      // never a concatenated shell command.
+      args: ["run", "--headless", "--browser", "chrome", "--spec", targets.join(",")],
+      // Bounded, human-readable evidence string only - never re-parsed or
+      // re-executed from this text; the actual argv array above is what
+      // spawn() receives. A short count-only summary keeps this comfortably
+      // within automation-execution-record.js's own MAX_COMMAND_LENGTH
+      // regardless of how many/how long the real target paths are.
+      commandLabel: `cypress run (${targets.length} target${targets.length === 1 ? "" : "s"})`,
+    };
+  }
+  // playwright: positional file arguments are natively supported and
+  // scope the run to exactly those files - each target is its own argv
+  // entry, never joined/concatenated.
+  return {
+    ok: true,
+    executable,
+    args: ["test", "--config=playwright.config.js", "--project=chromium", ...targets],
+    commandLabel: `playwright test (${targets.length} target${targets.length === 1 ? "" : "s"})`,
+  };
+}
 
 // Roadmap #23G Section 24/26: hard, non-caller-expandable bounds. A caller
 // MAY supply a smaller timeout (never a larger one) - see
@@ -119,32 +314,6 @@ const MAX_STDERR_BYTES = 200000;
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-// Roadmap #23G Section 13: `shell:false` always; on Windows, `npm` is a
-// `.cmd` shim that Node's non-shell spawn cannot resolve via PATHEXT the
-// way a real shell would - this is a fixed, platform-derived (never
-// caller-derived) executable name selection, not a caller/provider choice.
-function resolveNpmExecutable() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
-}
-
-// Roadmap #23G Section 12/20: the SOLE command-selection function - takes
-// only an already-validated framework enum value, returns a fixed
-// executable + argument array. Never accepts or interpolates any
-// caller/provider-supplied string into the returned command.
-function selectExecutionCommand(framework) {
-  const mapping = FRAMEWORK_COMMANDS[framework];
-  if (!mapping) return { ok: false };
-  return {
-    ok: true,
-    executable: resolveNpmExecutable(),
-    args: ["run", mapping.npmScript],
-    // Bounded, human-readable evidence string only - never re-parsed or
-    // re-executed from this text; the actual argv array above is what
-    // spawn() receives.
-    commandLabel: `npm run ${mapping.npmScript}`,
-  };
 }
 
 // Roadmap #23G Section 24: a caller MAY request a smaller timeout than the
@@ -187,12 +356,20 @@ function boundOutput(buffer, maxBytes) {
  * Returns `{ exitCode, timedOut, stdout: {text,truncated}, stderr:
  * {text,truncated}, spawnError }` - `spawnError` is a bounded boolean, the
  * raw underlying OS error is never included.
+ *
+ * `env`, when supplied, REPLACES (never merges with) the child's
+ * environment - the real orchestrator below always supplies the closed
+ * buildExecutionEnvironment() allowlist output, never this module's own
+ * full `process.env` (Roadmap #23G-C1, closes 23G-RV-4A). When omitted
+ * (e.g. by a direct unit test), Node's own default applies.
  */
-function runBoundedProcess(executable, args, { cwd, timeoutMs }) {
+function runBoundedProcess(executable, args, { cwd, timeoutMs, env }) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = childProcess.spawn(executable, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+      const spawnOptions = { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] };
+      if (env !== undefined) spawnOptions.env = env;
+      child = childProcess.spawn(executable, args, spawnOptions);
     } catch {
       resolve({ exitCode: null, timedOut: false, stdout: { text: "", truncated: false }, stderr: { text: "", truncated: false }, spawnError: true });
       return;
@@ -402,16 +579,28 @@ async function executeAppliedChangeSet(input) {
     return { ok: false, errors: [err("$.appliedChangeSetRecord.changes", ERROR_CODES.INVARIANT_VIOLATION, `applied state no longer matches the actual filesystem (${revalidation.reason})`)], automationExecutionRecord: null };
   }
 
-  // 6. Framework/command selection - closed vocabulary only.
-  const selected = selectExecutionCommand(planSnapshot.framework);
+  // 6. Target derivation - Roadmap #23G-C1, closes 23G-RV-2. Derived ONLY
+  // from the already execution-time-revalidated applied paths, filtered
+  // through the framework's own closed classifier. Zero executable targets
+  // is a precondition rejection, never a silent whole-suite fallback.
+  const targets = deriveExecutionTargets(planSnapshot.framework, recordSnapshot.changes);
+  if (targets.length === 0) {
+    return { ok: false, errors: [err("$.appliedChangeSetRecord.changes", ERROR_CODES.INVARIANT_VIOLATION, "no applied change matches a recognized executable test-file path for this framework (NO_EXECUTABLE_TEST_TARGET)")], automationExecutionRecord: null };
+  }
+
+  // 7. Framework/command selection - closed vocabulary only, targeted only
+  // at the exact paths derived above.
+  const selected = selectExecutionCommand(planSnapshot.framework, rootResult.realRoot, targets);
   if (!selected.ok) {
     return { ok: false, errors: [err("$.automationPlan.framework", ERROR_CODES.INVALID_ENUM, `no execution command is mapped for framework "${planSnapshot.framework}"`)], automationExecutionRecord: null };
   }
 
-  // 7. Bounded child-process execution.
+  // 8. Bounded, environment-minimized child-process execution - Roadmap
+  // #23G-C1, closes 23G-RV-4A.
   const startedAt = executedAt;
   const effectiveTimeoutMs = resolveExecutionTimeout(timeoutMs);
-  const result = await runBoundedProcess(selected.executable, selected.args, { cwd: rootResult.realRoot, timeoutMs: effectiveTimeoutMs });
+  const executionEnv = buildExecutionEnvironment(process.env);
+  const result = await runBoundedProcess(selected.executable, selected.args, { cwd: rootResult.realRoot, timeoutMs: effectiveTimeoutMs, env: executionEnv });
   const completedAt = nowIso();
 
   let status;
@@ -448,12 +637,16 @@ async function executeAppliedChangeSet(input) {
 
 module.exports = {
   SUPPORTED_FRAMEWORKS,
-  FRAMEWORK_COMMANDS,
+  FRAMEWORK_BINARIES,
+  EXECUTION_TARGET_CLASSIFIERS,
+  ENV_ALLOWLIST,
   MAX_EXECUTION_TIMEOUT_MS,
   DEFAULT_EXECUTION_TIMEOUT_MS,
   MAX_STDOUT_BYTES,
   MAX_STDERR_BYTES,
-  resolveNpmExecutable,
+  resolveLocalBinary,
+  deriveExecutionTargets,
+  buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
   runBoundedProcess,

@@ -308,6 +308,41 @@ function buildAutomationExecutionRecord(input) {
     return { ok: false, errors };
   }
 
+  // Roadmap #23G-C1 (closes 23G-RV-5): cross-field semantic coherence, not
+  // merely independent per-field shape. Every branch below reflects an
+  // ACTUAL reachable outcome of controlled-execution.js's own real
+  // status-derivation logic (never an invented/stricter-than-reality rule):
+  //   spawnError -> EXECUTION_ERROR (exitCode always null on this path)
+  //   else timedOut -> TIMED_OUT (exitCode may still be null or a real
+  //     integer, since the child's 'close' event can race the kill signal)
+  //   else exitCode===0 -> PASSED (timedOut is necessarily false here,
+  //     since the timedOut branch above already takes priority)
+  //   else -> TEST_FAILED (timedOut is necessarily false; exitCode is
+  //     usually a non-zero integer, but Node's 'close' event reports a
+  //     null code when the process was terminated by an external signal
+  //     rather than exiting on its own, so null remains valid here too)
+  if (snapshot.status === "PASSED" && (snapshot.exitCode !== 0 || snapshot.timedOut !== false)) {
+    errors.push(err("$", ERROR_CODES.INVARIANT_VIOLATION, "a PASSED record requires exitCode 0 and timedOut false"));
+  }
+  if (snapshot.status === "TEST_FAILED" && (snapshot.timedOut !== false || (snapshot.exitCode !== null && snapshot.exitCode === 0))) {
+    errors.push(err("$", ERROR_CODES.INVARIANT_VIOLATION, "a TEST_FAILED record requires timedOut false and a non-zero (or null) exitCode"));
+  }
+  if (snapshot.status === "TIMED_OUT" && snapshot.timedOut !== true) {
+    errors.push(err("$", ERROR_CODES.INVARIANT_VIOLATION, "a TIMED_OUT record requires timedOut true"));
+  }
+  if (snapshot.status === "EXECUTION_ERROR" && snapshot.exitCode !== null) {
+    errors.push(err("$", ERROR_CODES.INVARIANT_VIOLATION, "an EXECUTION_ERROR record requires a null exitCode"));
+  }
+  if (errors.length === 0 && isValidTimestamp(snapshot.startedAt) && isValidTimestamp(snapshot.completedAt)) {
+    if (new Date(snapshot.completedAt).getTime() < new Date(snapshot.startedAt).getTime()) {
+      errors.push(err("$.completedAt", ERROR_CODES.INVARIANT_VIOLATION, "$.completedAt must not be earlier than $.startedAt"));
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
   const recordContent = {
     schemaVersion: SCHEMA_VERSION,
     kind: KIND,

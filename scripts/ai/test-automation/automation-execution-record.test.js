@@ -117,9 +117,16 @@ test("rejects an invalid status enum value", () => {
   }
 });
 
-test("accepts every documented status", () => {
+test("accepts every documented status with its own semantically-coherent exitCode/timedOut combination", () => {
+  const coherentFieldsByStatus = {
+    PASSED: { exitCode: 0, timedOut: false },
+    TEST_FAILED: { exitCode: 1, timedOut: false },
+    TIMED_OUT: { exitCode: null, timedOut: true },
+    EXECUTION_ERROR: { exitCode: null, timedOut: false },
+  };
   for (const s of STATUSES) {
-    assert.equal(buildAutomationExecutionRecord(validInput({ status: s })).ok, true, s);
+    const result = buildAutomationExecutionRecord(validInput({ status: s, ...coherentFieldsByStatus[s] }));
+    assert.equal(result.ok, true, `${s}: ${JSON.stringify(result.errors)}`);
   }
 });
 
@@ -131,6 +138,45 @@ test("rejects a non-integer/non-null exitCode", () => {
 
 test("accepts a null exitCode (timeout/execution-error case)", () => {
   assert.equal(buildAutomationExecutionRecord(validInput({ exitCode: null, status: "TIMED_OUT", timedOut: true })).ok, true);
+});
+
+// --- cross-field semantic invariants (Roadmap #23G-C1, closes 23G-RV-5) ---------
+
+test("SEMANTIC INVARIANT: rejects every documented contradictory status/exitCode/timedOut/timestamp combination", () => {
+  const contradictions = [
+    { status: "PASSED", exitCode: 1, timedOut: false },
+    { status: "PASSED", exitCode: 0, timedOut: true },
+    { status: "TEST_FAILED", exitCode: 0, timedOut: false },
+    { status: "TEST_FAILED", exitCode: 1, timedOut: true },
+    { status: "TIMED_OUT", exitCode: null, timedOut: false },
+    { status: "EXECUTION_ERROR", exitCode: 0, timedOut: false },
+  ];
+  for (const bad of contradictions) {
+    const result = buildAutomationExecutionRecord(validInput(bad));
+    assert.equal(result.ok, false, JSON.stringify(bad));
+  }
+});
+
+test("SEMANTIC INVARIANT: accepts every real reachable boundary combination", () => {
+  const valid = [
+    { status: "TEST_FAILED", exitCode: null, timedOut: false }, // 'close' reports null when killed by an external signal, never our own timeout
+    { status: "TIMED_OUT", exitCode: 137, timedOut: true }, // a real exitCode can still race the kill signal
+    { status: "EXECUTION_ERROR", exitCode: null, timedOut: true }, // spawnError always wins over timedOut in status derivation
+  ];
+  for (const okCase of valid) {
+    const result = buildAutomationExecutionRecord(validInput(okCase));
+    assert.equal(result.ok, true, `${JSON.stringify(okCase)}: ${JSON.stringify(result.errors)}`);
+  }
+});
+
+test("SEMANTIC INVARIANT: rejects completedAt earlier than startedAt", () => {
+  const result = buildAutomationExecutionRecord(validInput({ startedAt: COMPLETED_AT, completedAt: STARTED_AT }));
+  assert.equal(result.ok, false);
+});
+
+test("SEMANTIC INVARIANT: accepts completedAt exactly equal to startedAt", () => {
+  const result = buildAutomationExecutionRecord(validInput({ startedAt: STARTED_AT, completedAt: STARTED_AT }));
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
 });
 
 test("rejects a non-boolean timedOut", () => {

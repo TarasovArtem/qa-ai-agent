@@ -63,6 +63,58 @@
  * orchestration-level persisted identity this module does not claim to
  * provide. This limitation is stated here explicitly rather than silently
  * assumed away.
+ *
+ * CREATE REGENERATION IS NOT SUPPORTED UNDER THE SAME PLAN (Roadmap
+ * #23G-C1, closes 23G-RV-1): a GeneratedChangeSet's `changes[].operation`
+ * is permanently bound to whatever `automationPlan.plannedChanges[].operation`
+ * originally declared for that path (#23D's own validateChangeEntry()
+ * enforces `change.operation !== planOperation` as a hard rejection, with
+ * no exception this module can or should route around). A CREATE, once
+ * applied, means the target now exists - so a regenerated proposal for
+ * that SAME path, under that SAME plan, can only ever be proposed as
+ * CREATE again, which #23D's own existence check will always reject
+ * (`CREATE target already exists`), and which #23F's own real filesystem
+ * check would independently reject even if #23D's context-bound check were
+ * somehow bypassed. If ANY change in the original changeset was a CREATE,
+ * this module refuses to call the provider at all and returns a bounded
+ * `INVARIANT_VIOLATION` explaining that a NEW planning cycle (a fresh
+ * AutomationRepositoryContext -> a fresh AutomationPlan authorizing MODIFY
+ * against the now-existing file) is required - never a doomed
+ * GeneratedChangeSet proposal that would waste a full human-review cycle
+ * before failing at #23F. This module does NOT build that new plan itself
+ * (that would expand #23G into #23C's own authority) - it only refuses to
+ * pretend a correction is possible when it structurally is not. A mixed
+ * changeset (CREATE and MODIFY together) is refused in its entirety for
+ * the same reason (Roadmap #23G-C1 Section 39) - never partially
+ * regenerated with the provider left to guess which change caused the
+ * failure.
+ *
+ * REPOSITORYCONTEXT FRESHNESS IS VERIFIED, NOT TRUSTED (Roadmap #23G-C1,
+ * closes 23G-RV-3): for a MODIFY-only changeset, a regenerated proposal's
+ * `baseContentDigest` is mechanically derived (by generate-change-set.js's
+ * own deriveChangesWithBaseDigests()) from whatever `repositoryContext` the
+ * caller supplies - if that context still reflects PRE-application content
+ * rather than the actually-applied `afterDigest`, the regenerated proposal
+ * would pass review only to fail #23F's own optimistic-concurrency check as
+ * STALE, again wasting a full human-review cycle. Before ever calling the
+ * provider, this module independently verifies that `repositoryContext`'s
+ * own evidence for every MODIFY target's path already matches
+ * `appliedChangeSetRecord.changes[].afterDigest` exactly - a caller-
+ * supplied context that does not is rejected with zero provider calls,
+ * never silently accepted on faith merely because its projectId/framework
+ * matched.
+ *
+ * PROVIDER EVIDENCE IS REDACTED, NOT JUST BOUNDED (Roadmap #23G-C1, closes
+ * 23G-RV-4B): the captured stdout/stderr this module embeds into the
+ * regeneration prompt passes through a conservative, best-effort
+ * redactSecrets() scrub (Authorization/Bearer headers, `*_TOKEN`/`*_SECRET`/
+ * `*_PASSWORD`/`*_API_KEY`-shaped assignments, URL-embedded credentials)
+ * before it ever reaches buildFailureEvidenceErrors()'s output - defense in
+ * depth alongside controlled-execution.js's own environment allowlist,
+ * neither of which is a complete DLP guarantee. The stored
+ * AutomationExecutionRecord itself is never mutated by this - redaction
+ * applies only to the copy of the evidence text built for the provider
+ * prompt.
  */
 
 "use strict";
@@ -73,6 +125,7 @@ const { validateAutomationPlan } = require("../generation/automation-plan");
 const {
   computeDigest: computeChangeSetDigest,
   LABEL_PLAN_BINDING,
+  LABEL_FILE_CONTENT,
   recomputeChangeSetDigest,
   validateRepositoryContextSnapshot,
   buildGeneratedChangeSet,
@@ -149,6 +202,38 @@ function containsInfrastructureMarker(text) {
   return INFRASTRUCTURE_MARKERS.some((marker) => lower.includes(marker));
 }
 
+// Roadmap #23G-C1 (closes 23G-RV-4B): a conservative, best-effort scrub
+// applied ONLY to the copy of execution evidence text built for the
+// provider prompt - never mutates the stored AutomationExecutionRecord.
+// Explicitly documented as defense-in-depth, never a claimed complete
+// secret-detection/DLP guarantee (see this module's own docstring).
+const REDACTED = "[REDACTED]";
+const REDACTION_PATTERNS = [
+  // "Authorization: <scheme> <value>" - redact everything after the colon.
+  /(authorization\s*:\s*)(\S.*?)(?=\r?\n|$)/gi,
+  // A bare "Bearer <token>" occurring outside an Authorization: line.
+  /\b(bearer\s+)(\S+)/gi,
+  // NAME_TOKEN / NAME_SECRET / NAME_PASSWORD / NAME_API_KEY style
+  // assignments (":" or "=" separated), e.g. GITHUB_TOKEN=xyz, API_KEY: xyz.
+  /\b([A-Z0-9][A-Z0-9_]*(?:_TOKEN|_SECRET|_PASSWORD|_API_?KEY)\s*[:=]\s*)(\S+)/gi,
+  // URL-embedded credentials: scheme://user:password@host
+  /(:\/\/[^\s/:@]+:)([^\s/@]+)(@)/g,
+];
+function redactSecrets(text) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  let out = text;
+  for (const pattern of REDACTION_PATTERNS) {
+    out = out.replace(pattern, (...args) => {
+      const groups = args.slice(1, args.length - 2);
+      // Every pattern above has a 2- or 3-group {prefix, secret, suffix?}
+      // shape - the secret (always the second capture group) is replaced,
+      // every other captured group is preserved verbatim.
+      return groups[0] + REDACTED + (groups[2] || "");
+    });
+  }
+  return out;
+}
+
 /**
  * Deterministic, provider-free classification of one AutomationExecutionRecord.
  * Never called with a caller-supplied category - always derives it fresh
@@ -199,8 +284,8 @@ function boundEvidenceErrors(errors) {
 // the EXISTING correction-prompt framing rather than inventing a new,
 // unreviewed provider-facing prompt surface.
 function buildFailureEvidenceErrors(automationExecutionRecord) {
-  const stdoutText = (automationExecutionRecord.stdout && automationExecutionRecord.stdout.text) || "";
-  const stderrText = (automationExecutionRecord.stderr && automationExecutionRecord.stderr.text) || "";
+  const stdoutText = redactSecrets((automationExecutionRecord.stdout && automationExecutionRecord.stdout.text) || "");
+  const stderrText = redactSecrets((automationExecutionRecord.stderr && automationExecutionRecord.stderr.text) || "");
   return boundEvidenceErrors([
     err("$.execution.status", ERROR_CODES.INVALID_VALUE, `controlled execution reported status "${automationExecutionRecord.status}" with exitCode ${automationExecutionRecord.exitCode}`),
     err("$.execution.stdout", ERROR_CODES.INVALID_VALUE, stdoutText.length > 0 ? stdoutText : "(empty)"),
@@ -342,6 +427,44 @@ async function regenerateAfterExecutionFailure(input) {
     };
   }
 
+  // 5b. CREATE-origin gate (Roadmap #23G-C1, closes 23G-RV-1) - see this
+  // module's own docstring for the full rationale. A changeset containing
+  // ANY CREATE operation (including a mixed CREATE+MODIFY changeset) can
+  // never be regenerated under the SAME AutomationPlan, because the
+  // applied CREATE target now exists and the plan-bound operation for that
+  // path can never legally change to MODIFY. Refused whole, before any
+  // provider call - never partially regenerated.
+  const hasCreateOriginChange = changeSetSnapshot.changes.some((c) => c.operation === "CREATE");
+  if (hasCreateOriginChange) {
+    return {
+      ok: false,
+      errors: [err("$.generatedChangeSet.changes", ERROR_CODES.INVARIANT_VIOLATION, "REQUIRES_NEW_PLAN: a changeset containing a CREATE operation cannot be regenerated under the same AutomationPlan, because the applied CREATE target now exists; a new planning cycle authorizing MODIFY is required")],
+      regeneratedChangeSet: null,
+      providerCallCount: 0,
+    };
+  }
+
+  // 5c. RepositoryContext freshness gate (Roadmap #23G-C1, closes 23G-RV-3).
+  // Every change here is guaranteed MODIFY (CREATE already refused above).
+  // The caller-supplied repositoryContext's own evidence for each target
+  // path must already reflect the ACTUALLY-applied afterDigest - never
+  // merely trusted because projectId/framework matched.
+  const evidenceByPath = new Map(contextSnapshot.repositoryEvidence.map((e) => [e.evidenceRef.location, e]));
+  const appliedByPath = new Map(appliedRecordSnapshot.changes.map((c) => [c.path, c]));
+  for (const change of changeSetSnapshot.changes) {
+    const appliedChange = appliedByPath.get(change.path);
+    const evidence = evidenceByPath.get(change.path);
+    const currentDigest = evidence ? computeChangeSetDigest(LABEL_FILE_CONTENT, evidence.content) : null;
+    if (!appliedChange || currentDigest === null || currentDigest !== appliedChange.afterDigest) {
+      return {
+        ok: false,
+        errors: [err("$.repositoryContext", ERROR_CODES.INVARIANT_VIOLATION, `repositoryContext is stale relative to appliedChangeSetRecord for "${change.path}" - it must reflect the actually-applied content before regeneration can proceed`)],
+        regeneratedChangeSet: null,
+        providerCallCount: 0,
+      };
+    }
+  }
+
   // 6. Exactly one bounded provider call - no internal retry loop.
   const projection = deepFreeze(buildPositiveProjection({ planSnapshot, contextSnapshot }));
   const systemPrompt = buildGenerateChangeSetSystemPrompt({ framework: planSnapshot.framework });
@@ -416,6 +539,7 @@ module.exports = {
   INFRASTRUCTURE_MARKERS,
   classifyExecutionFailure,
   isRegenerationEligible,
+  redactSecrets,
   buildFailureEvidenceErrors,
   regenerateAfterExecutionFailure,
 };

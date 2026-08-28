@@ -17,7 +17,10 @@ const {
   MAX_EXECUTION_TIMEOUT_MS,
   MAX_STDOUT_BYTES,
   MAX_STDERR_BYTES,
-  resolveNpmExecutable,
+  ENV_ALLOWLIST,
+  resolveLocalBinary,
+  deriveExecutionTargets,
+  buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
   runBoundedProcess,
@@ -84,20 +87,24 @@ function withMockSpawn(fn) {
 
 // --- happy path -------------------------------------------------------------
 
-test("valid APPLIED chain executes the closed-vocabulary command via a fixed argv, shell disabled, cwd = realpath(repositoryRoot)", async () => {
+test("valid APPLIED chain executes a TARGETED argv (--spec <exact applied path>), shell disabled, cwd = realpath(repositoryRoot), env is the minimal allowlist (never full process.env)", async () => {
   const root = makeRoot();
   const chain = buildChain(root);
+  process.env.QA_23GC1_UNALLOWLISTED_SENTINEL = "must-never-reach-child-env-object";
   await withMockSpawn(async (getCall) => {
     const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: chain.plan, generatedChangeSet: chain.generatedChangeSet, appliedChangeSetRecord: chain.appliedChangeSetRecord, executedAt: EXECUTED_AT });
     assert.equal(res.ok, true, JSON.stringify(res.errors));
     assert.equal(res.automationExecutionRecord.status, "PASSED");
     assert.equal(res.automationExecutionRecord.exitCode, 0);
     const call = getCall();
-    assert.equal(call.executable, resolveNpmExecutable());
-    assert.deepEqual(call.args, ["run", "chrome"]);
+    assert.equal(call.executable, resolveLocalBinary(fs.realpathSync(root), "cypress"));
+    assert.deepEqual(call.args, ["run", "--headless", "--browser", "chrome", "--spec", "cypress/e2e/tests/new_spec.cy.js"]);
     assert.equal(call.options.shell, false);
     assert.equal(call.options.cwd, fs.realpathSync(root));
+    assert.ok(!("QA_23GC1_UNALLOWLISTED_SENTINEL" in call.options.env), "child env must never carry an unallowlisted variable, even one this test process itself has set");
+    assert.notEqual(call.options.env, process.env, "child env must be a distinct, minimized object - never the orchestrator's own full process.env passed through");
   });
+  delete process.env.QA_23GC1_UNALLOWLISTED_SENTINEL;
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -121,7 +128,70 @@ test("playwright plan selects the playwright command", async () => {
   await withMockSpawn(async (getCall) => {
     const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applyResult.appliedChangeSetRecord, executedAt: EXECUTED_AT });
     assert.equal(res.ok, true, JSON.stringify(res.errors));
-    assert.deepEqual(getCall().args, ["run", "test:e2e:playwright"]);
+    const call = getCall();
+    assert.equal(call.executable, resolveLocalBinary(fs.realpathSync(root), "playwright"));
+    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", "playwright/tests/new_spec.spec.js"]);
+  });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a changeset that only touches a non-executable support/helper path is rejected with NO_EXECUTABLE_TEST_TARGET, zero spawn", async () => {
+  const root = makeRoot();
+  fs.mkdirSync(path.join(root, "cypress", "support"), { recursive: true });
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/support/commands.js", operation: "CREATE", purpose: "x" }] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+  const changes = [{ operation: "CREATE", path: "cypress/support/commands.js", baseContentDigest: null, content: "Cypress.Commands.add('x', () => {});" }];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  const applyResult = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(applyResult.ok, true, JSON.stringify(applyResult.errors));
+
+  const realSpawn = childProcess.spawn;
+  let spawnCalled = false;
+  childProcess.spawn = () => { spawnCalled = true; throw new Error("must not spawn"); };
+  try {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applyResult.appliedChangeSetRecord, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, false);
+    assert.equal(spawnCalled, false);
+    assert.ok(JSON.stringify(res.errors).includes("NO_EXECUTABLE_TEST_TARGET"));
+  } finally {
+    childProcess.spawn = realSpawn;
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a multi-change changeset executes ALL recognized targets, in changeset order, and excludes any non-matching support path", async () => {
+  const root = makeRoot();
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [
+    { path: "cypress/e2e/tests/first_spec.cy.js", operation: "CREATE", purpose: "x" },
+    { path: "cypress/support/commands.js", operation: "CREATE", purpose: "y" },
+    { path: "cypress/e2e/tests/second_spec.cy.js", operation: "CREATE", purpose: "z" },
+  ] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+  fs.mkdirSync(path.join(root, "cypress", "support"), { recursive: true });
+  const changes = [
+    { operation: "CREATE", path: "cypress/e2e/tests/first_spec.cy.js", baseContentDigest: null, content: "describe('first', () => {});" },
+    { operation: "CREATE", path: "cypress/support/commands.js", baseContentDigest: null, content: "Cypress.Commands.add('x', () => {});" },
+    { operation: "CREATE", path: "cypress/e2e/tests/second_spec.cy.js", baseContentDigest: null, content: "describe('second', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  const applyResult = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(applyResult.ok, true, JSON.stringify(applyResult.errors));
+
+  await withMockSpawn(async (getCall) => {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applyResult.appliedChangeSetRecord, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, true, JSON.stringify(res.errors));
+    const call = getCall();
+    const specIndex = call.args.indexOf("--spec");
+    assert.ok(specIndex !== -1);
+    assert.equal(call.args[specIndex + 1], "cypress/e2e/tests/first_spec.cy.js,cypress/e2e/tests/second_spec.cy.js");
   });
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -316,12 +386,9 @@ test("validationPlan free-text descriptions are never read as commands - no refe
   assert.ok(!code.includes("validationPlan"));
 });
 
-test("caller-supplied command-like strings cannot become argv - selectExecutionCommand ignores any extra caller field", () => {
-  // selectExecutionCommand() takes ONLY a framework enum value - there is
-  // no parameter through which a caller/provider string could ever reach
-  // the returned argv.
-  const result = selectExecutionCommand("cypress");
-  assert.deepEqual(result.args, ["run", "chrome"]);
+test("caller-supplied command-like strings cannot become argv - selectExecutionCommand's ONLY variable component is the already-derived target list", () => {
+  const result = selectExecutionCommand("cypress", "C:/fake/root", ["cypress/e2e/tests/new_spec.cy.js"]);
+  assert.deepEqual(result.args, ["run", "--headless", "--browser", "chrome", "--spec", "cypress/e2e/tests/new_spec.cy.js"]);
 });
 
 test("absolute/traversal repositoryRoot rejected", async () => {
@@ -344,15 +411,71 @@ test("resolveExecutionTimeout clamps to the hard maximum and falls back safely o
   assert.equal(resolveExecutionTimeout(1000), 1000);
 });
 
-test("resolveNpmExecutable returns a fixed, platform-derived value never influenced by input", () => {
-  const value = resolveNpmExecutable();
-  assert.ok(value === "npm" || value === "npm.cmd");
+test("resolveLocalBinary returns a fixed, repository-root-relative, platform-derived path never influenced by caller-supplied binaryName beyond the closed FRAMEWORK_BINARIES map", () => {
+  const value = resolveLocalBinary("C:/fake/root", "cypress");
+  assert.ok(value === path.join("C:/fake/root", "node_modules", ".bin", "cypress.cmd") || value === path.join("C:/fake/root", "node_modules", ".bin", "cypress"));
+  assert.ok(value.startsWith(path.join("C:/fake/root", "node_modules", ".bin")));
 });
 
-test("selectExecutionCommand rejects an unmapped framework", () => {
-  assert.equal(selectExecutionCommand("selenium").ok, false);
-  assert.equal(selectExecutionCommand("").ok, false);
-  assert.equal(selectExecutionCommand(undefined).ok, false);
+test("selectExecutionCommand rejects an unmapped framework and rejects an empty/missing target list", () => {
+  assert.equal(selectExecutionCommand("selenium", "C:/fake/root", ["x"]).ok, false);
+  assert.equal(selectExecutionCommand("", "C:/fake/root", ["x"]).ok, false);
+  assert.equal(selectExecutionCommand(undefined, "C:/fake/root", ["x"]).ok, false);
+  assert.equal(selectExecutionCommand("cypress", "C:/fake/root", []).ok, false);
+  assert.equal(selectExecutionCommand("cypress", "C:/fake/root", undefined).ok, false);
+});
+
+// --- deriveExecutionTargets / buildExecutionEnvironment direct unit tests --------
+
+test("deriveExecutionTargets: cypress classifier accepts only cypress/e2e/**/*.cy.js, rejects support/config/other-extension paths", () => {
+  const changes = [
+    { path: "cypress/e2e/tests/a.cy.js" },
+    { path: "cypress/support/commands.js" },
+    { path: "cypress/e2e/tests/not-a-spec.js" },
+    { path: "cypress.config.js" },
+  ];
+  assert.deepEqual(deriveExecutionTargets("cypress", changes), ["cypress/e2e/tests/a.cy.js"]);
+});
+
+test("deriveExecutionTargets: playwright classifier accepts only playwright/**/*.spec.js, rejects fixtures/config", () => {
+  const changes = [
+    { path: "playwright/tests/a.spec.js" },
+    { path: "playwright/fixtures/data.json" },
+    { path: "playwright.config.js" },
+  ];
+  assert.deepEqual(deriveExecutionTargets("playwright", changes), ["playwright/tests/a.spec.js"]);
+});
+
+test("deriveExecutionTargets: unknown framework returns an empty target list", () => {
+  assert.deepEqual(deriveExecutionTargets("selenium", [{ path: "cypress/e2e/tests/a.cy.js" }]), []);
+});
+
+test("buildExecutionEnvironment: copies only ENV_ALLOWLIST names, case-insensitively, excludes every unlisted variable including this repository's own real secret names", () => {
+  const source = { PATH: "/usr/bin", Path: "C:\\Windows", TEMP: "/tmp", AI_API_KEY: "should-be-excluded", GITHUB_TOKEN: "should-be-excluded", RANDOM_VAR: "should-be-excluded" };
+  const result = buildExecutionEnvironment(source);
+  assert.equal(result.PATH, "/usr/bin");
+  assert.equal(result.Path, "C:\\Windows");
+  assert.equal(result.TEMP, "/tmp");
+  assert.ok(!("AI_API_KEY" in result));
+  assert.ok(!("GITHUB_TOKEN" in result));
+  assert.ok(!("RANDOM_VAR" in result));
+});
+
+test("buildExecutionEnvironment: never throws on a non-object/null/hostile source", () => {
+  assert.deepEqual(buildExecutionEnvironment(null), {});
+  assert.deepEqual(buildExecutionEnvironment(undefined), {});
+  assert.deepEqual(buildExecutionEnvironment("not-an-object"), {});
+});
+
+test("SECRET SENTINEL: a real spawned child given buildExecutionEnvironment's output cannot see an env var this test process itself set that is not on the allowlist", async () => {
+  process.env.QA_AI_AGENT_SECRET_SENTINEL = "SECRET_SENTINEL_123";
+  try {
+    const env = buildExecutionEnvironment(process.env);
+    const r = await runBoundedProcess(process.execPath, ["-e", "process.stdout.write(process.env.QA_AI_AGENT_SECRET_SENTINEL || 'ABSENT')"], { cwd: process.cwd(), timeoutMs: 5000, env });
+    assert.equal(r.stdout.text, "ABSENT");
+  } finally {
+    delete process.env.QA_AI_AGENT_SECRET_SENTINEL;
+  }
 });
 
 // --- runBoundedProcess (real, safe child-process fixtures) ------------------------
@@ -458,7 +581,19 @@ test("AUTHORITY: no provider/Git/GitHub/eval/Function/vm authority anywhere in t
   assert.ok(!code.includes('require("simple-git")') && !code.toLowerCase().includes("octokit"));
   assert.ok(!code.includes("openai") && !code.includes("anthropic") && !code.includes("groq") && !code.includes("gemini"));
   assert.ok(!code.includes(".analyze("));
-  assert.ok(!code.includes("process.env"));
+});
+
+test("AUTHORITY: process.env is read only to build the minimal buildExecutionEnvironment() allowlist output - it is never passed through wholesale as a child's env", () => {
+  const code = sourceAfterDocstring("./controlled-execution.js");
+  const envUses = [...code.matchAll(/process\.env(?!\s*\))/g)];
+  // The only two legitimate own-code uses are: (1) the executionEnv
+  // assignment inside executeAppliedChangeSet, which passes process.env
+  // ONLY as the argument TO buildExecutionEnvironment(); (2) none else -
+  // grepping for "env:" or "env =" assigned directly from a bare
+  // "process.env" (not wrapped in buildExecutionEnvironment(...)) must
+  // find zero matches.
+  assert.ok(!/env\s*[:=]\s*process\.env(?!\s*\))/.test(code), "process.env must never be assigned directly as a spawn env option");
+  assert.ok(code.includes("buildExecutionEnvironment(process.env)"), "the only legitimate process.env read must flow through buildExecutionEnvironment()");
 });
 
 test("AUTHORITY: no dynamic require/import of a generated path anywhere in this module", () => {
