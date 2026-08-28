@@ -48,6 +48,14 @@
  *     outright, never followed. This is a deliberate, safest v1 default,
  *     not a completeness gap: a future stage could add narrow, reviewed
  *     safe-follow semantics if a real need is demonstrated.
+ *   - #23F-C1 (closes 23F-R-1): ancestor/target safety is re-validated
+ *     TWICE, independently - once during Phase 5 prevalidation (so an
+ *     already-unsafe batch is rejected with zero writes), and again,
+ *     completely fresh (a full re-walk of every ancestor component, never
+ *     a cached Phase-5 result), immediately before the one specific
+ *     change's own authoritative mutation in Phase 7. A directory swapped
+ *     for a symlink AFTER Phase 5 but BEFORE a given change's own Phase-7
+ *     commit is caught by that change's own fresh re-walk.
  *   - CREATE requires the target to be genuinely absent (via lstat, which
  *     also correctly rejects a pre-existing symlink/directory/special
  *     file at that path) and is committed with an OS-level exclusive
@@ -58,25 +66,61 @@
  *     content digests to exactly the change's own `baseContentDigest` -
  *     any drift (including a drift that happens to end in the same
  *     proposed bytes) is rejected as stale, never silently accepted.
+ *   - #23F-C1 (closes 23F-R-3): MODIFY preserves the target's own POSIX
+ *     permission bits across the operation - the mode is captured fresh at
+ *     Phase-7 commit time (never a stale Phase-5 value, since mode can
+ *     drift independently of content) and explicitly applied to the staged
+ *     temp file before it is renamed onto the target, so an executable
+ *     script does not silently lose its executable bit merely because the
+ *     staging temp file's own default creation mode differs.
  *   - Every predictable precondition for EVERY change in the batch is
  *     validated BEFORE the first real target mutation (Phase 5) - one
  *     invalid target anywhere in the batch means zero writes anywhere in
  *     the batch.
  *   - MODIFY uses same-directory exclusive temp-file staging plus an
- *     atomic rename-replace, with a FINAL revalidation of the real target
- *     immediately before that rename (a residual race window remains
- *     between that check and the rename syscall - this is an honest,
- *     documented platform limitation, not a claimed guarantee).
+ *     atomic rename-replace, with a FULL FRESH revalidation of the real
+ *     target (not merely its own final lstat) immediately before that
+ *     rename.
+ *   - #23F-C1 (closes 23F-R-2): a post-write mutation is verified
+ *     STRUCTURALLY, not merely by content - the resulting path must lstat
+ *     as an ordinary regular file (never a symlink) with an acceptable
+ *     link count before its bytes are even compared; a stable
+ *     (device, inode) identity is captured at that moment and is later
+ *     REQUIRED (not merely content equality) before any rollback
+ *     compensation is permitted to touch that same path again - a
+ *     byte-identical but structurally different replacement object (e.g.
+ *     a symlink to an external file with the same content) is refused,
+ *     never treated as "ours to restore/delete".
+ *   - THREAT MODEL / HONEST RESIDUAL LIMITATION: ordinary Node.js path-
+ *     based filesystem APIs cannot make "validate this path is safe" and
+ *     "mutate this path" a single atomic kernel operation - #23F rejects
+ *     symlinked targets/ancestors during validation and revalidates them
+ *     completely fresh immediately before mutation, which closes the
+ *     specific ancestor-swap race an independent review (23F-R-1)
+ *     reproduced against the pre-#23F-C1 implementation, but a
+ *     vanishingly narrow window between that final revalidation and the
+ *     mutating syscall itself still exists and is not eliminated by this
+ *     or any pure-userspace implementation without OS-specific
+ *     directory-handle/`openat`-style primitives (deliberately not
+ *     introduced in v1 - see Roadmap #23F-C1 Section 9). v1's operational
+ *     assumption is that `repositoryRoot` is not concurrently topology-
+ *     mutated (directories replaced/relinked) by an untrusted local actor
+ *     during a single `applyApprovedGeneratedChangeSet()` call - this
+ *     module never claims immunity to a hostile co-resident local process,
+ *     only that it fails closed on every topology change it can observe.
  *   - Every write is verified by re-reading the actual resulting bytes
  *     before being reported as applied - a successful `writeFile`/`rename`
  *     call alone is never treated as proof.
  *   - If a later change in the same batch fails after earlier changes were
  *     already committed, this module attempts best-effort rollback
  *     (compensating delete for CREATE, byte-restore for MODIFY) - each
- *     compensation re-checks that the target still holds exactly what THIS
- *     application wrote before touching it again, and refuses to overwrite
- *     externally-raced content. Whole-change-set filesystem atomicity is
- *     NEVER claimed - see APPLICATION_FAILED_ROLLBACK_INCOMPLETE.
+ *     compensation requires the target to still be the SAME structural
+ *     object (regular file, not a symlink, matching (device, inode)
+ *     identity) this application itself produced, in addition to matching
+ *     content, before touching it again, and refuses to overwrite
+ *     externally-raced or type-confused content. Whole-change-set
+ *     filesystem atomicity is NEVER claimed - see
+ *     APPLICATION_FAILED_ROLLBACK_INCOMPLETE.
  *   - No content normalization of any kind (no formatter, no line-ending
  *     conversion, no BOM handling) - the exact approved bytes are written,
  *     because human approval was bound to those exact bytes.
@@ -293,6 +337,107 @@ function detectCaseCollisionAgainstDirectory(parentAbs, targetBasename) {
   return entries.some((name) => name !== targetBasename && name.toLowerCase() === targetLower);
 }
 
+// Roadmap #23F-C1 (closes 23F-R-1): the single, canonical CREATE-target
+// safety check - full ancestor walk, target-absence check, and
+// case-collision check, in that order. Called ONCE during Phase 5
+// prevalidation AND, completely independently (a fresh call, never a
+// cached result), again immediately before the Phase-7 authoritative
+// mutation for that same change - this is what closes the ancestor-swap
+// TOCTOU an independent review reproduced against the pre-corrective
+// implementation, which only re-lstat'd the target itself at commit time
+// and never re-walked the ancestor chain.
+function revalidateCreateTarget(realRoot, relPath) {
+  const inspected = inspectApplicationTarget(realRoot, relPath);
+  if (!inspected.ok) return { ok: false, reason: inspected.reason };
+  const createCheck = inspectCreateTarget(inspected.targetLstat);
+  if (!createCheck.ok) return { ok: false, reason: "EXISTS" };
+  if (detectCaseCollisionAgainstDirectory(inspected.parentAbs, path.basename(relPath))) {
+    return { ok: false, reason: "CASE_COLLISION" };
+  }
+  return { ok: true, parentAbs: inspected.parentAbs, targetAbs: inspected.targetAbs };
+}
+
+// Roadmap #23F-C1 (closes 23F-R-1): the single, canonical MODIFY-target
+// safety check - full ancestor walk plus actual-state/base-digest check.
+// Same double-call discipline as revalidateCreateTarget() above. Also
+// returns the target's CURRENT permission mode (masked to the low 12 bits)
+// captured at the exact moment of this call - Roadmap #23F-C1 Section 15:
+// mode can drift independently of content between Phase 5 and Phase 7, so
+// only a mode captured fresh at Phase-7 commit time (never a stale Phase-5
+// value) is ever used to preserve/restore permissions.
+function revalidateModifyTarget(realRoot, relPath, expectedBaseDigest) {
+  const inspected = inspectApplicationTarget(realRoot, relPath);
+  if (!inspected.ok) return { ok: false, reason: inspected.reason };
+  const modifyCheck = inspectModifyTarget(inspected.targetAbs, inspected.targetLstat, expectedBaseDigest);
+  if (!modifyCheck.ok) return { ok: false, reason: modifyCheck.reason };
+  return {
+    ok: true,
+    parentAbs: inspected.parentAbs,
+    targetAbs: inspected.targetAbs,
+    actualDigest: modifyCheck.actualDigest,
+    content: modifyCheck.content,
+    mode: inspected.targetLstat.mode & 0o7777,
+  };
+}
+
+// Roadmap #23F-C1 (closes 23F-R-2, part 1): post-write verification that a
+// successful `writeFile`/`rename` call alone is never treated as - the
+// resulting path must lstat (non-following) as an ordinary regular file
+// with an acceptable link count BEFORE its bytes are even read/compared; a
+// symlink or other non-regular object left at the target path after the
+// mutating syscall is treated identically to a corrupted/failed write,
+// never reported as APPLIED. The (device, inode) pair captured here on
+// success becomes the trusted identity a later rollback attempt must
+// independently reproduce before it is ever allowed to touch this same
+// path again (see verifyRollbackIdentity() below).
+function verifyStructuralWrite(targetAbs, expectedContent) {
+  const lst = safeLstat(targetAbs);
+  if (lst === null) return { ok: false };
+  if (lst.isSymbolicLink()) return { ok: false };
+  if (!lst.isFile()) return { ok: false };
+  if (lst.nlink > 1) return { ok: false };
+  let actual;
+  try {
+    actual = fs.readFileSync(targetAbs, WRITE_ENCODING);
+  } catch {
+    return { ok: false };
+  }
+  if (actual !== expectedContent) return { ok: false };
+  return { ok: true, identity: { dev: lst.dev, ino: lst.ino } };
+}
+
+// Roadmap #23F-C1 (closes 23F-R-2, part 2): rollback object-identity guard.
+// An independent review reproduced a sequence where a legitimately-created
+// target was replaced by a symlink to an external, byte-identical file -
+// content-equality alone (the pre-corrective rollback check) could not
+// distinguish that replacement from the genuine object this application
+// wrote, because `readFileSync` follows symlinks. This lstat's the CURRENT
+// path (never following), requires it to still be an ordinary regular file
+// with an acceptable link count, requires its (device, inode) identity to
+// match exactly what was captured immediately after THIS application's own
+// successful write (verifyStructuralWrite() above), and only THEN compares
+// content. Any mismatch anywhere in this chain means "not provably the
+// object we wrote" and the caller fails closed rather than mutating or
+// deleting an object of uncertain provenance - a safety refusal
+// (ROLLBACK_INCOMPLETE) is always preferred over destroying/replacing
+// something #23F cannot prove it owns.
+function verifyRollbackIdentity(targetAbs, expectedContent, expectedIdentity) {
+  const lst = safeLstat(targetAbs);
+  if (lst === null) return { ok: false };
+  if (lst.isSymbolicLink()) return { ok: false };
+  if (!lst.isFile()) return { ok: false };
+  if (lst.nlink > 1) return { ok: false };
+  if (lst.dev !== expectedIdentity.dev || lst.ino !== expectedIdentity.ino) return { ok: false };
+  let actual;
+  try {
+    actual = fs.readFileSync(targetAbs, WRITE_ENCODING);
+  } catch {
+    return { ok: false };
+  }
+  if (actual !== expectedContent) return { ok: false };
+  return { ok: true };
+}
+
 // Roadmap #23F Section 44-46: same-parent-directory, exclusive-create,
 // unpredictable-filename temp staging - `wx` guarantees the OS itself
 // rejects a name collision, and same-directory placement maximizes the
@@ -303,16 +448,6 @@ function stageTempFile(parentAbs, targetBasename, content) {
   const tempAbs = path.join(parentAbs, tempName);
   fs.writeFileSync(tempAbs, content, { encoding: WRITE_ENCODING, flag: "wx" });
   return tempAbs;
-}
-
-function verifyWrittenContent(targetAbs, expectedContent) {
-  let actual;
-  try {
-    actual = fs.readFileSync(targetAbs, WRITE_ENCODING);
-  } catch {
-    return false;
-  }
-  return actual === expectedContent;
 }
 
 function cleanupTemp(tempAbs) {
@@ -326,20 +461,17 @@ function cleanupTemp(tempAbs) {
   }
 }
 
-// Roadmap #23F Section 101/107: rollback of a CREATE this SAME application
-// attempt performed - never an arbitrary remove. The identity check (actual
-// current bytes still equal exactly what this attempt wrote) is required
-// immediately before deletion; if the target has since changed, this
-// refuses to delete it and reports incomplete rollback instead (Section
-// 103: never blindly destroy externally-raced content).
-function rollbackCreate(targetAbs, writtenContent) {
-  let actual;
-  try {
-    actual = fs.readFileSync(targetAbs, WRITE_ENCODING);
-  } catch {
-    return { ok: false };
-  }
-  if (actual !== writtenContent) return { ok: false };
+// Roadmap #23F Section 101/107, hardened by #23F-C1 (closes 23F-R-2):
+// rollback of a CREATE this SAME application attempt performed - never an
+// arbitrary remove. verifyRollbackIdentity() requires the current path to
+// still be a plain regular file whose (device, inode) identity AND exact
+// bytes match what this attempt itself produced; if the target has since
+// changed in type, identity, or content, this refuses to delete it and
+// reports incomplete rollback instead (never blindly destroy externally-
+// raced or type-confused content).
+function rollbackCreate(targetAbs, writtenContent, identity) {
+  const verify = verifyRollbackIdentity(targetAbs, writtenContent, identity);
+  if (!verify.ok) return { ok: false };
   try {
     fs.unlinkSync(targetAbs);
   } catch {
@@ -348,25 +480,28 @@ function rollbackCreate(targetAbs, writtenContent) {
   return { ok: true };
 }
 
-// Roadmap #23F Section 102-103: restores exactly the original bytes this
-// application attempt itself captured before mutating - via the same
-// exclusive-temp-plus-rename primitive used for the original commit, with
-// the identical identity guard (current content must still equal exactly
-// what THIS attempt wrote) before restoring.
-function rollbackModify(targetAbs, writtenContent, originalContent) {
-  let actual;
-  try {
-    actual = fs.readFileSync(targetAbs, WRITE_ENCODING);
-  } catch {
-    return { ok: false };
-  }
-  if (actual !== writtenContent) return { ok: false };
+// Roadmap #23F Section 102-103, hardened by #23F-C1 (closes 23F-R-2/
+// 23F-R-3): restores exactly the original bytes AND original permission
+// mode this application attempt itself captured before mutating - via the
+// same exclusive-temp-plus-rename primitive used for the original commit,
+// gated by the identical object-identity guard (current path must still be
+// a plain regular file with matching (device, inode) identity and exact
+// content) before restoring.
+function rollbackModify(targetAbs, writtenContent, originalContent, identity, originalMode) {
+  const verify = verifyRollbackIdentity(targetAbs, writtenContent, identity);
+  if (!verify.ok) return { ok: false };
   const parentAbs = path.dirname(targetAbs);
   const basename = path.basename(targetAbs);
   let tempAbs;
   try {
     tempAbs = stageTempFile(parentAbs, basename, originalContent);
   } catch {
+    return { ok: false };
+  }
+  try {
+    fs.chmodSync(tempAbs, originalMode);
+  } catch {
+    cleanupTemp(tempAbs);
     return { ok: false };
   }
   try {
@@ -481,30 +616,26 @@ function applyApprovedGeneratedChangeSet(input) {
       continue;
     }
 
-    const inspected = inspectApplicationTarget(realRoot, change.path);
-    if (!inspected.ok) {
-      precheckErrors.push(err(entryPath, ERROR_CODES.INVARIANT_VIOLATION, `${entryPath}: target location is not safe to apply to (${inspected.reason})`));
-      continue;
-    }
-
     if (change.operation === "CREATE") {
-      const createCheck = inspectCreateTarget(inspected.targetLstat);
-      if (!createCheck.ok) {
-        precheckErrors.push(err(entryPath, ERROR_CODES.INVARIANT_VIOLATION, `${entryPath}: CREATE target already exists on the actual filesystem`));
+      const r = revalidateCreateTarget(realRoot, change.path);
+      if (!r.ok) {
+        precheckErrors.push(err(entryPath, ERROR_CODES.INVARIANT_VIOLATION, `${entryPath}: CREATE target is not safe to apply to (${r.reason})`));
         continue;
       }
-      if (detectCaseCollisionAgainstDirectory(inspected.parentAbs, path.basename(change.path))) {
-        precheckErrors.push(err(entryPath, ERROR_CODES.INVARIANT_VIOLATION, `${entryPath}: CREATE target collides with an existing entry under case-insensitive comparison`));
-        continue;
-      }
-      plan.push({ kind: "CREATE", change, parentAbs: inspected.parentAbs, targetAbs: inspected.targetAbs });
+      // #23F-C1: parentAbs/targetAbs are plain, deterministic string joins
+      // of realRoot + the approved relative path - carrying them forward
+      // here is never a stale filesystem-state assumption (Phase 7 below
+      // re-derives and re-validates actual filesystem STATE fresh via its
+      // own independent revalidateCreateTarget() call; only the path
+      // STRINGS, which cannot themselves go stale, are reused).
+      plan.push({ kind: "CREATE", change, parentAbs: r.parentAbs, targetAbs: r.targetAbs });
     } else {
-      const modifyCheck = inspectModifyTarget(inspected.targetAbs, inspected.targetLstat, change.baseContentDigest);
-      if (!modifyCheck.ok) {
-        precheckErrors.push(err(entryPath, ERROR_CODES.INVARIANT_VIOLATION, `${entryPath}: MODIFY target is not in the expected actual state (${modifyCheck.reason})`));
+      const r = revalidateModifyTarget(realRoot, change.path, change.baseContentDigest);
+      if (!r.ok) {
+        precheckErrors.push(err(entryPath, ERROR_CODES.INVARIANT_VIOLATION, `${entryPath}: MODIFY target is not in the expected actual state (${r.reason})`));
         continue;
       }
-      plan.push({ kind: "MODIFY", change, parentAbs: inspected.parentAbs, targetAbs: inspected.targetAbs, beforeDigest: modifyCheck.actualDigest, beforeContent: modifyCheck.content });
+      plan.push({ kind: "MODIFY", change, parentAbs: r.parentAbs, targetAbs: r.targetAbs });
     }
   }
 
@@ -549,7 +680,11 @@ function applyApprovedGeneratedChangeSet(input) {
   for (let i = 0; i < staged.length; i += 1) {
     const item = staged[i];
     if (item.kind === "CREATE") {
-      const finalCheck = inspectCreateTarget(safeLstat(item.targetAbs));
+      // #23F-C1 (closes 23F-R-1): a COMPLETE, independent, fresh re-walk of
+      // the ancestor chain + target-absence + case-collision checks,
+      // immediately before the exclusive write - never a reuse of Phase
+      // 5's own result, and never merely the target's own final lstat.
+      const finalCheck = revalidateCreateTarget(realRoot, item.change.path);
       if (!finalCheck.ok) {
         failureIndex = i;
         failureReason = "CREATE_RACE";
@@ -562,18 +697,32 @@ function applyApprovedGeneratedChangeSet(input) {
         failureReason = "WRITE_FAILED";
         break;
       }
-      if (!verifyWrittenContent(item.targetAbs, item.change.content)) {
+      const verify = verifyStructuralWrite(item.targetAbs, item.change.content);
+      if (!verify.ok) {
         failureIndex = i;
         failureReason = "VERIFY_FAILED";
         break;
       }
-      committed.push({ kind: "CREATE", targetAbs: item.targetAbs, change: item.change, beforeDigest: null, afterContent: item.change.content });
+      committed.push({ kind: "CREATE", targetAbs: item.targetAbs, change: item.change, beforeDigest: null, afterContent: item.change.content, identity: verify.identity });
     } else {
-      const finalCheck = inspectModifyTarget(item.targetAbs, safeLstat(item.targetAbs), item.change.baseContentDigest);
+      // #23F-C1 (closes 23F-R-1/23F-R-3): same fresh, independent re-walk
+      // discipline as CREATE above, plus the mode captured HERE (never a
+      // stale Phase-5 value) is what gets applied to the staged temp file
+      // immediately below, preserving the target's permission bits across
+      // the MODIFY.
+      const finalCheck = revalidateModifyTarget(realRoot, item.change.path, item.change.baseContentDigest);
       if (!finalCheck.ok) {
         cleanupTemp(item.tempAbs);
         failureIndex = i;
         failureReason = "MODIFY_RACE";
+        break;
+      }
+      try {
+        fs.chmodSync(item.tempAbs, finalCheck.mode);
+      } catch {
+        cleanupTemp(item.tempAbs);
+        failureIndex = i;
+        failureReason = "WRITE_FAILED";
         break;
       }
       try {
@@ -584,12 +733,22 @@ function applyApprovedGeneratedChangeSet(input) {
         failureReason = "WRITE_FAILED";
         break;
       }
-      if (!verifyWrittenContent(item.targetAbs, item.change.content)) {
+      const verify = verifyStructuralWrite(item.targetAbs, item.change.content);
+      if (!verify.ok) {
         failureIndex = i;
         failureReason = "VERIFY_FAILED";
         break;
       }
-      committed.push({ kind: "MODIFY", targetAbs: item.targetAbs, change: item.change, beforeDigest: item.beforeDigest, beforeContent: item.beforeContent, afterContent: item.change.content });
+      committed.push({
+        kind: "MODIFY",
+        targetAbs: item.targetAbs,
+        change: item.change,
+        beforeDigest: finalCheck.actualDigest,
+        beforeContent: finalCheck.content,
+        beforeMode: finalCheck.mode,
+        afterContent: item.change.content,
+        identity: verify.identity,
+      });
     }
   }
 
@@ -635,7 +794,7 @@ function applyApprovedGeneratedChangeSet(input) {
   const rollbackOk = [];
   for (let i = committed.length - 1; i >= 0; i -= 1) {
     const c = committed[i];
-    const result = c.kind === "CREATE" ? rollbackCreate(c.targetAbs, c.afterContent) : rollbackModify(c.targetAbs, c.afterContent, c.beforeContent);
+    const result = c.kind === "CREATE" ? rollbackCreate(c.targetAbs, c.afterContent, c.identity) : rollbackModify(c.targetAbs, c.afterContent, c.beforeContent, c.identity, c.beforeMode);
     rollbackOk[i] = result.ok;
     if (!result.ok) rollbackAllOk = false;
   }
@@ -682,5 +841,9 @@ module.exports = {
   inspectModifyTarget,
   detectBatchCaseCollisions,
   detectCaseCollisionAgainstDirectory,
+  revalidateCreateTarget,
+  revalidateModifyTarget,
+  verifyStructuralWrite,
+  verifyRollbackIdentity,
   applyApprovedGeneratedChangeSet,
 };

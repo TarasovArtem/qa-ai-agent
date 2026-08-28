@@ -18,6 +18,10 @@ const {
   inspectModifyTarget,
   detectBatchCaseCollisions,
   detectCaseCollisionAgainstDirectory,
+  revalidateCreateTarget,
+  revalidateModifyTarget,
+  verifyStructuralWrite,
+  verifyRollbackIdentity,
   applyApprovedGeneratedChangeSet,
 } = require("./change-set-application");
 
@@ -756,6 +760,435 @@ test("MUTATION: without post-write verification, a truncated/corrupted write cou
   }
   assert.equal(res.ok, false);
   assert.notEqual(res.errors[0].message.includes("APPLIED"), true);
+  cleanup(root);
+});
+
+// =============================================================================
+// #23F-C1 corrective regression matrix (closes 23F-R-1, 23F-R-2, 23F-R-3)
+//
+// Every test below deterministically forces a topology/identity change at
+// the EXACT boundary between Phase-5 prevalidation (the whole batch) and
+// Phase-7 per-item commit, via a controlled monkeypatch of a specific,
+// counted fs call - never a sleep/timing-based race, and never a
+// production backdoor. This is the same instrumentation style already used
+// above in this file (see the existing "a runtime race detected at final
+// revalidation..." and "rollback identity guard..." tests) - #23F-C1
+// extends it to the ancestor chain, case-collision, structural
+// post-write, and rollback-identity dimensions an independent review
+// (#23F-R) found were only checked once, during Phase 5, and never
+// refreshed at Phase-7 commit time.
+// =============================================================================
+
+// --- 23F-R-1: CREATE ancestor swapped between Phase 5 and Phase 7 -----------
+
+test("23F-R-1 CREATE: ancestor directory safe at Phase-5 prevalidation, swapped for a symlink before Phase-7 commit -> fails closed, nothing written outside repositoryRoot", () => {
+  skipIfNoSymlink(() => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-r1-create-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-r1-create-outside-"));
+    fs.mkdirSync(path.join(root, "cypress", "e2e", "tests"), { recursive: true });
+    fs.writeFileSync(path.join(root, "cypress.config.js"), "module.exports = {};", "utf8");
+
+    const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/e2e/tests/generated.spec.ts", operation: "CREATE", purpose: "x" }] };
+    const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+    const changes = [{ operation: "CREATE", path: "cypress/e2e/tests/generated.spec.ts", baseContentDigest: null, content: "describe('PWNED', () => {});" }];
+    const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+    assert.equal(built.ok, true, JSON.stringify(built.errors));
+    const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+    const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+    const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+    const testsDir = path.join(root, "cypress", "e2e", "tests");
+    // Deterministic phase-boundary trigger: the ancestor directory's own
+    // lstat is called once during Phase 5 (call #1, observes a real safe
+    // directory) and once again during Phase 7's OWN fresh re-walk (call
+    // #2) - swapping right before that second call fires means Phase 7's
+    // fresh ancestor walk is the one that must observe and reject the
+    // swap, exactly reproducing the real Phase-5-to-Phase-7 window an
+    // independent review found exploitable pre-#23F-C1.
+    const realLstatSync = fs.lstatSync;
+    let calls = 0;
+    let swapped = false;
+    fs.lstatSync = function (p) {
+      if (p === testsDir) {
+        calls += 1;
+        if (calls === 2 && !swapped) {
+          swapped = true;
+          fs.rmdirSync(testsDir);
+          fs.symlinkSync(outside, testsDir, "dir");
+        }
+      }
+      return realLstatSync.call(fs, p);
+    };
+
+    let res;
+    try {
+      res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+    } finally {
+      fs.lstatSync = realLstatSync;
+    }
+
+    assert.equal(swapped, true, "test setup did not actually trigger the ancestor swap");
+    assert.equal(res.ok, false);
+    assert.equal(res.appliedChangeSetRecord, null);
+    assert.equal(fs.existsSync(path.join(outside, "generated.spec.ts")), false, "the approved content must NEVER be written outside repositoryRoot");
+    assert.equal(fs.readdirSync(outside).length, 0);
+
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+// --- MODIFY ancestor swapped between Phase 5 and Phase 7 --------------------
+
+test("23F-R-1 MODIFY: ancestor directory safe at Phase-5 prevalidation, swapped for a symlink before Phase-7 commit -> fails closed, no outside-root mutation, no orphan temp file", () => {
+  skipIfNoSymlink(() => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-r1-modify-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-r1-modify-outside-"));
+    fs.mkdirSync(path.join(root, "cypress", "e2e", "tests"), { recursive: true });
+    fs.writeFileSync(path.join(root, "cypress.config.js"), "module.exports = {};", "utf8");
+    fs.writeFileSync(path.join(root, "cypress", "e2e", "tests", "existing_spec.cy.js"), OLD_CONTENT, "utf8");
+
+    const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/e2e/tests/existing_spec.cy.js", operation: "MODIFY", purpose: "x" }] };
+    const context = context1();
+    const changes = [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: OLD_DIGEST, content: "describe('PWNED', () => {});" }];
+    const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+    assert.equal(built.ok, true, JSON.stringify(built.errors));
+    const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+    const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+    const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+    const testsDir = path.join(root, "cypress", "e2e", "tests");
+    const realLstatSync = fs.lstatSync;
+    let calls = 0;
+    let swapped = false;
+    fs.lstatSync = function (p) {
+      if (p === testsDir) {
+        calls += 1;
+        if (calls === 2 && !swapped) {
+          swapped = true;
+          fs.unlinkSync(path.join(testsDir, "existing_spec.cy.js"));
+          // remove any staged temp file too, so the directory is empty and
+          // rmdir succeeds - a real attacker able to replace this
+          // directory could equally remove/relocate its own contents.
+          for (const entry of fs.readdirSync(testsDir)) fs.unlinkSync(path.join(testsDir, entry));
+          fs.rmdirSync(testsDir);
+          fs.symlinkSync(outside, testsDir, "dir");
+        }
+      }
+      return realLstatSync.call(fs, p);
+    };
+
+    let res;
+    try {
+      res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+    } finally {
+      fs.lstatSync = realLstatSync;
+    }
+
+    assert.equal(swapped, true, "test setup did not actually trigger the ancestor swap");
+    assert.equal(res.ok, false);
+    assert.equal(fs.existsSync(path.join(outside, "existing_spec.cy.js")), false, "no outside-root mutation must ever occur");
+    // no orphaned .23f-tmp-* files anywhere reachable
+    assert.equal(fs.readdirSync(outside).filter((n) => n.includes(".23f-tmp-")).length, 0);
+
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+// --- Final CREATE case-collision revalidation --------------------------------
+
+test("23F-R-1 (case collision variant): no collision at Phase-5, a differently-cased sibling appears before Phase-7 commit -> final revalidation rejects, requested target is not created", () => {
+  const root = makeRoot();
+  const parentAbs = path.join(root, "cypress", "e2e", "tests");
+  const targetAbs = path.join(parentAbs, "foo.spec.ts");
+
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/e2e/tests/foo.spec.ts", operation: "CREATE", purpose: "x" }] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+  const changes = [{ operation: "CREATE", path: "cypress/e2e/tests/foo.spec.ts", baseContentDigest: null, content: "describe('x', () => {});" }];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  // Phase 5's own readdir call on parentAbs is call #1 (empty directory, no
+  // collision). Right before Phase 7's own fresh readdir call (#2), create
+  // the differently-cased sibling "FOO.spec.ts" - the fresh, independent
+  // final case-collision check must observe and reject it.
+  const realReaddirSync = fs.readdirSync;
+  let calls = 0;
+  let injected = false;
+  fs.readdirSync = function (p) {
+    if (p === parentAbs) {
+      calls += 1;
+      if (calls === 2 && !injected) {
+        injected = true;
+        fs.writeFileSync(path.join(parentAbs, "FOO.spec.ts"), "describe('collider', () => {});", "utf8");
+      }
+    }
+    return realReaddirSync.call(fs, p);
+  };
+
+  let res;
+  try {
+    res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  } finally {
+    fs.readdirSync = realReaddirSync;
+  }
+
+  assert.equal(injected, true, "test setup did not actually inject the colliding sibling");
+  assert.equal(res.ok, false);
+  assert.equal(res.appliedChangeSetRecord, null);
+  // fs.existsSync() alone is unreliable here on a case-insensitive host
+  // filesystem (it would report true merely because "FOO.spec.ts" exists) -
+  // assert directly on the directory's own entries instead: exactly one
+  // entry must exist at this casing family, and it must still be the
+  // injected collider's own content, never #23F's approved content.
+  const entries = fs.readdirSync(parentAbs);
+  const matching = entries.filter((n) => n.toLowerCase() === "foo.spec.ts");
+  assert.equal(matching.length, 1, "the case-colliding sibling must still be the only entry - #23F must not have added a second one");
+  assert.equal(fs.readFileSync(path.join(parentAbs, matching[0]), "utf8"), "describe('collider', () => {});", "the approved CREATE content must never have been written");
+  cleanup(root);
+});
+
+// --- 23F-R-2: rollback refuses a byte-identical, structurally-different replacement ---
+
+test("23F-R-2: CREATE target replaced with a symlink to an external byte-identical file -> rollback refuses to touch it, reports ROLLBACK_INCOMPLETE, external file survives", () => {
+  skipIfNoSymlink(() => {
+    const root = makeRootWithExisting();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-r2-outside-"));
+    const CREATE_CONTENT = "describe('a', () => {});";
+    const decoyFile = path.join(outside, "decoy.js");
+    fs.writeFileSync(decoyFile, CREATE_CONTENT, "utf8");
+
+    const plan = {
+      schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress",
+      plannedChanges: [
+        { path: "cypress/e2e/tests/aaa_spec.cy.js", operation: "CREATE", purpose: "x" },
+        { path: "cypress/e2e/tests/existing_spec.cy.js", operation: "MODIFY", purpose: "y" },
+      ],
+    };
+    const context = context1();
+    const changes = [
+      { operation: "CREATE", path: "cypress/e2e/tests/aaa_spec.cy.js", baseContentDigest: null, content: CREATE_CONTENT },
+      { operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: OLD_DIGEST, content: "describe('new', () => {});" },
+    ];
+    const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+    assert.equal(built.ok, true, JSON.stringify(built.errors));
+    const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+    const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+    const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+    const createTargetAbs = path.join(root, "cypress", "e2e", "tests", "aaa_spec.cy.js");
+    const modifyTargetAbs = path.join(root, "cypress", "e2e", "tests", "existing_spec.cy.js");
+
+    // Force the MODIFY's final revalidation to fail (triggering rollback of
+    // the already-committed CREATE), and as a side effect of that SAME
+    // hook, replace the CREATE target with a symlink to an external,
+    // byte-identical decoy file - simulating an external actor replacing
+    // #23F's own output with a different filesystem object that happens to
+    // contain the same bytes.
+    const realReadFileSync = fs.readFileSync;
+    let modifyReadCount = 0;
+    fs.readFileSync = function (p, enc) {
+      if (p === modifyTargetAbs) {
+        modifyReadCount += 1;
+        if (modifyReadCount === 2) {
+          fs.unlinkSync(createTargetAbs);
+          fs.symlinkSync(decoyFile, createTargetAbs, "file");
+          return "describe('raced modify', () => {});";
+        }
+      }
+      return realReadFileSync.call(fs, p, enc);
+    };
+
+    let res;
+    try {
+      res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+    } finally {
+      fs.readFileSync = realReadFileSync;
+    }
+
+    assert.equal(res.ok, false);
+    assert.ok(res.appliedChangeSetRecord);
+    assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE");
+    const createEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/aaa_spec.cy.js");
+    assert.equal(createEntry.status, "ROLLBACK_INCOMPLETE");
+    // rollback must NOT have deleted the symlink or the external decoy
+    assert.equal(fs.existsSync(decoyFile), true);
+    assert.equal(fs.readFileSync(decoyFile, "utf8"), CREATE_CONTENT);
+    const lst = fs.lstatSync(createTargetAbs);
+    assert.equal(lst.isSymbolicLink(), true, "the symlink itself must be left untouched, never silently unlinked based on content match alone");
+
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+// --- verifyStructuralWrite / verifyRollbackIdentity direct unit tests --------
+
+test("verifyStructuralWrite rejects a symlink target, a directory target, and an absent target - only accepts a genuine regular file with matching bytes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-structverify-"));
+  const regular = path.join(root, "regular.txt");
+  fs.writeFileSync(regular, "hello", "utf8");
+  assert.equal(verifyStructuralWrite(regular, "hello").ok, true);
+  assert.equal(verifyStructuralWrite(regular, "wrong").ok, false);
+  assert.equal(verifyStructuralWrite(path.join(root, "absent.txt"), "hello").ok, false);
+
+  const dir = path.join(root, "adir");
+  fs.mkdirSync(dir);
+  assert.equal(verifyStructuralWrite(dir, "hello").ok, false);
+
+  skipIfNoSymlink(() => {
+    const linkTarget = path.join(root, "linktarget.txt");
+    fs.writeFileSync(linkTarget, "hello", "utf8");
+    const link = path.join(root, "alink.txt");
+    fs.symlinkSync(linkTarget, link, "file");
+    assert.equal(verifyStructuralWrite(link, "hello").ok, false, "a symlink must never be accepted as a genuine written regular file, even with matching content");
+  });
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("verifyRollbackIdentity rejects a mismatched (device, inode) identity even when content matches", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "f23f-identverify-"));
+  const a = path.join(root, "a.txt");
+  const b = path.join(root, "b.txt");
+  fs.writeFileSync(a, "same", "utf8");
+  fs.writeFileSync(b, "same", "utf8");
+  const identityA = { dev: fs.lstatSync(a).dev, ino: fs.lstatSync(a).ino };
+  // b has byte-identical content but is a genuinely different filesystem
+  // object - its own identity must not satisfy identityA's requirement.
+  assert.equal(verifyRollbackIdentity(b, "same", identityA).ok, false);
+  assert.equal(verifyRollbackIdentity(a, "same", identityA).ok, true);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// --- structural post-write verification integration --------------------------
+
+test("post-write structural verification: CREATE target replaced by a directory before verification -> not reported as APPLIED", () => {
+  const root = makeRoot();
+  const targetAbs = path.join(root, "cypress", "e2e", "tests", "new_spec.cy.js");
+
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/e2e/tests/new_spec.cy.js", operation: "CREATE", purpose: "x" }] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+  const changes = [{ operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "describe('x', () => {});" }];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  // After the exclusive CREATE write succeeds, but before this module's own
+  // structural verification reads it back, replace the file with a
+  // directory of the same name - simulating a post-write corruption/race
+  // that a byte-only check could never observe.
+  const realWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function (targetPath, content, options) {
+    const result = realWriteFileSync.call(fs, targetPath, content, options);
+    if (targetPath === targetAbs) {
+      fs.unlinkSync(targetPath);
+      fs.mkdirSync(targetPath);
+    }
+    return result;
+  };
+
+  let res;
+  try {
+    res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
+
+  assert.equal(res.ok, false);
+  assert.ok(!res.appliedChangeSetRecord || res.appliedChangeSetRecord.status !== "APPLIED");
+  cleanup(root);
+});
+
+// --- 23F-R-3: MODIFY preserves the target's permission mode (POSIX only) -----
+
+test("23F-R-3: MODIFY preserves the original 0755 permission mode across content replacement (POSIX)", (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows does not expose POSIX permission-bit semantics through Node's fs.stat the same way - this assertion is only meaningful, and only executed, on a POSIX CI runner (see .github/workflows - the Unit tests job runs on ubuntu-latest).");
+    return;
+  }
+  const root = makeRoot();
+  const targetAbs = path.join(root, "cypress", "e2e", "tests", "runner.sh");
+  fs.writeFileSync(targetAbs, "#!/bin/sh\necho old\n", "utf8");
+  fs.chmodSync(targetAbs, 0o755);
+  const beforeDigest = gcsComputeDigest(LABEL_FILE_CONTENT, "#!/bin/sh\necho old\n");
+
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/e2e/tests/runner.sh", operation: "MODIFY", purpose: "x" }] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }, { evidenceRef: { location: "cypress/e2e/tests/runner.sh" }, content: "#!/bin/sh\necho old\n" }] };
+  const changes = [{ operation: "MODIFY", path: "cypress/e2e/tests/runner.sh", baseContentDigest: beforeDigest, content: "#!/bin/sh\necho new\n" }];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((tt) => ({ operation: tt.operation, path: tt.path, targetDigest: tt.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  const res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(res.ok, true, JSON.stringify(res.errors));
+  assert.equal(fs.readFileSync(targetAbs, "utf8"), "#!/bin/sh\necho new\n");
+  assert.equal(fs.statSync(targetAbs).mode & 0o777, 0o755, "executable permission bits must survive an ordinary MODIFY");
+  cleanup(root);
+});
+
+test("23F-R-3: MODIFY rollback restores the original content AND the original 0755 permission mode (POSIX)", (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows does not expose POSIX permission-bit semantics through Node's fs.stat the same way - this assertion is only meaningful, and only executed, on a POSIX CI runner (see .github/workflows - the Unit tests job runs on ubuntu-latest).");
+    return;
+  }
+  const root = makeRoot();
+  const modifyTargetAbs = path.join(root, "cypress", "e2e", "tests", "runner.sh");
+  fs.writeFileSync(modifyTargetAbs, "#!/bin/sh\necho old\n", "utf8");
+  fs.chmodSync(modifyTargetAbs, 0o755);
+  const beforeDigest = gcsComputeDigest(LABEL_FILE_CONTENT, "#!/bin/sh\necho old\n");
+
+  const plan = {
+    schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress",
+    plannedChanges: [
+      { path: "cypress/e2e/tests/runner.sh", operation: "MODIFY", purpose: "x" },
+      { path: "cypress/e2e/tests/second.cy.js", operation: "CREATE", purpose: "y" },
+    ],
+  };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }, { evidenceRef: { location: "cypress/e2e/tests/runner.sh" }, content: "#!/bin/sh\necho old\n" }] };
+  const changes = [
+    { operation: "MODIFY", path: "cypress/e2e/tests/runner.sh", baseContentDigest: beforeDigest, content: "#!/bin/sh\necho new\n" },
+    { operation: "CREATE", path: "cypress/e2e/tests/second.cy.js", baseContentDigest: null, content: "describe('second', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((tt) => ({ operation: tt.operation, path: tt.path, targetDigest: tt.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  const secondTargetAbs = path.join(root, "cypress", "e2e", "tests", "second.cy.js");
+  const realWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function (targetPath, content, options) {
+    if (targetPath === secondTargetAbs && options && options.flag === "wx") {
+      // force the SECOND change (CREATE) to fail after the MODIFY has
+      // already committed, triggering rollback of the MODIFY.
+      const e = new Error("EEXIST: simulated");
+      e.code = "EEXIST";
+      throw e;
+    }
+    return realWriteFileSync.call(fs, targetPath, content, options);
+  };
+
+  let res;
+  try {
+    res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
+
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord);
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLED_BACK");
+  assert.equal(fs.readFileSync(modifyTargetAbs, "utf8"), "#!/bin/sh\necho old\n", "rollback must restore the original content");
+  assert.equal(fs.statSync(modifyTargetAbs).mode & 0o777, 0o755, "rollback must restore the original permission mode, not merely the original content");
   cleanup(root);
 });
 
