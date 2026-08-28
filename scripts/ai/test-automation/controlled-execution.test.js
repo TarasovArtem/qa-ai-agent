@@ -21,7 +21,8 @@ const {
   resolveLocalBinary,
   deriveExecutionTargets,
   escapeRegexLiteral,
-  buildPlaywrightSafeTargetPattern,
+  buildPlaywrightExactTargetPattern,
+  CYPRESS_SAFE_TARGET_PATH,
   buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
@@ -131,8 +132,9 @@ test("playwright plan selects the playwright command", async () => {
     const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applyResult.appliedChangeSetRecord, executedAt: EXECUTED_AT });
     assert.equal(res.ok, true, JSON.stringify(res.errors));
     const call = getCall();
-    assert.equal(call.executable, resolveLocalBinary(fs.realpathSync(root), "playwright"));
-    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", "playwright/tests/new_spec\\.spec\\.js"]);
+    const realRoot = fs.realpathSync(root);
+    assert.equal(call.executable, resolveLocalBinary(realRoot, "playwright"));
+    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", buildPlaywrightExactTargetPattern(realRoot, "playwright/tests/new_spec.spec.js")]);
   });
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -195,6 +197,70 @@ test("a multi-change changeset executes ALL recognized targets, in changeset ord
     assert.ok(specIndex !== -1);
     assert.equal(call.args[specIndex + 1], "cypress/e2e/tests/first_spec.cy.js,cypress/e2e/tests/second_spec.cy.js");
   });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// Roadmap #23G-C3 (closes 23G-C2-RR-2 Section 29-32): a changeset containing
+// ONE safe and ONE unsafe (but still classifier-recognized) executable
+// Cypress target must be rejected WHOLE - never silently narrowed to "just
+// run the safe one".
+test("a changeset with one safe and one unsafe-but-recognized Cypress target is rejected whole (UNSAFE_EXECUTION_TARGET), zero spawn - never silently narrowed to just the safe one", async () => {
+  const root = makeRoot();
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [
+    { path: "cypress/e2e/tests/safe.cy.js", operation: "CREATE", purpose: "x" },
+    { path: "cypress/e2e/tests/a+b.cy.js", operation: "CREATE", purpose: "y" },
+  ] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+  const changes = [
+    { operation: "CREATE", path: "cypress/e2e/tests/safe.cy.js", baseContentDigest: null, content: "describe('safe', () => {});" },
+    { operation: "CREATE", path: "cypress/e2e/tests/a+b.cy.js", baseContentDigest: null, content: "describe('unsafe', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  const applyResult = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(applyResult.ok, true, JSON.stringify(applyResult.errors));
+
+  const realSpawn = childProcess.spawn;
+  let spawnCalled = false;
+  childProcess.spawn = () => { spawnCalled = true; throw new Error("must not spawn"); };
+  try {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applyResult.appliedChangeSetRecord, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, false);
+    assert.equal(spawnCalled, false);
+    assert.ok(JSON.stringify(res.errors).includes("UNSAFE_EXECUTION_TARGET"));
+  } finally {
+    childProcess.spawn = realSpawn;
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a changeset with only an unsafe-but-recognized Cypress target is rejected (UNSAFE_EXECUTION_TARGET), zero spawn", async () => {
+  const root = makeRoot();
+  const plan = { schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress", plannedChanges: [{ path: "cypress/e2e/tests/a!(b).cy.js", operation: "CREATE", purpose: "x" }] };
+  const context = { projectId: "proj-1", framework: "cypress", repositoryEvidence: [{ evidenceRef: { location: "cypress.config.js" }, content: "module.exports = {};" }] };
+  const changes = [{ operation: "CREATE", path: "cypress/e2e/tests/a!(b).cy.js", baseContentDigest: null, content: "describe('unsafe', () => {});" }];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  const applyResult = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(applyResult.ok, true, JSON.stringify(applyResult.errors));
+
+  const realSpawn = childProcess.spawn;
+  let spawnCalled = false;
+  childProcess.spawn = () => { spawnCalled = true; throw new Error("must not spawn"); };
+  try {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applyResult.appliedChangeSetRecord, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, false);
+    assert.equal(spawnCalled, false);
+    assert.ok(JSON.stringify(res.errors).includes("UNSAFE_EXECUTION_TARGET"));
+  } finally {
+    childProcess.spawn = realSpawn;
+  }
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -436,7 +502,7 @@ test("deriveExecutionTargets: cypress classifier accepts only cypress/e2e/**/*.c
     { path: "cypress/e2e/tests/not-a-spec.js" },
     { path: "cypress.config.js" },
   ];
-  assert.deepEqual(deriveExecutionTargets("cypress", changes), ["cypress/e2e/tests/a.cy.js"]);
+  assert.deepEqual(deriveExecutionTargets("cypress", changes), { executableTargets: ["cypress/e2e/tests/a.cy.js"], unsafeExecutableTargets: [] });
 });
 
 test("deriveExecutionTargets: playwright classifier accepts only playwright/**/*.spec.js, rejects fixtures/config", () => {
@@ -445,11 +511,11 @@ test("deriveExecutionTargets: playwright classifier accepts only playwright/**/*
     { path: "playwright/fixtures/data.json" },
     { path: "playwright.config.js" },
   ];
-  assert.deepEqual(deriveExecutionTargets("playwright", changes), ["playwright/tests/a.spec.js"]);
+  assert.deepEqual(deriveExecutionTargets("playwright", changes), { executableTargets: ["playwright/tests/a.spec.js"], unsafeExecutableTargets: [] });
 });
 
-test("deriveExecutionTargets: unknown framework returns an empty target list", () => {
-  assert.deepEqual(deriveExecutionTargets("selenium", [{ path: "cypress/e2e/tests/a.cy.js" }]), []);
+test("deriveExecutionTargets: unknown framework returns empty target lists", () => {
+  assert.deepEqual(deriveExecutionTargets("selenium", [{ path: "cypress/e2e/tests/a.cy.js" }]), { executableTargets: [], unsafeExecutableTargets: [] });
 });
 
 test("buildExecutionEnvironment: copies only ENV_ALLOWLIST names, case-insensitively, excludes every unlisted variable including this repository's own real secret names", () => {
@@ -543,45 +609,6 @@ async function listPlaywrightTests(fixtureRoot, targets) {
   return result;
 }
 
-// TEMPORARY #23G-C3 ROOT-CAUSE DIAGNOSTIC - not a permanent test, removed
-// before this mission's final commit. Determines empirically, on whichever
-// real platform runs it (this is specifically meant to be read from a
-// natural Linux CI log), which of several candidate match subjects the
-// real installed Playwright binary's positional filter actually compares
-// against, so the real #23G-C3 fix can be built on evidence rather than
-// another guess. Never hard-fails (diagnostic only) so it does not block
-// other CI jobs while this evidence is being gathered.
-test("TEMP DIAGNOSTIC: which anchored pattern variant does Playwright actually match on this platform", async (t) => {
-  const root = makePlaywrightFixture({ "foo.spec.js": "target" });
-  try {
-    const relTarget = "playwright/tests/foo.spec.js";
-    const absTarget = path.resolve(root, "playwright/tests/foo.spec.js").split(path.sep).join("/");
-    let realAbsTarget = absTarget;
-    try { realAbsTarget = fs.realpathSync(path.resolve(root, "playwright/tests/foo.spec.js")).split(path.sep).join("/"); } catch { /* best effort */ }
-    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const variants = {
-      anchored_relative: `^${escape(relTarget)}$`,
-      anchored_absolute_resolve: `^${escape(absTarget)}$`,
-      anchored_absolute_realpath: `^${escape(realAbsTarget)}$`,
-      anchored_testdir_relative: `^tests/foo\\.spec\\.js$`,
-      unanchored_relative: escape(relTarget),
-    };
-    for (const [label, pattern] of Object.entries(variants)) {
-      const args = ["test", "--config=playwright.config.js", "--project=chromium", "--list", pattern];
-      const result = await runBoundedProcess(playwrightBinaryPath(), args, { cwd: root, timeoutMs: 30000, env: fixtureEnv() });
-      if (result.spawnError && process.platform === "win32") { t.skip("Windows EINVAL, see other tests"); return; }
-      console.log(`### DIAG[${label}] pattern=${JSON.stringify(pattern)} exitCode=${result.exitCode} selected="${result.stdout.text.includes("foo.spec.js")}" stdout=${JSON.stringify(result.stdout.text)} stderr=${JSON.stringify(result.stderr.text)}`);
-    }
-    assert.ok(true);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-function playwrightBinaryPath() {
-  return path.join(REAL_REPO_ROOT, "node_modules", ".bin", process.platform === "win32" ? "playwright.cmd" : "playwright");
-}
-
 // KNOWN, PRE-EXISTING, WINDOWS-SPECIFIC LIMITATION (discovered while writing
 // these tests, unrelated to the regex-collision fix they verify): Node.js
 // hardened child_process.spawn() to refuse spawning a .cmd/.bat file
@@ -660,6 +687,64 @@ test("PLAYWRIGHT EXACT TARGET: a target path containing regex metacharacters (+)
   }
 });
 
+// Roadmap #23G-C3 (closes 23G-C2-RR-1 for real): this is the exact,
+// mandatory regression proving the independent review's central finding is
+// closed - the intended target's own path is a literal PREFIX/substring of
+// an unrelated, independently-valid decoy's path (a "double extension"
+// filename, e.g. a careless rename or provider mistake) - which #23G-C2's
+// escaped-but-UNANCHORED matcher selected as well as the real target. Both
+// ends of the current pattern are anchored against the full absolute path
+// specifically to close this: an unanchored escaped literal can still
+// match as a substring of a longer string; a `^...$`-anchored one cannot.
+test("PLAYWRIGHT EXACT TARGET (substring collision - the exact independent-review regression): the intended target is selected; a decoy whose path is a literal EXTENSION of the target's own path is excluded", async (t) => {
+  const root = makePlaywrightFixture({ "foo.spec.js": "the-actual-target", "foo.spec.js.spec.js": "substring-collision" });
+  try {
+    const result = await listPlaywrightTests(root, ["playwright/tests/foo.spec.js"]);
+    if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
+    assert.ok(result.stdout.text.includes("foo.spec.js"), diag(result));
+    assert.ok(!result.stdout.text.includes("foo.spec.js.spec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), diag(result));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PLAYWRIGHT EXACT TARGET: a fixture root directory name itself containing a regex metacharacter does not break matching - the REALROOT is escaped too, not only the target filename", async (t) => {
+  fs.mkdirSync(FIXTURE_PARENT_DIR, { recursive: true });
+  const root = fs.mkdtempSync(path.join(FIXTURE_PARENT_DIR, "pw-root+regex-"));
+  fs.mkdirSync(path.join(root, "playwright", "tests"), { recursive: true });
+  fs.writeFileSync(path.join(root, "playwright.config.js"), 'module.exports = { testDir: "./playwright", projects: [{ name: "chromium" }] };', "utf8");
+  fs.writeFileSync(path.join(root, "playwright/tests/foo.spec.js"), "const { test } = require('@playwright/test');\ntest('target', async () => {});\n", "utf8");
+  try {
+    const result = await listPlaywrightTests(root, ["playwright/tests/foo.spec.js"]);
+    if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
+    assert.ok(result.stdout.text.includes("foo.spec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), diag(result));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PLAYWRIGHT EXACT TARGET: multiple targets select exactly that set, excluding BOTH a wildcard decoy AND a substring decoy simultaneously", async (t) => {
+  const root = makePlaywrightFixture({
+    "A.spec.js": "target-A",
+    "B.spec.js": "target-B",
+    "A.spec.js.spec.js": "A-substring-decoy",
+    "BXspec.js": "B-wildcard-decoy",
+  });
+  try {
+    const result = await listPlaywrightTests(root, ["playwright/tests/A.spec.js", "playwright/tests/B.spec.js"]);
+    if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
+    assert.ok(result.stdout.text.includes("A.spec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("B.spec.js"), diag(result));
+    assert.ok(!result.stdout.text.includes("A.spec.js.spec.js"), diag(result));
+    assert.ok(!result.stdout.text.includes("BXspec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("Total: 2 tests in 2 files"), diag(result));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("escapeRegexLiteral escapes every JS regex metacharacter", () => {
   assert.equal(escapeRegexLiteral("a.b"), "a\\.b");
   assert.equal(escapeRegexLiteral("a+b*c?d"), "a\\+b\\*c\\?d");
@@ -667,25 +752,49 @@ test("escapeRegexLiteral escapes every JS regex metacharacter", () => {
   assert.equal(escapeRegexLiteral("plain_no_metachars"), "plain_no_metachars");
 });
 
-test("buildPlaywrightSafeTargetPattern escapes the exact canonical path (not anchored - see the function's own docstring)", () => {
-  assert.equal(buildPlaywrightSafeTargetPattern("playwright/tests/foo.spec.js"), "playwright/tests/foo\\.spec\\.js");
+test("buildPlaywrightExactTargetPattern anchors BOTH ends and escapes the FULL ABSOLUTE path (Roadmap #23G-C3, closes 23G-C2-RR-1 for real)", () => {
+  const realRoot = process.platform === "win32" ? "C:/repo" : "/repo";
+  const pattern = buildPlaywrightExactTargetPattern(realRoot, "playwright/tests/foo.spec.js");
+  assert.equal(pattern, `^${realRoot}/playwright/tests/foo\\.spec\\.js$`);
 });
 
-test("deriveExecutionTargets: Cypress excludes glob-special-charactered candidate paths (comma/asterisk/question mark/brackets/braces), even though upstream path-safety rules permit them", () => {
+test("buildPlaywrightExactTargetPattern escapes a regex metacharacter in the REALROOT itself, not only in the target filename", () => {
+  const realRoot = process.platform === "win32" ? "C:/repo+fixture" : "/repo+fixture";
+  const pattern = buildPlaywrightExactTargetPattern(realRoot, "playwright/tests/foo.spec.js");
+  assert.equal(pattern, `^${realRoot.replace("+", "\\+")}/playwright/tests/foo\\.spec\\.js$`);
+});
+
+test("buildPlaywrightExactTargetPattern returns null (never throws) if the resolved target would escape realRoot - defense in depth", () => {
+  const realRoot = process.platform === "win32" ? "C:/repo" : "/repo";
+  assert.equal(buildPlaywrightExactTargetPattern(realRoot, "../escape/foo.spec.js"), null);
+});
+
+// --- Cypress positive safe-character allowlist (Roadmap #23G-C3, closes 23G-C2-RR-2) ---
+
+test("CYPRESS_SAFE_TARGET_PATH: accepts this repository's own real spec-naming conventions", () => {
+  for (const p of ["cypress/e2e/tests/category_tree_behavior.cy.js", "cypress/e2e/tests/map-v2.cy.js", "cypress/e2e/tests/map_v2.cy.js", "cypress/e2e/tests/map.mobile.cy.js", "cypress/e2e/tests/nested/path/map.cy.js"]) {
+    assert.equal(CYPRESS_SAFE_TARGET_PATH.test(p), true, p);
+  }
+});
+
+test("CYPRESS_SAFE_TARGET_PATH: rejects every character with minimatch/extglob significance, including the ones #23G-C2's denylist missed", () => {
+  for (const bad of ["cypress/e2e/tests/a,b.cy.js", "cypress/e2e/tests/a*.cy.js", "cypress/e2e/tests/a?.cy.js", "cypress/e2e/tests/a[b].cy.js", "cypress/e2e/tests/a{b}.cy.js", "cypress/e2e/tests/a!(b).cy.js", "cypress/e2e/tests/a+b.cy.js", "cypress/e2e/tests/a@b.cy.js", "cypress/e2e/tests/a(b).cy.js", "cypress/e2e/tests/a|b.cy.js"]) {
+    assert.equal(CYPRESS_SAFE_TARGET_PATH.test(bad), false, bad);
+  }
+});
+
+test("deriveExecutionTargets: Cypress separates safe from unsafe-but-recognized executable targets, never silently drops the unsafe one", () => {
   const changes = [
     { path: "cypress/e2e/tests/normal.cy.js" },
-    { path: "cypress/e2e/tests/a,b.cy.js" },
-    { path: "cypress/e2e/tests/a*.cy.js" },
-    { path: "cypress/e2e/tests/a?.cy.js" },
-    { path: "cypress/e2e/tests/a[b].cy.js" },
-    { path: "cypress/e2e/tests/a{b}.cy.js" },
+    { path: "cypress/e2e/tests/a+b.cy.js" },
+    { path: "cypress/support/commands.js" },
   ];
-  assert.deepEqual(deriveExecutionTargets("cypress", changes), ["cypress/e2e/tests/normal.cy.js"]);
+  assert.deepEqual(deriveExecutionTargets("cypress", changes), { executableTargets: ["cypress/e2e/tests/normal.cy.js"], unsafeExecutableTargets: ["cypress/e2e/tests/a+b.cy.js"] });
 });
 
-test("deriveExecutionTargets: Playwright does NOT apply the Cypress glob-character exclusion (its own exact-match anchoring handles metacharacters instead)", () => {
-  const changes = [{ path: "playwright/tests/a+b.spec.js" }, { path: "playwright/tests/a,b.spec.js" }];
-  assert.deepEqual(deriveExecutionTargets("playwright", changes), ["playwright/tests/a+b.spec.js", "playwright/tests/a,b.spec.js"]);
+test("deriveExecutionTargets: Playwright never populates unsafeExecutableTargets - its own exact-match anchoring handles every character, no denylist/allowlist needed", () => {
+  const changes = [{ path: "playwright/tests/a+b.spec.js" }, { path: "playwright/tests/a,b.spec.js" }, { path: "playwright/tests/a!(b).spec.js" }];
+  assert.deepEqual(deriveExecutionTargets("playwright", changes), { executableTargets: ["playwright/tests/a+b.spec.js", "playwright/tests/a,b.spec.js", "playwright/tests/a!(b).spec.js"], unsafeExecutableTargets: [] });
 });
 
 // --- runBoundedProcess (real, safe child-process fixtures) ------------------------

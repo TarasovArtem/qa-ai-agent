@@ -270,43 +270,58 @@ function resolveLocalBinary(realRoot, binaryName) {
   return path.join(realRoot, "node_modules", ".bin", `${binaryName}${ext}`);
 }
 
-// Roadmap #23G-C2 (closes 23G-C1-RR-1, the Cypress side of the same class
-// of exact-target-selection risk): Cypress's own --spec value is matched
-// via minimatch glob semantics (not a literal filename comparison) -
-// #23D/#23C's own path-safety rules (isSafeRepoRelativePath/
-// isCanonicalPlanPath) do NOT reject glob-special characters in a path
-// segment (independently confirmed: "a,b.cy.js", "a*.cy.js", "a?.cy.js"
-// all pass as safe/canonical), so a path containing one of these could, in
-// principle, cause Cypress to match more files than intended - the exact
-// same class of problem #23G-C1-RR-1 found in Playwright's own regex-based
-// matching, just via glob wildcards instead. Rather than attempting to
-// escape glob syntax for minimatch (fragile to prove correct - backslash
-// escaping interacts badly with Windows path separators, and this
-// environment has no working local Cypress binary to empirically verify
-// escape behavior against), a target whose path contains any of these
-// characters is simply never treated as an eligible execution target at
-// all - the same treatment as a path that does not match the classifier's
-// own naming convention. This is provable by construction (the character
-// never reaches Cypress's spec matcher), not by empirical Cypress-CLI
-// verification.
-const CYPRESS_UNSAFE_TARGET_CHARS = /[*?[\]{},]/;
+// Roadmap #23G-C3 (closes 23G-C2-RR-2): Cypress's own --spec value is
+// matched via minimatch glob semantics (not a literal filename comparison),
+// and #23D/#23C's own path-safety rules (isSafeRepoRelativePath/
+// isCanonicalPlanPath) do NOT reject glob/extglob-special characters in a
+// path segment. #23G-C2 tried to DENYLIST the dangerous characters
+// (*, ?, [, ], {, }, ,) but independent review proved this incomplete:
+// minimatch (the exact version installed in this repository's own
+// dependency tree) treats !, +, @, (, ), | as extglob syntax under DEFAULT
+// options too (independently confirmed: minimatch("other.cy.js",
+// "!(foo).cy.js") -> true; minimatch("a.cy.js", "+(a|b).cy.js") -> true).
+// A denylist is fundamentally fragile here (it can only ever be as
+// complete as whatever was enumerated), so this is a POSITIVE ALLOWLIST
+// instead: a Cypress target path is safe to pass to --spec ONLY if it
+// contains nothing but the characters this repository's own real spec
+// files already use (letters, digits, ".", "_", "/", "-") - anything else
+// is unsafe BY DEFAULT, never individually re-litigated character by
+// character. This is provable by construction (no character outside this
+// set ever reaches Cypress's spec matcher), not by empirical Cypress-CLI
+// verification (the local Cypress binary remains broken on this dev
+// machine, independent of #23G's own changes).
+const CYPRESS_SAFE_TARGET_PATH = /^[A-Za-z0-9._/-]+$/;
 
-// Roadmap #23G-C1 (closes 23G-RV-2): derives the exact, ordered list of
-// executable target paths for `framework` from `changes` (the ALREADY
-// execution-time-revalidated `appliedChangeSetRecord.changes[]` array) -
-// never from any other source. A path that does not match the framework's
-// own EXECUTION_TARGET_CLASSIFIERS entry (e.g. a support/helper/config
-// file), OR (Cypress only) that contains a glob-special character, is
-// silently excluded from the returned target list - it is not an error for
-// a changeset to also touch such a file, only for a changeset to contain
-// ZERO recognized targets (checked by this function's caller).
+// Roadmap #23G-C3 (closes 23G-C2-RR-2 Section 29-32): a RECOGNIZED
+// executable target (one that matches EXECUTION_TARGET_CLASSIFIERS) whose
+// path fails the safe-character allowlist is NOT silently dropped from
+// execution the way a non-matching support/helper file is (#23G-C2's own
+// bug) - it is returned separately as `unsafeExecutableTargets`, which
+// executeAppliedChangeSet() below treats as a hard, whole-execution
+// rejection (zero spawn) rather than quietly running only the safe
+// remainder. A changeset containing one safe spec and one unsafe spec must
+// never execute "just the safe one" - that would silently narrow the
+// reviewed/applied scope the AppliedChangeSetRecord actually represents.
 function deriveExecutionTargets(framework, changes) {
   const classifier = EXECUTION_TARGET_CLASSIFIERS[framework];
-  if (!classifier) return [];
-  return changes
-    .filter((change) => classifier(change.path))
-    .filter((change) => framework !== "cypress" || !CYPRESS_UNSAFE_TARGET_CHARS.test(change.path))
-    .map((change) => change.path);
+  if (!classifier) return { executableTargets: [], unsafeExecutableTargets: [] };
+  const recognized = changes.filter((change) => classifier(change.path));
+  if (framework !== "cypress") {
+    // Playwright's own exact-match construction (see
+    // buildPlaywrightExactTargetPattern() below) escapes and anchors the
+    // FULL absolute path, which is a complete, provably-exhaustive
+    // operation over every possible character - unlike Cypress's
+    // minimatch-based matching, there is no "unsafe character" category
+    // here to separately reject.
+    return { executableTargets: recognized.map((change) => change.path), unsafeExecutableTargets: [] };
+  }
+  const executableTargets = [];
+  const unsafeExecutableTargets = [];
+  for (const change of recognized) {
+    if (CYPRESS_SAFE_TARGET_PATH.test(change.path)) executableTargets.push(change.path);
+    else unsafeExecutableTargets.push(change.path);
+  }
+  return { executableTargets, unsafeExecutableTargets };
 }
 
 // Roadmap #23G-C2 (closes 23G-C1-RR-1): escapes every JavaScript regex
@@ -318,42 +333,43 @@ function escapeRegexLiteral(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Roadmap #23G-C2 (closes 23G-C1-RR-1): builds a fully-escaped matching
-// pattern for one canonical repository-relative target path. Independently,
-// empirically verified against the actual installed Playwright 1.62.1
-// binary (see controlled-execution.test.js's own PLAYWRIGHT EXACT TARGET
-// test group, which runs the real binary in both CI environments this
-// project uses): Playwright's positional test-filter arguments are
-// unanchored regular expressions, so an unescaped raw path (the #23G-C1
-// behavior) can match an unrelated file whose path differs at any position
-// a literal "." (or other regex metacharacter) in the intended target
-// happens to occupy - escaping every metacharacter closes that gap, since
-// the escaped literal can then only ever match its own exact character
-// sequence, never a wildcard-substituted neighbor.
+// Roadmap #23G-C3 (closes 23G-C2-RR-1 for real): builds an anchored,
+// fully-escaped exact-match pattern for one target, against the FULL
+// ABSOLUTE file path - not the repository-relative path #23G-C1/#23G-C2
+// both used. ROOT CAUSE, established empirically this pass (see this
+// project's own natural Linux CI log, and not merely reasoned about):
+// Playwright's positional test-filter arguments are regular expressions
+// matched against the candidate file's full absolute path, not any
+// repository- or testDir-relative form. An anchored REPOSITORY-RELATIVE
+// pattern (`^playwright/tests/foo\.spec\.js$`) can therefore never match
+// ANY real file on ANY platform, because the string it is actually
+// compared against always begins with the filesystem's own absolute root,
+// never with "playwright/" - #23G-C2's own anchored-relative attempt
+// appeared to work on a Windows dev-machine manual run but failed with
+// "No tests found" on this exact project's natural Linux CI, and a
+// dedicated, disposable, non-permanent diagnostic test (never committed to
+// this pass's final history) proved conclusively, side-by-side on the same
+// real Linux CI job, that only an ANCHORED ABSOLUTE pattern selects the
+// intended file while an anchored repository-relative or testDir-relative
+// pattern selects nothing.
 //
-// NOT ANCHORED WITH ^...$, BY DELIBERATE CHOICE, NOT OVERSIGHT: an earlier
-// version of this function anchored the pattern, which is a strictly
-// tighter guarantee in principle (rejects a target appearing merely as a
-// substring of a longer, unrelated candidate path, in addition to the
-// wildcard case above) - but it was empirically found, via this exact
-// project's own natural Linux CI run, to make Playwright report "No tests
-// found" for a target that DOES exist, on Linux specifically, while the
-// identical anchored pattern worked correctly on this Windows dev machine.
-// The precise mechanism was not fully isolated within this corrective
-// pass's own time budget (candidates include Playwright normalizing/
-// resolving the candidate path differently across platforms/versions
-// before the regex is applied), and rather than ship an anchoring
-// mechanism whose cross-platform correctness is unverified, this function
-// uses ONLY escaping - which IS independently verified correct on both
-// platforms this project's own CI exercises (Windows dev-machine manual
-// runs; Linux natural PR CI) - accepting the narrower residual risk that a
-// target's exact escaped path could, in principle, match as a literal
-// substring within some other, unrelated file's longer path (e.g. a
-// deliberately nested or prefixed decoy name) rather than the wildcard-
-// substitution risk this function was originally written to close, which
-// remains fully closed either way.
-function buildPlaywrightSafeTargetPattern(canonicalTargetPath) {
-  return escapeRegexLiteral(canonicalTargetPath);
+// `realRoot` MUST be the already execution-time-revalidated, already
+// symlink/containment-checked real repository root (resolveRepositoryRoot's
+// own output) - never a caller-supplied raw string - and
+// `canonicalTargetPath` MUST be an already-classified, already-revalidated
+// applied path. This function performs one additional, cheap containment
+// sanity check of its own (the resolved absolute path must still be
+// realRoot itself or a path under it) as defense in depth, even though
+// upstream #23D/#23F/#23G validation already guarantees this - returning
+// `null` (never throwing) if that invariant is somehow violated, which the
+// caller treats as a hard command-construction failure.
+function buildPlaywrightExactTargetPattern(realRoot, canonicalTargetPath) {
+  const normalizedRoot = realRoot.split(path.sep).join("/").replace(/\/+$/, "");
+  const absoluteTarget = path.resolve(realRoot, canonicalTargetPath).split(path.sep).join("/");
+  if (absoluteTarget !== normalizedRoot && !absoluteTarget.startsWith(`${normalizedRoot}/`)) {
+    return null;
+  }
+  return `^${escapeRegexLiteral(absoluteTarget)}$`;
 }
 
 // Roadmap #23G-C1 (closes 23G-RV-2): the SOLE command-selection function -
@@ -384,19 +400,25 @@ function selectExecutionCommand(framework, realRoot, targets) {
       commandLabel: `cypress run (${targets.length} target${targets.length === 1 ? "" : "s"})`,
     };
   }
-  // playwright: positional arguments are UNANCHORED REGULAR EXPRESSIONS
-  // against the relative spec path, not literal filenames (Roadmap
-  // #23G-C2, closes 23G-C1-RR-1) - each target is converted to its own
-  // fully-escaped safe pattern via buildPlaywrightSafeTargetPattern()
-  // (see that function's own docstring for why it is deliberately not
-  // additionally anchored), never the raw path, and passed as its own
-  // argv entry (Playwright ORs multiple positional patterns together -
-  // independently verified against the real installed binary on both
-  // Windows and this project's own Linux CI).
+  // playwright: positional arguments are regular expressions matched
+  // against the candidate file's FULL ABSOLUTE path, never a literal
+  // filename (Roadmap #23G-C3, closes 23G-C2-RR-1 for real - see
+  // buildPlaywrightExactTargetPattern()'s own docstring for the empirical
+  // evidence) - each target is converted to its own anchored, fully-escaped
+  // absolute-path pattern, never the raw repo-relative path, and passed as
+  // its own argv entry (Playwright ORs multiple positional patterns
+  // together - independently verified against the real installed binary).
+  const patterns = targets.map((target) => buildPlaywrightExactTargetPattern(realRoot, target));
+  if (patterns.some((pattern) => pattern === null)) {
+    // Containment sanity check failed (see buildPlaywrightExactTargetPattern's
+    // own docstring) - defense in depth against an invariant upstream
+    // validation should already guarantee; fails closed, zero spawn.
+    return { ok: false };
+  }
   return {
     ok: true,
     executable,
-    args: ["test", "--config=playwright.config.js", "--project=chromium", ...targets.map(buildPlaywrightSafeTargetPattern)],
+    args: ["test", "--config=playwright.config.js", "--project=chromium", ...patterns],
     commandLabel: `playwright test (${targets.length} target${targets.length === 1 ? "" : "s"})`,
   };
 }
@@ -680,7 +702,19 @@ async function executeAppliedChangeSet(input) {
   // from the already execution-time-revalidated applied paths, filtered
   // through the framework's own closed classifier. Zero executable targets
   // is a precondition rejection, never a silent whole-suite fallback.
-  const targets = deriveExecutionTargets(planSnapshot.framework, recordSnapshot.changes);
+  //
+  // Roadmap #23G-C3 (closes 23G-C2-RR-2 Section 29-32): a RECOGNIZED
+  // executable target whose path fails the Cypress safe-character
+  // allowlist is a HARD, WHOLE-EXECUTION rejection - never silently
+  // dropped while the remaining safe targets execute anyway. A changeset
+  // containing one safe spec and one unsafe spec must never narrow to "just
+  // run the safe one"; that would silently execute less than what the
+  // AppliedChangeSetRecord actually represents.
+  const derivedTargets = deriveExecutionTargets(planSnapshot.framework, recordSnapshot.changes);
+  if (derivedTargets.unsafeExecutableTargets.length > 0) {
+    return { ok: false, errors: [err("$.appliedChangeSetRecord.changes", ERROR_CODES.INVARIANT_VIOLATION, "one or more applied executable test targets are not safe to pass to the framework's own target-selection CLI (UNSAFE_EXECUTION_TARGET)")], automationExecutionRecord: null };
+  }
+  const targets = derivedTargets.executableTargets;
   if (targets.length === 0) {
     return { ok: false, errors: [err("$.appliedChangeSetRecord.changes", ERROR_CODES.INVARIANT_VIOLATION, "no applied change matches a recognized executable test-file path for this framework (NO_EXECUTABLE_TEST_TARGET)")], automationExecutionRecord: null };
   }
@@ -744,7 +778,8 @@ module.exports = {
   resolveLocalBinary,
   deriveExecutionTargets,
   escapeRegexLiteral,
-  buildPlaywrightSafeTargetPattern,
+  buildPlaywrightExactTargetPattern,
+  CYPRESS_SAFE_TARGET_PATH,
   buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
