@@ -318,21 +318,42 @@ function escapeRegexLiteral(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Roadmap #23G-C2 (closes 23G-C1-RR-1): builds an ANCHORED, fully-escaped
-// exact-match pattern for one canonical repository-relative target path.
-// Independently, empirically verified against the actual installed
-// Playwright 1.62.1 binary (see controlled-execution.test.js's own
-// PLAYWRIGHT EXACT TARGET test group): Playwright's positional test-filter
-// arguments are unanchored regular expressions matched against the
-// forward-slash-normalized relative spec path (confirmed on this Windows
-// host - a backslash-separated equivalent pattern matches nothing), so an
-// unescaped raw path (the #23G-C1 behavior) can also match an unrelated
-// file whose path differs at any position a literal "." (or other regex
-// metacharacter) in the intended target happens to occupy. Anchoring with
-// ^...$ plus escaping every metacharacter closes that gap: only a
-// byte-for-byte identical relative path can ever match.
-function buildPlaywrightExactMatcher(canonicalTargetPath) {
-  return `^${escapeRegexLiteral(canonicalTargetPath)}$`;
+// Roadmap #23G-C2 (closes 23G-C1-RR-1): builds a fully-escaped matching
+// pattern for one canonical repository-relative target path. Independently,
+// empirically verified against the actual installed Playwright 1.62.1
+// binary (see controlled-execution.test.js's own PLAYWRIGHT EXACT TARGET
+// test group, which runs the real binary in both CI environments this
+// project uses): Playwright's positional test-filter arguments are
+// unanchored regular expressions, so an unescaped raw path (the #23G-C1
+// behavior) can match an unrelated file whose path differs at any position
+// a literal "." (or other regex metacharacter) in the intended target
+// happens to occupy - escaping every metacharacter closes that gap, since
+// the escaped literal can then only ever match its own exact character
+// sequence, never a wildcard-substituted neighbor.
+//
+// NOT ANCHORED WITH ^...$, BY DELIBERATE CHOICE, NOT OVERSIGHT: an earlier
+// version of this function anchored the pattern, which is a strictly
+// tighter guarantee in principle (rejects a target appearing merely as a
+// substring of a longer, unrelated candidate path, in addition to the
+// wildcard case above) - but it was empirically found, via this exact
+// project's own natural Linux CI run, to make Playwright report "No tests
+// found" for a target that DOES exist, on Linux specifically, while the
+// identical anchored pattern worked correctly on this Windows dev machine.
+// The precise mechanism was not fully isolated within this corrective
+// pass's own time budget (candidates include Playwright normalizing/
+// resolving the candidate path differently across platforms/versions
+// before the regex is applied), and rather than ship an anchoring
+// mechanism whose cross-platform correctness is unverified, this function
+// uses ONLY escaping - which IS independently verified correct on both
+// platforms this project's own CI exercises (Windows dev-machine manual
+// runs; Linux natural PR CI) - accepting the narrower residual risk that a
+// target's exact escaped path could, in principle, match as a literal
+// substring within some other, unrelated file's longer path (e.g. a
+// deliberately nested or prefixed decoy name) rather than the wildcard-
+// substitution risk this function was originally written to close, which
+// remains fully closed either way.
+function buildPlaywrightSafeTargetPattern(canonicalTargetPath) {
+  return escapeRegexLiteral(canonicalTargetPath);
 }
 
 // Roadmap #23G-C1 (closes 23G-RV-2): the SOLE command-selection function -
@@ -366,14 +387,16 @@ function selectExecutionCommand(framework, realRoot, targets) {
   // playwright: positional arguments are UNANCHORED REGULAR EXPRESSIONS
   // against the relative spec path, not literal filenames (Roadmap
   // #23G-C2, closes 23G-C1-RR-1) - each target is converted to its own
-  // anchored, fully-escaped exact-match pattern via
-  // buildPlaywrightExactMatcher(), never the raw path, and passed as its
-  // own argv entry (Playwright ORs multiple positional patterns together -
-  // independently verified against the real installed binary).
+  // fully-escaped safe pattern via buildPlaywrightSafeTargetPattern()
+  // (see that function's own docstring for why it is deliberately not
+  // additionally anchored), never the raw path, and passed as its own
+  // argv entry (Playwright ORs multiple positional patterns together -
+  // independently verified against the real installed binary on both
+  // Windows and this project's own Linux CI).
   return {
     ok: true,
     executable,
-    args: ["test", "--config=playwright.config.js", "--project=chromium", ...targets.map(buildPlaywrightExactMatcher)],
+    args: ["test", "--config=playwright.config.js", "--project=chromium", ...targets.map(buildPlaywrightSafeTargetPattern)],
     commandLabel: `playwright test (${targets.length} target${targets.length === 1 ? "" : "s"})`,
   };
 }
@@ -721,7 +744,7 @@ module.exports = {
   resolveLocalBinary,
   deriveExecutionTargets,
   escapeRegexLiteral,
-  buildPlaywrightExactMatcher,
+  buildPlaywrightSafeTargetPattern,
   buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,

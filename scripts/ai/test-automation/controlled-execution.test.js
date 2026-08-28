@@ -21,7 +21,7 @@ const {
   resolveLocalBinary,
   deriveExecutionTargets,
   escapeRegexLiteral,
-  buildPlaywrightExactMatcher,
+  buildPlaywrightSafeTargetPattern,
   buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
@@ -132,7 +132,7 @@ test("playwright plan selects the playwright command", async () => {
     assert.equal(res.ok, true, JSON.stringify(res.errors));
     const call = getCall();
     assert.equal(call.executable, resolveLocalBinary(fs.realpathSync(root), "playwright"));
-    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", "^playwright/tests/new_spec\\.spec\\.js$"]);
+    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", "playwright/tests/new_spec\\.spec\\.js"]);
   });
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -628,8 +628,8 @@ test("escapeRegexLiteral escapes every JS regex metacharacter", () => {
   assert.equal(escapeRegexLiteral("plain_no_metachars"), "plain_no_metachars");
 });
 
-test("buildPlaywrightExactMatcher anchors and escapes the exact canonical path", () => {
-  assert.equal(buildPlaywrightExactMatcher("playwright/tests/foo.spec.js"), "^playwright/tests/foo\\.spec\\.js$");
+test("buildPlaywrightSafeTargetPattern escapes the exact canonical path (not anchored - see the function's own docstring)", () => {
+  assert.equal(buildPlaywrightSafeTargetPattern("playwright/tests/foo.spec.js"), "playwright/tests/foo\\.spec\\.js");
 });
 
 test("deriveExecutionTargets: Cypress excludes glob-special-charactered candidate paths (comma/asterisk/question mark/brackets/braces), even though upstream path-safety rules permit them", () => {
