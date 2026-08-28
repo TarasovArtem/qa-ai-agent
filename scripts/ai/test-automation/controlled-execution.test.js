@@ -495,18 +495,26 @@ test("SECRET SENTINEL: a real spawned child given buildExecutionEnvironment's ou
 
 // The REAL repository root (three levels up from this test file) is the
 // only place a working node_modules/.bin/playwright + @playwright/test
-// installation actually exists. Binary resolution therefore uses THIS
-// root (exactly like selectExecutionCommand() does in real #23G usage,
-// where repositoryRoot IS the application repository and already has its
-// own node_modules) - only the spawn `cwd` uses the disposable fixture
-// root, so Playwright resolves testDir/specs against the fixture's own
-// playwright.config.js. In real production usage these two roots are the
-// same value; here they differ only because a disposable fixture cannot
-// reasonably carry its own multi-hundred-megabyte node_modules copy.
+// installation actually exists. Binary resolution uses THIS root (exactly
+// like selectExecutionCommand() does in real #23G usage, where
+// repositoryRoot IS the application repository and already has its own
+// node_modules) - and the disposable fixture is deliberately nested AS A
+// DIRECT SUBDIRECTORY OF THIS ROOT (never os.tmpdir()), so that Node's own
+// standard upward node_modules resolution (walking parent directories from
+// the fixture's own spec files) finds the real @playwright/test install
+// without any extra configuration - this is more robust than an explicit
+// NODE_PATH env var, which is a legacy Node mechanism with real
+// cross-platform resolution quirks (an earlier version of this test used
+// NODE_PATH and passed locally on Windows but failed on Linux CI for
+// exactly this reason - a real gap this test itself caught). The fixture
+// root is gitignored (.g23g-test-fixtures) and always removed in a
+// `finally` block; it is never committed.
 const REAL_REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const FIXTURE_PARENT_DIR = path.join(REAL_REPO_ROOT, ".g23g-test-fixtures");
 
 function makePlaywrightFixture(specs) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "g23g-pw-exact-"));
+  fs.mkdirSync(FIXTURE_PARENT_DIR, { recursive: true });
+  const root = fs.mkdtempSync(path.join(FIXTURE_PARENT_DIR, "pw-exact-"));
   fs.mkdirSync(path.join(root, "playwright", "tests"), { recursive: true });
   fs.writeFileSync(path.join(root, "playwright.config.js"), 'module.exports = { testDir: "./playwright" };', "utf8");
   for (const [name, testName] of Object.entries(specs)) {
@@ -515,12 +523,8 @@ function makePlaywrightFixture(specs) {
   return root;
 }
 
-// @playwright/test itself must be resolvable from the disposable fixture
-// directory's own require() calls - a test-fixture-only necessity (in real
-// #23G usage, cwd IS the repository root and already has its own
-// node_modules; this env var never exists in production code).
 function fixtureEnv() {
-  return { ...buildExecutionEnvironment(process.env), NODE_PATH: path.join(REAL_REPO_ROOT, "node_modules") };
+  return buildExecutionEnvironment(process.env);
 }
 
 async function listPlaywrightTests(fixtureRoot, targets) {
@@ -553,6 +557,10 @@ async function listPlaywrightTests(fixtureRoot, targets) {
 // this limitation does not apply (Linux CI, and any future Windows fix),
 // while reporting a clear, specific skip - never a silent pass - on an
 // affected Windows host today.
+function diag(result) {
+  return `exitCode=${result.exitCode} spawnError=${result.spawnError}\nSTDOUT: ${result.stdout.text}\nSTDERR: ${result.stderr.text}`;
+}
+
 function skipIfWindowsCmdSpawnLimitation(t, result) {
   if (result.spawnError && process.platform === "win32") {
     t.skip("known Windows-only limitation: Node's child_process.spawn refuses to launch a .cmd file under shell:false (EINVAL) - unrelated to the regex-collision fix under test; unaffected on Linux CI, where the resolved binary is an extensionless POSIX shebang script");
@@ -566,9 +574,9 @@ test("PLAYWRIGHT EXACT TARGET: the exact intended target is selected; a path-col
   try {
     const result = await listPlaywrightTests(root, ["playwright/tests/foo.spec.js"]);
     if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
-    assert.ok(result.stdout.text.includes("foo.spec.js"), result.stdout.text);
-    assert.ok(!result.stdout.text.includes("fooXspec.js"), result.stdout.text);
-    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("foo.spec.js"), diag(result));
+    assert.ok(!result.stdout.text.includes("fooXspec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), diag(result));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -583,10 +591,10 @@ test("PLAYWRIGHT EXACT TARGET: multiple targets select exactly that set, excludi
   try {
     const result = await listPlaywrightTests(root, ["playwright/tests/foo.spec.js", "playwright/tests/second_spec.spec.js"]);
     if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
-    assert.ok(result.stdout.text.includes("foo.spec.js"), result.stdout.text);
-    assert.ok(result.stdout.text.includes("second_spec.spec.js"), result.stdout.text);
-    assert.ok(!result.stdout.text.includes("fooXspec.js"), result.stdout.text);
-    assert.ok(result.stdout.text.includes("Total: 2 tests in 2 files"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("foo.spec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("second_spec.spec.js"), diag(result));
+    assert.ok(!result.stdout.text.includes("fooXspec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("Total: 2 tests in 2 files"), diag(result));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -597,9 +605,9 @@ test("PLAYWRIGHT EXACT TARGET: a target path containing regex metacharacters (+)
   try {
     const result = await listPlaywrightTests(root, ["playwright/tests/a+b.spec.js"]);
     if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
-    assert.ok(result.stdout.text.includes("a+b.spec.js"), result.stdout.text);
-    assert.ok(!result.stdout.text.includes("aaab.spec.js"), result.stdout.text);
-    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("a+b.spec.js"), diag(result));
+    assert.ok(!result.stdout.text.includes("aaab.spec.js"), diag(result));
+    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), diag(result));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
