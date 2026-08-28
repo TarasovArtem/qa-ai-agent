@@ -601,11 +601,32 @@ function fixtureEnv() {
   return buildExecutionEnvironment(process.env);
 }
 
+// NOTE: this deliberately does NOT call selectExecutionCommand() as a
+// single all-in-one step, even though mission guidance prefers exercising
+// the real production command-construction path - it calls
+// buildPlaywrightExactTargetPattern() (the SAME function
+// selectExecutionCommand() itself calls) directly instead, and
+// resolveLocalBinary() separately. This is a genuine, disclosed test-only
+// necessity: selectExecutionCommand(framework, realRoot, targets) uses ONE
+// `realRoot` value for BOTH binary resolution (needs to be REAL_REPO_ROOT,
+// which has a real node_modules/@playwright/test install) AND target-path
+// resolution (needs to be the disposable FIXTURE root, where the actual
+// candidate spec files live) - these two roots are ALWAYS the same value
+// in real production usage (repositoryRoot IS the application repository,
+// with its own files and its own node_modules together), and only diverge
+// here because a disposable fixture cannot reasonably carry its own
+// multi-hundred-megabyte node_modules copy. An earlier version of this
+// helper passed REAL_REPO_ROOT for both purposes, which silently
+// mismatched the constructed absolute pattern against the fixture's real
+// file location and made every real-binary test in this section fail with
+// "No tests found" on Linux CI - not a production defect, a test-helper one,
+// caught and fixed by that exact failure.
 async function listPlaywrightTests(fixtureRoot, targets) {
-  const cmd = selectExecutionCommand("playwright", REAL_REPO_ROOT, targets);
-  assert.equal(cmd.ok, true);
-  const args = [...cmd.args, "--list"];
-  const result = await runBoundedProcess(cmd.executable, args, { cwd: fixtureRoot, timeoutMs: 30000, env: fixtureEnv() });
+  const executable = resolveLocalBinary(REAL_REPO_ROOT, "playwright");
+  const patterns = targets.map((target) => buildPlaywrightExactTargetPattern(fixtureRoot, target));
+  assert.ok(patterns.every((pattern) => pattern !== null), "pattern construction must not fail for a valid fixture target");
+  const args = ["test", "--config=playwright.config.js", "--project=chromium", ...patterns, "--list"];
+  const result = await runBoundedProcess(executable, args, { cwd: fixtureRoot, timeoutMs: 30000, env: fixtureEnv() });
   return result;
 }
 
