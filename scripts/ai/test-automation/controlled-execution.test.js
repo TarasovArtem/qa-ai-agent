@@ -20,6 +20,8 @@ const {
   ENV_ALLOWLIST,
   resolveLocalBinary,
   deriveExecutionTargets,
+  escapeRegexLiteral,
+  buildPlaywrightExactMatcher,
   buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
@@ -130,7 +132,7 @@ test("playwright plan selects the playwright command", async () => {
     assert.equal(res.ok, true, JSON.stringify(res.errors));
     const call = getCall();
     assert.equal(call.executable, resolveLocalBinary(fs.realpathSync(root), "playwright"));
-    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", "playwright/tests/new_spec.spec.js"]);
+    assert.deepEqual(call.args, ["test", "--config=playwright.config.js", "--project=chromium", "^playwright/tests/new_spec\\.spec\\.js$"]);
   });
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -476,6 +478,159 @@ test("SECRET SENTINEL: a real spawned child given buildExecutionEnvironment's ou
   } finally {
     delete process.env.QA_AI_AGENT_SECRET_SENTINEL;
   }
+});
+
+// --- PLAYWRIGHT EXACT TARGET (Roadmap #23G-C2, closes 23G-C1-RR-1) ---------------
+//
+// Independent review empirically proved, against the actual installed
+// Playwright binary, that positional test-filter arguments are unanchored
+// regular expressions - the exact, correctly-derived target path
+// "playwright/tests/foo.spec.js" ALSO matched an unrelated
+// "playwright/tests/fooXspec.js", because the literal "." in ".spec.js"
+// acted as a regex wildcard. These tests run the REAL, installed
+// Playwright binary (via --list, which resolves matching test files
+// without executing them - no network, no browser needed) against a
+// disposable temp fixture, proving the fix holds against actual CLI
+// behavior rather than only against argv-string assertions.
+
+// The REAL repository root (three levels up from this test file) is the
+// only place a working node_modules/.bin/playwright + @playwright/test
+// installation actually exists. Binary resolution therefore uses THIS
+// root (exactly like selectExecutionCommand() does in real #23G usage,
+// where repositoryRoot IS the application repository and already has its
+// own node_modules) - only the spawn `cwd` uses the disposable fixture
+// root, so Playwright resolves testDir/specs against the fixture's own
+// playwright.config.js. In real production usage these two roots are the
+// same value; here they differ only because a disposable fixture cannot
+// reasonably carry its own multi-hundred-megabyte node_modules copy.
+const REAL_REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+
+function makePlaywrightFixture(specs) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "g23g-pw-exact-"));
+  fs.mkdirSync(path.join(root, "playwright", "tests"), { recursive: true });
+  fs.writeFileSync(path.join(root, "playwright.config.js"), 'module.exports = { testDir: "./playwright" };', "utf8");
+  for (const [name, testName] of Object.entries(specs)) {
+    fs.writeFileSync(path.join(root, "playwright", "tests", name), `const { test } = require('@playwright/test');\ntest('${testName}', async () => {});\n`, "utf8");
+  }
+  return root;
+}
+
+// @playwright/test itself must be resolvable from the disposable fixture
+// directory's own require() calls - a test-fixture-only necessity (in real
+// #23G usage, cwd IS the repository root and already has its own
+// node_modules; this env var never exists in production code).
+function fixtureEnv() {
+  return { ...buildExecutionEnvironment(process.env), NODE_PATH: path.join(REAL_REPO_ROOT, "node_modules") };
+}
+
+async function listPlaywrightTests(fixtureRoot, targets) {
+  const cmd = selectExecutionCommand("playwright", REAL_REPO_ROOT, targets);
+  assert.equal(cmd.ok, true);
+  const args = [...cmd.args, "--list"];
+  const result = await runBoundedProcess(cmd.executable, args, { cwd: fixtureRoot, timeoutMs: 30000, env: fixtureEnv() });
+  return result;
+}
+
+// KNOWN, PRE-EXISTING, WINDOWS-SPECIFIC LIMITATION (discovered while writing
+// these tests, unrelated to the regex-collision fix they verify): Node.js
+// hardened child_process.spawn() to refuse spawning a .cmd/.bat file
+// directly under shell:false, throwing a synchronous EINVAL (this is where
+// runBoundedProcess's own try/catch correctly reports it as spawnError:true
+// rather than crashing - see controlled-execution.js). This affects EVERY
+// .cmd-suffixed binary this module resolves (cypress.cmd, playwright.cmd),
+// not anything specific to this test or to the C2 fix - and it was never
+// caught earlier because every prior #23G/#23G-C1 test exercising argv
+// construction used a MOCKED spawn, and every REAL (unmocked)
+// runBoundedProcess test used process.execPath (a real .exe, not a .cmd
+// file). It does not affect Linux CI, where resolveLocalBinary() resolves
+// to an extensionless POSIX shebang script that the kernel executes
+// directly without any shell involvement. Fixing this Windows-specific
+// spawn limitation is a separate, security-sensitive change (it would mean
+// conditionally re-introducing some form of shell involvement specifically
+// for .cmd files on win32) intentionally left out of this narrow
+// #23G-C2 pass - see the final report's own dedicated finding. This helper
+// lets the tests below still run for real and assert normally everywhere
+// this limitation does not apply (Linux CI, and any future Windows fix),
+// while reporting a clear, specific skip - never a silent pass - on an
+// affected Windows host today.
+function skipIfWindowsCmdSpawnLimitation(t, result) {
+  if (result.spawnError && process.platform === "win32") {
+    t.skip("known Windows-only limitation: Node's child_process.spawn refuses to launch a .cmd file under shell:false (EINVAL) - unrelated to the regex-collision fix under test; unaffected on Linux CI, where the resolved binary is an extensionless POSIX shebang script");
+    return true;
+  }
+  return false;
+}
+
+test("PLAYWRIGHT EXACT TARGET: the exact intended target is selected; a path-collision decoy (differing only where the target's literal '.' sits) is excluded", async (t) => {
+  const root = makePlaywrightFixture({ "foo.spec.js": "the-actual-target", "fooXspec.js": "unrelated-collision" });
+  try {
+    const result = await listPlaywrightTests(root, ["playwright/tests/foo.spec.js"]);
+    if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
+    assert.ok(result.stdout.text.includes("foo.spec.js"), result.stdout.text);
+    assert.ok(!result.stdout.text.includes("fooXspec.js"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), result.stdout.text);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PLAYWRIGHT EXACT TARGET: multiple targets select exactly that set, excluding the collision decoy and each other's near-miss variants", async (t) => {
+  const root = makePlaywrightFixture({
+    "foo.spec.js": "target-1",
+    "second_spec.spec.js": "target-2",
+    "fooXspec.js": "unrelated-collision",
+  });
+  try {
+    const result = await listPlaywrightTests(root, ["playwright/tests/foo.spec.js", "playwright/tests/second_spec.spec.js"]);
+    if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
+    assert.ok(result.stdout.text.includes("foo.spec.js"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("second_spec.spec.js"), result.stdout.text);
+    assert.ok(!result.stdout.text.includes("fooXspec.js"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("Total: 2 tests in 2 files"), result.stdout.text);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PLAYWRIGHT EXACT TARGET: a target path containing regex metacharacters (+) matches only itself, never a quantifier-expanded decoy", async (t) => {
+  const root = makePlaywrightFixture({ "a+b.spec.js": "plus-target", "aaab.spec.js": "plus-decoy" });
+  try {
+    const result = await listPlaywrightTests(root, ["playwright/tests/a+b.spec.js"]);
+    if (skipIfWindowsCmdSpawnLimitation(t, result)) return;
+    assert.ok(result.stdout.text.includes("a+b.spec.js"), result.stdout.text);
+    assert.ok(!result.stdout.text.includes("aaab.spec.js"), result.stdout.text);
+    assert.ok(result.stdout.text.includes("Total: 1 test in 1 file"), result.stdout.text);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("escapeRegexLiteral escapes every JS regex metacharacter", () => {
+  assert.equal(escapeRegexLiteral("a.b"), "a\\.b");
+  assert.equal(escapeRegexLiteral("a+b*c?d"), "a\\+b\\*c\\?d");
+  assert.equal(escapeRegexLiteral("(a|b)[c]{1}^$\\"), "\\(a\\|b\\)\\[c\\]\\{1\\}\\^\\$\\\\");
+  assert.equal(escapeRegexLiteral("plain_no_metachars"), "plain_no_metachars");
+});
+
+test("buildPlaywrightExactMatcher anchors and escapes the exact canonical path", () => {
+  assert.equal(buildPlaywrightExactMatcher("playwright/tests/foo.spec.js"), "^playwright/tests/foo\\.spec\\.js$");
+});
+
+test("deriveExecutionTargets: Cypress excludes glob-special-charactered candidate paths (comma/asterisk/question mark/brackets/braces), even though upstream path-safety rules permit them", () => {
+  const changes = [
+    { path: "cypress/e2e/tests/normal.cy.js" },
+    { path: "cypress/e2e/tests/a,b.cy.js" },
+    { path: "cypress/e2e/tests/a*.cy.js" },
+    { path: "cypress/e2e/tests/a?.cy.js" },
+    { path: "cypress/e2e/tests/a[b].cy.js" },
+    { path: "cypress/e2e/tests/a{b}.cy.js" },
+  ];
+  assert.deepEqual(deriveExecutionTargets("cypress", changes), ["cypress/e2e/tests/normal.cy.js"]);
+});
+
+test("deriveExecutionTargets: Playwright does NOT apply the Cypress glob-character exclusion (its own exact-match anchoring handles metacharacters instead)", () => {
+  const changes = [{ path: "playwright/tests/a+b.spec.js" }, { path: "playwright/tests/a,b.spec.js" }];
+  assert.deepEqual(deriveExecutionTargets("playwright", changes), ["playwright/tests/a+b.spec.js", "playwright/tests/a,b.spec.js"]);
 });
 
 // --- runBoundedProcess (real, safe child-process fixtures) ------------------------

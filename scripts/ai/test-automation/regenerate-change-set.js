@@ -213,9 +213,22 @@ const REDACTION_PATTERNS = [
   /(authorization\s*:\s*)(\S.*?)(?=\r?\n|$)/gi,
   // A bare "Bearer <token>" occurring outside an Authorization: line.
   /\b(bearer\s+)(\S+)/gi,
-  // NAME_TOKEN / NAME_SECRET / NAME_PASSWORD / NAME_API_KEY style
-  // assignments (":" or "=" separated), e.g. GITHUB_TOKEN=xyz, API_KEY: xyz.
-  /\b([A-Z0-9][A-Z0-9_]*(?:_TOKEN|_SECRET|_PASSWORD|_API_?KEY)\s*[:=]\s*)(\S+)/gi,
+  // Roadmap #23G-C2 (closes 23G-C1-RR-1's redaction sub-finding,
+  // 23G-C1-RR-2): (optionally-prefixed)_TOKEN / _SECRET / _PASSWORD /
+  // _API_KEY assignments (":" or "=" separated, optionally quoted on
+  // either side of the operator for JSON-object-shaped evidence like
+  // `"API_KEY":"xyz"`) - e.g. GITHUB_TOKEN=xyz, API_KEY: xyz, and now also
+  // the BARE (unprefixed) forms TOKEN=xyz / SECRET=xyz / PASSWORD=xyz /
+  // API_KEY=xyz, which the original #23G-C1 pattern required a prefix
+  // segment before and therefore missed entirely (confirmed via
+  // independent review: "PASSWORD=..." passed through unredacted). The
+  // REQUIRED [:=] assignment operator immediately after the keyword (only
+  // an optional quote character may sit between them) is what keeps this
+  // from over-matching ordinary prose that merely contains one of these
+  // words with no assignment syntax (e.g. "password validation failed",
+  // "tokenizer test failed", "secret-management UI visible" all correctly
+  // remain untouched - a permanent test proves this).
+  /\b((?:[A-Z0-9][A-Z0-9_]*_)?(?:TOKEN|SECRET|PASSWORD|API_?KEY)["']?\s*[:=]\s*["']?)([^"'\s,}]+)/gi,
   // URL-embedded credentials: scheme://user:password@host
   /(:\/\/[^\s/:@]+:)([^\s/@]+)(@)/g,
 ];

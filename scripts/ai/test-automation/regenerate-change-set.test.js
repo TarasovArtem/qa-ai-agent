@@ -200,6 +200,45 @@ test("redactSecrets: Authorization/Bearer headers, *_TOKEN/*_SECRET/*_PASSWORD/*
   assert.equal(redactSecrets("plain assertion text with no secrets at all"), "plain assertion text with no secrets at all");
 });
 
+// --- bare-name redaction (Roadmap #23G-C2, closes 23G-C1-RR-2) -------------------
+
+test("redactSecrets: bare (unprefixed) TOKEN/SECRET/PASSWORD/API_KEY assignments are redacted - the exact gap independent review found", () => {
+  const SECRET = "VERY_SECRET_SENTINEL_987";
+  assert.ok(!redactSecrets(`TOKEN=${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`SECRET=${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`PASSWORD=${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`API_KEY=${SECRET}`).includes(SECRET));
+  // The mission's own literal required reproduction sentinel.
+  assert.ok(!redactSecrets(`PASSWORD=SECRET_PASS_444`).includes("SECRET_PASS_444"));
+});
+
+test("redactSecrets: bare-name assignment forms (spaced, colon-separated, JSON-quoted) are all redacted", () => {
+  const SECRET = "VERY_SECRET_SENTINEL_987";
+  assert.ok(!redactSecrets(`TOKEN = ${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`TOKEN: ${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`"API_KEY":"${SECRET}"`).includes(SECRET));
+  assert.ok(!redactSecrets(`'PASSWORD':'${SECRET}'`).includes(SECRET));
+});
+
+test("redactSecrets: prefixed forms still work after the bare-name widening (no regression)", () => {
+  const SECRET = "VERY_SECRET_SENTINEL_987";
+  assert.ok(!redactSecrets(`OPENAI_API_KEY=${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`MY_TOKEN=${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`Authorization: Bearer ${SECRET}`).includes(SECRET));
+  assert.ok(!redactSecrets(`https://user:${SECRET}@example.com/`).includes(SECRET));
+});
+
+test("redactSecrets: ordinary prose merely containing 'password'/'token'/'secret' with no assignment syntax is never redacted (false-positive check)", () => {
+  const prose = [
+    "the password validation test passed",
+    "tokenizer test failed",
+    "secret-management UI visible",
+  ];
+  for (const line of prose) {
+    assert.equal(redactSecrets(line), line, line);
+  }
+});
+
 test("buildFailureEvidenceErrors applies redaction before embedding stdout/stderr, and does not mutate the caller's record", () => {
   const SECRET = "VERY_SECRET_SENTINEL_987";
   const record = { status: "TEST_FAILED", exitCode: 1, stdout: { text: `1 failing\nAuthorization: Bearer ${SECRET}` }, stderr: { text: `OPENAI_API_KEY=${SECRET}` } };

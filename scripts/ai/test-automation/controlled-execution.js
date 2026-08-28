@@ -181,6 +181,25 @@ const FRAMEWORK_BINARIES = Object.freeze({
 // classifier below, and is therefore never a direct runner target (it may
 // still be naturally imported/loaded by a matching spec file, exactly as
 // it would be if a human ran the suite locally).
+// Roadmap #23G-C2 (23G-C1-RR-3, DEFERRED/NON-BLOCKING - explicitly, not
+// silently): this classifier is deliberately NARROWER than both (a)
+// Cypress's own actual default specPattern, which also matches
+// .cy.jsx/.cy.ts/.cy.tsx, and (b) what #23C/#23D's generation pipeline is
+// technically unconstrained to produce (grepped the entire
+// automation-plan-prompt.js/generate-change-set-prompt.js prompt-building
+// layer - no naming-convention guidance exists anywhere upstream). This is
+// the explicit, documented v1 execution contract, not an oversight: a
+// legitimately generated/reviewed/applied CREATE or MODIFY whose path does
+// not end in exactly ".cy.js" (Cypress) or ".spec.js" (Playwright) will be
+// rejected at THIS stage with NO_EXECUTABLE_TEST_TARGET - safely (no
+// execution occurs) but with reduced coverage relative to the underlying
+// framework's own broader capability. Broadening this classifier, or
+// constraining #23C's own plan-generation stage to only ever produce
+// classifier-recognized names, is intentionally left for a future pass -
+// see FUTURE_TARGET_CLASSIFIER_COVERAGE_GUARD. Do not broaden this map
+// without re-verifying framework target-selection semantics for every
+// added extension the same way Roadmap #23G-C2 empirically verified the
+// two entries already here.
 const EXECUTION_TARGET_CLASSIFIERS = Object.freeze({
   cypress: (relPath) => relPath.startsWith("cypress/e2e/") && relPath.endsWith(".cy.js"),
   playwright: (relPath) => relPath.startsWith("playwright/") && relPath.endsWith(".spec.js"),
@@ -251,18 +270,69 @@ function resolveLocalBinary(realRoot, binaryName) {
   return path.join(realRoot, "node_modules", ".bin", `${binaryName}${ext}`);
 }
 
+// Roadmap #23G-C2 (closes 23G-C1-RR-1, the Cypress side of the same class
+// of exact-target-selection risk): Cypress's own --spec value is matched
+// via minimatch glob semantics (not a literal filename comparison) -
+// #23D/#23C's own path-safety rules (isSafeRepoRelativePath/
+// isCanonicalPlanPath) do NOT reject glob-special characters in a path
+// segment (independently confirmed: "a,b.cy.js", "a*.cy.js", "a?.cy.js"
+// all pass as safe/canonical), so a path containing one of these could, in
+// principle, cause Cypress to match more files than intended - the exact
+// same class of problem #23G-C1-RR-1 found in Playwright's own regex-based
+// matching, just via glob wildcards instead. Rather than attempting to
+// escape glob syntax for minimatch (fragile to prove correct - backslash
+// escaping interacts badly with Windows path separators, and this
+// environment has no working local Cypress binary to empirically verify
+// escape behavior against), a target whose path contains any of these
+// characters is simply never treated as an eligible execution target at
+// all - the same treatment as a path that does not match the classifier's
+// own naming convention. This is provable by construction (the character
+// never reaches Cypress's spec matcher), not by empirical Cypress-CLI
+// verification.
+const CYPRESS_UNSAFE_TARGET_CHARS = /[*?[\]{},]/;
+
 // Roadmap #23G-C1 (closes 23G-RV-2): derives the exact, ordered list of
 // executable target paths for `framework` from `changes` (the ALREADY
 // execution-time-revalidated `appliedChangeSetRecord.changes[]` array) -
 // never from any other source. A path that does not match the framework's
 // own EXECUTION_TARGET_CLASSIFIERS entry (e.g. a support/helper/config
-// file) is silently excluded from the returned target list - it is not an
-// error for a changeset to also touch such a file, only for a changeset to
-// contain ZERO recognized targets (checked by this function's caller).
+// file), OR (Cypress only) that contains a glob-special character, is
+// silently excluded from the returned target list - it is not an error for
+// a changeset to also touch such a file, only for a changeset to contain
+// ZERO recognized targets (checked by this function's caller).
 function deriveExecutionTargets(framework, changes) {
   const classifier = EXECUTION_TARGET_CLASSIFIERS[framework];
   if (!classifier) return [];
-  return changes.filter((change) => classifier(change.path)).map((change) => change.path);
+  return changes
+    .filter((change) => classifier(change.path))
+    .filter((change) => framework !== "cypress" || !CYPRESS_UNSAFE_TARGET_CHARS.test(change.path))
+    .map((change) => change.path);
+}
+
+// Roadmap #23G-C2 (closes 23G-C1-RR-1): escapes every JavaScript regex
+// metacharacter in a literal string so it can be embedded in a regex
+// pattern and match only itself. Standard, well-established idiom (the
+// same 12-character class MDN documents) - not reimplemented per-use, and
+// deliberately not sourced from a dependency for a 1-line pure function.
+function escapeRegexLiteral(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Roadmap #23G-C2 (closes 23G-C1-RR-1): builds an ANCHORED, fully-escaped
+// exact-match pattern for one canonical repository-relative target path.
+// Independently, empirically verified against the actual installed
+// Playwright 1.62.1 binary (see controlled-execution.test.js's own
+// PLAYWRIGHT EXACT TARGET test group): Playwright's positional test-filter
+// arguments are unanchored regular expressions matched against the
+// forward-slash-normalized relative spec path (confirmed on this Windows
+// host - a backslash-separated equivalent pattern matches nothing), so an
+// unescaped raw path (the #23G-C1 behavior) can also match an unrelated
+// file whose path differs at any position a literal "." (or other regex
+// metacharacter) in the intended target happens to occupy. Anchoring with
+// ^...$ plus escaping every metacharacter closes that gap: only a
+// byte-for-byte identical relative path can ever match.
+function buildPlaywrightExactMatcher(canonicalTargetPath) {
+  return `^${escapeRegexLiteral(canonicalTargetPath)}$`;
 }
 
 // Roadmap #23G-C1 (closes 23G-RV-2): the SOLE command-selection function -
@@ -293,13 +363,17 @@ function selectExecutionCommand(framework, realRoot, targets) {
       commandLabel: `cypress run (${targets.length} target${targets.length === 1 ? "" : "s"})`,
     };
   }
-  // playwright: positional file arguments are natively supported and
-  // scope the run to exactly those files - each target is its own argv
-  // entry, never joined/concatenated.
+  // playwright: positional arguments are UNANCHORED REGULAR EXPRESSIONS
+  // against the relative spec path, not literal filenames (Roadmap
+  // #23G-C2, closes 23G-C1-RR-1) - each target is converted to its own
+  // anchored, fully-escaped exact-match pattern via
+  // buildPlaywrightExactMatcher(), never the raw path, and passed as its
+  // own argv entry (Playwright ORs multiple positional patterns together -
+  // independently verified against the real installed binary).
   return {
     ok: true,
     executable,
-    args: ["test", "--config=playwright.config.js", "--project=chromium", ...targets],
+    args: ["test", "--config=playwright.config.js", "--project=chromium", ...targets.map(buildPlaywrightExactMatcher)],
     commandLabel: `playwright test (${targets.length} target${targets.length === 1 ? "" : "s"})`,
   };
 }
@@ -646,6 +720,8 @@ module.exports = {
   MAX_STDERR_BYTES,
   resolveLocalBinary,
   deriveExecutionTargets,
+  escapeRegexLiteral,
+  buildPlaywrightExactMatcher,
   buildExecutionEnvironment,
   selectExecutionCommand,
   resolveExecutionTimeout,
