@@ -516,7 +516,15 @@ function makePlaywrightFixture(specs) {
   fs.mkdirSync(FIXTURE_PARENT_DIR, { recursive: true });
   const root = fs.mkdtempSync(path.join(FIXTURE_PARENT_DIR, "pw-exact-"));
   fs.mkdirSync(path.join(root, "playwright", "tests"), { recursive: true });
-  fs.writeFileSync(path.join(root, "playwright.config.js"), 'module.exports = { testDir: "./playwright" };', "utf8");
+  // selectExecutionCommand() always passes --project=chromium (matching
+  // this repository's own real playwright.config.js) - the fixture's own
+  // config must define a project by that exact name or Playwright rejects
+  // the run with "Project(s) \"chromium\" not found" before ever reaching
+  // target-filter matching (a real gap this test itself caught: an earlier
+  // version of this fixture omitted `projects` entirely and passed
+  // locally only because the Windows EINVAL limitation skipped the real
+  // invocation before this would have mattered).
+  fs.writeFileSync(path.join(root, "playwright.config.js"), 'module.exports = { testDir: "./playwright", projects: [{ name: "chromium" }] };', "utf8");
   for (const [name, testName] of Object.entries(specs)) {
     fs.writeFileSync(path.join(root, "playwright", "tests", name), `const { test } = require('@playwright/test');\ntest('${testName}', async () => {});\n`, "utf8");
   }
