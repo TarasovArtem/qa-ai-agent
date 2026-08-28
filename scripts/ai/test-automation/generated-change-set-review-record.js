@@ -94,7 +94,8 @@
 const { ERROR_CODES, err } = require("../generation/errors");
 const { isPlainObject, isValidId, isBoundedText } = require("../generation/primitives");
 const { LIMITS: GENERATION_LIMITS } = require("../generation/limits");
-const { snapshotOwnData, deepFreeze, computeDigest } = require("./generated-change-set-review-canonical");
+const { OPERATIONS, isSafeRepoRelativePath, isCanonicalPlanPath } = require("../generation/automation-plan");
+const { snapshotOwnData, deepFreeze, computeDigest, isValidDigest } = require("./generated-change-set-review-canonical");
 const { recomputeReviewPackageDigest } = require("./generated-change-set-review-package");
 
 const KIND = "GeneratedChangeSetReviewRecord";
@@ -134,6 +135,44 @@ const DECISION_ENTRY_ALLOWED_KEYS = Object.freeze(["operation", "path", "targetD
 // never collide with operation="ab", path="c").
 function reviewTargetKey(target) {
   return `${target.operation.length}:${target.operation}${target.path.length}:${target.path}${target.targetDigest.length}:${target.targetDigest}`;
+}
+
+// Roadmap #23E-C1 (closes 23E-R-1): reviewTargetKey() above dereferences
+// `.length` on `operation`/`path`/`targetDigest` unconditionally - a
+// reviewPackage.reviewTargets entry is normally only ever produced by
+// buildGeneratedChangeSetReviewPackage() (which always supplies well-
+// formed strings there), but this module's own public functions accept
+// `reviewPackage` as a caller-supplied parameter, not something they
+// themselves constructed - a hand-forged reviewPackage (a self-consistent
+// recomputed packageDigest is trivial for anyone with require() access to
+// this module's own digest primitives, exactly like the already-documented
+// "INTEGRITY IS NOT AUTHENTICITY" limitation above) with a malformed
+// reviewTargets entry must never reach reviewTargetKey() un-validated,
+// or it throws an uncaught TypeError instead of the documented bounded
+// `{ok:false, errors}` contract. This validates exactly the three fields
+// reviewTargetKey() itself dereferences - never the full target shape
+// (purpose/proposedContent/etc. are never read by this module at all, so
+// validating them here would be unrelated scope creep) - reusing the
+// frozen AutomationPlan v1 OPERATIONS enum and path classifiers
+// (../generation/automation-plan) and this module's own digest-format
+// check (isValidDigest), rather than inventing new semantics. No implicit
+// coercion (String(...)) and no optional-chain silent collapse
+// (`target?.operation?.length ?? 0`) - a malformed field is rejected
+// outright with a bounded error, never repaired or defaulted.
+function validateReviewTargetReferenceShape(target, path, errors) {
+  if (!isPlainObject(target)) {
+    errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be an object`));
+    return;
+  }
+  if (typeof target.operation !== "string" || !OPERATIONS.includes(target.operation)) {
+    errors.push(err(`${path}.operation`, ERROR_CODES.INVALID_ENUM, `${path}.operation must be one of ${OPERATIONS.join(", ")}`));
+  }
+  if (typeof target.path !== "string" || !isSafeRepoRelativePath(target.path) || !isCanonicalPlanPath(target.path)) {
+    errors.push(err(`${path}.path`, ERROR_CODES.INVALID_PATH, `${path}.path must be a safe, canonical, repository-relative path`));
+  }
+  if (typeof target.targetDigest !== "string" || !isValidDigest(target.targetDigest)) {
+    errors.push(err(`${path}.targetDigest`, ERROR_CODES.INVALID_VALUE, `${path}.targetDigest must be a valid sha256:<64 lowercase hex> digest`));
+  }
 }
 
 /**
@@ -238,6 +277,20 @@ function buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId, review
     return { ok: false, errors };
   }
 
+  // Roadmap #23E-C1 (closes 23E-R-1): every reviewPackage.reviewTargets
+  // entry must be structurally valid BEFORE reviewTargetKey() is ever
+  // called on it - reviewPackage is caller-supplied data (a hand-forged,
+  // self-consistent-digest package is not excluded merely because the
+  // real builder would never produce one), and reviewTargetKey()'s own
+  // `.length` dereferences would otherwise throw an uncaught TypeError on
+  // a malformed entry instead of the documented bounded error contract.
+  reviewPackageSnapshot.reviewTargets.forEach((target, i) => {
+    validateReviewTargetReferenceShape(target, `$.reviewPackage.reviewTargets[${i}]`, errors);
+  });
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
   // Completeness + exact-binding (Roadmap #23E, mirrors #22F): every
   // reviewTargets entry requires exactly one decisions[] entry matching
   // its full {operation, path, targetDigest} triple - never matched by
@@ -272,10 +325,29 @@ function buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId, review
   // Canonical order (Roadmap #23E, mirrors #22F): mirrors reviewTargets'
   // own order, never the caller-supplied decisions[] order.
   const decisionsByKey = new Map(decisionsSnapshot.map((entry) => [reviewTargetKey(entry), entry]));
+  // Roadmap #23E-C1 (closes 23E-R-1): a defensive, last-resort guard - not
+  // a replacement for the completeness checks above, which remain the
+  // primary, redundant (unknown-reference + missing-reference) enforcement
+  // and are independently sufficient under normal correct-logic flow. This
+  // guard exists so that IF the completeness invariant were ever somehow
+  // compromised (e.g. both directions disabled), decisionsByKey.get()
+  // resolving to `undefined` here produces a bounded `{ok:false, errors}`
+  // result instead of an uncaught TypeError on `entry.operation` - the
+  // exact failure mode the independent review's combined-mutation probe
+  // demonstrated. No optional-chain silent collapse: an unresolved lookup
+  // is treated as a hard, reported error, never defaulted/skipped.
+  let unresolvedTargetCount = 0;
   const orderedDecisions = reviewPackageSnapshot.reviewTargets.map((target) => {
     const entry = decisionsByKey.get(reviewTargetKey(target));
+    if (entry === undefined) {
+      unresolvedTargetCount += 1;
+      return null;
+    }
     return { operation: entry.operation, path: entry.path, targetDigest: entry.targetDigest, decision: entry.decision, reason: entry.reason === undefined ? null : entry.reason };
   });
+  if (unresolvedTargetCount > 0) {
+    return { ok: false, errors: [err("$.decisions", ERROR_CODES.INVALID_REFERENCE, "one or more reviewPackage.reviewTargets entries could not be resolved to a decision")] };
+  }
 
   // status is DERIVED, never accepted as caller input.
   let status;
@@ -394,4 +466,5 @@ module.exports = {
   validateApprovedGeneratedChangeSetReview,
   isValidTimestamp,
   reviewTargetKey,
+  validateReviewTargetReferenceShape,
 };

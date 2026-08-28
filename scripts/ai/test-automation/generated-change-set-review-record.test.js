@@ -4,13 +4,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { buildGeneratedChangeSet, computeDigest: gcsComputeDigest, LABEL_FILE_CONTENT } = require("./generated-change-set");
-const { buildGeneratedChangeSetReviewPackage } = require("./generated-change-set-review-package");
+const { buildGeneratedChangeSetReviewPackage, DIGEST_LABEL_PACKAGE } = require("./generated-change-set-review-package");
+const { computeDigest } = require("./generated-change-set-review-canonical");
 const {
   buildGeneratedChangeSetReviewRecord,
   recomputeReviewRecordDigest,
   validateApprovedGeneratedChangeSetReview,
   isValidTimestamp,
   reviewTargetKey,
+  validateReviewTargetReferenceShape,
   DECISIONS,
   STATUSES,
 } = require("./generated-change-set-review-record");
@@ -453,6 +455,188 @@ test("an unknown field on a decision entry is rejected", () => {
   const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "reviewer-1", reviewedAt: REVIEWED_AT, decisions });
   assert.equal(recResult.ok, false);
   assert.ok(recResult.errors.some((e) => e.code === "UNKNOWN_FIELD"));
+});
+
+// =============================================================================
+// Roadmap #23E-C1: fail-closed on a hand-forged, malformed reviewPackage
+// (closes 23E-R-1). All fixtures below build a SELF-CONSISTENT
+// packageDigest by hand (never via buildGeneratedChangeSetReviewPackage())
+// so the recompute-digest check at the top of buildGeneratedChangeSetReviewRecord()
+// passes and execution actually reaches the new structural validation -
+// proving the fix, not merely an earlier, unrelated rejection.
+// =============================================================================
+
+function selfConsistentForgedPackage(reviewTargets, overrides = {}) {
+  const content = {
+    schemaVersion: 1, kind: "GeneratedChangeSetReviewPackage", projectId: "proj-1", framework: "cypress",
+    automationPlanId: "plan-1", changeSetDigest: "sha256:" + "1".repeat(64), automationPlanDigest: "sha256:" + "2".repeat(64), repositoryContextDigest: "sha256:" + "3".repeat(64),
+    reviewTargets,
+    ...overrides,
+  };
+  return { ...content, packageDigest: computeDigest(DIGEST_LABEL_PACKAGE, content) };
+}
+const VALID_TARGET_DIGEST = "sha256:" + "4".repeat(64);
+
+test("PRE-FIX REPRODUCTION CONTROL: a self-consistent forged package with reviewTargets:[{}] no longer throws - it returns a bounded rejection", () => {
+  const pkg = selfConsistentForgedPackage([{}]);
+  assert.doesNotThrow(() => {
+    const result = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.length > 0);
+    for (const e of result.errors) assert.deepEqual(Object.keys(e).sort(), ["code", "message", "path"]);
+  });
+});
+
+for (const [label, target] of [
+  ["missing operation", { path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["missing path", { operation: "CREATE", targetDigest: VALID_TARGET_DIGEST }],
+  ["missing targetDigest", { operation: "CREATE", path: "cypress/e2e/x.cy.js" }],
+]) {
+  test(`malformed target (${label}) is a bounded rejection, never a thrown exception`, () => {
+    const pkg = selfConsistentForgedPackage([target]);
+    assert.doesNotThrow(() => {
+      const result = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+      assert.equal(result.ok, false);
+    });
+  });
+}
+
+for (const [label, target] of [
+  ["operation = null", { operation: null, path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["operation = {}", { operation: {}, path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["operation = 1", { operation: 1, path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["operation = '' (empty)", { operation: "", path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["operation = 'DELETE' (not in enum)", { operation: "DELETE", path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["operation = 'RENAME'", { operation: "RENAME", path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["operation = 'EXECUTE'", { operation: "EXECUTE", path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["path = null", { operation: "CREATE", path: null, targetDigest: VALID_TARGET_DIGEST }],
+  ["path = []", { operation: "CREATE", path: [], targetDigest: VALID_TARGET_DIGEST }],
+  ["path = {}", { operation: "CREATE", path: {}, targetDigest: VALID_TARGET_DIGEST }],
+  ["path = '' (empty)", { operation: "CREATE", path: "", targetDigest: VALID_TARGET_DIGEST }],
+  ["path = '../etc/passwd' (traversal)", { operation: "CREATE", path: "../etc/passwd", targetDigest: VALID_TARGET_DIGEST }],
+  ["path = '/etc/passwd' (absolute)", { operation: "CREATE", path: "/etc/passwd", targetDigest: VALID_TARGET_DIGEST }],
+  ["path = 'C:\\\\evil.js' (windows drive)", { operation: "CREATE", path: "C:\\evil.js", targetDigest: VALID_TARGET_DIGEST }],
+  ["targetDigest = null", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: null }],
+  ["targetDigest = 42", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: 42 }],
+  ["targetDigest = {}", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: {} }],
+  ["targetDigest = '' (empty)", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: "" }],
+  ["targetDigest too short", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: "sha256:abc" }],
+  ["targetDigest uppercase hex", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: "sha256:" + "A".repeat(64) }],
+  ["targetDigest missing sha256: prefix", { operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: "a".repeat(64) }],
+] ) {
+  test(`wrong-type/invalid target field (${label}) is a bounded rejection, never a thrown exception, never coerced`, () => {
+    const pkg = selfConsistentForgedPackage([target]);
+    assert.doesNotThrow(() => {
+      const result = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+      assert.equal(result.ok, false, `expected rejection for ${label}`);
+    });
+  });
+}
+
+test("validateReviewTargetReferenceShape accepts a well-formed target and rejects a non-object target", () => {
+  const errorsOk = [];
+  validateReviewTargetReferenceShape({ operation: "CREATE", path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }, "$.t", errorsOk);
+  assert.equal(errorsOk.length, 0);
+
+  const errorsBad = [];
+  validateReviewTargetReferenceShape(null, "$.t", errorsBad);
+  assert.ok(errorsBad.length > 0);
+  assert.equal(errorsBad[0].code, "INVALID_TYPE");
+});
+
+test("UNRESOLVED LOOKUP GUARD (direct): a genuinely valid, well-shaped target with a MODIFY operation that has no matching decision at all is a bounded rejection (missing-reference path, not a crash)", () => {
+  const pkg = selfConsistentForgedPackage([{ operation: "MODIFY", path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST }]);
+  assert.doesNotThrow(() => {
+    const result = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.message.includes("missing")));
+  });
+});
+
+test("GENUINE PACKAGE NON-REGRESSION: a real, buildGeneratedChangeSetReviewPackage()-produced package still round-trips through the new structural validation with zero errors", () => {
+  const { reviewPackage } = buildValidReviewPackage();
+  const decisions = reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "reviewer-1", reviewedAt: REVIEWED_AT, decisions });
+  assert.equal(recResult.ok, true, JSON.stringify(recResult.errors));
+  assert.equal(recResult.reviewRecord.status, "APPROVED");
+});
+
+test("ERROR PRIVACY: a malformed target's own fields (even if they carry secret-shaped content) never leak into the bounded error output", () => {
+  const pkg = selfConsistentForgedPackage([{ operation: "SECRET_23E_C1_MARKER", path: "SECRET_23E_C1_MARKER", targetDigest: "SECRET_23E_C1_MARKER" }]);
+  const result = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+  assert.equal(result.ok, false);
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes("SECRET_23E_C1_MARKER"), "malformed field values must never be echoed verbatim into bounded errors");
+});
+
+test("TOCTOU NON-REGRESSION: the new structural validation reads each reviewTargets field getter at most once during buildGeneratedChangeSetReviewRecord()'s own snapshot - no new post-snapshot caller reads", () => {
+  const hostileTarget = {};
+  Object.defineProperty(hostileTarget, "operation", { enumerable: true, configurable: true, get() { return "CREATE"; } });
+  Object.defineProperty(hostileTarget, "path", { enumerable: true, configurable: true, get() { return "cypress/e2e/x.cy.js"; } });
+  Object.defineProperty(hostileTarget, "targetDigest", { enumerable: true, configurable: true, get() { return VALID_TARGET_DIGEST; } });
+  // Build the self-consistent forged package FIRST (this itself reads each
+  // getter once, as part of the test's own forgery step - outside what
+  // #23E promises to bound). Only THEN start counting, isolating exactly
+  // what buildGeneratedChangeSetReviewRecord()'s own snapshot does.
+  const pkg = selfConsistentForgedPackage([hostileTarget]);
+
+  let operationReads = 0;
+  let pathReads = 0;
+  let digestReads = 0;
+  Object.defineProperty(hostileTarget, "operation", { enumerable: true, configurable: true, get() { operationReads += 1; return "CREATE"; } });
+  Object.defineProperty(hostileTarget, "path", { enumerable: true, configurable: true, get() { pathReads += 1; return "cypress/e2e/x.cy.js"; } });
+  Object.defineProperty(hostileTarget, "targetDigest", { enumerable: true, configurable: true, get() { digestReads += 1; return VALID_TARGET_DIGEST; } });
+
+  buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+  // The snapshot step reads each own property once; downstream structural
+  // validation and reviewTargetKey() both then operate on the ALREADY-
+  // SNAPSHOTTED plain value (never the original hostile getter object
+  // again) - so total reads must stay at exactly 1 per field, not grow
+  // with the number of new validation passes this correction added.
+  assert.equal(operationReads, 1);
+  assert.equal(pathReads, 1);
+  assert.equal(digestReads, 1);
+});
+
+test("HOSTILE OBJECT NON-REGRESSION: a reviewTargets entry with a throwing operation getter is caught during snapshot and produces a bounded, private error (never a raw exception)", () => {
+  const hostileTarget = { path: "cypress/e2e/x.cy.js", targetDigest: VALID_TARGET_DIGEST };
+  Object.defineProperty(hostileTarget, "operation", { enumerable: true, get() { throw new Error("SECRET_GETTER_MARKER"); } });
+  // A throwing getter makes it impossible to compute a genuinely self-
+  // consistent packageDigest (the attacker's own forgery attempt would
+  // throw identically) - so this fixture instead uses an arbitrary,
+  // already-mismatched packageDigest, isolating what actually matters
+  // here: does buildGeneratedChangeSetReviewRecord()'s OWN first snapshot
+  // step (snapshotOwnData, which every prior #23E/#22F module already
+  // guarantees catches a throwing getter and reports `null`) handle this
+  // gracefully, rather than letting the throw propagate uncaught.
+  const pkg = {
+    schemaVersion: 1, kind: "GeneratedChangeSetReviewPackage", projectId: "proj-1", framework: "cypress",
+    automationPlanId: "plan-1", changeSetDigest: "sha256:" + "1".repeat(64), automationPlanDigest: "sha256:" + "2".repeat(64), repositoryContextDigest: "sha256:" + "3".repeat(64),
+    reviewTargets: [hostileTarget],
+    packageDigest: "sha256:" + "9".repeat(64),
+  };
+  assert.doesNotThrow(() => {
+    const result = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg, reviewerId: "r1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions: [] });
+    assert.equal(result.ok, false);
+    assert.ok(!JSON.stringify(result).includes("SECRET_GETTER_MARKER"));
+  });
+});
+
+test("COMPLETENESS CHECKS PRESERVED: missing/extra/duplicate decision rejection still works unchanged after the correction (non-regression)", () => {
+  const { reviewPackage } = buildValidReviewPackage();
+  const decisions = reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+
+  // missing
+  const missingResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "r1", reviewedAt: REVIEWED_AT, decisions: decisions.slice(0, 1) });
+  assert.equal(missingResult.ok, false);
+
+  // duplicate
+  const dupResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "r1", reviewedAt: REVIEWED_AT, decisions: [...decisions, decisions[0]] });
+  assert.equal(dupResult.ok, false);
+
+  // extra/unknown
+  const extraResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "r1", reviewedAt: REVIEWED_AT, decisions: [...decisions, { operation: "CREATE", path: "cypress/e2e/unrelated.cy.js", targetDigest: VALID_TARGET_DIGEST, decision: "APPROVE" }] });
+  assert.equal(extraResult.ok, false);
 });
 
 // --- source integrity ------------------------------------------------------------
