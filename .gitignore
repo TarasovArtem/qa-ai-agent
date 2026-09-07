@@ -11,3 +11,4 @@ debug.log
 CLAUDE.md
 .claude/settings.local.json
 bash.exe.stackdump
+.g23g-test-fixtures
