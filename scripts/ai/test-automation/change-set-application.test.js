@@ -1627,3 +1627,120 @@ test("CS2 temp cleanup: after a mid-staging ancestor relocation, cleanup never d
   cleanup(root);
 });
 
+// --- CS2-C1 (closes CS2-RR-1) CREATE: repositoryRoot identity replacement, isolated from descendant ancestor checks ---
+//
+// Every CS2 test above attacks an ancestor BENEATH repositoryRoot (direct
+// parent or grandparent) - each is independently caught by the descendant
+// ancestorIdentities comparison in verifyRollbackTopology() alone, regardless
+// of whether repositoryRoot's OWN identity is separately checked. An
+// independent exact-head adversarial review (finding CS2-RR-1) found that no
+// committed test isolates repositoryRoot specifically: a mutation that
+// disables ONLY the rootIdentity comparison in verifyRollbackTopology() (Section
+// 488-490 of change-set-application.js), while leaving the descendant
+// ancestorIdentities loop fully intact, still passed all six prior CS2 tests.
+//
+// This test closes that gap. It relocates the ENTIRE original repositoryRoot
+// subtree away, creates a BRAND NEW ordinary directory at the identical
+// repositoryRoot pathname, then moves every original entry back into it
+// UNCHANGED - preserving the (dev, ino) identity of every descendant ancestor
+// (cypress/, cypress/e2e/, cypress/e2e/tests/) and of the CREATE target
+// itself EXACTLY. Only repositoryRoot's own object identity differs. If
+// rollback still refuses under this precise arrangement, the refusal cannot
+// be explained by any descendant-ancestor mismatch (there is none) - it can
+// only be explained by a genuine repositoryRoot-identity comparison.
+
+test("CS2-C1 CREATE: repositoryRoot itself replaced with a NEW ordinary directory at the identical path (every descendant ancestor's own identity left completely unchanged) -> rollback refuses, application-created file survives untouched", () => {
+  const root = makeRootWithExisting();
+  const realRoot = fs.realpathSync(root);
+  const chain = buildChain(); // plan1(): CREATE new_spec.cy.js (commits first), MODIFY existing_spec.cy.js (fails second)
+  const testsDir = path.join(realRoot, "cypress", "e2e", "tests");
+  const createTargetAbs = path.join(testsDir, "new_spec.cy.js");
+
+  const rootLstatBefore = fs.lstatSync(realRoot);
+  const testsDirLstatBefore = fs.lstatSync(testsDir);
+
+  let preAttackTargetIdentity = null;
+  let attacked = false;
+  const realChmodSync = fs.chmodSync;
+  // Same "force the MODIFY to fail via fs.chmodSync" idiom as the CS2
+  // ancestor-directory-replacement test above - this fires exactly once,
+  // strictly AFTER the CREATE (staged[0]) has already committed and AFTER
+  // MODIFY's own Phase-7 revalidateModifyTarget() has already read the
+  // still-untouched original target, so the attack cannot be mistaken for
+  // merely corrupting MODIFY's own precondition.
+  fs.chmodSync = function (targetPath, mode) {
+    if (!attacked && typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js")) {
+      attacked = true;
+      const lst = fs.lstatSync(createTargetAbs);
+      preAttackTargetIdentity = { dev: lst.dev, ino: lst.ino };
+
+      // Relocate the ENTIRE original root subtree away, create a BRAND NEW,
+      // otherwise-empty ordinary directory at the exact original
+      // repositoryRoot pathname, then move every original entry
+      // (cypress/, cypress.config.js, etc.) back into the new root
+      // UNCHANGED - this preserves the (dev, ino) identity of every
+      // descendant ancestor and of the CREATE target itself exactly, so
+      // ONLY repositoryRoot's own object identity differs.
+      const oldRootPath = realRoot + "-relocated";
+      fs.renameSync(realRoot, oldRootPath);
+      fs.mkdirSync(realRoot);
+      for (const entry of fs.readdirSync(oldRootPath)) {
+        fs.renameSync(path.join(oldRootPath, entry), path.join(realRoot, entry));
+      }
+      fs.rmdirSync(oldRootPath);
+
+      const e = new Error("CS2-C1 test: forced MODIFY failure to trigger CREATE rollback");
+      e.code = "ENOENT";
+      throw e;
+    }
+    return realChmodSync.call(fs, targetPath, mode);
+  };
+
+  let res;
+  try {
+    res = apply(root, chain);
+  } finally {
+    fs.chmodSync = realChmodSync;
+  }
+
+  assert.equal(attacked, true, "test setup did not actually trigger the repositoryRoot-identity attack");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord, "a real AppliedChangeSetRecord must exist - at least one change (CREATE) was genuinely committed before the attack");
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE", "a repositoryRoot-identity mismatch must be reported as incomplete rollback, never a fabricated clean ROLLED_BACK");
+  const createEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/new_spec.cy.js");
+  assert.equal(createEntry.status, "ROLLBACK_INCOMPLETE");
+
+  // Prove the replacement repositoryRoot object is genuinely different -
+  // same pathname, same type (ordinary directory, not a symlink), different
+  // (dev, ino) identity.
+  const rootLstatAfter = fs.lstatSync(realRoot);
+  assert.equal(rootLstatAfter.isDirectory(), true);
+  assert.equal(rootLstatAfter.isSymbolicLink(), false);
+  assert.equal(
+    rootLstatAfter.dev === rootLstatBefore.dev && rootLstatAfter.ino === rootLstatBefore.ino,
+    false,
+    "repositoryRoot must be a genuinely different filesystem object after the attack"
+  );
+
+  // Prove EVERY descendant ancestor's own identity is completely unchanged
+  // by the attack - this is what isolates the repositoryRoot guard
+  // specifically from the already-covered descendant-ancestor guard in the
+  // CS2 tests above.
+  const testsDirLstatAfter = fs.lstatSync(testsDir);
+  assert.equal(testsDirLstatAfter.dev, testsDirLstatBefore.dev, "the CREATE target's own direct-parent directory object must be untouched by this attack");
+  assert.equal(testsDirLstatAfter.ino, testsDirLstatBefore.ino, "the CREATE target's own direct-parent directory object must be untouched by this attack");
+
+  // The central proof (CS2-RR-1 corrective requirement): same target inode,
+  // same target bytes, same target relative path, EVERY descendant ancestor
+  // identical, ONLY repositoryRoot's own identity different -> rollback
+  // refused. A guard that checked only the ancestor chain BENEATH root (and
+  // not root itself) would incorrectly authorize compensation here.
+  assert.equal(fs.existsSync(createTargetAbs), true, "the application-created file must survive - rollback must refuse to delete through a relocated repositoryRoot");
+  const postRollbackAttemptIdentity = fs.lstatSync(createTargetAbs);
+  assert.equal(postRollbackAttemptIdentity.dev, preAttackTargetIdentity.dev);
+  assert.equal(postRollbackAttemptIdentity.ino, preAttackTargetIdentity.ino);
+  assert.equal(fs.readFileSync(createTargetAbs, "utf8"), "describe('x', () => {});", "content must be exactly what CREATE originally wrote");
+
+  cleanup(root);
+});
+
