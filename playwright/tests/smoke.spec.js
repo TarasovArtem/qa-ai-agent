@@ -62,4 +62,12 @@ test("selecting the Gastronomy category checks it and keeps the map visible", as
   await expect(gastronomyCheckboxInput).toBeChecked();
 
   await expect(page.locator(".map-container")).toBeVisible();
+
+  // TEMPORARY EVIDENCE-ONLY PROBE - CS1 Playwright required-check negative
+  // probe (Section 26). Deliberate, deterministic test-side failure -
+  // never an infrastructure/setup error - proving the required
+  // "Playwright Chromium" branch-protection check actually blocks merge
+  // when the real suite fails. Never committed to main; exists only on
+  // the disposable evidence/cs1-ci-authority-proof branch.
+  await expect(page.locator(".map-container")).toHaveText("CS1_INTENTIONAL_PROBE_FAILURE_TEXT_THAT_NEVER_MATCHES", { timeout: 2000 });
 });
