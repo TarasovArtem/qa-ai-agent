@@ -194,12 +194,19 @@ jobs:
         continue-on-error: true
         run: npm run ${{ matrix.browser }}
 
-      # Everything below this point is additive diagnostics. None of it can
-      # turn a failed E2E run into a passing job: continue-on-error above
-      # only lets these steps execute, and steps.run_tests.outcome (not the
-      # ambient failure()/success() functions, which would already read as
-      # "success" once a continue-on-error step fails) is what the final
-      # gate step below checks.
+      # Everything below this point is additive diagnostics, and every one
+      # of these steps now carries its own explicit continue-on-error: true
+      # (Roadmap CS1, closes CS0-F1) - a step here failing for its OWN
+      # reason (an upload-artifact infrastructure error, an unexpected
+      # ai:collect/ai:history crash, etc.) must never, by itself, fail this
+      # job or prevent a later step from running: continue-on-error forces
+      # that step's .conclusion to success regardless of its real .outcome,
+      # which keeps GitHub's own implicit success()-gating on every later
+      # step's `if:` condition intact. None of this can turn a failed E2E
+      # run into a passing job either: steps.run_tests.outcome (not the
+      # ambient failure()/success() functions) is what the final gate step
+      # below checks, and continue-on-error only ever affects .conclusion,
+      # never the recorded .outcome that gate reads.
 
       # Machine-readable pass/fail marker for this specific browser leg,
       # written unconditionally (always(), not just on failure) so the
@@ -210,12 +217,14 @@ jobs:
       # recorded step outcome.
       - name: Record browser result
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p reports/ai
           printf '{"browser": "%s", "framework": "cypress", "outcome": "%s"}' "${{ matrix.browser }}" "${{ steps.run_tests.outcome }}" > reports/ai/browser-result.json
 
       - name: Collect structured failure context
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         env:
           TEST_BROWSER: ${{ matrix.browser }}
         run: npm run ai:collect
@@ -227,9 +236,13 @@ jobs:
       # a custom secret, so this runs the same for fork and same-repo PRs.
       # Entirely optional: any failure here (first-ever run, rate limit,
       # API error) writes { available: false } and this step still
-      # succeeds - the downstream QA AI triage job works with or without it.
+      # succeeds - the downstream QA AI triage job works with or without
+      # it; continue-on-error is additional defense-in-depth against an
+      # unexpected crash in the script itself, not just its own documented
+      # graceful-degradation path.
       - name: Collect run history for flaky-test reasoning
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TEST_BROWSER: ${{ matrix.browser }}
@@ -237,6 +250,7 @@ jobs:
 
       - name: Upload Cypress screenshots
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: cypress-screenshots-${{ matrix.browser }}
@@ -245,6 +259,7 @@ jobs:
 
       - name: Upload Cypress videos
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: cypress-videos-${{ matrix.browser }}
@@ -253,6 +268,7 @@ jobs:
 
       - name: Upload structured test report
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: cypress-report-${{ matrix.browser }}
@@ -270,6 +286,7 @@ jobs:
       # qa-triage-input-edge) so the two legs' uploads can never collide.
       - name: Upload QA triage input
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: qa-triage-input-${{ matrix.browser }}
@@ -277,14 +294,23 @@ jobs:
           if-no-files-found: ignore
 
       # The one step in this job allowed to actually fail it. Everything
-      # above ran (or was skipped) without affecting job status; this is
-      # the sole source of truth for whether the job conclusion is
-      # failure, and it depends only on the original test outcome - never
-      # on whether context/history collection succeeded, failed, or was
-      # skipped, and never on the downstream AI triage job (which hasn't
-      # even started yet when this runs).
+      # above ran (or was skipped) without affecting job status - every
+      # diagnostic step above now carries its own continue-on-error: true,
+      # so nothing between run_tests and here can leave the job in an
+      # already-failed state. This is the sole source of truth for whether
+      # the job conclusion is failure, and it depends only on the original
+      # test outcome - never on whether context/history collection
+      # succeeded, failed, or was skipped, and never on the downstream AI
+      # triage job (which hasn't even started yet when this runs).
+      # always() (Roadmap CS1) is defense-in-depth: GitHub Actions
+      # implicitly prepends success() to a custom `if:` expression that
+      # doesn't already call an explicit status-check function, so without
+      # always() here this gate would itself be silently skipped if any
+      # step above it ever regressed to failing for real (no
+      # continue-on-error) - exactly the same reasoning the Firefox
+      # forensics steps below already document and rely on.
       - name: Fail job on E2E failure
-        if: steps.run_tests.outcome == 'failure'
+        if: always() && steps.run_tests.outcome == 'failure'
         run: |
           echo "Cypress E2E tests failed for browser '${{ matrix.browser }}'. See the report/screenshot/video artifacts (and QA AI triage, if it runs) for details."
           exit 1
@@ -356,8 +382,17 @@ jobs:
       # were never captured on production runs. Removal: delete this step
       # once Firefox root cause is captured/confirmed or the investigation
       # is explicitly closed.
+      #
+      # continue-on-error: true (Roadmap CS1, closes CS0-F14): this step
+      # runs BEFORE the authoritative "Run Cypress E2E tests (firefox)" step
+      # below - without continue-on-error, a failure here (e.g. one of the
+      # diagnostic commands, like `firefox --version`, exiting non-zero on
+      # an unexpected runner image) would fail the job before the real test
+      # ever got a chance to run. This step is read-only evidence collection,
+      # never authoritative over whether the Firefox suite itself passed.
       - name: "Capture Firefox runtime metadata (temporary, #19.7F-B4B)"
         if: always()
+        continue-on-error: true
         run: |
           echo "=== #19.7F-B4B temporary runtime metadata (safe subset only) ==="
           date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -394,23 +429,29 @@ jobs:
         run: npm run firefox
 
       # Everything below this point is additive diagnostics, identical in
-      # spirit to cypress-tests' own copy - none of it can turn a failed
-      # E2E run into a passing job.
+      # spirit to cypress-tests' own copy (Roadmap CS1, closes CS0-F1):
+      # every diagnostic step now carries its own continue-on-error: true,
+      # so a diagnostic-only failure can never turn a passing E2E run into
+      # a failing job, and none of it can turn a failed E2E run into a
+      # passing job either.
 
       - name: Record browser result
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p reports/ai
           printf '{"browser": "firefox", "framework": "cypress", "outcome": "%s"}' "${{ steps.run_tests.outcome }}" > reports/ai/browser-result.json
 
       - name: Collect structured failure context
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         env:
           TEST_BROWSER: firefox
         run: npm run ai:collect
 
       - name: Collect run history for flaky-test reasoning
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TEST_BROWSER: firefox
@@ -418,6 +459,7 @@ jobs:
 
       - name: Upload Cypress screenshots
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: cypress-screenshots-firefox
@@ -426,6 +468,7 @@ jobs:
 
       - name: Upload Cypress videos
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: cypress-videos-firefox
@@ -434,6 +477,7 @@ jobs:
 
       - name: Upload structured test report
         if: steps.run_tests.outcome == 'failure'
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: cypress-report-firefox
@@ -447,6 +491,7 @@ jobs:
       # already knows how to handle for any browser in its list.
       - name: Upload QA triage input
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: qa-triage-input-firefox
@@ -456,9 +501,12 @@ jobs:
       # Identical gate to cypress-tests' own copy: the sole source of
       # truth for this job's conclusion, depending only on the original
       # test outcome - never on diagnostics collection or the downstream
-      # AI triage job.
+      # AI triage job. always() (Roadmap CS1) is defense-in-depth, same
+      # reasoning as cypress-tests' own copy and the Firefox forensics
+      # steps below, which already rely on and document this exact
+      # implicit-success() semantic.
       - name: Fail job on E2E failure
-        if: steps.run_tests.outcome == 'failure'
+        if: always() && steps.run_tests.outcome == 'failure'
         run: |
           echo "Cypress E2E tests failed for browser 'firefox'. See the report/screenshot/video artifacts (and QA AI triage, if it runs) for details."
           exit 1
@@ -583,8 +631,13 @@ jobs:
       # if-no-files-found: ignore means a setup/browser-install failure
       # that never produced a report is not itself an upload error - only
       # real evidence is ever uploaded here, nothing synthesized.
+      # continue-on-error: true (Roadmap CS1, closes CS0-F1): an upload
+      # infrastructure failure here must never fail this job on its own -
+      # same reasoning as every diagnostic/evidence step in
+      # cypress-tests/firefox-tests.
       - name: Upload Playwright report
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
@@ -596,9 +649,11 @@ jobs:
       # The sole source of truth for this job's conclusion - identical
       # contract to cypress-tests'/firefox-tests' own "Fail job on E2E
       # failure" gate, depending only on the original smoke outcome, never
-      # on artifact upload success or the downstream triage job.
+      # on artifact upload success or the downstream triage job. always()
+      # (Roadmap CS1) is the same defense-in-depth hardening applied to
+      # both Cypress gates above.
       - name: Fail job on smoke failure
-        if: steps.run_tests.outcome == 'failure'
+        if: always() && steps.run_tests.outcome == 'failure'
         run: |
           echo "Playwright Chromium smoke failed. See the playwright-report artifact for details."
           exit 1
