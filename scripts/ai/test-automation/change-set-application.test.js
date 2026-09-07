@@ -1192,3 +1192,555 @@ test("23F-R-3: MODIFY rollback restores the original content AND the original 07
   cleanup(root);
 });
 
+// =============================================================================
+// Roadmap CS2 (closes CS0-F7 / 23F-R2-1): rollback ANCESTOR-TOPOLOGY
+// hardening. Every test below is DISTINCT from 23F-R-1 (which tests the
+// window between Phase-5 prevalidation and Phase-7 COMMIT) and from 23F-R-2
+// (which tests the TARGET object's own identity at ROLLBACK time, already
+// closed and unchanged by CS2) - these tests specifically prove that the
+// ANCESTOR DIRECTORY CHAIN's own object identity, not merely its type
+// (symlink vs. real directory), is required rollback authority. The central,
+// load-bearing case (Sections 19/20) is an ORDINARY directory replacing an
+// ordinary directory - no symlink anywhere - which 23F-R-2's own guard
+// cannot detect because the TARGET's own (dev, ino) and bytes are
+// deliberately left completely unchanged.
+// =============================================================================
+
+// --- CS2 CREATE: ordinary ancestor-directory replacement (primary case) -----
+
+test("CS2 CREATE: ancestor directory replaced with a NEW ordinary directory (no symlink) between commit and rollback -> rollback refuses, application-created file survives untouched", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain(); // plan1(): CREATE new_spec.cy.js (commits first), MODIFY existing_spec.cy.js (fails second)
+  const testsDir = path.join(fs.realpathSync(root), "cypress", "e2e", "tests");
+  const createTargetAbs = path.join(testsDir, "new_spec.cy.js");
+
+  let preAttackIdentity = null;
+  let postRollbackAttemptIdentity = null;
+  const realChmodSync = fs.chmodSync;
+  let attacked = false;
+  // fs.chmodSync(tempAbs, mode) fires exactly once per real Phase-7 MODIFY
+  // commit attempt, strictly AFTER CREATE (staged[0]) has already committed
+  // - intercepting it here lets us attack immediately after CREATE succeeds
+  // and force the MODIFY itself to fail (triggering rollback of CREATE),
+  // all in one deterministic step, mirroring this file's own established
+  // "force a later change to fail via a specific fs call" idiom.
+  fs.chmodSync = function (targetPath, mode) {
+    if (!attacked && typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js")) {
+      attacked = true;
+      const lst = fs.lstatSync(createTargetAbs);
+      preAttackIdentity = { dev: lst.dev, ino: lst.ino };
+      const oldDir = testsDir + "-relocated";
+      fs.renameSync(testsDir, oldDir);
+      fs.mkdirSync(testsDir);
+      fs.renameSync(path.join(oldDir, "new_spec.cy.js"), path.join(testsDir, "new_spec.cy.js"));
+      fs.rmSync(oldDir, { recursive: true, force: true });
+      const e = new Error("CS2 test: forced MODIFY failure to trigger CREATE rollback");
+      e.code = "ENOENT";
+      throw e;
+    }
+    return realChmodSync.call(fs, targetPath, mode);
+  };
+
+  let res;
+  try {
+    res = apply(root, chain);
+  } finally {
+    fs.chmodSync = realChmodSync;
+  }
+
+  assert.equal(attacked, true, "test setup did not actually trigger the ancestor-topology attack");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord, "a real AppliedChangeSetRecord must exist - at least one change (CREATE) was genuinely committed before the attack");
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE", "an ancestor-topology mismatch must be reported as incomplete rollback, never a fabricated clean ROLLED_BACK");
+  const createEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/new_spec.cy.js");
+  assert.equal(createEntry.status, "ROLLBACK_INCOMPLETE");
+
+  // The central proof (mission-required): same target inode, same target
+  // bytes, same target relative path, DIFFERENT ancestor inode -> rollback
+  // refused. If rollback had proceeded (the pre-CS2 bug), this file would
+  // not exist.
+  assert.equal(fs.existsSync(createTargetAbs), true, "the application-created file must survive - rollback must refuse to delete through a relocated ancestor");
+  postRollbackAttemptIdentity = fs.lstatSync(createTargetAbs);
+  assert.equal(postRollbackAttemptIdentity.dev, preAttackIdentity.dev);
+  assert.equal(postRollbackAttemptIdentity.ino, preAttackIdentity.ino);
+  assert.equal(fs.readFileSync(createTargetAbs, "utf8"), "describe('x', () => {});", "content must be exactly what CREATE originally wrote");
+
+  cleanup(root);
+});
+
+// --- CS2 MODIFY: ordinary ancestor-directory replacement --------------------
+
+test("CS2 MODIFY: ancestor directory replaced with a NEW ordinary directory (no symlink) between commit and rollback -> rollback refuses, original pre-application bytes are NOT restored into the relocated topology", () => {
+  const root = makeRoot();
+  const testsDir = path.join(fs.realpathSync(root), "cypress", "e2e", "tests");
+  const modifyTargetAbs = path.join(testsDir, "existing_spec.cy.js");
+  fs.writeFileSync(modifyTargetAbs, OLD_CONTENT, "utf8");
+
+  const plan = {
+    schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress",
+    plannedChanges: [
+      { path: "cypress/e2e/tests/existing_spec.cy.js", operation: "MODIFY", purpose: "x" },
+      { path: "cypress/e2e/tests/second.cy.js", operation: "CREATE", purpose: "y" },
+    ],
+  };
+  const context = context1();
+  const changes = [
+    { operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: OLD_DIGEST, content: "describe('new', () => {});" },
+    { operation: "CREATE", path: "cypress/e2e/tests/second.cy.js", baseContentDigest: null, content: "describe('second', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  const secondTargetAbs = path.join(testsDir, "second.cy.js");
+  let preAttackIdentity = null;
+  const realWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function (targetPath, content, options) {
+    if (targetPath === secondTargetAbs && options && options.flag === "wx") {
+      // Force CREATE (second change) to fail after MODIFY has already
+      // committed, triggering rollback of the MODIFY - same idiom as the
+      // existing 23F-R-3 rollback test, immediately preceded here by the
+      // ancestor-topology attack itself.
+      const lst = fs.lstatSync(modifyTargetAbs);
+      preAttackIdentity = { dev: lst.dev, ino: lst.ino };
+      const oldDir = testsDir + "-relocated";
+      fs.renameSync(testsDir, oldDir);
+      fs.mkdirSync(testsDir);
+      fs.renameSync(path.join(oldDir, "existing_spec.cy.js"), path.join(testsDir, "existing_spec.cy.js"));
+      fs.rmSync(oldDir, { recursive: true, force: true });
+      const e = new Error("EEXIST: simulated");
+      e.code = "EEXIST";
+      throw e;
+    }
+    return realWriteFileSync.call(fs, targetPath, content, options);
+  };
+
+  let res;
+  try {
+    res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
+
+  assert.ok(preAttackIdentity, "test setup did not actually trigger the ancestor-topology attack");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord);
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE");
+  const modifyEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/existing_spec.cy.js");
+  assert.equal(modifyEntry.status, "ROLLBACK_INCOMPLETE");
+
+  // The target still holds the NEW (applied) bytes, not the original - the
+  // old rollback would have staged+renamed the ORIGINAL bytes back into the
+  // relocated topology, silently "restoring" through an object #23F never
+  // actually committed into. CS2 must refuse that restoration entirely.
+  assert.equal(fs.readFileSync(modifyTargetAbs, "utf8"), "describe('new', () => {});", "the applied MODIFY bytes must remain - a compensating restore into a relocated ancestor must never happen");
+  const postAttempt = fs.lstatSync(modifyTargetAbs);
+  assert.equal(postAttempt.dev, preAttackIdentity.dev);
+  assert.equal(postAttempt.ino, preAttackIdentity.ino);
+
+  cleanup(root);
+});
+
+// --- CS2 symlinked-ancestor relocation, at ROLLBACK time (not commit time) --
+
+test("CS2 CREATE: ancestor replaced by a SYMLINK to its own relocated real self between commit and rollback -> rollback refuses before mutation, relocated directory and symlink both survive", () => {
+  skipIfNoSymlink(() => {
+    const root = makeRootWithExisting();
+    const chain = buildChain();
+    const testsDir = path.join(fs.realpathSync(root), "cypress", "e2e", "tests");
+    const createTargetAbs = path.join(testsDir, "new_spec.cy.js");
+
+    const realChmodSync = fs.chmodSync;
+    let attacked = false;
+    let relocatedDir = null;
+    fs.chmodSync = function (targetPath, mode) {
+      if (!attacked && typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js")) {
+        attacked = true;
+        relocatedDir = testsDir + "-relocated";
+        fs.renameSync(testsDir, relocatedDir);
+        fs.symlinkSync(relocatedDir, testsDir, "dir");
+        const e = new Error("CS2 test: forced MODIFY failure to trigger CREATE rollback");
+        e.code = "ENOENT";
+        throw e;
+      }
+      return realChmodSync.call(fs, targetPath, mode);
+    };
+
+    let res;
+    try {
+      res = apply(root, chain);
+    } finally {
+      fs.chmodSync = realChmodSync;
+    }
+
+    assert.equal(attacked, true, "test setup did not actually trigger the symlink-relocation attack");
+    assert.equal(res.ok, false);
+    assert.ok(res.appliedChangeSetRecord);
+    assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE");
+    const createEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/new_spec.cy.js");
+    assert.equal(createEntry.status, "ROLLBACK_INCOMPLETE");
+
+    // The relocated real directory (accessible only via the new symlink)
+    // and its content must survive completely untouched - rollback must
+    // refuse before it ever reads/mutates through the symlinked path.
+    assert.equal(fs.lstatSync(testsDir).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(path.join(relocatedDir, "new_spec.cy.js")), true);
+    assert.equal(fs.readFileSync(path.join(relocatedDir, "new_spec.cy.js"), "utf8"), "describe('x', () => {});");
+
+    fs.unlinkSync(testsDir);
+    fs.rmSync(relocatedDir, { recursive: true, force: true });
+    cleanup(root);
+  });
+});
+
+// --- CS2 control: identical topology restored before rollback still authorizes compensation ---
+
+test("CS2 control: ancestor renamed away and then the EXACT SAME directory object restored to the original path before rollback -> rollback still succeeds (identity-based, not rename-poisoned)", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const testsDir = path.join(fs.realpathSync(root), "cypress", "e2e", "tests");
+  const createTargetAbs = path.join(testsDir, "new_spec.cy.js");
+
+  const realChmodSync = fs.chmodSync;
+  let attacked = false;
+  fs.chmodSync = function (targetPath, mode) {
+    if (!attacked && typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js")) {
+      attacked = true;
+      const tempName = testsDir + "-temporarily-elsewhere";
+      // Rename the SAME directory object away and immediately back - its
+      // (dev, ino) identity is preserved throughout, unlike the other CS2
+      // tests above which create a brand-new directory object.
+      fs.renameSync(testsDir, tempName);
+      fs.renameSync(tempName, testsDir);
+      const e = new Error("CS2 test: forced MODIFY failure to trigger CREATE rollback");
+      e.code = "ENOENT";
+      throw e;
+    }
+    return realChmodSync.call(fs, targetPath, mode);
+  };
+
+  let res;
+  try {
+    res = apply(root, chain);
+  } finally {
+    fs.chmodSync = realChmodSync;
+  }
+
+  assert.equal(attacked, true, "test setup did not actually trigger the rename-and-restore sequence");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord);
+  // Unlike the attack tests above: the ancestor's OBJECT IDENTITY was never
+  // actually different at rollback time, only its path briefly was - CS2
+  // authorizes rollback based on identity, never treats "was ever renamed"
+  // as permanent poisoning.
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLED_BACK", "identical topology identity must still authorize rollback");
+  const createEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/new_spec.cy.js");
+  assert.equal(createEntry.status, "ROLLED_BACK");
+  assert.equal(fs.existsSync(createTargetAbs), false, "legitimate rollback must still actually delete the compensated CREATE");
+
+  cleanup(root);
+});
+
+// --- CS2 MODIFY staging-race: topology changes DURING rollback's own staging window ---
+
+test("CS2 MODIFY staging-race: ancestor topology changed during ROLLBACK's OWN staging window is caught by the fresh pre-rename revalidation, not merely the check performed before staging", () => {
+  const root = makeRoot();
+  const testsDir = path.join(fs.realpathSync(root), "cypress", "e2e", "tests");
+  const modifyTargetAbs = path.join(testsDir, "existing_spec.cy.js");
+  fs.writeFileSync(modifyTargetAbs, OLD_CONTENT, "utf8");
+
+  const plan = {
+    schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress",
+    plannedChanges: [
+      { path: "cypress/e2e/tests/existing_spec.cy.js", operation: "MODIFY", purpose: "x" },
+      { path: "cypress/e2e/tests/second.cy.js", operation: "CREATE", purpose: "y" },
+    ],
+  };
+  const context = context1();
+  const changes = [
+    { operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: OLD_DIGEST, content: "describe('new', () => {});" },
+    { operation: "CREATE", path: "cypress/e2e/tests/second.cy.js", baseContentDigest: null, content: "describe('second', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  const secondTargetAbs = path.join(testsDir, "second.cy.js");
+  let tempWriteCount = 0;
+  let attacked = false;
+  const realWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function (targetPath, content, options) {
+    // First occurrence of this pattern: Phase 6's own original forward
+    // staging of the MODIFY's temp file (before any commit). Second
+    // occurrence: ROLLBACK's own re-staging of the same target's temp file,
+    // called from inside rollbackModify() AFTER the MODIFY has already
+    // committed and AFTER rollback's own initial topology/identity checks
+    // have already passed - this is the exact window CS2's fresh
+    // pre-rename revalidation exists to close.
+    if (typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js") && options && options.flag === "wx") {
+      tempWriteCount += 1;
+      const result = realWriteFileSync.call(fs, targetPath, content, options);
+      if (tempWriteCount === 2 && !attacked) {
+        attacked = true;
+        const oldDir = testsDir + "-relocated";
+        fs.renameSync(testsDir, oldDir);
+        fs.mkdirSync(testsDir);
+        fs.renameSync(path.join(oldDir, "existing_spec.cy.js"), path.join(testsDir, "existing_spec.cy.js"));
+        // Move the just-staged rollback temp file into the new directory
+        // too, under the SAME basename, so a buggy implementation that
+        // skips fresh temp-identity verification could still find
+        // *something* at that path and proceed.
+        const tempBasename = path.basename(targetPath);
+        fs.renameSync(path.join(oldDir, tempBasename), path.join(testsDir, tempBasename));
+        fs.rmSync(oldDir, { recursive: true, force: true });
+      }
+      return result;
+    }
+    if (targetPath === secondTargetAbs && options && options.flag === "wx") {
+      const e = new Error("EEXIST: simulated");
+      e.code = "EEXIST";
+      throw e;
+    }
+    return realWriteFileSync.call(fs, targetPath, content, options);
+  };
+
+  let res;
+  try {
+    res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
+
+  assert.equal(attacked, true, "test setup did not actually trigger the mid-rollback-staging topology attack");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord);
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE", "a topology change during rollback's own staging window must be caught by the FRESH pre-rename check, not silently missed because only the pre-staging check ran");
+  const modifyEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/existing_spec.cy.js");
+  assert.equal(modifyEntry.status, "ROLLBACK_INCOMPLETE");
+  // The relocated topology's own target must still hold the APPLIED bytes,
+  // never the compensating original - the rename-into-relocated-topology
+  // must never have happened.
+  assert.equal(fs.readFileSync(modifyTargetAbs, "utf8"), "describe('new', () => {});");
+
+  cleanup(root);
+});
+
+// --- CS2 temp cleanup: relocation must never cause deletion of an unrelated object ---
+
+test("CS2 temp cleanup: after a mid-staging ancestor relocation, cleanup never deletes an unrelated decoy object that happens to share the temp file's own random name in the new topology", () => {
+  const root = makeRoot();
+  const testsDir = path.join(fs.realpathSync(root), "cypress", "e2e", "tests");
+  const modifyTargetAbs = path.join(testsDir, "existing_spec.cy.js");
+  fs.writeFileSync(modifyTargetAbs, OLD_CONTENT, "utf8");
+
+  const plan = {
+    schemaVersion: 1, kind: "AutomationPlan", id: "plan-1", projectId: "proj-1", automationCandidateId: "cand-1", framework: "cypress",
+    plannedChanges: [
+      { path: "cypress/e2e/tests/existing_spec.cy.js", operation: "MODIFY", purpose: "x" },
+      { path: "cypress/e2e/tests/second.cy.js", operation: "CREATE", purpose: "y" },
+    ],
+  };
+  const context = context1();
+  const changes = [
+    { operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: OLD_DIGEST, content: "describe('new', () => {});" },
+    { operation: "CREATE", path: "cypress/e2e/tests/second.cy.js", baseContentDigest: null, content: "describe('second', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkgResult = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkgResult.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkgResult.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+
+  const secondTargetAbs = path.join(testsDir, "second.cy.js");
+  const DECOY_CONTENT = "DO NOT DELETE ME - unrelated object planted at the attacker's new topology";
+  let chmodCount = 0;
+  let attacked = false;
+  let decoyAbs = null;
+  const realChmodSync = fs.chmodSync;
+  const realWriteFileSync = fs.writeFileSync;
+  // fs.chmodSync(tempAbs, mode) is called exactly twice for this scenario:
+  // once during the ORIGINAL Phase-7 forward MODIFY commit (call #1), and
+  // once again inside rollbackModify()'s OWN re-staging (call #2) - which,
+  // in the CS2-hardened implementation, fires strictly AFTER
+  // stagedTempIdentity has already been captured. Attacking exactly here
+  // (rather than during stageTempFile()'s own write, which would fire
+  // BEFORE that identity capture and corrupt the test's own baseline)
+  // reproduces the precise window the identity-guarded cleanup exists to
+  // close: the real staged temp object is relocated away and destroyed,
+  // and an unrelated decoy is planted at the exact same tempAbs string in
+  // the new topology, simulating the worst case named in the mission text
+  // ("a different same-name filesystem object becomes reachable through
+  // tempAbs").
+  fs.chmodSync = function (targetPath, mode) {
+    if (typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js")) {
+      chmodCount += 1;
+      if (chmodCount === 2 && !attacked) {
+        attacked = true;
+        const tempBasename = path.basename(targetPath);
+        const oldDir = testsDir + "-relocated";
+        fs.renameSync(testsDir, oldDir);
+        fs.mkdirSync(testsDir);
+        fs.renameSync(path.join(oldDir, "existing_spec.cy.js"), path.join(testsDir, "existing_spec.cy.js"));
+        decoyAbs = path.join(testsDir, tempBasename);
+        realWriteFileSync.call(fs, decoyAbs, DECOY_CONTENT, "utf8");
+        // Destroys the real, original staged temp file (relocated into
+        // oldDir above) - only the decoy remains reachable at tempAbs.
+        fs.rmSync(oldDir, { recursive: true, force: true });
+      }
+    }
+    return realChmodSync.call(fs, targetPath, mode);
+  };
+
+  fs.writeFileSync = function (targetPath, content, options) {
+    if (targetPath === secondTargetAbs && options && options.flag === "wx") {
+      const e = new Error("EEXIST: simulated");
+      e.code = "EEXIST";
+      throw e;
+    }
+    return realWriteFileSync.call(fs, targetPath, content, options);
+  };
+
+  let res;
+  try {
+    res = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkgResult.reviewPackage, reviewRecord: recResult.reviewRecord, appliedAt: APPLIED_AT });
+  } finally {
+    fs.chmodSync = realChmodSync;
+    fs.writeFileSync = realWriteFileSync;
+  }
+
+  assert.equal(attacked, true, "test setup did not actually plant the decoy object");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord);
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE");
+
+  // The central proof: the unrelated decoy object, which happens to share
+  // the rollback temp file's own random basename in the relocated topology,
+  // must survive completely untouched - identity-safe cleanup must never
+  // delete an object it cannot prove is the one it staged.
+  assert.equal(fs.existsSync(decoyAbs), true, "an unrelated same-name object must never be deleted by temp cleanup");
+  assert.equal(fs.readFileSync(decoyAbs, "utf8"), DECOY_CONTENT, "the unrelated object's content must be completely unmodified");
+
+  cleanup(root);
+});
+
+// --- CS2-C1 (closes CS2-RR-1) CREATE: repositoryRoot identity replacement, isolated from descendant ancestor checks ---
+//
+// Every CS2 test above attacks an ancestor BENEATH repositoryRoot (direct
+// parent or grandparent) - each is independently caught by the descendant
+// ancestorIdentities comparison in verifyRollbackTopology() alone, regardless
+// of whether repositoryRoot's OWN identity is separately checked. An
+// independent exact-head adversarial review (finding CS2-RR-1) found that no
+// committed test isolates repositoryRoot specifically: a mutation that
+// disables ONLY the rootIdentity comparison in verifyRollbackTopology() (Section
+// 488-490 of change-set-application.js), while leaving the descendant
+// ancestorIdentities loop fully intact, still passed all six prior CS2 tests.
+//
+// This test closes that gap. It relocates the ENTIRE original repositoryRoot
+// subtree away, creates a BRAND NEW ordinary directory at the identical
+// repositoryRoot pathname, then moves every original entry back into it
+// UNCHANGED - preserving the (dev, ino) identity of every descendant ancestor
+// (cypress/, cypress/e2e/, cypress/e2e/tests/) and of the CREATE target
+// itself EXACTLY. Only repositoryRoot's own object identity differs. If
+// rollback still refuses under this precise arrangement, the refusal cannot
+// be explained by any descendant-ancestor mismatch (there is none) - it can
+// only be explained by a genuine repositoryRoot-identity comparison.
+
+test("CS2-C1 CREATE: repositoryRoot itself replaced with a NEW ordinary directory at the identical path (every descendant ancestor's own identity left completely unchanged) -> rollback refuses, application-created file survives untouched", () => {
+  const root = makeRootWithExisting();
+  const realRoot = fs.realpathSync(root);
+  const chain = buildChain(); // plan1(): CREATE new_spec.cy.js (commits first), MODIFY existing_spec.cy.js (fails second)
+  const testsDir = path.join(realRoot, "cypress", "e2e", "tests");
+  const createTargetAbs = path.join(testsDir, "new_spec.cy.js");
+
+  const rootLstatBefore = fs.lstatSync(realRoot);
+  const testsDirLstatBefore = fs.lstatSync(testsDir);
+
+  let preAttackTargetIdentity = null;
+  let attacked = false;
+  const realChmodSync = fs.chmodSync;
+  // Same "force the MODIFY to fail via fs.chmodSync" idiom as the CS2
+  // ancestor-directory-replacement test above - this fires exactly once,
+  // strictly AFTER the CREATE (staged[0]) has already committed and AFTER
+  // MODIFY's own Phase-7 revalidateModifyTarget() has already read the
+  // still-untouched original target, so the attack cannot be mistaken for
+  // merely corrupting MODIFY's own precondition.
+  fs.chmodSync = function (targetPath, mode) {
+    if (!attacked && typeof targetPath === "string" && targetPath.includes(".23f-tmp-") && targetPath.includes("existing_spec.cy.js")) {
+      attacked = true;
+      const lst = fs.lstatSync(createTargetAbs);
+      preAttackTargetIdentity = { dev: lst.dev, ino: lst.ino };
+
+      // Relocate the ENTIRE original root subtree away, create a BRAND NEW,
+      // otherwise-empty ordinary directory at the exact original
+      // repositoryRoot pathname, then move every original entry
+      // (cypress/, cypress.config.js, etc.) back into the new root
+      // UNCHANGED - this preserves the (dev, ino) identity of every
+      // descendant ancestor and of the CREATE target itself exactly, so
+      // ONLY repositoryRoot's own object identity differs.
+      const oldRootPath = realRoot + "-relocated";
+      fs.renameSync(realRoot, oldRootPath);
+      fs.mkdirSync(realRoot);
+      for (const entry of fs.readdirSync(oldRootPath)) {
+        fs.renameSync(path.join(oldRootPath, entry), path.join(realRoot, entry));
+      }
+      fs.rmdirSync(oldRootPath);
+
+      const e = new Error("CS2-C1 test: forced MODIFY failure to trigger CREATE rollback");
+      e.code = "ENOENT";
+      throw e;
+    }
+    return realChmodSync.call(fs, targetPath, mode);
+  };
+
+  let res;
+  try {
+    res = apply(root, chain);
+  } finally {
+    fs.chmodSync = realChmodSync;
+  }
+
+  assert.equal(attacked, true, "test setup did not actually trigger the repositoryRoot-identity attack");
+  assert.equal(res.ok, false);
+  assert.ok(res.appliedChangeSetRecord, "a real AppliedChangeSetRecord must exist - at least one change (CREATE) was genuinely committed before the attack");
+  assert.equal(res.appliedChangeSetRecord.status, "APPLICATION_FAILED_ROLLBACK_INCOMPLETE", "a repositoryRoot-identity mismatch must be reported as incomplete rollback, never a fabricated clean ROLLED_BACK");
+  const createEntry = res.appliedChangeSetRecord.changes.find((c) => c.path === "cypress/e2e/tests/new_spec.cy.js");
+  assert.equal(createEntry.status, "ROLLBACK_INCOMPLETE");
+
+  // Prove the replacement repositoryRoot object is genuinely different -
+  // same pathname, same type (ordinary directory, not a symlink), different
+  // (dev, ino) identity.
+  const rootLstatAfter = fs.lstatSync(realRoot);
+  assert.equal(rootLstatAfter.isDirectory(), true);
+  assert.equal(rootLstatAfter.isSymbolicLink(), false);
+  assert.equal(
+    rootLstatAfter.dev === rootLstatBefore.dev && rootLstatAfter.ino === rootLstatBefore.ino,
+    false,
+    "repositoryRoot must be a genuinely different filesystem object after the attack"
+  );
+
+  // Prove EVERY descendant ancestor's own identity is completely unchanged
+  // by the attack - this is what isolates the repositoryRoot guard
+  // specifically from the already-covered descendant-ancestor guard in the
+  // CS2 tests above.
+  const testsDirLstatAfter = fs.lstatSync(testsDir);
+  assert.equal(testsDirLstatAfter.dev, testsDirLstatBefore.dev, "the CREATE target's own direct-parent directory object must be untouched by this attack");
+  assert.equal(testsDirLstatAfter.ino, testsDirLstatBefore.ino, "the CREATE target's own direct-parent directory object must be untouched by this attack");
+
+  // The central proof (CS2-RR-1 corrective requirement): same target inode,
+  // same target bytes, same target relative path, EVERY descendant ancestor
+  // identical, ONLY repositoryRoot's own identity different -> rollback
+  // refused. A guard that checked only the ancestor chain BENEATH root (and
+  // not root itself) would incorrectly authorize compensation here.
+  assert.equal(fs.existsSync(createTargetAbs), true, "the application-created file must survive - rollback must refuse to delete through a relocated repositoryRoot");
+  const postRollbackAttemptIdentity = fs.lstatSync(createTargetAbs);
+  assert.equal(postRollbackAttemptIdentity.dev, preAttackTargetIdentity.dev);
+  assert.equal(postRollbackAttemptIdentity.ino, preAttackTargetIdentity.ino);
+  assert.equal(fs.readFileSync(createTargetAbs, "utf8"), "describe('x', () => {});", "content must be exactly what CREATE originally wrote");
+
+  cleanup(root);
+});
+
