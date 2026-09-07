@@ -147,6 +147,18 @@ jobs:
       - name: Run Test Design quality regression comparison v6
         run: npm run eval:regression:v6
 
+      # TEMPORARY EVIDENCE-ONLY PROBE - CS1 QA Agent evaluation
+      # required-check negative probe (Section 27). Tests
+      # BRANCH-PROTECTION AUTHORITY only, not v6 scoring logic itself (that
+      # is already covered by permanent evaluation tests) - a plain,
+      # workflow-only controlled failure with no continue-on-error, so it
+      # genuinely fails this job. Never committed to main; exists only on
+      # the disposable evidence/cs1-ci-authority-proof branch.
+      - name: CS1 controlled evaluation-gate failure
+        run: |
+          echo "CS1_CONTROLLED_EVALUATION_FAILURE"
+          exit 98
+
   cypress-tests:
     name: Cypress - ${{ matrix.browser }}
     runs-on: ubuntu-latest
