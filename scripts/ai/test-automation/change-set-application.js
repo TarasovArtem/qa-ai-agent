@@ -237,15 +237,36 @@ function resolveRepositoryRoot(repositoryRoot) {
 // with context-utils.js's own segment-aware isCanonicalPathInsideRoot() -
 // deliberately not a bare string-prefix check (Section 23's documented
 // "/root/project-evil" sibling-prefix bug class).
+//
+// Roadmap CS2 (closes 23F-R2-1): also captures the (device, inode) identity
+// of realRoot itself and of every ancestor directory walked, in addition to
+// the existing type checks above. A symlink check alone proves an ancestor
+// is STILL A REAL DIRECTORY, but not that it is the SAME directory OBJECT
+// that existed at an earlier call to this function - an independent review
+// found that an ordinary directory can be renamed away and replaced with a
+// brand-new ordinary directory at the identical path (no symlink involved
+// anywhere), which every existing type-only check here would accept
+// unchanged. `rootIdentity`/`ancestorIdentities` give callers that need
+// object-identity authority (rollback compensation - see
+// verifyRollbackTopology() below) something to compare a later, independent
+// fresh walk against. This is a pure by-product of lstat calls this
+// function already performs - no additional filesystem access.
 function inspectApplicationTarget(realRoot, relPath) {
+  const rootLst = safeLstat(realRoot);
+  if (rootLst === null || rootLst.isSymbolicLink() || !rootLst.isDirectory()) {
+    return { ok: false, reason: "ROOT_INVALID" };
+  }
+  const rootIdentity = { dev: rootLst.dev, ino: rootLst.ino };
   const segments = relPath.split("/");
   let cumulative = realRoot;
+  const ancestorIdentities = [];
   for (let i = 0; i < segments.length - 1; i += 1) {
     cumulative = path.join(cumulative, segments[i]);
     const lst = safeLstat(cumulative);
     if (lst === null) return { ok: false, reason: "PARENT_MISSING" };
     if (lst.isSymbolicLink()) return { ok: false, reason: "PARENT_SYMLINK" };
     if (!lst.isDirectory()) return { ok: false, reason: "PARENT_NOT_DIRECTORY" };
+    ancestorIdentities.push({ dev: lst.dev, ino: lst.ino });
   }
   const parentAbs = segments.length > 1 ? path.join(realRoot, ...segments.slice(0, -1)) : realRoot;
   if (!isCanonicalPathInsideRoot({ root: realRoot, candidate: parentAbs })) {
@@ -255,7 +276,7 @@ function inspectApplicationTarget(realRoot, relPath) {
   if (!isCanonicalPathInsideRoot({ root: realRoot, candidate: targetAbs })) {
     return { ok: false, reason: "ESCAPE" };
   }
-  return { ok: true, parentAbs, targetAbs, targetLstat: safeLstat(targetAbs) };
+  return { ok: true, parentAbs, targetAbs, targetLstat: safeLstat(targetAbs), rootIdentity, ancestorIdentities };
 }
 
 // Roadmap #23F Section 30/84: CREATE means a genuinely absent filesystem
@@ -354,7 +375,7 @@ function revalidateCreateTarget(realRoot, relPath) {
   if (detectCaseCollisionAgainstDirectory(inspected.parentAbs, path.basename(relPath))) {
     return { ok: false, reason: "CASE_COLLISION" };
   }
-  return { ok: true, parentAbs: inspected.parentAbs, targetAbs: inspected.targetAbs };
+  return { ok: true, parentAbs: inspected.parentAbs, targetAbs: inspected.targetAbs, rootIdentity: inspected.rootIdentity, ancestorIdentities: inspected.ancestorIdentities };
 }
 
 // Roadmap #23F-C1 (closes 23F-R-1): the single, canonical MODIFY-target
@@ -377,6 +398,8 @@ function revalidateModifyTarget(realRoot, relPath, expectedBaseDigest) {
     actualDigest: modifyCheck.actualDigest,
     content: modifyCheck.content,
     mode: inspected.targetLstat.mode & 0o7777,
+    rootIdentity: inspected.rootIdentity,
+    ancestorIdentities: inspected.ancestorIdentities,
   };
 }
 
@@ -438,6 +461,42 @@ function verifyRollbackIdentity(targetAbs, expectedContent, expectedIdentity) {
   return { ok: true };
 }
 
+// Roadmap CS2 (closes 23F-R2-1): rollback ANCESTOR-TOPOLOGY authority guard,
+// independent of and prerequisite to verifyRollbackIdentity() above.
+// verifyRollbackIdentity() proves the TARGET is still the same structural
+// object this application wrote - it says nothing about the ancestor
+// directories the target's own relative path resolves through. An
+// independent review demonstrated that an ordinary ancestor directory can
+// be renamed away and replaced by a brand-new ordinary directory at the
+// identical path, with the application-written file then moved back into
+// it: the target's relative path, (device, inode) identity, and bytes are
+// ALL unchanged, so verifyRollbackIdentity() alone would accept it - but
+// the directory the file now lives in is a completely different object
+// than the one #23F actually committed into. This performs a completely
+// fresh, independent re-walk (via inspectApplicationTarget(), never a
+// cached result - same "never trust a stale check" discipline every other
+// fresh-revalidation call in this file already follows) and requires BOTH
+// realRoot's own identity AND every ancestor directory's identity to match
+// exactly what was captured at the moment #23F itself committed this
+// change (Phase 7) - a mismatch anywhere in the chain, including realRoot
+// itself, means rollback must refuse rather than compensate through a
+// relocated topology it cannot prove is the one it originally committed
+// into.
+function verifyRollbackTopology(realRoot, relPath, expectedRootIdentity, expectedAncestorIdentities) {
+  const inspected = inspectApplicationTarget(realRoot, relPath);
+  if (!inspected.ok) return { ok: false };
+  if (inspected.rootIdentity.dev !== expectedRootIdentity.dev || inspected.rootIdentity.ino !== expectedRootIdentity.ino) {
+    return { ok: false };
+  }
+  if (inspected.ancestorIdentities.length !== expectedAncestorIdentities.length) return { ok: false };
+  for (let i = 0; i < expectedAncestorIdentities.length; i += 1) {
+    const actual = inspected.ancestorIdentities[i];
+    const expected = expectedAncestorIdentities[i];
+    if (actual.dev !== expected.dev || actual.ino !== expected.ino) return { ok: false };
+  }
+  return { ok: true };
+}
+
 // Roadmap #23F Section 44-46: same-parent-directory, exclusive-create,
 // unpredictable-filename temp staging - `wx` guarantees the OS itself
 // rejects a name collision, and same-directory placement maximizes the
@@ -461,15 +520,50 @@ function cleanupTemp(tempAbs) {
   }
 }
 
-// Roadmap #23F Section 101/107, hardened by #23F-C1 (closes 23F-R-2):
-// rollback of a CREATE this SAME application attempt performed - never an
-// arbitrary remove. verifyRollbackIdentity() requires the current path to
-// still be a plain regular file whose (device, inode) identity AND exact
-// bytes match what this attempt itself produced; if the target has since
-// changed in type, identity, or content, this refuses to delete it and
-// reports incomplete rollback instead (never blindly destroy externally-
-// raced or type-confused content).
-function rollbackCreate(targetAbs, writtenContent, identity) {
+// Roadmap CS2 (closes 23F-R2-1, temp-file authority - Section 16/25):
+// identity-guarded cleanup for use ONLY after a temp file's own (device,
+// inode) identity has already been captured. cleanupTemp() above is safe
+// everywhere it is used for the ORIGINAL forward-application staging (Phase
+// 6/7), where no adversarial ancestor relocation is part of this module's
+// threat model between staging and that same, immediate use. Rollback
+// staging is different: an ancestor relocation during the staging interval
+// could cause the SAME tempAbs string to resolve, through the new topology,
+// to a completely different, unrelated object that happens to share the
+// unpredictable random temp name - a plain cleanupTemp(tempAbs) there would
+// unlink that unrelated object with no proof it is the one this attempt
+// staged. This re-lstats the CURRENT path (never following, never trusting
+// a stale identity) and only unlinks if it is still a plain regular file
+// with the EXACT (device, inode) identity captured immediately after
+// staging - any mismatch (including "nothing there") is left alone, an
+// orphaned unpredictable temp file being strictly preferable to deleting an
+// object this attempt cannot prove it owns.
+function cleanupTempIfIdentityMatches(tempAbs, expectedIdentity) {
+  if (!tempAbs || !expectedIdentity) return;
+  const lst = safeLstat(tempAbs);
+  if (lst === null || lst.isSymbolicLink() || !lst.isFile()) return;
+  if (lst.dev !== expectedIdentity.dev || lst.ino !== expectedIdentity.ino) return;
+  try {
+    fs.unlinkSync(tempAbs);
+  } catch {
+    // best-effort only, same rationale as cleanupTemp() above.
+  }
+}
+
+// Roadmap #23F Section 101/107, hardened by #23F-C1 (closes 23F-R-2) and
+// CS2 (closes 23F-R2-1): rollback of a CREATE this SAME application attempt
+// performed - never an arbitrary remove. Topology authority is verified
+// FIRST (Roadmap CS2 Section 13's required order: a changed/relocated
+// ancestor must not even let the subsequent target-identity read resolve
+// through it before topology authority is established), then
+// verifyRollbackIdentity() requires the current path to still be a plain
+// regular file whose (device, inode) identity AND exact bytes match what
+// this attempt itself produced; if the target OR any ancestor has since
+// changed in type, object identity, or content, this refuses to delete it
+// and reports incomplete rollback instead (never blindly destroy
+// externally-raced, type-confused, or topology-relocated content).
+function rollbackCreate(realRoot, relPath, targetAbs, writtenContent, identity, rootIdentity, ancestorIdentities) {
+  const topology = verifyRollbackTopology(realRoot, relPath, rootIdentity, ancestorIdentities);
+  if (!topology.ok) return { ok: false };
   const verify = verifyRollbackIdentity(targetAbs, writtenContent, identity);
   if (!verify.ok) return { ok: false };
   try {
@@ -481,15 +575,41 @@ function rollbackCreate(targetAbs, writtenContent, identity) {
 }
 
 // Roadmap #23F Section 102-103, hardened by #23F-C1 (closes 23F-R-2/
-// 23F-R-3): restores exactly the original bytes AND original permission
-// mode this application attempt itself captured before mutating - via the
-// same exclusive-temp-plus-rename primitive used for the original commit,
-// gated by the identical object-identity guard (current path must still be
-// a plain regular file with matching (device, inode) identity and exact
-// content) before restoring.
-function rollbackModify(targetAbs, writtenContent, originalContent, identity, originalMode) {
+// 23F-R-3) and CS2 (closes 23F-R2-1): restores exactly the original bytes
+// AND original permission mode this application attempt itself captured
+// before mutating - via the same exclusive-temp-plus-rename primitive used
+// for the original commit, gated by BOTH the ancestor-topology guard and
+// the existing object-identity guard (current path must still be a plain
+// regular file with matching (device, inode) identity and exact content)
+// before restoring.
+//
+// CS2 Section 15: a single verification before staging is insufficient -
+// the staging interval itself (stageTempFile + chmodSync, both real
+// filesystem operations that take real, if small, time) is its own window
+// during which topology could change. A completely fresh, independent
+// re-verification of topology AND target identity/content immediately
+// before the compensating rename is therefore mandatory here, never
+// optional - this is the same "never rely solely on a check that ran
+// before an intervening operation" discipline Phase 7's own fresh
+// per-change revalidation already established for the ORIGINAL commit.
+//
+// CS2 Section 16 (temp-file authority): the temp file's own unpredictable
+// random name is not itself authority - if an ancestor were relocated
+// during staging, the same tempAbs STRING could resolve through the new
+// topology to a location that does not contain the exact object we staged
+// (either nothing, or - vanishingly unlikely but not assumed away - a
+// different object). This captures the staged temp file's own (device,
+// inode) identity immediately after creation and requires it to still
+// match immediately before rename; on any mismatch, this refuses to
+// rename, leaving the temp file's fate to best-effort cleanup rather than
+// treating an unpredictable same-name match as authority to overwrite an
+// unrelated object at targetAbs.
+function rollbackModify(realRoot, relPath, targetAbs, writtenContent, originalContent, identity, originalMode, rootIdentity, ancestorIdentities) {
+  const topology = verifyRollbackTopology(realRoot, relPath, rootIdentity, ancestorIdentities);
+  if (!topology.ok) return { ok: false };
   const verify = verifyRollbackIdentity(targetAbs, writtenContent, identity);
   if (!verify.ok) return { ok: false };
+
   const parentAbs = path.dirname(targetAbs);
   const basename = path.basename(targetAbs);
   let tempAbs;
@@ -498,16 +618,58 @@ function rollbackModify(targetAbs, writtenContent, originalContent, identity, or
   } catch {
     return { ok: false };
   }
+
+  // Capture the staged temp file's own identity IMMEDIATELY after creating
+  // it - this is the required comparison baseline for every cleanup
+  // attempt below (Roadmap CS2 Section 16/25). If this attempt cannot even
+  // prove what it just created is what it thinks it is, the safest action
+  // is to leave the path alone entirely rather than unlink an object of
+  // unknown provenance.
+  const stagedTempLstat = safeLstat(tempAbs);
+  if (stagedTempLstat === null || stagedTempLstat.isSymbolicLink() || !stagedTempLstat.isFile()) {
+    return { ok: false };
+  }
+  const stagedTempIdentity = { dev: stagedTempLstat.dev, ino: stagedTempLstat.ino };
+
   try {
     fs.chmodSync(tempAbs, originalMode);
   } catch {
-    cleanupTemp(tempAbs);
+    cleanupTempIfIdentityMatches(tempAbs, stagedTempIdentity);
     return { ok: false };
   }
+
+  // Fresh, independent re-verification of everything the staging interval
+  // above could have invalidated - never a reuse of the checks performed
+  // before staging. Every cleanup from this point on is identity-guarded
+  // (cleanupTempIfIdentityMatches, never the plain cleanupTemp) precisely
+  // because an ancestor relocation observed here is the scenario where
+  // tempAbs could now resolve to an unrelated object.
+  const finalTopology = verifyRollbackTopology(realRoot, relPath, rootIdentity, ancestorIdentities);
+  if (!finalTopology.ok) {
+    cleanupTempIfIdentityMatches(tempAbs, stagedTempIdentity);
+    return { ok: false };
+  }
+  const finalVerify = verifyRollbackIdentity(targetAbs, writtenContent, identity);
+  if (!finalVerify.ok) {
+    cleanupTempIfIdentityMatches(tempAbs, stagedTempIdentity);
+    return { ok: false };
+  }
+  const freshTempLstat = safeLstat(tempAbs);
+  if (
+    freshTempLstat === null ||
+    freshTempLstat.isSymbolicLink() ||
+    !freshTempLstat.isFile() ||
+    freshTempLstat.dev !== stagedTempIdentity.dev ||
+    freshTempLstat.ino !== stagedTempIdentity.ino
+  ) {
+    cleanupTempIfIdentityMatches(tempAbs, stagedTempIdentity);
+    return { ok: false };
+  }
+
   try {
     fs.renameSync(tempAbs, targetAbs);
   } catch {
-    cleanupTemp(tempAbs);
+    cleanupTempIfIdentityMatches(tempAbs, stagedTempIdentity);
     return { ok: false };
   }
   return { ok: true };
@@ -703,7 +865,21 @@ function applyApprovedGeneratedChangeSet(input) {
         failureReason = "VERIFY_FAILED";
         break;
       }
-      committed.push({ kind: "CREATE", targetAbs: item.targetAbs, change: item.change, beforeDigest: null, afterContent: item.change.content, identity: verify.identity });
+      committed.push({
+        kind: "CREATE",
+        targetAbs: item.targetAbs,
+        change: item.change,
+        beforeDigest: null,
+        afterContent: item.change.content,
+        identity: verify.identity,
+        // Roadmap CS2 (closes 23F-R2-1): the ancestor-topology identity
+        // chain observed during THIS change's own authoritative Phase-7
+        // revalidation, immediately before its commit - this becomes the
+        // required rollback topology authority if this change must later
+        // be compensated (see verifyRollbackTopology()).
+        rootIdentity: finalCheck.rootIdentity,
+        ancestorIdentities: finalCheck.ancestorIdentities,
+      });
     } else {
       // #23F-C1 (closes 23F-R-1/23F-R-3): same fresh, independent re-walk
       // discipline as CREATE above, plus the mode captured HERE (never a
@@ -748,6 +924,10 @@ function applyApprovedGeneratedChangeSet(input) {
         beforeMode: finalCheck.mode,
         afterContent: item.change.content,
         identity: verify.identity,
+        // Roadmap CS2 (closes 23F-R2-1): same commit-time topology capture
+        // as CREATE above.
+        rootIdentity: finalCheck.rootIdentity,
+        ancestorIdentities: finalCheck.ancestorIdentities,
       });
     }
   }
@@ -790,11 +970,20 @@ function applyApprovedGeneratedChangeSet(input) {
   }
 
   // Roll back every real mutation already committed, in reverse order.
+  // Roadmap CS2 (closes 23F-R2-1): each compensation is passed realRoot and
+  // the change's own relative path so rollbackCreate/rollbackModify can
+  // perform a completely fresh, independent ancestor-topology re-walk
+  // (never a reuse of the commit-time inspectApplicationTarget() result),
+  // plus the rootIdentity/ancestorIdentities captured at THIS change's own
+  // commit time as the required comparison baseline.
   let rollbackAllOk = true;
   const rollbackOk = [];
   for (let i = committed.length - 1; i >= 0; i -= 1) {
     const c = committed[i];
-    const result = c.kind === "CREATE" ? rollbackCreate(c.targetAbs, c.afterContent, c.identity) : rollbackModify(c.targetAbs, c.afterContent, c.beforeContent, c.identity, c.beforeMode);
+    const result =
+      c.kind === "CREATE"
+        ? rollbackCreate(realRoot, c.change.path, c.targetAbs, c.afterContent, c.identity, c.rootIdentity, c.ancestorIdentities)
+        : rollbackModify(realRoot, c.change.path, c.targetAbs, c.afterContent, c.beforeContent, c.identity, c.beforeMode, c.rootIdentity, c.ancestorIdentities);
     rollbackOk[i] = result.ok;
     if (!result.ok) rollbackAllOk = false;
   }
