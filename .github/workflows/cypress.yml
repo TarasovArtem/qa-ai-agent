@@ -194,6 +194,20 @@ jobs:
         continue-on-error: true
         run: npm run ${{ matrix.browser }}
 
+      # TEMPORARY EVIDENCE-ONLY PROBE - CS1 controlled diagnostic-failure
+      # proof. Deliberately fails with a non-zero exit while carrying
+      # continue-on-error: true, to prove a non-authoritative diagnostic
+      # failure cannot affect this job's conclusion when run_tests itself
+      # passed. Never committed to the real CS1 branch history - this
+      # commit exists only on the disposable evidence/cs1-ci-authority-proof
+      # branch and its evidence-only PR, which will never be merged.
+      - name: CS1 controlled diagnostic failure probe
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "CS1_CONTROLLED_DIAGNOSTIC_FAILURE"
+          exit 97
+
       # Everything below this point is additive diagnostics, and every one
       # of these steps now carries its own explicit continue-on-error: true
       # (Roadmap CS1, closes CS0-F1) - a step here failing for its OWN
