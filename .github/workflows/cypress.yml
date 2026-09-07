@@ -38,10 +38,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: "npm"
@@ -100,10 +100,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: "npm"
@@ -161,7 +161,7 @@ jobs:
     # binaries for the same Cypress version declared in package.json, so no
     # separate Node setup or binary caching step is needed.
     container:
-      image: cypress/included:15.19.0
+      image: cypress/included:15.21.1
       options: --shm-size=1gb
     strategy:
       fail-fast: false
@@ -176,7 +176,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install dependencies
         run: npm ci
@@ -251,7 +251,7 @@ jobs:
       - name: Upload Cypress screenshots
         if: steps.run_tests.outcome == 'failure'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cypress-screenshots-${{ matrix.browser }}
           path: cypress/screenshots
@@ -260,7 +260,7 @@ jobs:
       - name: Upload Cypress videos
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cypress-videos-${{ matrix.browser }}
           path: cypress/videos
@@ -269,7 +269,7 @@ jobs:
       - name: Upload structured test report
         if: steps.run_tests.outcome == 'failure'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cypress-report-${{ matrix.browser }}
           path: reports/cypress
@@ -287,7 +287,7 @@ jobs:
       - name: Upload QA triage input
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qa-triage-input-${{ matrix.browser }}
           path: reports/ai
@@ -347,14 +347,14 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # cypress-tests doesn't need this step - cypress/included bundles
       # Node/npm already. This job runs on the bare runner, so it needs
       # its own Node setup, identical to unit-tests/qa-agent-evaluation/
       # qa-ai-triage above.
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: "npm"
@@ -368,7 +368,7 @@ jobs:
       # Roadmap #14B spike. "latest" mirrors the spike's own proven choice
       # rather than introducing a new, untested version-pinning policy.
       - name: Set up Firefox
-        uses: browser-actions/setup-firefox@v1
+        uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1.7.2
         with:
           firefox-version: latest
 
@@ -460,7 +460,7 @@ jobs:
       - name: Upload Cypress screenshots
         if: steps.run_tests.outcome == 'failure'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cypress-screenshots-firefox
           path: cypress/screenshots
@@ -469,7 +469,7 @@ jobs:
       - name: Upload Cypress videos
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cypress-videos-firefox
           path: cypress/videos
@@ -478,7 +478,7 @@ jobs:
       - name: Upload structured test report
         if: steps.run_tests.outcome == 'failure'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cypress-report-firefox
           path: reports/cypress
@@ -492,7 +492,7 @@ jobs:
       - name: Upload QA triage input
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qa-triage-input-firefox
           path: reports/ai
@@ -559,7 +559,7 @@ jobs:
       - name: "Upload Firefox forensics artifact (temporary, #19.7F-B4B)"
         if: always() && steps.run_tests.outcome == 'failure'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: firefox-forensics
           path: reports/firefox-forensics
@@ -587,10 +587,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: "npm"
@@ -638,7 +638,7 @@ jobs:
       - name: Upload Playwright report
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report
           path: |
@@ -701,10 +701,10 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: "npm"
@@ -718,14 +718,14 @@ jobs:
       # -fail triage; aggregate-browser-context.js treats a missing
       # browser input as simply unknown for that browser, not a crash.
       - name: Download chrome triage input
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: qa-triage-input-chrome
           path: reports/ai/browser-inputs/chrome
 
       - name: Download edge triage input
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: qa-triage-input-edge
@@ -735,7 +735,7 @@ jobs:
       # artifact unconditionally (always()), so its absence here only ever
       # means that job never reached its own upload step.
       - name: Download firefox triage input
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: qa-triage-input-firefox
@@ -775,7 +775,7 @@ jobs:
       # failure, cancellation) simply leaves nothing here, handled safely
       # by the next step's own "no report found" path, never a crash.
       - name: Download Playwright report evidence
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: playwright-report
@@ -916,7 +916,7 @@ jobs:
       - name: Comment AI analysis on PR
         if: steps.aggregate.outputs.has-failures == 'true' && github.event_name == 'pull_request'
         continue-on-error: true
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -987,7 +987,7 @@ jobs:
       - name: Resolve QA Agent comment on PR
         if: steps.aggregate.outputs.has-failures == 'false' && github.event_name == 'pull_request'
         continue-on-error: true
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const path = require('path');
@@ -1040,7 +1040,7 @@ jobs:
       # still uploads context.json/history.json rather than losing them.
       - name: Upload AI analysis artifacts
         if: steps.aggregate.outputs.has-failures == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-report
           path: |
