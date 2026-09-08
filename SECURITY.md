@@ -254,7 +254,12 @@ This document consolidates controls already implemented and independently verifi
 
 Everything above this section (§1-§20) describes the **CI failure-triage pipeline** (Roadmap #1-#21): reactive, read-only with respect to the repository, and bounded to producing a PR comment. It never writes a file and never spawns a test-runner process.
 
-This section and §22-§29 describe a **separate, later pipeline** - Roadmap #22 (AI Test Design) and Roadmap #23 (AI Test Automation), implemented in `scripts/ai/test-design/`, `scripts/ai/generation/`, and `scripts/ai/test-automation/`. Unlike the triage pipeline, this pipeline is generative: starting from evidence about desired behavior, it proposes new requirements and test cases (#22), and - only after an explicit human approval step - proposes, and then safely applies and controlled-executes, new automated test code (#23). This is the first and only part of the codebase with filesystem-mutation authority (#23F) or child-process-execution authority (#23G). See [README.md](README.md#ai-test-design--test-automation-2223) for the stage-by-stage functional description; this document covers only the security-relevant authority and trust boundaries.
+This section and §22-§29 describe a **separate, later pipeline** - Roadmap #22 (AI Test Design) and Roadmap #23 (AI Test Automation), implemented in `scripts/ai/test-design/`, `scripts/ai/generation/`, and `scripts/ai/test-automation/`. Unlike the triage pipeline, this pipeline is generative: starting from evidence about desired behavior, it proposes new requirements and test cases (#22), and - only after an explicit human approval step - proposes, and then safely applies and controlled-executes, new automated test code (#23). Two authorities are new to this pipeline and did not exist in the codebase before it:
+
+- **Filesystem-mutation authority (#23F)** - `change-set-application.js` is the first and only module in the codebase permitted to write to the repository filesystem. See [§24](#24-filesystem-mutation-authority-23f).
+- **Generated-test-execution authority (#23G)** - `controlled-execution.js` is the first and only module permitted to spawn a child process whose target file is influenced by AI-generated, human-reviewed content. This is distinct from a narrower, pre-existing, read-only use of `child_process` in the older triage pipeline (`collect-context.js`, `execFileSync("git", ...)`, fixed binary and fixed arguments, no AI-influenced input, no execution of generated code) - see [§25](#25-controlled-execution-authority-23g) for the precise distinction.
+
+See [README.md](README.md#ai-test-design--test-automation-2223) for the stage-by-stage functional description; this document covers only the security-relevant authority and trust boundaries.
 
 ## 22. Authority escalation model
 
@@ -293,7 +298,7 @@ Both guards remain **open**; see [§28](#28-open-future_-guard-register) for the
 
 ## 25. Controlled execution authority (#23G)
 
-`scripts/ai/test-automation/controlled-execution.js` is the only module authorized to spawn a child process. Its controls, per source:
+`scripts/ai/test-automation/controlled-execution.js` is the only module authorized to spawn a child process to run an approved, generated test target. (A separate, pre-existing, narrower use of `child_process` exists in the older triage pipeline - `collect-context.js`'s `execFileSync("git", args, ...)` - invoking only a fixed `git` binary with fixed, read-only arguments for repository metadata; it never executes generated code and has no relation to #23G's authority.) Controlled-execution's controls, per source:
 
 - **`shell:false` always** - the child process is never spawned through a shell, closing the shell-metacharacter-injection class of risk for this call site.
 - **Explicit argv construction** - the command and its arguments are built as a discrete array, never a concatenated/interpolated shell string.
@@ -323,6 +328,9 @@ This is the canonical list of open (unresolved) forward-looking guards reference
 | `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD` | No proof a human (vs. some other actor) made the #22F/#23E decision | [§23](#23-human-review-boundary-22f--23e); `test-design-review-record.js`, `generated-change-set-review-record.js` |
 | `FUTURE_TARGET_CLASSIFIER_COVERAGE_GUARD` | `EXECUTION_TARGET_CLASSIFIERS` covers only `.cy.js`/`.spec.js`-shaped files today | [§25](#25-controlled-execution-authority-23g); `controlled-execution.js` |
 | `FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD` | Controlled execution (#23G) does not run on Windows | [§27](#27-windows-execution-limitation-future_windows_execution_capability_guard) |
+| `FUTURE_FRAMEWORK_CAPABILITY_PROVENANCE_GUARD` | Framework capability is a trusted, unverified caller declaration (see below) | `generated-change-set.js`, `scoring-v6.js` |
+
+**`FUTURE_FRAMEWORK_CAPABILITY_PROVENANCE_GUARD` (open):** the framework identity/capability an `AutomationRepositoryContext` carries (e.g. `repositoryContext.framework`, and the labeled `frameworkCapability` fixture `scoring-v6.js`'s evaluator scores against) is supplied to and validated for structural consistency by the pipeline, and constrains what #23C/#23D can generate against - **currently guaranteed**. It is **not** independently authenticated against the real repository/runtime environment - **not guaranteed**: a caller could in principle supply a framework declaration the actual project doesn't back, and nothing in #22/#23 objectively verifies it against live repository state. This is deferred for the same reason `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD` is deferred: closing it requires a dedicated provenance/authentication design, not an incidental patch. It would be triggered by the same future orchestration work that would close the reviewer-identity and human-decision guards above.
 
 A small number of guards named in earlier design discussion for this pipeline (covering generated-change-set review-package structure and change-set re-validation) were closed by the #23E/#23F implementations themselves and are intentionally omitted from this open register; they are not tracked here because there is no remaining open concern to point a reader at.
 

@@ -221,18 +221,25 @@ An architecture change to the prompt, provider layer, or policy is only as trust
 | v2 | 6 | frozen |
 | v3 | 7 | frozen |
 | v4 | 9 | frozen |
-| v5 | 13 scorable + 1 historical-only | **frozen (latest, no v6 yet)** |
+| v5 | 13 scorable + 1 historical-only | frozen |
+| v6 | 11 samples | frozen - scoped to Test Design (#22F) quality, not the triage pipeline above; see below |
 
 Core principle: **a new architecture change must never silently redefine what "correct" meant historically.** Every dataset version is additive and byte-for-byte frozen once merged; regression comparison is per-sample (not aggregate-accuracy) with an explicit "any regression anywhere wins" precedence, so an unrelated improvement can never mask a real regression on a protected dimension. Dataset v5's regression comparator protects **15 separate dimensions per sample** (classification correctness, `shouldRetry`/`shouldCreateBug` correctness, evidence-grounding quality, three cross-browser correlation-quality dimensions, and five knowledge-authority dimensions added specifically because a live experiment exposed a real gap each one closes). Full detail, including the specific historical samples and each version's design rationale, is in the [Detailed Engineering History](#detailed-engineering-history) section below.
 
 ```
 npm run eval:ai:v5          # scores Dataset v5
 npm run eval:regression:v5  # compares against frozen Baseline v5
+npm run eval:ai:v6          # scores Dataset v6 (Test Design / #22F quality, not this pipeline)
+npm run eval:regression:v6  # compares against frozen Baseline v6
 ```
 
-**Verified at Roadmap #18 completion** (a historical milestone snapshot, not a permanent repository invariant - re-run `npm run test:unit` for the current count): 918 unit tests passing, including 93 provider-layer tests (27 Gemini / 17 Groq / 14 Mock / remainder shared contract-and-factory tests); Dataset/Baseline v1-v5 all `UNCHANGED`.
+**Dataset v6 is a different pipeline's dataset, not an addition to v1-v5's triage scope.** v1-v5 score this document's own CI failure-triage pipeline; v6 exists specifically to score Roadmap #22F's Test Design human-review-record construction (`buildTestDesignReviewPackage()`/`buildTestDesignReviewRecord()`) against labeled fixtures - see [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below for what #22F is. v6 does not extend or supersede v1-v5's 15-dimension triage regression protection described above.
 
-**Verified at Roadmap #21J-A completion** (current, most recent snapshot - again, re-run `npm run test:unit` for the up-to-date count as the suite keeps growing): 1377 unit tests passing; Dataset/Baseline v1-v5 all `UNCHANGED`; no v6 exists yet.
+**Historical snapshots below are frozen at the roadmap stage named - re-run `npm run test:unit` for the current count, which has grown substantially since #21J-A with the #22/#23 pipeline and CS1-CS4 stabilization work:**
+
+- **Roadmap #18 completion:** 918 unit tests passing, including 93 provider-layer tests (27 Gemini / 17 Groq / 14 Mock / remainder shared contract-and-factory tests); Dataset/Baseline v1-v5 all `UNCHANGED`.
+- **Roadmap #21J-A completion:** 1377 unit tests passing; Dataset/Baseline v1-v5 all `UNCHANGED`; Dataset v6 did not exist at this point in the roadmap.
+- **CS5A-C1 completion (current, most recent snapshot):** 2916 unit tests passing (2924 total, 8 skipped - see [Windows execution limitation](SECURITY.md#27-windows-execution-limitation-future_windows_execution_capability_guard) in `SECURITY.md`); Dataset/Baseline v1-v6 all `UNCHANGED`.
 
 ## Continuous Integration
 
@@ -418,7 +425,7 @@ See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reach
 
 ## Roadmap #21 — Production Playwright Enablement + Final Hardening
 
-**Status: technical implementation and evidence work COMPLETE. Formal closure (this documentation, #21J-B) requires independent review and a standard merge - see [Roadmap closure state](#roadmap-closure-state) at the end of this document for the exact current status.**
+**Status: COMPLETE_ON_MAIN.** Technical implementation and evidence work, and the #21J-B documentation update that closed it, are both independently reviewed, merged, and verified on `main` - see [Roadmap closure state](#roadmap-closure-state) at the end of this document for the exact stage-by-stage closure record.
 
 Roadmap #21 took Roadmap #19's offline-proven adapter/portability architecture into real, production GitHub Actions CI - the single largest architectural change since the original pipeline shipped.
 
