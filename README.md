@@ -221,18 +221,25 @@ An architecture change to the prompt, provider layer, or policy is only as trust
 | v2 | 6 | frozen |
 | v3 | 7 | frozen |
 | v4 | 9 | frozen |
-| v5 | 13 scorable + 1 historical-only | **frozen (latest, no v6 yet)** |
+| v5 | 13 scorable + 1 historical-only | frozen |
+| v6 | 11 samples | frozen - scoped to Test Design (#22F) quality, not the triage pipeline above; see below |
 
 Core principle: **a new architecture change must never silently redefine what "correct" meant historically.** Every dataset version is additive and byte-for-byte frozen once merged; regression comparison is per-sample (not aggregate-accuracy) with an explicit "any regression anywhere wins" precedence, so an unrelated improvement can never mask a real regression on a protected dimension. Dataset v5's regression comparator protects **15 separate dimensions per sample** (classification correctness, `shouldRetry`/`shouldCreateBug` correctness, evidence-grounding quality, three cross-browser correlation-quality dimensions, and five knowledge-authority dimensions added specifically because a live experiment exposed a real gap each one closes). Full detail, including the specific historical samples and each version's design rationale, is in the [Detailed Engineering History](#detailed-engineering-history) section below.
 
 ```
 npm run eval:ai:v5          # scores Dataset v5
 npm run eval:regression:v5  # compares against frozen Baseline v5
+npm run eval:ai:v6          # scores Dataset v6 (Test Design / #22F quality, not this pipeline)
+npm run eval:regression:v6  # compares against frozen Baseline v6
 ```
 
-**Verified at Roadmap #18 completion** (a historical milestone snapshot, not a permanent repository invariant - re-run `npm run test:unit` for the current count): 918 unit tests passing, including 93 provider-layer tests (27 Gemini / 17 Groq / 14 Mock / remainder shared contract-and-factory tests); Dataset/Baseline v1-v5 all `UNCHANGED`.
+**Dataset v6 is a different pipeline's dataset, not an addition to v1-v5's triage scope.** v1-v5 score this document's own CI failure-triage pipeline; v6 exists specifically to score Roadmap #22F's Test Design human-review-record construction (`buildTestDesignReviewPackage()`/`buildTestDesignReviewRecord()`) against labeled fixtures - see [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below for what #22F is. v6 does not extend or supersede v1-v5's 15-dimension triage regression protection described above.
 
-**Verified at Roadmap #21J-A completion** (current, most recent snapshot - again, re-run `npm run test:unit` for the up-to-date count as the suite keeps growing): 1377 unit tests passing; Dataset/Baseline v1-v5 all `UNCHANGED`; no v6 exists yet.
+**Historical snapshots below are frozen at the roadmap stage named - re-run `npm run test:unit` for the current count, which has grown substantially since #21J-A with the #22/#23 pipeline and CS1-CS4 stabilization work:**
+
+- **Roadmap #18 completion:** 918 unit tests passing, including 93 provider-layer tests (27 Gemini / 17 Groq / 14 Mock / remainder shared contract-and-factory tests); Dataset/Baseline v1-v5 all `UNCHANGED`.
+- **Roadmap #21J-A completion:** 1377 unit tests passing; Dataset/Baseline v1-v5 all `UNCHANGED`; Dataset v6 did not exist at this point in the roadmap.
+- **CS5A-C1 completion (current, most recent snapshot):** 2916 unit tests passing (2924 total, 8 skipped - see [Windows execution limitation](SECURITY.md#27-windows-execution-limitation-future_windows_execution_capability_guard) in `SECURITY.md`); Dataset/Baseline v1-v6 all `UNCHANGED`.
 
 ## Continuous Integration
 
@@ -418,7 +425,7 @@ See [SECURITY.md](SECURITY.md) for the full data-governance contract: what reach
 
 ## Roadmap #21 — Production Playwright Enablement + Final Hardening
 
-**Status: technical implementation and evidence work COMPLETE. Formal closure (this documentation, #21J-B) requires independent review and a standard merge - see [Roadmap closure state](#roadmap-closure-state) at the end of this document for the exact current status.**
+**Status: COMPLETE_ON_MAIN.** Technical implementation and evidence work, and the #21J-B documentation update that closed it, are both independently reviewed, merged, and verified on `main` - see [Roadmap closure state](#roadmap-closure-state) at the end of this document for the exact stage-by-stage closure record.
 
 Roadmap #21 took Roadmap #19's offline-proven adapter/portability architecture into real, production GitHub Actions CI - the single largest architectural change since the original pipeline shipped.
 
@@ -811,28 +818,107 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #21H - Production Playwright History | COMPLETE_ON_MAIN |
 | #21I - Independent controlled Playwright failure proof + D21D-3 (Windows containment) | COMPLETE |
 | #21J-A - Final residual hardening (D21H-1, D21H-2) | COMPLETE_ON_MAIN |
-| #21J-B - Final documentation closure (this update) | READY_FOR_INDEPENDENT_REVIEW |
+| #21J-B - Final documentation closure | COMPLETE_ON_MAIN |
+| #22/23-F0 - Shared QA generation contracts (`RequirementModel`/`TestCaseModel`/`AutomationCandidate`/`AutomationPlan` v1) | COMPLETE |
+| #22 (AI Test Design: #22B-#22F) - evidence ingestion through human review of design artifacts | COMPLETE |
+| #23 (AI Test Automation: #23B-#23G) - repository-context assembly through controlled, bounded test execution | COMPLETE_ON_MAIN |
 
-**Next:** #21J-B's independent review (#21J-B-R), then a standard merge and post-merge verification, formally closes Roadmap #21 - see [Roadmap closure state](#roadmap-closure-state) below. After that, the next locked stage is **#22/23-F0 (Shared QA Generation Foundation)**, which will define/freeze shared versioned generation contracts before two parallel streams diverge: **#22 (AI Test Design)** and **#23 (AI Test Automation)**. None of #22/23-F0, #22, or #23 has been started or designed yet - they are named here only as the next locked roadmap stage, not as implemented or in-progress work.
+**Next:** Roadmap #21 formally closed on `main`. Roadmap #22 (AI Test Design) and Roadmap #23 (AI Test Automation) - the AI-assisted test-generation and safe-application/execution pipeline built on top of the #22/23-F0 shared contracts - are both now implemented and merged to `main`; see [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below for the full stage-by-stage architecture, and [SECURITY.md](SECURITY.md) for the authority/trust model, including the filesystem-mutation and child-process-execution boundaries #23F and #23G introduce. The stabilization work that followed (Core Stabilization, CS1-CS4: CI-authority hardening, rollback ancestor-topology hardening, supply-chain hardening, recursive test-discovery correctness) is also complete on `main`.
 
-**Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); a genuine second production project (only offline-proven today); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; #22/23-F0, #22, and #23 (see above).
+**Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); a genuine second production project (only offline-proven today); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; broadening the #23G execution target classifier beyond `.cy.js`/`.spec.js`; reviewer-identity/human-decision provenance (see [SECURITY.md](SECURITY.md) for the open guards this refers to).
 
 ## Roadmap closure state
 
 - **`ROADMAP_21_TECHNICAL_WORK`: COMPLETE** - every #21A-#21J-A stage is implemented, independently reviewed, and merged to `main`, including one real, independently-reviewed, controlled Playwright failure proof.
-- **`ROADMAP_21_DOCUMENTATION`: READY_FOR_FINAL_REVIEW** - this documentation update (#21J-B) is open for independent review (#21J-B-R) as of this writing; it changes no runtime code, workflow, or test.
-- **`ROADMAP_21_FORMAL_CLOSURE`: PENDING #21J-B-R AND MERGE** - Roadmap #21 is not yet formally `COMPLETE_ON_MAIN` until #21J-B's independent review passes, its PR is standard-merged, and natural post-merge CI is verified on the exact merge commit.
+- **`ROADMAP_21_DOCUMENTATION`: COMPLETE_ON_MAIN** - the #21J-B documentation update was independently reviewed (#21J-B-R) and merged.
+- **`ROADMAP_21_FORMAL_CLOSURE`: COMPLETE_ON_MAIN** - Roadmap #21 is formally closed: #21J-B's independent review passed, its PR was standard-merged, and natural post-merge CI was verified on the exact merge commit.
 
-## Roadmap #22/23-F0 — Shared QA Generation Foundation
+## AI Test Design & Test Automation (#22/#23)
+
+This repository contains **two separate AI-assisted pipelines** that must not be
+confused with each other:
+
+1. **CI failure-triage pipeline (Roadmap #1-#21)** - reactive. It runs after a
+   Cypress/Playwright test *already failed* in CI, gathers evidence about that
+   failure, and asks an AI provider to analyze root cause and suggest a fix.
+   It never writes to the repository and never runs a test itself; its output
+   is a PR comment. This is the pipeline the rest of this README (the sections
+   above this one) describes.
+2. **AI Test Design & Test Automation pipeline (Roadmap #22/#23)** - generative.
+   Given evidence about desired behavior (not a failure), it proposes new
+   requirements and test cases (#22, "AI Test Design"), then proposes,
+   human-reviews, and - only after explicit human approval - safely applies
+   and controlled-executes new automated test code (#23, "AI Test Automation").
+   Unlike the triage pipeline, this pipeline **does** write files to the
+   repository and **does** spawn a test-runner child process, but only inside
+   the specific, human-gated, bounded stages described below. See
+   [SECURITY.md](SECURITY.md#21-ai-test-design--test-automation-pipeline-2223)
+   for the full authority/trust model.
+
+Both pipelines share nothing at runtime except the AI provider abstraction
+(`scripts/ai/providers/`); they are otherwise independent code paths.
+
+### Shared foundation: #22/23-F0
 
 A shared, versioned, strictly validated `RequirementModel` / `TestCaseModel` /
 `AutomationCandidate` / `AutomationPlan` v1 contract layer
-(`scripts/ai/generation/`), frozen before the two future streams named above
-(`#22 AI Test Design`, `#23 AI Test Automation`) begin, so neither can
-independently invent an incompatible data model. See
+(`scripts/ai/generation/`), frozen before the two streams below (`#22 AI Test
+Design`, `#23 AI Test Automation`) began, so neither could independently
+invent an incompatible data model. See
 [docs/qa-generation-contracts-v1.md](docs/qa-generation-contracts-v1.md) for
 the full design: grounding/provenance, project isolation, cross-model
 reference validation, safe repository paths, and the v1 freeze policy. This
 foundation defines data contracts only - it calls no AI provider, runs no
 browser, and performs no filesystem mutation; it does not itself implement
 requirements ingestion, test design, or test automation.
+
+### End-to-end flow
+
+```text
+Evidence  ->  Test Design (#22)  ->  Human Review (#22F)
+                                          |
+                                   Automation Plan (#23B/#23C)
+                                          |
+                              Generated Change Set (#23D/#23E-gen)
+                                          |
+                                Human Review (#23E)  -- reject/approve --
+                                          |  approve
+                              Safe Application (#23F, filesystem writes)
+                                          |
+                          Controlled Execution (#23G, child process, shell:false)
+                                          |
+                             Execution Evidence + Bounded Regeneration (#23G, max 1 attempt)
+```
+
+No stage past "Human Review" runs without an explicit prior human approval
+recorded in a digest-bound review record; see
+[SECURITY.md](SECURITY.md#23-human-review-boundary-22f--23e) for what that
+review boundary does and does not guarantee.
+
+### #22 - AI Test Design (evidence -> reviewed design artifacts)
+
+| Stage | Purpose |
+| --- | --- |
+| #22B | Evidence ingestion - turns raw project/requirement input into a validated intake artifact |
+| #22C | `RequirementModel` generation - AI-proposed, schema-validated requirements |
+| #22D | `TestCaseModel` generation - AI-proposed, schema-validated test cases grounded in the requirements |
+| #22E | Test-design review package/canonical assembly - deterministic, digest-bound packaging of the proposed design for human review |
+| #22F | Human test-design review record - a human approves or rejects the packaged design; the decision is sealed into a digest-bound review record (see the review-boundary caveat above) |
+
+### #23 - AI Test Automation (reviewed design -> controlled execution)
+
+| Stage | Purpose |
+| --- | --- |
+| #23B | Automation repository context - read-only assembly of the target project's existing test conventions/framework identity |
+| #23C | `AutomationCandidate` / `AutomationPlan` generation - AI-proposed mapping from approved test cases to concrete automation code, grounded in #23B's context |
+| #23D | Generated change set - the concrete file-level diff the plan implies, not yet applied to disk |
+| #23E-gen / #23E | Generated-change-set review package/canonical assembly and human review record - a human approves or rejects the proposed *code*, sealed into its own digest-bound review record |
+| #23F | Safe application - once approved, applies the generated change set to the real filesystem under a constrained, containment-checked writer (see [SECURITY.md](SECURITY.md#24-filesystem-mutation-authority-23f)) |
+| #23G | Controlled execution - runs the applied test(s) via a `shell:false` child process against a closed classifier map, records execution evidence, and supports one bounded regeneration attempt on failure (see [SECURITY.md](SECURITY.md#25-controlled-execution-authority-23g)) |
+
+**Current platform limitation:** #23G's controlled execution does not run on
+Windows hosts today (a `shell:false` Node `child_process` limitation when
+resolving `.cmd`-shim binaries on that platform surfaces as `EINVAL`; the
+affected tests are explicitly skipped on Windows, not silently passed). See
+`FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD` in
+[SECURITY.md](SECURITY.md#27-windows-execution-limitation-future_windows_execution_capability_guard).

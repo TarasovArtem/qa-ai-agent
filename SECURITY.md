@@ -246,6 +246,103 @@ This is not a general-purpose DLP layer over provider network traffic; it is a f
 | #21G-C1 - browserCorrelation/frameworkCorrelation evidence-semantics separation (D21G-2/D21G-3) | COMPLETE_ON_MAIN |
 | #21H/#21J-A - Framework-identity fail-closed hardening (D21G-2, D21H-1), bounded History-metric validation (D21H-2) | COMPLETE_ON_MAIN |
 | #21I - Independent controlled Playwright failure evidence proof | COMPLETE (immutable, unmerged evidence PR) |
-| #21J-B - This documentation update | READY FOR INDEPENDENT REVIEW (docs-only, pending PR merge) |
+| #21J-B - Roadmap #21 documentation closure | COMPLETE_ON_MAIN |
 
-This document consolidates controls already implemented and independently verified through #20A-#21J-A. It does not add DLP, PII detection, new secret scanning, provider-retention enforcement, error-stack sanitization, or new prompt-injection controls - see [§16](#16-known-limitations--non-goals) for what remains explicitly out of scope.
+This document consolidates controls already implemented and independently verified through #20A-#21J-A. It does not add DLP, PII detection, new secret scanning, provider-retention enforcement, error-stack sanitization, or new prompt-injection controls - see [§16](#16-known-limitations--non-goals) for what remains explicitly out of scope. **§21-§29 below cover a separate pipeline (Roadmap #22/#23) with its own, materially different authority model - filesystem mutation and child-process execution, neither of which the controls above address.**
+
+## 21. AI Test Design & Test Automation pipeline (#22/#23)
+
+Everything above this section (§1-§20) describes the **CI failure-triage pipeline** (Roadmap #1-#21): reactive, read-only with respect to the repository, and bounded to producing a PR comment. It never writes a file and never spawns a test-runner process.
+
+This section and §22-§29 describe a **separate, later pipeline** - Roadmap #22 (AI Test Design) and Roadmap #23 (AI Test Automation), implemented in `scripts/ai/test-design/`, `scripts/ai/generation/`, and `scripts/ai/test-automation/`. Unlike the triage pipeline, this pipeline is generative: starting from evidence about desired behavior, it proposes new requirements and test cases (#22), and - only after an explicit human approval step - proposes, and then safely applies and controlled-executes, new automated test code (#23). Two authorities are new to this pipeline and did not exist in the codebase before it:
+
+- **GeneratedChangeSet application authority (#23F)** - within the #22/#23 generative pipeline, `change-set-application.js` is the sole module authorized to apply a human-reviewed, AI-generated change set to repository files (confirmed by source: it is the only module under `scripts/ai/test-automation/`, `scripts/ai/test-design/`, or `scripts/ai/generation/` that imports a filesystem-write API). This is not a claim that no other repository tooling ever writes to the checkout - pre-existing CI diagnostic utilities such as `scripts/diagnostics/firefox-failure-forensics.sh` create and remove temporary diagnostic files (and, during its own investigation, a temporary diagnostic spec) on Firefox CI failures; see [§15](#15-firefox-forensics). Diagnostic filesystem writes are unrelated to, and carry none of, #23F's GeneratedChangeSet-application authority - they never touch an AI-generated or human-reviewed artifact. See [§24](#24-filesystem-mutation-authority-23f).
+- **Generated-test-execution authority (#23G)** - `controlled-execution.js` is the first and only module permitted to spawn a child process whose target file is influenced by AI-generated, human-reviewed content. This is distinct from a narrower, pre-existing, read-only use of `child_process` in the older triage pipeline (`collect-context.js`, `execFileSync("git", ...)`, fixed binary and fixed arguments, no AI-influenced input, no execution of generated code) - see [§25](#25-controlled-execution-authority-23g) for the precise distinction.
+
+See [README.md](README.md#ai-test-design--test-automation-2223) for the stage-by-stage functional description; this document covers only the security-relevant authority and trust boundaries.
+
+## 22. Authority escalation model
+
+Authority increases monotonically along the pipeline and only two transitions require a human decision:
+
+| Stage | Authority | Human gate before proceeding? |
+|---|---|---|
+| #22B-#22E, #23B-#23D | Read evidence/repository context, propose data (`RequirementModel`/`TestCaseModel`/`AutomationPlan`/generated change set) | No - proposal only, no mutation |
+| #22F | Human reviews proposed test **design** | **Yes** - digest-bound review record required before #23 can consume it |
+| #23E-gen / #23E | Human reviews proposed **generated code** (the concrete change set) | **Yes** - digest-bound review record required before #23F can apply it |
+| #23F | Apply the approved change set to the real filesystem | No further human gate - approval already granted at #23E |
+| #23G | Execute the applied test via a child process, capture evidence, optionally regenerate once | No further human gate - approval already granted at #23E |
+
+No stage in this pipeline has git or GitHub authority (no commit, push, branch, or PR/issue mutation capability) - confirmed by the absence of any such call in `scripts/ai/test-automation/` and by that module's own negative-assertion tests.
+
+## 23. Human review boundary (#22F / #23E)
+
+Both human-review records (`scripts/ai/test-design/test-design-review-record.js` for #22F, `scripts/ai/test-automation/generated-change-set-review-record.js` for #23E) bind the reviewed artifact and the reviewer's decision into a SHA-256 content digest, and both carry the same explicit self-documented limitation, verbatim in both files: **"INTEGRITY IS NOT AUTHENTICITY."**
+
+A matching digest proves only that the record's own fields were not altered after being sealed. It does **not** prove:
+- that the named reviewer is who they claim to be (no identity/authentication check backs the reviewer field) - tracked as `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD`;
+- that a human actually made the decision, as opposed to the field being populated some other way - tracked as `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD`.
+
+Both guards remain **open**; see [§28](#28-open-future_-guard-register) for the canonical register. Any claim that this pipeline "requires human approval" should be read as "requires a digest-sealed review record asserting approval," not as a claim of verified human/reviewer identity.
+
+## 24. Filesystem mutation authority (#23F)
+
+`scripts/ai/test-automation/change-set-application.js` is the only module in this repository authorized to write an approved generated change set to the real filesystem. It only runs after an approved #23E review record is supplied, and its writer enforces (per the source, independently re-derivable by reading that file):
+
+- **Containment**: every target path is resolved and re-checked to remain inside the target project root; no write may escape it.
+- **Symlink/hardlink defenses**: target paths are checked against symlink/hardlink indirection before the write, not trusted at face value.
+- **Repository-root identity binding**: the writer's authority is bound to the ancestor-topology identity of the target repository root (hardened by Roadmap CS2, `stabilization/cs2-rollback-ancestor-topology`), not merely to a target path string - a target-identity-only check would be spoofable by directory-structure manipulation.
+- **CREATE/MODIFY-only mutation set**: the change-set contract does not carry a delete/rename operation; the writer applies only file creation and content modification.
+- **Rollback on partial failure**: if application of a multi-file change set fails partway through, already-applied files are rolled back, using the same ancestor-topology-bound identity check as the forward application (not just a target-path match) so a rollback cannot be redirected to a different repository sharing a similar path.
+- **Residual limitation (explicitly not eliminated)**: a TOCTOU (time-of-check/time-of-use) window between a path's containment/symlink check and the actual write is a known, unclosed limitation of any filesystem-mutation authority of this shape; it is mitigated by the checks above but not eliminated by them.
+
+## 25. Controlled execution authority (#23G)
+
+`scripts/ai/test-automation/controlled-execution.js` is the only module authorized to spawn a child process to run an approved, generated test target. (A separate, pre-existing, narrower use of `child_process` exists in the older triage pipeline - `collect-context.js`'s `execFileSync("git", args, ...)` - invoking only a fixed `git` binary with fixed, read-only arguments for repository metadata; it never executes generated code and has no relation to #23G's authority.) Controlled-execution's controls, per source:
+
+- **`shell:false` always** - the child process is never spawned through a shell, closing the shell-metacharacter-injection class of risk for this call site.
+- **Explicit argv construction** - the command and its arguments are built as a discrete array, never a concatenated/interpolated shell string.
+- **Closed execution-target classifier map** (`EXECUTION_TARGET_CLASSIFIERS`) - only file patterns the map explicitly recognizes (currently `.cy.js`/`.spec.js`-shaped Cypress/Playwright test files) can be selected for execution; anything else is rejected rather than passed through. The map's coverage is intentionally narrow today - tracked as the open `FUTURE_TARGET_CLASSIFIER_COVERAGE_GUARD` (see [§28](#28-open-future_-guard-register)).
+- **Environment allowlist** (`ENV_ALLOWLIST`) - the spawned process does not inherit the full parent environment; only an explicit, closed set of environment variables is passed through.
+- **Timeout and output bounds** - execution is bounded by an explicit timeout, and captured stdout/stderr is bounded in size, so neither a hung nor a runaway-output test process can exhaust the caller indefinitely.
+- **Two-layer authority model - explicitly NOT a sandbox**: the orchestrator module (`controlled-execution.js`) itself has no shell, git, or network authority beyond spawning the one classified process. But the test framework binary it launches (Cypress or Playwright), and any generated test/support code that framework subsequently loads and runs, executes with the **full authority of the host OS process** - the same authority any locally-run `npx cypress run` would have. Constraining *what* gets launched (the classifier map) and *how* (argv/env/shell:false) does not constrain what a framework or generated test does once it is running. This is a deliberate, explicitly-documented design boundary, not an oversight.
+- **Bounded regeneration** - see [§26](#26-bounded-regeneration).
+
+## 26. Bounded regeneration
+
+`scripts/ai/test-automation/regenerate-change-set.js` allows exactly one automatic regeneration attempt (`MAX_REGENERATION_ATTEMPTS = 1`) when a controlled execution (#23G) fails. This bound is enforced **per call**, not across sessions or process restarts - re-invoking the pipeline from scratch (e.g., in a new run) is a new call and is not itself blocked by a prior attempt. Do not read this constant as a durable, cross-session rate limit; it bounds retry behavior within a single automation attempt only.
+
+## 27. Windows execution limitation (`FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD`)
+
+Controlled execution (#23G, [§25](#25-controlled-execution-authority-23g)) does not run on Windows hosts today. The `shell:false` requirement in §25 is deliberate and load-bearing for security, but on Windows it collides with a Node.js `child_process` limitation: resolving a `.cmd`-shim binary (how locally-installed Cypress/Playwright executables are exposed on Windows) without a shell surfaces as an `EINVAL` spawn error. The affected automated tests are explicitly **skipped** on Windows (not silently passed, and not falsely reported as green) while this remains unresolved.
+
+This limitation is tracked under the canonical guard name **`FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD`**. It is open. Closing it would require either a Windows-safe way to resolve/execute the shimmed binary without reintroducing shell interpretation, or an explicit, reviewed decision to accept a narrower `shell:true` surface on Windows only with compensating controls - neither has been implemented or decided as of this writing.
+
+## 28. Open `FUTURE_*` guard register
+
+This is the canonical list of open (unresolved) forward-looking guards referenced by name elsewhere in this pipeline's source and in this document. A guard listed here has no closing implementation yet; do not treat any of them as resolved based on prose elsewhere.
+
+| Guard | Concern | Where referenced |
+|---|---|---|
+| `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD` | No authenticated reviewer identity behind #22F/#23E review records | [§23](#23-human-review-boundary-22f--23e); `test-design-review-record.js`, `generated-change-set-review-record.js` |
+| `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD` | No proof a human (vs. some other actor) made the #22F/#23E decision | [§23](#23-human-review-boundary-22f--23e); `test-design-review-record.js`, `generated-change-set-review-record.js` |
+| `FUTURE_TARGET_CLASSIFIER_COVERAGE_GUARD` | `EXECUTION_TARGET_CLASSIFIERS` covers only `.cy.js`/`.spec.js`-shaped files today | [§25](#25-controlled-execution-authority-23g); `controlled-execution.js` |
+| `FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD` | Controlled execution (#23G) does not run on Windows | [§27](#27-windows-execution-limitation-future_windows_execution_capability_guard) |
+| `FUTURE_FRAMEWORK_CAPABILITY_PROVENANCE_GUARD` | Framework capability is a trusted, unverified caller declaration (see below) | `generated-change-set.js`, `scoring-v6.js` |
+
+**`FUTURE_FRAMEWORK_CAPABILITY_PROVENANCE_GUARD` (open):** the framework identity/capability an `AutomationRepositoryContext` carries (e.g. `repositoryContext.framework`, and the labeled `frameworkCapability` fixture `scoring-v6.js`'s evaluator scores against) is supplied to and validated for structural consistency by the pipeline, and constrains what #23C/#23D can generate against - **currently guaranteed**. It is **not** independently authenticated against the real repository/runtime environment - **not guaranteed**: a caller could in principle supply a framework declaration the actual project doesn't back, and nothing in #22/#23 objectively verifies it against live repository state. This is deferred for the same reason `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD` is deferred: closing it requires a dedicated provenance/authentication design, not an incidental patch. It would be triggered by the same future orchestration work that would close the reviewer-identity and human-decision guards above.
+
+A small number of guards named in earlier design discussion for this pipeline (covering generated-change-set review-package structure and change-set re-validation) were closed by the #23E/#23F implementations themselves and are intentionally omitted from this open register; they are not tracked here because there is no remaining open concern to point a reader at.
+
+## 29. #22/#23 security roadmap status
+
+| Stage | Status |
+|---|---|
+| #22/23-F0 - Shared generation contracts (`scripts/ai/generation/`) | COMPLETE |
+| #22B-#22F - AI Test Design, incl. human review boundary | COMPLETE |
+| #23B-#23E - Automation planning, generated change set, human review boundary | COMPLETE |
+| #23F - Safe filesystem application (containment, symlink defense, ancestor-topology identity binding, rollback) | COMPLETE_ON_MAIN |
+| #23G - Controlled execution (`shell:false`, closed classifier map, env allowlist, bounded regeneration) | COMPLETE_ON_MAIN (Windows execution unsupported - see [§27](#27-windows-execution-limitation-future_windows_execution_capability_guard)) |
+| CS1-CS4 - Post-#23G stabilization (CI-authority hardening, rollback ancestor-topology hardening, supply-chain hardening, recursive test-discovery correctness) | COMPLETE_ON_MAIN |
+
+This section reflects the state of the #22/#23 pipeline as of this document's own reconciliation pass. It carries the same limitation as §20: it does not add DLP, PII detection, new secret scanning, provider-retention enforcement, or new prompt-injection controls beyond what §1-§19 already establish for the shared provider-abstraction layer.
