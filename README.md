@@ -2,43 +2,214 @@
 
 ![Cypress E2E Tests](https://github.com/TarasovArtem/qa-ai-agent/actions/workflows/cypress.yml/badge.svg?branch=main)
 
-QA AI Agent is a framework-portable, AI-assisted failure-triage system with production integration for **two** E2E frameworks - Cypress and Playwright. It deterministically aggregates cross-browser and cross-framework test evidence, performs one centralized AI analysis through a provider-neutral abstraction (Mock / Groq / Gemini), validates the model's output by hand, applies a deterministic application-level safety policy on top of the model's recommendation, and protects its own behavior over time with an offline evaluation/regression suite. The AI is **assistive, not authoritative**: it never decides whether a CI run passes, and it never files a bug on its own recommendation alone.
+QA AI Agent is an AI-assisted QA engineering system spanning two production-integrated pipelines: a **reactive CI failure-triage pipeline** (Cypress + Playwright evidence → deterministic correlation → one AI analysis → deterministic policy → PR comment) and a **generative AI Test Design & Test Automation pipeline** (evidence → AI-proposed requirements/test cases → human review → AI-generated automation code → human review → safe filesystem application → controlled test execution). Both pipelines run against real GitHub Actions CI for Cypress (Chrome/Edge/Firefox) and Playwright (Chromium), share a provider-neutral AI abstraction (Mock/Groq/Gemini), and are protected by an offline evaluation/regression suite. AI is **assistive and human-gated throughout**: it never decides whether CI passes, never applies its own generated code without an explicit human approval record, and never executes generated code without that same approval already in place.
 
-See [TEST_CASES.md](TEST_CASES.md) for the full list of manual test cases covered by the Cypress suite, with preconditions, steps, and expected results for each.
+## Why this project matters
+
+Cross-browser E2E failures are frequently ambiguous - a single failure can mean a real product defect, a stale test, environment instability, genuine browser-specific behavior, or a flaky timing issue, and a raw error message rarely settles which. Reasoning over that ambiguity is a real AI-assistance problem, but handing an AI model authority over CI results, generated code, or process execution is a real *safety* problem - one that gets strictly harder as the system's authority grows:
+
+- **Triage is read-only.** The reactive pipeline only ever reads evidence and writes a PR comment; nothing it does can affect the repository or the CI result.
+- **Generation escalates authority in controlled steps.** Proposing a test case is low-risk; writing AI-generated files to the real repository and then executing them is not. This project's #22/#23 pipeline models that escalation explicitly - proposal, human review, filesystem application, controlled execution - rather than collapsing it into one uncontrolled "AI does everything" step.
+- **Cross-framework, cross-browser evidence is inherently more complex than single-run evidence**, and correlating it correctly (without letting an independent framework's outcome masquerade as same-test corroboration) is a real architecture problem, not a formatting exercise.
+- **AI behavior itself needs regression protection.** A prompt or policy change that silently makes classification worse is exactly the kind of regression a human reviewer is unlikely to catch by eye - this project protects against that with a frozen, per-sample evaluation harness rather than trusting manual spot-checks.
+
+The result is an architecture where **the AI proposes and the deterministic/human layer decides** - never the reverse - at every authority boundary in both pipelines.
+
+## What this project demonstrates
+
+- **Senior QA / AQA engineering** - deterministic, evidence-driven E2E test architecture across two independent frameworks
+- **Cypress and Playwright** - both production-integrated into the same CI, with framework-neutral evidence normalization
+- **JavaScript / Node.js** - the entire pipeline (collection, correlation, prompt construction, policy, evaluation, generation, automation) is hand-written Node, no test-generation framework dependency
+- **GitHub Actions / CI-CD engineering** - a seven-job workflow with framework-aware evidence aggregation, artifact boundaries, and branch-protection design
+- **AI-agent / LLM orchestration** - provider abstraction across structurally different vendor APIs (Groq's OpenAI-compatible envelope, Gemini's native envelope), with zero core changes required to add the second vendor
+- **Prompt and evidence engineering** - an explicit OBSERVED FACT / SUPPORTED INFERENCE / UNKNOWN epistemic contract enforced on every model-writable field, not just a top-level classification
+- **Deterministic policy design constraining LLM output** - the model's own `shouldCreateBug` recommendation can be overridden by policy, never the other way around
+- **AI-assisted test generation** - requirement/test-case generation grounded in supplied evidence, schema-validated end to end
+- **Human-in-the-loop authority-escalation design** - every step from "AI proposes" to "code executes" is bound to a specific, digest-sealed human review record
+- **Filesystem-mutation and process-execution safety engineering** - containment/symlink/ancestor-topology defenses for applying AI-generated code, and a `shell:false`/closed-classifier/env-allowlist model for executing it
+- **Offline AI evaluation and regression infrastructure** - six frozen, additive dataset/baseline versions, per-sample (never aggregate-accuracy) regression comparison
+- **Governance-aware delivery** - every stage of this project has gone through an implement → independent-adversarial-review → corrective cycle before merging, evidenced in the roadmap history below
 
 ## Key capabilities
 
-- Two production E2E frameworks: Cypress (Chrome / Edge / Firefox) and Playwright (Chromium), each with its own framework adapter and its own CI job(s)
+**Failure intelligence (reactive pipeline)**
+- Two production E2E frameworks (Cypress: Chrome/Edge/Firefox; Playwright: Chromium), each with its own adapter and CI job(s)
 - One logical AI analysis per failing workflow, never one call per browser or per framework
-- Deterministic, code-computed evidence correlation: `browserCorrelation` (same-framework, cross-browser) and `frameworkCorrelation` (cross-framework, workflow-level outcomes only) - kept explicitly separate, no LLM involved in computing either
-- Framework-scoped, project-scoped flaky-test History, derived from prior GitHub Actions run/job evidence (not a custom durable database - GitHub Actions' own records are the durable substrate)
-- Evidence-grounded model reasoning (observed fact vs. supported inference vs. unknown - enforced by prompt contract)
+- Deterministic `browserCorrelation` (same-framework, cross-browser) and `frameworkCorrelation` (cross-framework, workflow-level only) - never conflated, no LLM involved in computing either
+- Framework-scoped, project-scoped flaky-test History derived from GitHub Actions' own run/job records
+- Evidence-grounded model reasoning (observed fact vs. supported inference vs. unknown, enforced by prompt contract)
 - Deterministic `shouldCreateBug` safety policy the model cannot override; no automatic GitHub issue creation
-- Provider abstraction across three real backends: Mock / Groq / Gemini, swappable with zero core changes; no automatic cross-provider fallback
+
+**Test design & automation (generative pipeline)**
+- AI-proposed `RequirementModel`/`TestCaseModel` generation, schema-validated, grounded in supplied evidence
+- Digest-bound human review records for both the proposed test design (#22F) and the proposed generated code (#23E)
+- Safe, containment-checked filesystem application of an approved, AI-generated change set (#23F)
+- Controlled, `shell:false`, closed-classifier execution of the applied test with bounded environment/timeout/output and one bounded regeneration attempt on failure (#23G)
+
+**Platform & AI architecture**
+- Provider abstraction across three real backends (Mock / Groq / Gemini), swappable with zero core changes; no automatic cross-provider fallback
 - Machine-readable provider provenance (attempt count, first-attempt error) and bounded transport retry
 - Curated, schema-validated, offline Knowledge Layer selected before the model is ever called
-- Versioned, frozen offline evaluation/regression datasets (v1-v5) that protect 15 behavioral dimensions per sample
 - Repo-local, canonical-path, cross-platform (Windows/POSIX) attachment and source-evidence containment
+
+**CI/CD, evaluation & governance**
 - GitHub Actions CI with authoritative Cypress/Playwright pass/fail, independent of AI outcome
+- Six frozen, additive offline evaluation/regression dataset versions (v1-v6) protecting 15 triage dimensions plus dedicated Test Design quality dimensions
+- Every roadmap stage independently reviewed (adversarially, against source) before merging - see [Project status & maturity](#project-status--maturity) below
+
+## Project status & maturity
+
+| Capability | Status | Evidence / limitation |
+|---|---|---|
+| CI failure triage (Cypress + Playwright) | **Implemented, production** | Real GitHub Actions CI on every push/PR; one real, independently-reviewed, controlled Playwright failure exercised the full pipeline end to end |
+| AI Test Design (#22) | **Implemented** | Schema-validated generation + digest-bound human review record; evaluated by Dataset v6 |
+| AI Test Automation (#23) | **Implemented** | Generated-code human review, safe filesystem application, controlled execution, bounded regeneration - all independently reviewed |
+| Multi-provider AI abstraction | **Implemented, one provider CI-wired** | Groq is the real CI provider; Gemini's API compatibility is proven by one controlled call but Gemini is **not** CI-wired (no repository secret) |
+| Multi-framework portability | **Implemented, production** | Both Cypress and Playwright adapters run in real production CI today |
+| Multi-project portability | **Proven offline only** | Isolation boundary validated against a synthetic second project; no second real production project exists yet |
+| Controlled execution on Windows | **Not supported** | `shell:false` + Windows `.cmd`-shim resolution collide (`EINVAL`); tracked as `FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD` in `SECURITY.md`, tests explicitly skip (never silently pass) on Windows |
+| Automatic GitHub issue creation | **Not implemented** | `shouldCreateBug` is a human-actionable field only |
+| Cross-provider automatic fallback | **Not implemented (by design)** | A misconfigured/failing provider fails honestly rather than silently substituting another |
+| Reviewer/human-decision identity authentication | **Not implemented** | Review records prove content integrity, never actor authenticity - see `SECURITY.md`'s open `FUTURE_*` guards |
+| Full project independence (installable in any repo) | **Future roadmap work** | Current architecture has explicit project/framework identity boundaries, but has not been packaged/proven for installation outside this repository |
+
+## Architecture
+
+```text
+                              QA AI Agent
+                                   |
+                +------------------+------------------+
+                |                                     |
+                v                                     v
+     CI Failure Triage (reactive)         AI Test Design + Automation (generative)
+          Roadmaps #1-#21                          Roadmaps #22-#23
+                |                                     |
+   Cypress + Playwright CI failure         Evidence about desired behavior
+                |                                     |
+      deterministic correlation                  Test Design (#22)
+                |                                     |
+        one logical AI analysis            Human Review (#22F)  <-- required
+                |                                     |
+        deterministic policy                Automation Plan (#23B/#23C)
+                |                                     |
+            PR comment                      Generated Change Set (#23D/#23E-gen)
+                                                       |
+                                            Human Review (#23E)  <-- required
+                                                       |
+                                          Safe Application (#23F, filesystem write)
+                                                       |
+                                     Controlled Execution (#23G, shell:false child process)
+                                                       |
+                                    Execution Evidence + Bounded Regeneration (max 1 attempt)
+```
+
+The two pipelines are **separate runtime paths** - they share only the AI provider abstraction. Triage never writes to the repository or executes code; generation does both, but only past an explicit human-approval gate. See [SECURITY.md](SECURITY.md) for the full authority/trust model.
+
+## CI Failure Triage Pipeline
+
+Chrome, Edge, and Firefox each run the identical Cypress suite in their own CI job; Chromium runs Playwright's own smoke test in its own job. No browser/framework job ever calls an AI provider directly - a separate `QA AI triage` job runs after all four legs finish, aggregates every leg's result, and performs **at most one** AI analysis for the whole workflow run (never per-browser, never per-framework). On a fully green run it performs zero AI calls.
+
+The model returns a recommendation (`classification`, `confidence`, `rootCause`, `shouldRetry`, `shouldCreateBug`, ...); a separate, pure, deterministic policy layer (`scripts/ai/agent-policy.js`) decides the only safety-relevant action: only a `PRODUCT_BUG` classification may keep a model-recommended `shouldCreateBug: true` - every other classification is forced to `false`, regardless of what the model said. **Cypress and Playwright's own pass/fail results remain authoritative regardless of what the AI concludes.**
+
+Full detail: [How failure triage works](#how-failure-triage-works), [Deterministic safety model](#deterministic-safety-model), [Evidence grounding](#evidence-grounding), [Multi-browser and multi-framework correlation](#multi-browser-and-multi-framework-correlation), [History](#history), [Knowledge Layer](#knowledge-layer) below.
+
+## AI Test Design Pipeline
+
+Given evidence about desired behavior (not a CI failure), the pipeline proposes schema-validated `RequirementModel`/`TestCaseModel` artifacts, packages them for review, and requires an explicit human decision - approve, request changes, or reject - sealed into a digest-bound review record (#22F) before anything downstream can consume the design. The record proves the reviewed content wasn't altered after the decision was sealed; it does **not** prove the reviewer's identity or that a human (rather than some other actor) made the call - that limitation is stated explicitly, not hidden, in both the code and `SECURITY.md`.
+
+Full stage-by-stage detail (#22B-#22F): [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below.
+
+## AI Test Automation Pipeline
+
+Once a test design is approved, the pipeline generates concrete automation code (`AutomationCandidate`/`AutomationPlan` → a `GeneratedChangeSet`), which again requires an explicit human APPROVE decision (#23E) before anything is written to disk. Only after that approval:
+
+- **#23F - Safe application**: `change-set-application.js` applies the approved change set under a containment-checked, symlink/hardlink-defended, ancestor-topology-bound writer, with rollback on partial failure.
+- **#23G - Controlled execution**: `controlled-execution.js` runs the applied test via a `shell:false` child process, targeting only files matched by a closed, framework-specific classifier, with an environment allowlist, hard timeout, bounded output, and at most one automatic regeneration attempt on failure.
+
+The orchestrator itself has no shell/Git/network authority beyond spawning that one classified process - but the framework binary it launches, and any generated test code that framework loads, runs with the full authority of the host OS process. This is explicitly **not** a sandbox; see [SECURITY.md](SECURITY.md#25-controlled-execution-authority-23g) for the precise boundary.
+
+Full stage-by-stage detail (#23B-#23G): [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below.
+
+## Safety & Trust Model
+
+The governing principle across both pipelines: **the AI proposes, deterministic code validates, and a human authorizes every authority escalation.** In brief:
+
+- Every AI-generated artifact (requirement, test case, automation plan, change set) is schema-validated before a human ever sees it.
+- Human decisions are sealed into SHA-256 digest-bound review records - a matching digest proves the record wasn't tampered with after sealing, but (stated explicitly, not glossed over) **does not** prove reviewer identity or actual human authorship.
+- Filesystem writes (#23F) are containment-checked, symlink/hardlink-defended, and bound to the repository root's ancestor-topology identity, with rollback on partial failure and an acknowledged residual TOCTOU limitation.
+- Process execution (#23G) is `shell:false`, argv-only, restricted to a closed target classifier, environment-allowlisted, timeout- and output-bounded, and never described as sandboxed.
+- Regeneration after a failed execution is bounded to one attempt per call - not a durable cross-session rate limit.
+- No stage in either pipeline has Git or GitHub-mutation authority (no commit, push, branch, PR, or issue creation) - the only automated GitHub write anywhere in this repository is upserting a single PR comment.
+
+See [SECURITY.md](SECURITY.md) for the complete data-governance and authority model, including the full canonical register of open, explicitly-tracked trust-boundary limitations (`FUTURE_*` guards).
+
+## CI/CD
+
+GitHub Actions ([.github/workflows/cypress.yml](.github/workflows/cypress.yml)) runs seven jobs on every push to `main`, every PR targeting `main`, and manual dispatch: `Unit tests`, `QA Agent evaluation` (offline), `Cypress - chrome`, `Cypress - edge`, `Cypress - firefox`, `Playwright Chromium`, and `QA AI triage`.
+
+Current required branch-protection checks: `Cypress - chrome`, `Cypress - edge`, `Unit tests`, `Playwright Chromium`, `QA Agent evaluation`. `Cypress - firefox` and `QA AI triage` remain informational while their real-world reliability is observed independently.
+
+**Current repository governance profile: solo-maintainer.** A pull request is required for every change to `main`, all required checks above must pass, the branch must be up to date with `main` (strict mode), and branch-protection rules apply to the repository administrator as well (no bypass exemption) - a required *human-approving-reviewer* count is deliberately not enforced today, since this is a single-maintainer repository and that specific control cannot be satisfied honestly by a second account. Independent adversarial source review is still mandatory under this project's own delivery process (see the roadmap history below) - GitHub enforces the PR/CI/branch-freshness mechanics; the independent-review discipline itself is a project-governance practice, not a platform feature.
+
+## Portability & Current Boundaries
+
+Two portability axes are tracked separately and must not be conflated:
+
+- **Framework portability - resolved in production.** Both Cypress and Playwright adapters run in real GitHub Actions CI today, normalizing into an identical generic evidence shape, with framework-scoped History/Knowledge isolation enforced by construction.
+- **Project portability - proven offline only.** The `ProjectProfile`/History/Knowledge isolation boundary is validated end to end against a synthetic second project, but this repository runs against exactly one real production project. Do not read this project as "already portable to any codebase out of the box."
+- **Full project independence** (packaging/installing this pipeline outside its current demonstration repository) is future roadmap work, not implemented today.
+
+Full detail: [Current Multi-Framework Status](#current-multi-framework-status) and [Known Architectural Boundaries](#known-architectural-boundaries) below.
+
+## Repository Structure
+
+    cypress/                       Cypress specs, page objects, config
+    playwright/                    Playwright spec(s), config
+
+    scripts/ai/
+      adapters/                    Cypress + Playwright evidence adapters
+      providers/                   Mock / Groq / Gemini provider implementations
+      evaluation/                  Dataset/Baseline v1-v6, evaluate/regression scripts
+      generation/                  #22/23-F0 shared contracts (RequirementModel, TestCaseModel, ...)
+      test-design/                 #22 AI Test Design (evidence -> reviewed design)
+      test-automation/             #23 AI Test Automation (design -> controlled execution)
+      *.js                         Core triage pipeline (collection, correlation, prompt, policy)
+
+    scripts/diagnostics/           CI diagnostic utilities (Firefox forensics, disposable-output reset)
+
+    docs/                          Frozen shared-contract design docs
+    .github/workflows/             GitHub Actions CI definition
+    SECURITY.md                    Full data-governance and authority/trust model
+    TEST_CASES.md                  Manual Cypress test-case reference
+
+## Running Locally
+
+    git clone https://github.com/TarasovArtem/qa-ai-agent.git
+    cd qa-ai-agent
+    npm install
+
+    npm run cypress:open           # interactive Cypress GUI
+    npm run test:e2e               # Cypress, default browser
+    npm run chrome                 # Cypress, headless Chrome (also: firefox, edge)
+    npm run test:e2e:playwright    # Playwright, Chromium
+
+    npm run test:unit              # scripts/ai/ unit tests (offline, no network)
+    npm run eval:ai:v5             # score triage Dataset v5 (see eval:ai / :v2 / :v3 / :v4 / :v6)
+    npm run eval:regression:v5     # compare against frozen Baseline v5
+
+    AI_PROVIDER=mock npm run ai:analyze   # run AI failure analysis with the offline mock provider
+
+See [TEST_CASES.md](TEST_CASES.md) for the full manual Cypress test-case reference, and [Commands for running tests](#commands-for-running-tests) below for the complete command list including every evaluation dataset version.
+
+---
+
+## Technical Reference & Engineering History
+
+Everything below this point is the detailed engineering reference and chronological history behind the current architecture summarized above - full field-level semantics, the complete roadmap-by-roadmap build history, controlled experiments, and every independent-review finding. It is not required reading to understand what the system does today, but it is where every claim above is backed by exact evidence.
 
 ## Security and AI data governance
 
 See [SECURITY.md](SECURITY.md) for the full data-governance contract: what data can reach an external AI provider, what's explicitly excluded, credential handling, provider/retry policy, GitHub Actions artifact boundaries, and explicit known limitations. Roadmap #20 (baseline audit, trust-boundary hardening, this governance documentation, and its independent review) is implemented and independently reviewed - see [Roadmap #20](#roadmap-20--data-security--governance) below for exact stage-by-stage status and delivery via PR #85.
-
-## Why this project exists
-
-Cross-browser E2E failures are frequently ambiguous. A single failing test can mean:
-
-- a real product defect,
-- a broken or stale test (selector, assertion, page object),
-- CI/environment instability unrelated to the app or the test,
-- genuine browser-specific behavior,
-- a flaky timing/synchronization issue,
-- or simply not enough evidence to tell.
-
-A raw error message or stack trace alone is usually not enough to distinguish these. This project combines several deterministic evidence sources - the current failure's own error/source context, cross-browser correlation, recent pass/fail history, and curated engineering knowledge - and hands all of it to a model in a single, tightly-scoped analysis, under an explicit contract that forbids the model from inventing facts the evidence doesn't support.
-
-Two things are true at once by design: **the AI is doing real reasoning work**, and **Cypress remains the sole source of truth for whether the build passed**. Nothing downstream of Cypress - correlation, knowledge selection, the AI call, or application policy - can turn a failed run green, and none of it is required for Cypress's own result to be authoritative.
 
 ## High-level architecture (current)
 
@@ -235,11 +406,11 @@ npm run eval:regression:v6  # compares against frozen Baseline v6
 
 **Dataset v6 is a different pipeline's dataset, not an addition to v1-v5's triage scope.** v1-v5 score this document's own CI failure-triage pipeline; v6 exists specifically to score Roadmap #22F's Test Design human-review-record construction (`buildTestDesignReviewPackage()`/`buildTestDesignReviewRecord()`) against labeled fixtures - see [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below for what #22F is. v6 does not extend or supersede v1-v5's 15-dimension triage regression protection described above.
 
-**Historical snapshots below are frozen at the roadmap stage named - re-run `npm run test:unit` for the current count, which has grown substantially since #21J-A with the #22/#23 pipeline and CS1-CS4 stabilization work:**
+**Historical snapshots below are frozen at the roadmap stage named - re-run `npm run test:unit` for the current count, which has grown substantially since #21J-A with the #22/#23 pipeline and CS1-CS5A stabilization work:**
 
 - **Roadmap #18 completion:** 918 unit tests passing, including 93 provider-layer tests (27 Gemini / 17 Groq / 14 Mock / remainder shared contract-and-factory tests); Dataset/Baseline v1-v5 all `UNCHANGED`.
 - **Roadmap #21J-A completion:** 1377 unit tests passing; Dataset/Baseline v1-v5 all `UNCHANGED`; Dataset v6 did not exist at this point in the roadmap.
-- **CS5A-C1 completion (current, most recent snapshot):** 2916 unit tests passing (2924 total, 8 skipped - see [Windows execution limitation](SECURITY.md#27-windows-execution-limitation-future_windows_execution_capability_guard) in `SECURITY.md`); Dataset/Baseline v1-v6 all `UNCHANGED`.
+- **CS5A-certified `main` (current, most recent snapshot; platform-dependent):** the natural Linux CI run on the certified merge commit passed all **2,924** unit tests (0 fail, 0 skip); a Windows local run of the identical tree passes **2,916** with an expected, documented 8-test platform-specific skip set (Windows-only `child_process`/symlink-privilege/POSIX-permission-bit limitations - see `SECURITY.md`'s Windows execution-limitation section). Dataset/Baseline v1-v6 all `UNCHANGED` on both platforms.
 
 ## Continuous Integration
 
@@ -247,7 +418,9 @@ GitHub Actions ([.github/workflows/cypress.yml](.github/workflows/cypress.yml)) 
 
 **If every E2E leg (all three Cypress browsers and Playwright) passes, AI analysis is skipped entirely** (`No E2E failures detected; AI triage skipped.`) - zero provider calls happen on a green run. If any leg fails, the deterministic aggregator selects one primary failure across both frameworks, computes `browserCorrelation`/`frameworkCorrelation`, and triggers exactly one AI analysis. **AI never controls whether the workflow passes or fails** - each framework's own pass/fail is always authoritative, regardless of whether AI analysis ran, succeeded, or failed.
 
-Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cypress - edge`. `Cypress - firefox`, `Playwright Chromium`, `QA Agent evaluation`, and `QA AI triage` are deliberately **not required yet** - each is informational while its real-world reliability is observed independently. (Firefox's own execution-environment split from Chrome/Edge, and CI history in general, are explained in [Detailed Engineering History](#detailed-engineering-history) below - this is normal engineering history for a live external site, not evidence of a current defect.)
+Required branch-protection checks are `Cypress - chrome`, `Cypress - edge`, `Unit tests`, `Playwright Chromium`, and `QA Agent evaluation`. `Cypress - firefox` and `QA AI triage` are deliberately **not required** - each is informational while its real-world reliability is observed independently. (Firefox's own execution-environment split from Chrome/Edge, and CI history in general, are explained in [Detailed Engineering History](#detailed-engineering-history) below - this is normal engineering history for a live external site, not evidence of a current defect.)
+
+**Current repository governance profile: solo-maintainer.** A pull request is required for every merge to `main`; the branch must be up to date (strict mode) and every required check above must pass; branch-protection rules apply to the repository administrator as well - there is no admin-bypass exemption. A required second-human-approving-reviewer count is deliberately not enforced, since this is a single-maintainer repository and a second qualifying reviewer does not exist; independent adversarial source review is still mandatory under this project's own delivery process before any change merges (see the roadmap history below), it is simply not the specific GitHub review-count mechanism.
 
 ## Current Multi-Framework Status
 
@@ -325,7 +498,7 @@ Stated as engineering seams and deliberately deferred work, not defects. Roadmap
 
 1. **Only one real production project exists.** `ProjectProfile`/History/Knowledge project-isolation is proven offline against a synthetic second project (Roadmap #19.4) only - a genuine second project has never run through this pipeline in production.
 2. **A small number of informational, non-blocking observations remain** (documented, not hidden): `error.stack` may contain a standard hosted-runner absolute source path as intentional model-visible evidence (never a secret) - see `SECURITY.md`; a theoretical, structurally-unreachable "both sides say an unsupported framework string" edge case in the framework-identity consistency check, closed off in practice by every real production producer being hardcoded to exactly `cypress`/`playwright`.
-3. **#19.7F-B4B (Firefox forensic observability) is now live-validated.** An organic occurrence of the known intermittent Firefox failure signature (`cy.wait()` timeout on the `poiTiles` route, no request ever occurring) happened naturally during this documentation PR's own CI run (GitHub Actions run `32873480322`, unrelated to and unaffected by this PR's docs-only content) - the corrected capture behavior executed and its `firefox-forensics` artifact uploaded successfully (18 files), and the sensitive-pattern scan flagged nothing. **This confirms the capture pipeline itself works live; it does not establish a root cause.** #19.7F-C's own status is unchanged by this occurrence: an earlier organic Firefox review had already confirmed this exact failure family (`poi_data_requests.cy.js`/`cy.wait("@poiTiles")`), with the root cause left inconclusive; this PR's occurrence is a second, independently-captured instance of that same known family, live-validating B4B's corrected capture path without newly resolving the underlying root cause - see [Detailed Engineering History](#detailed-engineering-history) below.
+3. **#19.7F-B4B (Firefox forensic observability) is now live-validated.** An organic occurrence of the known intermittent Firefox failure signature (`cy.wait()` timeout on the `poiTiles` route, no request ever occurring) happened naturally during a documentation PR's own CI run (GitHub Actions run `32873480322`, unrelated to and unaffected by that PR's docs-only content) - the corrected capture behavior executed and its `firefox-forensics` artifact uploaded successfully (18 files), and the sensitive-pattern scan flagged nothing. **This confirms the capture pipeline itself works live; it does not establish a root cause.** #19.7F-C's own status is unchanged by this occurrence: an earlier organic Firefox review had already confirmed this exact failure family (`poi_data_requests.cy.js`/`cy.wait("@poiTiles")`), with the root cause left inconclusive; that occurrence was a second, independently-captured instance of that same known family, live-validating B4B's corrected capture path without newly resolving the underlying root cause - see [Detailed Engineering History](#detailed-engineering-history) below.
 
 None of these affect current production behavior. See [Roadmap #19](#roadmap-19--project--framework-portability) and [Roadmap #21](#roadmap-21--production-playwright-enablement--final-hardening) below.
 
@@ -338,10 +511,7 @@ None of these affect current production behavior. See [Roadmap #19](#roadmap-19-
 - **Provider adapters, not a provider-aware core.** Transport, auth, and vendor-native envelopes live entirely in `scripts/ai/providers/`; adding Gemini as a second real vendor required zero changes to prompt, policy, knowledge, or evaluation code - proving the boundary is real, not aspirational.
 - **No automatic provider fallback.** A misconfigured or failing provider fails the analysis honestly rather than silently substituting a different provider or a fabricated result - hidden fallback would also hide cost, semantics, and observability changes a human should see.
 - **A synthetic portability proof came before any real second-framework integration.** Roadmap #19 proved the `NormalizedFailure` abstraction and a second adapter (`playwrightAdapter`) entirely offline, against official-shape synthetic fixtures, before ever considering a real Playwright integration - so the question "does the abstraction actually work" was never conflated with "did I map one specific framework's reporter API correctly."
-
-## What this project demonstrates
-
-QA automation architecture and Cypress E2E engineering; GitHub Actions CI orchestration; deterministic cross-browser failure correlation; deterministic policy design constraining LLM output; AI provider abstraction proven across two structurally different vendors; offline AI evaluation/regression infrastructure; evidence-grounded prompt engineering; curated knowledge selection; and incremental, evidence-driven architecture refactoring (each roadmap item shipped independently, verified, and regression-checked against frozen history before the next one started).
+- **Test design and test automation escalate authority in explicit, reviewable steps.** #22/#23 never collapse "AI proposes" and "code executes" into one step - each authority increase (design → generated code → filesystem write → process execution) has its own gate, and the two human-review gates are the only ones that can advance the pipeline.
 
 ## Roadmap #19 — Project / Framework Portability
 
@@ -483,8 +653,31 @@ Every stage above was independently reviewed before merging, following the same 
     ./scripts/ai/knowledge/selector.js
     ./scripts/ai/knowledge/units/*.json   # 6 curated units
 
-    ./scripts/ai/evaluation/dataset.json ... dataset-v5.json
-    ./scripts/ai/evaluation/baseline-v1.json ... baseline-v5.json
+    ./scripts/ai/generation/requirement-model.js
+    ./scripts/ai/generation/test-case-model.js
+    ./scripts/ai/generation/automation-candidate.js
+    ./scripts/ai/generation/automation-plan.js
+
+    ./scripts/ai/test-design/evidence-ingestion.js
+    ./scripts/ai/test-design/requirement-model-generator.js
+    ./scripts/ai/test-design/test-case-model-generator.js
+    ./scripts/ai/test-design/test-design-review-package.js
+    ./scripts/ai/test-design/test-design-review-record.js
+
+    ./scripts/ai/test-automation/automation-repository-context.js
+    ./scripts/ai/test-automation/automation-plan-generator.js
+    ./scripts/ai/test-automation/generate-change-set.js
+    ./scripts/ai/test-automation/generated-change-set-review-package.js
+    ./scripts/ai/test-automation/generated-change-set-review-record.js
+    ./scripts/ai/test-automation/change-set-application.js
+    ./scripts/ai/test-automation/controlled-execution.js
+    ./scripts/ai/test-automation/regenerate-change-set.js
+
+    ./scripts/ai/evaluation/dataset.json ... dataset-v6.json
+    ./scripts/ai/evaluation/baseline-v1.json ... baseline-v6.json
+
+    ./scripts/diagnostics/firefox-failure-forensics.sh
+    ./scripts/diagnostics/reset-cypress-runtime-outputs.sh
 
 ## Commands for running tests
 
@@ -512,13 +705,19 @@ or, without picking a browser (uses Cypress's default):
 
     npm run test:e2e
 
+#### Run the Playwright suite (Chromium, browser must be installed locally)
+
+    npm run test:e2e:playwright
+
 #### QA Agent / evaluation commands
 
     npm run ai:collect          # build reports/ai/context.json from the last Cypress run
     npm run ai:analyze          # run AI failure analysis (AI_PROVIDER=mock by default)
     npm run test:unit           # scripts/ai/ unit tests (offline, no network)
-    npm run eval:ai:v5          # score Dataset v5
-    npm run eval:regression:v5  # compare against frozen Baseline v5
+    npm run eval:ai:v5          # score Dataset v5 (also: eval:ai, :v2, :v3, :v4)
+    npm run eval:regression:v5  # compare against frozen Baseline v5 (also: eval:regression, :v2, :v3, :v4)
+    npm run eval:ai:v6          # score Dataset v6 (Test Design / #22F quality)
+    npm run eval:regression:v6  # compare against frozen Baseline v6
 
 ## Provider configuration
 
@@ -583,7 +782,7 @@ GitHub Actions runs seven jobs per trigger: `Unit tests` and `QA Agent evaluatio
 
 **Why Firefox has its own job, on the bare runner instead of the container:** Firefox previously hung during WebDriver session creation when run inside the same nested `cypress/included` container Chrome/Edge use - a container-sandboxing limitation of that specific setup, confirmed by a dedicated CI spike (Roadmap #14B): the identical, unmodified suite ran cleanly in ~80s once moved directly onto the bare `ubuntu-latest` runner, with Firefox installed explicitly via `browser-actions/setup-firefox`. This is infrastructure history, not evidence of a Firefox-specific application or test defect - the job produces the same artifact shapes and the same authoritative-failure semantics as Chrome/Edge (a failed Firefox E2E run fails this job, and nothing downstream can turn it green).
 
-Required branch-protection checks are `Unit tests`, `Cypress - chrome`, and `Cypress - edge`. `Cypress - firefox`, `Playwright Chromium`, `QA Agent evaluation`, and `QA AI triage` are deliberately not required yet - each is informational only while its real-world CI reliability is observed independently, the same treatment already applied to Firefox since Roadmap #14C.
+Required branch-protection checks are `Cypress - chrome`, `Cypress - edge`, `Unit tests`, `Playwright Chromium`, and `QA Agent evaluation`. `Cypress - firefox` and `QA AI triage` are deliberately not required - each is informational only while its real-world CI reliability is observed independently, the same treatment Firefox itself received since Roadmap #14C before its own required-check status changed.
 
 ### QA Agent (AI failure analysis) - full detail
 
@@ -672,7 +871,7 @@ Key design points:
 - **Ambiguous samples are excluded from strict classification accuracy** but remain fully scored for `shouldRetry`/`shouldCreateBug` - Experiment #5's boundary-case status doesn't get silently smoothed over into a clean pass or fail.
 - **Regression comparison is per-sample, not aggregate-accuracy-based.** A sample that goes from wrong to right while a different sample goes from right to wrong leaves aggregate accuracy unchanged, but is a real regression - the comparator is built specifically not to be fooled by that.
 - **`shouldCreateBug` correctness is a protected safety invariant** - any sample whose `shouldCreateBug` action goes from correct to incorrect is always a `REGRESSED` result, even if classification simultaneously improved and even for an ambiguous-classification sample.
-- **`QA Agent evaluation` (the CI check) is currently informational.** A `REGRESSED` comparison does **not** fail the job or block a merge today - only a technical failure (invalid dataset/baseline, a runtime crash) does. It is **not** a required branch-protection check.
+- **`QA Agent evaluation` (the CI check) is currently informational.** A `REGRESSED` comparison does **not** fail the job or block a merge today - only a technical failure (invalid dataset/baseline, a runtime crash) does. It **is** a required branch-protection check for the job's own technical success (see [Continuous Integration](#continuous-integration) above) - what remains non-blocking is only the semantic `REGRESSED` verdict inside it.
 
 ### Multi-browser evaluation (Dataset v2, Roadmap #6)
 
@@ -780,7 +979,7 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 
 ### Roadmap #19.8 — Offline Playwright Adapter
 
-**Status: complete.** Implemented `scripts/ai/adapters/playwright-adapter.js`, a second, fully independent adapter proving the `{id, collect()}` contract generalizes: it parses official Playwright JSON-reporter-shaped evidence (`suites[].specs[].tests[].results[]`) and normalizes it into the same generic `{testResults, failedTests, warnings}` shape Cypress produces. The critical design decision: Playwright's *logical* outcome (`test.status` - `expected`/`unexpected`/`flaky`/`skipped`) is the sole classification authority, never an individual attempt's `result.status` - so an intentionally-expected failure (`test.fail()`) or a flaky-then-passed retry never leaks into `failedTests`, and a retried-but-still-failing test produces exactly one normalized failure, from the final attempt. Proven by 36 offline fixture tests using inline, official-shape synthetic reports - no Playwright package, browser, or CI involved. Not wired into production: `collect-context.js` still imports only `cypressAdapter`.
+**Status: complete.** Implemented `scripts/ai/adapters/playwright-adapter.js`, a second, fully independent adapter proving the `{id, collect()}` contract generalizes: it parses official Playwright JSON-reporter-shaped evidence (`suites[].specs[].tests[].results[]`) and normalizes it into the same generic `{testResults, failedTests, warnings}` shape Cypress produces. The critical design decision: Playwright's *logical* outcome (`test.status` - `expected`/`unexpected`/`flaky`/`skipped`) is the sole classification authority, never an individual attempt's `result.status` - so an intentionally-expected failure (`test.fail()`) or a flaky-then-passed retry never leaks into `failedTests`, and a retried-but-still-failing test produces exactly one normalized failure, from the final attempt. Proven by 36 offline fixture tests using inline, official-shape synthetic reports - no Playwright package, browser, or CI involved. Not wired into production at this stage: `collect-context.js` still imports only `cypressAdapter` - this was later resolved by Roadmap #21, see above.
 
 ### Roadmap #19.9 — Offline Framework Orchestration + History Framework Namespace
 
@@ -788,7 +987,7 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 
 ### Roadmap #19.10 — Final Portability Review + Documentation Closure
 
-**Status: #19.10A (read-only architecture/evidence audit) complete - found zero runtime blockers to closing the offline portability milestone. #19.10D (this documentation update) in progress.** The audit's one substantive finding was that this README itself had fallen materially behind #19.5-#19.9's shipped work (describing the adapter boundary as a future concept after it had already merged) - #19.10D exists specifically to correct that, with no source, test, workflow, package, or evaluation-data changes.
+**Status: complete.** #19.10A (read-only architecture/evidence audit) found zero runtime blockers to closing the offline portability milestone. #19.10D (documentation update) corrected this README's own historical lag behind #19.5-#19.9's shipped work at the time (it had described the adapter boundary as a future concept after it had already merged), with no source, test, workflow, package, or evaluation-data changes.
 
 ### Roadmap summary
 
@@ -822,10 +1021,14 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 | #22/23-F0 - Shared QA generation contracts (`RequirementModel`/`TestCaseModel`/`AutomationCandidate`/`AutomationPlan` v1) | COMPLETE |
 | #22 (AI Test Design: #22B-#22F) - evidence ingestion through human review of design artifacts | COMPLETE |
 | #23 (AI Test Automation: #23B-#23G) - repository-context assembly through controlled, bounded test execution | COMPLETE_ON_MAIN |
+| CS1-CS4 - Core stabilization (CI-authority hardening, rollback ancestor-topology hardening, supply-chain hardening, recursive test-discovery correctness) | COMPLETE_ON_MAIN |
+| CS5A - #22/#23 technical documentation reconciliation (README/SECURITY) | COMPLETE_ON_MAIN |
+| SG1 - Solo-maintainer GitHub governance reconciliation | COMPLETE (current repository configuration) |
+| CS5B - Recruiter-facing README optimization (this update) | IN PROGRESS |
 
-**Next:** Roadmap #21 formally closed on `main`. Roadmap #22 (AI Test Design) and Roadmap #23 (AI Test Automation) - the AI-assisted test-generation and safe-application/execution pipeline built on top of the #22/23-F0 shared contracts - are both now implemented and merged to `main`; see [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below for the full stage-by-stage architecture, and [SECURITY.md](SECURITY.md) for the authority/trust model, including the filesystem-mutation and child-process-execution boundaries #23F and #23G introduce. The stabilization work that followed (Core Stabilization, CS1-CS4: CI-authority hardening, rollback ancestor-topology hardening, supply-chain hardening, recursive test-discovery correctness) is also complete on `main`.
+**Next:** Roadmap #21 formally closed on `main`. Roadmap #22 (AI Test Design) and Roadmap #23 (AI Test Automation) are both implemented and merged to `main`, independently reviewed and certified through CS5A - see [AI Test Design & Test Automation (#22/#23)](#ai-test-design--test-automation-2223) below for the full stage-by-stage architecture, and [SECURITY.md](SECURITY.md) for the authority/trust model. The stabilization work that followed (CS1-CS5A: CI-authority hardening, rollback ancestor-topology hardening, supply-chain hardening, recursive test-discovery correctness, and #22/#23 documentation reconciliation) is also complete on `main`. Repository governance was reconciled to a solo-maintainer profile (SG1) after CS5A's own merge gate found the previous team-oriented review-count policy could not be honestly satisfied by a single maintainer.
 
-**Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); a genuine second production project (only offline-proven today); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; broadening the #23G execution target classifier beyond `.cy.js`/`.spec.js`; reviewer-identity/human-decision provenance (see [SECURITY.md](SECURITY.md) for the open guards this refers to).
+**Planned / future work** (not implemented yet): Controlled Correlation Re-validation (Roadmap #8, Phases 2-3, still outstanding); cross-run failure fingerprinting (correlation is currently scoped to a single workflow run only); a genuine second production project (only offline-proven today); full project independence / installability outside this demonstration repository; future SOLO/TEAM/CORPORATE governance-profile architecture (post-independence work; today's SOLO_MAINTAINER profile is a current configuration decision, not this future architecture); API/database/performance testing integration; confidence-based policy refinements; structured provider output-schema improvements; human-approved action flow / automatic GitHub Issue creation from `shouldCreateBug`; automatic multi-provider fallback (explicitly not implemented - today's provider selection is single, static, and manual); human feedback loop into evaluation; broadening the #23G execution target classifier beyond `.cy.js`/`.spec.js`; reviewer-identity/human-decision provenance (see [SECURITY.md](SECURITY.md) for the open guards this refers to).
 
 ## Roadmap closure state
 
