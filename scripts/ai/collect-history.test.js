@@ -3,17 +3,16 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  main,
   aggregateHistory,
   fetchJson,
   isRetryableStatus,
   clampRunsWanted,
   DEFAULT_RUNS,
   MAX_RUNS,
-  PROJECT_PROFILE,
   cypressAdapter,
   selectRuntimeAdapter,
 } = require("./collect-history");
-const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const realCypressAdapter = require("./adapters/cypress-adapter");
 const realPlaywrightAdapter = require("./adapters/playwright-adapter");
 const realSelectRuntimeAdapter = require("./runtime-framework-selector").selectRuntimeAdapter;
@@ -22,19 +21,34 @@ function run({ id, run_attempt = 1 }) {
   return { id, run_attempt };
 }
 
-// Roadmap #19.3C: the collected History aggregate's projectId (written
-// onto the available:true object inside main(), which is not otherwise
-// unit-testable without mocking the GitHub API/filesystem/env) must come
-// from this exact single source of truth, never a duplicated/hardcoded
-// literal - proving the module reads the real, current stable project
-// identity by reference is the strongest available proof that main()'s
-// `projectId: PROJECT_PROFILE.id` will always reflect it correctly.
-test("PROJECT_PROFILE: collect-history.js sources project identity from the same ProjectProfile as the rest of the AI pipeline, not a duplicated/hardcoded literal", () => {
-  assert.equal(PROJECT_PROFILE, TARGOMO_PROJECT_PROFILE, "must be the exact same object reference, not a copy");
-  assert.equal(PROJECT_PROFILE.id, "external-poi-sut");
+// Roadmap TI-1: this generic collector owns no concrete project identity
+// of its own - main() now requires an explicitly injected ProjectProfile
+// and fails closed without one. Targomo's own production identity
+// ("external-poi-sut") is proven by
+// scripts/targets/targomo/collect-history.test.js instead.
+test("main(): fails closed with PROJECT_PROFILE_REQUIRED when no profile is supplied", async () => {
+  await assert.rejects(() => main(), /PROJECT_PROFILE_REQUIRED/);
 });
 
-// Roadmap #19.9B: mirrors the PROJECT_PROFILE test immediately above -
+test("main(): fails closed with PROJECT_PROFILE_INVALID for a malformed profile", async () => {
+  await assert.rejects(() => main({ profile: {} }), /PROJECT_PROFILE_INVALID/);
+});
+
+test("main(): a missing profile is rejected before any GITHUB_TOKEN/GITHUB_REPOSITORY/TEST_BROWSER check - configuration failure, not ordinary unavailable history", async (t) => {
+  const saved = { ...process.env };
+  t.after(() => {
+    process.env = saved;
+  });
+  delete process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_REPOSITORY;
+  delete process.env.TEST_BROWSER;
+  // If profile validation ran AFTER the token/repo/browser checks, this
+  // would resolve normally (writeUnavailable's best-effort path) instead
+  // of rejecting - proving the check order matters, not just its presence.
+  await assert.rejects(() => main(), /PROJECT_PROFILE_REQUIRED/);
+});
+
+// Roadmap #19.9B:
 // main()'s own `framework: cypressAdapter.id` line is not otherwise
 // unit-testable without mocking the GitHub API/filesystem/env (this file
 // deliberately never does that - see every other test here), so proving

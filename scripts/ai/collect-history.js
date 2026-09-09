@@ -29,7 +29,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const { assertValidProjectProfile } = require("./project-profile");
 const cypressAdapter = require("./adapters/cypress-adapter");
 // Roadmap #21H: the exact same trusted selection mechanism collect-context.js's
 // own CLI bootstrap already uses (Roadmap #21E) - QA_FRAMEWORK absent still
@@ -43,12 +43,12 @@ const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 const ROOT = path.resolve(__dirname, "..", "..");
 const OUTPUT_FILE = path.join(ROOT, "reports", "ai", "history.json");
 
-// This repository's single production project (see
-// scripts/ai/project-profile.js, Roadmap #19.2/#19.3C). Stable project
-// identity is owned by that module, not here - this file only consumes
-// it, so the aggregate can be scoped to the project it was actually
-// collected for without ever hardcoding that project's id here.
-const PROJECT_PROFILE = TARGOMO_PROJECT_PROFILE;
+// Roadmap TI-1: this generic collector owns no concrete project identity
+// of its own - main() requires an explicitly injected ProjectProfile (see
+// scripts/ai/project-profile.js for the generic contract) and fails
+// closed if one isn't supplied. See
+// scripts/targets/targomo/collect-history.js for the target-owned
+// bootstrap that supplies the real production profile.
 
 // This script is specific to this repo's single workflow file, matching
 // how other scripts/ai/*.js already hardcode repo-specific details (spec
@@ -179,7 +179,18 @@ async function aggregateHistory({ runs, browser, jobName, getJobsForRun }) {
   return { passes, failures, retryPasses, inspected };
 }
 
-async function main() {
+// Roadmap TI-1: `profile` is a required, explicitly injected
+// ProjectProfile, validated FIRST - before any of the existing best-effort
+// token/repository/browser degradation checks below, and before any
+// writeUnavailable()/output write. A missing/invalid profile is a
+// configuration failure, never downgraded to an ordinary "history
+// unavailable" marker - the promise this async function returns rejects
+// immediately, and the require.main===module block at the bottom of this
+// file distinguishes that rejection from every other (best-effort)
+// failure mode.
+async function main({ profile } = {}) {
+  assertValidProjectProfile(profile, "collect-history.main()");
+
   const token = process.env.GITHUB_TOKEN;
   const repo = process.env.GITHUB_REPOSITORY;
   const browser = process.env.TEST_BROWSER;
@@ -247,9 +258,9 @@ async function main() {
     // aggregate was actually collected for, so a consumer analyzing a
     // different (or unknown) current project can refuse to trust it
     // rather than silently treating it as universally applicable. See
-    // scripts/ai/project-profile.js for the single source of truth this
-    // value is read from.
-    projectId: PROJECT_PROFILE.id,
+    // scripts/ai/project-profile.js for the generic contract this value
+    // must satisfy.
+    projectId: profile.id,
     // Roadmap #19.9B: explicit framework provenance, read from the
     // selected adapter's own stable identity constant - the exact same
     // one collect-context.js's own metadata.framework already derives
@@ -280,8 +291,24 @@ async function main() {
   );
 }
 
+// Roadmap TI-1: generic direct invocation of this file supplies no
+// profile, so main() always rejects with PROJECT_PROFILE_REQUIRED here -
+// that specific, deterministic failure is a configuration error and must
+// exit non-zero rather than being silently downgraded into a normal
+// `history unavailable` marker (see main()'s own comment above). Every
+// OTHER rejection (network/API errors, etc.) keeps the pre-existing
+// best-effort writeUnavailable() behavior unchanged. A target-owned
+// bootstrap (see scripts/targets/targomo/collect-history.js) supplies a
+// real profile and therefore never hits the first branch in production.
 if (require.main === module) {
-  main().catch((err) => writeUnavailable(`unexpected error: ${err.message}`));
+  main().catch((err) => {
+    if (err && typeof err.message === "string" && err.message.startsWith("PROJECT_PROFILE_")) {
+      process.stderr.write(`[ai:history] ${err.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    writeUnavailable(`unexpected error: ${err.message}`);
+  });
 }
 
 module.exports = {
@@ -294,7 +321,6 @@ module.exports = {
   DEFAULT_RUNS,
   DEFAULT_BRANCH,
   MAX_RUNS,
-  PROJECT_PROFILE,
   cypressAdapter,
   // Roadmap #21H: exported by reference (same pattern as cypressAdapter
   // above) so a test can prove main()'s `framework: adapter.id` line

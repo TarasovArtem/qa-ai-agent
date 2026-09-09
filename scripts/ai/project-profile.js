@@ -19,13 +19,16 @@
  * any specific current-run failure - the same authority boundary already
  * enforced for this same content by qa-agent-prompt.js's rule 9.
  *
- * There is exactly one real production project today. This module
- * reflects that reality directly - a single exported profile constant,
- * not a registry, factory, or plugin system. A second project (Roadmap
- * #19.4) is expected to be introduced as another plain object of the same
- * shape, supplied as data to the functions that accept a profile
- * parameter (see qa-agent-prompt.js's buildSystemPrompt()) - never by
- * editing this file's consumers.
+ * Roadmap TI-1 (Targomo Independence): this module is the GENERIC CORE
+ * contract only - a shape/validator, never a concrete project instance.
+ * It must never import or define a concrete target's profile (e.g.
+ * Targomo's `TARGOMO_PROJECT_PROFILE`, previously exported from here).
+ * A concrete profile is now target-owned - see
+ * scripts/targets/targomo/project-profile.js for the real production
+ * instance - and is always supplied as data to the functions that accept
+ * a profile parameter (collect-context.js's main(), collect-history.js's
+ * main(), qa-agent-prompt.js's buildSystemPrompt(),
+ * analyze-failure.js's main()), never imported by them.
  */
 
 "use strict";
@@ -61,40 +64,26 @@ function validateProjectProfile(profile) {
   return { valid: errors.length === 0, errors };
 }
 
-// The single production project. `id` is the canonical, stable,
-// machine-readable project identity referenced elsewhere as
-// "external-poi-sut" (context.metadata.projectId, ai-report.json's
-// sourceContext.projectId) - this object is the only place that literal
-// is defined; everything else imports it from here. `id` identifies the
-// logical external POI SUT project itself, not any single point-in-time
-// attribute of it - it is not a hostname, a vendor/brand name, or a test
-// framework, and should not be renamed merely because `displayName`,
-// `baseUrl`, the external vendor, or the test framework changes.
-//
-// `displayName` fills the exact clause the system prompt's persona
-// sentence previously hardcoded (see qa-agent-prompt.js) - kept
-// byte-identical in wording so the production prompt's meaning is
-// unchanged, only its origin moved.
-//
-// `knownProjectConstraints` is moved here verbatim from
-// collect-context.js's former KNOWN_PROJECT_CONSTRAINTS array - same
-// text, same order, no rewrite.
-const TARGOMO_PROJECT_PROFILE = Object.freeze({
-  id: "external-poi-sut",
-  displayName: "a live, externally hosted third-party application (poi.targomo.com)",
-  // Frozen (see below) - collect-context.js assigns this exact array
-  // reference into context.knownProjectConstraints (no defensive copy),
-  // so without freezing, a future consumer mutating "its own" context
-  // data (e.g. context.knownProjectConstraints.push(...) - the same
-  // in-place-mutation style buildFailureReport() already uses for
-  // context.history/context.relevantKnowledge) would silently corrupt
-  // this shared, singleton, process-lifetime constant for every
-  // subsequent analysis, and - in the long-lived `node --test` process -
-  // every later test.
-  knownProjectConstraints: Object.freeze([
-    "Firefox runs in this CI workflow (Roadmap #14C) in a different execution environment from Chrome/Edge: Chrome and Edge run inside a cypress/included Docker container, while Firefox runs directly on the bare GitHub Actions runner with Firefox installed explicitly. This split exists because Firefox previously hung during WebDriver session creation when run inside that same nested container - an infrastructure/sandboxing limitation of that specific setup, not evidence of a browser-specific product bug or test defect.",
-    "The application under test (poi.targomo.com) is a live, externally hosted third-party service outside this repository's control - it has no staging/mocked environment, so failures can reflect real upstream instability, not just this repo's code.",
-  ]),
-});
+// Roadmap TI-1: shared fail-closed helper for every generic core entry
+// point that requires an injected ProjectProfile (collect-context.js,
+// collect-history.js, qa-agent-prompt.js, analyze-failure.js). A small,
+// duplicated-primitive-style helper here (matching this file's own
+// existing convention over introducing a shared validation library) -
+// throws a plain Error with a stable, deterministic, bounded message
+// prefix, never a fabricated/partial profile and never uncontrolled
+// serialization of the invalid input. `callerLabel` is a short,
+// caller-supplied string (e.g. "collect-context.main()") identifying
+// where the check failed, for operator-readable errors only - never
+// parsed programmatically.
+function assertValidProjectProfile(profile, callerLabel) {
+  if (profile === undefined || profile === null) {
+    throw new Error(`PROJECT_PROFILE_REQUIRED: ${callerLabel} requires an explicit ProjectProfile; none was supplied.`);
+  }
+  const { valid, errors } = validateProjectProfile(profile);
+  if (!valid) {
+    throw new Error(`PROJECT_PROFILE_INVALID: ${callerLabel} received an invalid ProjectProfile (${errors.join("; ")}).`);
+  }
+  return profile;
+}
 
-module.exports = { TARGOMO_PROJECT_PROFILE, validateProjectProfile };
+module.exports = { validateProjectProfile, assertValidProjectProfile };

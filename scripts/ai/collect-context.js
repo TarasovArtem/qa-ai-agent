@@ -16,7 +16,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const { assertValidProjectProfile } = require("./project-profile");
 const { normalizeSpecPath } = require("./context-utils");
 const cypressAdapter = require("./adapters/cypress-adapter");
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
@@ -38,12 +38,13 @@ const REAL_ROOT = fs.realpathSync(ROOT);
 const MAX_FILE_BYTES = 20 * 1024;
 const MAX_TOTAL_RELEVANT_BYTES = 150 * 1024;
 
-// This repository's single production project (see
-// scripts/ai/project-profile.js, Roadmap #19.2). Stable project
-// identity and known-constraint text are owned by that module, not here -
-// this file only consumes it (project identity/constraints, never a
-// classification shortcut - see qa-agent-prompt.js rule 9).
-const PROJECT_PROFILE = TARGOMO_PROJECT_PROFILE;
+// Roadmap TI-1: this generic collector owns NO concrete project identity.
+// A ProjectProfile (see scripts/ai/project-profile.js for the generic
+// contract/validator) is always supplied by the caller as data - main()
+// validates it and threads projectId/knownProjectConstraints through
+// explicitly. This file must never import a concrete target profile
+// (e.g. Targomo's) - see scripts/targets/targomo/collect-context.js for
+// the target-owned bootstrap that supplies the real production profile.
 
 // Never read these, even if something inside an allowed policy directory
 // somehow imports them (e.g. a future cypress.env.json or a stray .env in
@@ -155,18 +156,25 @@ function runGit(args) {
 // id here, so metadata.framework always reflects whichever adapter
 // actually produced this run's evidence, never a second, independently-
 // derived framework guess. One active adapter, one framework identity.
-function getMetadata(frameworkId = cypressAdapter.id) {
+//
+// Roadmap TI-1: `projectId` is now an explicit parameter too - this
+// generic function has no concrete project identity of its own to fall
+// back to. main() supplies the caller-validated profile's own `id` here;
+// a direct call with no projectId simply produces `projectId: undefined`,
+// exactly like any other ordinary missing argument - the fail-closed
+// enforcement lives in main(), not in this pure metadata builder.
+function getMetadata(frameworkId = cypressAdapter.id, projectId) {
   const lifecycleEvent = process.env.npm_lifecycle_event || "";
   const browserFromLifecycle = ["chrome", "firefox", "edge"].includes(lifecycleEvent)
     ? lifecycleEvent
     : null;
 
   return {
-    // Stable, machine-readable project identity (Roadmap #19.2) - always
-    // this repository's single production project today; see
-    // scripts/ai/project-profile.js for the single source of
-    // truth this value is read from.
-    projectId: PROJECT_PROFILE.id,
+    // Stable, machine-readable project identity (Roadmap #19.2) - supplied
+    // by the caller's own validated ProjectProfile; see
+    // scripts/ai/project-profile.js for the generic contract this value
+    // must satisfy.
+    projectId,
     framework: frameworkId,
     repository: process.env.GITHUB_REPOSITORY || runGit(["remote", "get-url", "origin"]) || null,
     commit: process.env.GITHUB_SHA || runGit(["rev-parse", "HEAD"]) || null,
@@ -422,14 +430,22 @@ function buildRelevantFiles(failedTests, warnings, frameworkId) {
 // inside each adapter's own contract, never known to this generic
 // collector. Exactly one adapter is ever invoked per call - there is no
 // mechanism here for two adapters to run within one context.
-function main({ adapter = cypressAdapter, adapterOptions } = {}) {
+//
+// Roadmap TI-1: `profile` is now a required, explicitly injected
+// ProjectProfile - this generic entry point owns no concrete project
+// identity of its own. Validated (fail closed, before any output
+// directory/file is touched) via project-profile.js's shared
+// assertValidProjectProfile() - a missing/invalid profile throws and
+// writes nothing.
+function main({ adapter = cypressAdapter, adapterOptions, profile } = {}) {
   if (typeof adapter.id !== "string" || adapter.id.length === 0 || typeof adapter.collect !== "function") {
     throw new Error("main(): adapter must have a non-empty string id and a collect() function");
   }
+  assertValidProjectProfile(profile, "collect-context.main()");
 
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  const metadata = getMetadata(adapter.id);
+  const metadata = getMetadata(adapter.id, profile.id);
   const adapterResult = adapter.collect(adapterOptions);
   const { testResults, failedTests } = adapterResult;
   // Copied, not mutated in place - Roadmap #19.6B: the adapter's returned
@@ -443,7 +459,7 @@ function main({ adapter = cypressAdapter, adapterOptions } = {}) {
 
   if (failedTests.length > 0) {
     relevantFiles = buildRelevantFiles(failedTests, warnings, adapter.id);
-    knownProjectConstraints = PROJECT_PROFILE.knownProjectConstraints;
+    knownProjectConstraints = profile.knownProjectConstraints;
   }
 
   const context = {
@@ -473,9 +489,22 @@ function main({ adapter = cypressAdapter, adapterOptions } = {}) {
 // before, completely unaffected by this environment variable - runtime
 // framework selection belongs to this CLI entrypoint only, never to
 // generic orchestration.
-if (require.main === module) {
+//
+// Roadmap TI-1: runCli({ profile }) is the generic CORE bootstrap seam a
+// target owns and calls - it performs framework selection (unchanged,
+// still the only place QA_FRAMEWORK is read) and passes the caller's
+// profile straight through to main(), which fails closed if it is
+// missing/invalid. This module's own require.main===module block calls
+// runCli() with NO profile - direct invocation of this generic core file
+// therefore always fails closed; only a target-owned bootstrap (see
+// scripts/targets/targomo/collect-context.js) supplies a real profile.
+function runCli({ profile } = {}) {
   const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
-  main({ adapter });
+  return main({ adapter, profile });
+}
+
+if (require.main === module) {
+  runCli();
 }
 
 module.exports = {
@@ -487,4 +516,5 @@ module.exports = {
   getRelevantFilesPolicy,
   RELEVANT_FILES_POLICIES,
   main,
+  runCli,
 };

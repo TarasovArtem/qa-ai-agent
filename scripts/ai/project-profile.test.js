@@ -2,69 +2,14 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { TARGOMO_PROJECT_PROFILE, validateProjectProfile } = require("./project-profile");
+const { validateProjectProfile, assertValidProjectProfile } = require("./project-profile");
 
-test("TARGOMO_PROJECT_PROFILE: id is the stable production project identity", () => {
-  assert.equal(TARGOMO_PROJECT_PROFILE.id, "external-poi-sut");
-});
+// Roadmap TI-1: this generic core module owns no concrete project
+// instance - every test below uses a synthetic profile, never a real
+// target's. The real Targomo profile's own shape/immutability/content is
+// proven by scripts/targets/targomo/project-profile.test.js instead.
 
-test("TARGOMO_PROJECT_PROFILE: displayName is a non-empty string mentioning poi.targomo.com", () => {
-  assert.equal(typeof TARGOMO_PROJECT_PROFILE.displayName, "string");
-  assert.ok(TARGOMO_PROJECT_PROFILE.displayName.length > 0);
-  assert.match(TARGOMO_PROJECT_PROFILE.displayName, /poi\.targomo\.com/);
-});
-
-test("TARGOMO_PROJECT_PROFILE: knownProjectConstraints is a non-empty array of plain strings (no secrets/tokens)", () => {
-  assert.ok(Array.isArray(TARGOMO_PROJECT_PROFILE.knownProjectConstraints));
-  assert.ok(TARGOMO_PROJECT_PROFILE.knownProjectConstraints.length > 0);
-  TARGOMO_PROJECT_PROFILE.knownProjectConstraints.forEach((entry) => assert.equal(typeof entry, "string"));
-});
-
-test("TARGOMO_PROJECT_PROFILE: known constraint order/text is preserved - Firefox execution-environment fact first, external-service fact second", () => {
-  assert.match(TARGOMO_PROJECT_PROFILE.knownProjectConstraints[0], /Firefox runs in this CI workflow/);
-  assert.match(TARGOMO_PROJECT_PROFILE.knownProjectConstraints[1], /poi\.targomo\.com.*live, externally hosted third-party service/);
-});
-
-test("TARGOMO_PROJECT_PROFILE: has exactly the #19.2 contract's three keys (id, displayName, knownProjectConstraints) - update this alongside any deliberate future field addition (e.g. #19.3 knowledge/history scoping fields), not as a permanent architecture ceiling", () => {
-  const keys = Object.keys(TARGOMO_PROJECT_PROFILE);
-  assert.deepEqual(keys.sort(), ["displayName", "id", "knownProjectConstraints"]);
-});
-
-test("TARGOMO_PROJECT_PROFILE: exposes no secrets, provider config, or network/dynamic behavior", () => {
-  for (const value of Object.values(TARGOMO_PROJECT_PROFILE)) {
-    assert.notEqual(typeof value, "function");
-  }
-});
-
-// collect-context.js assigns TARGOMO_PROJECT_PROFILE.knownProjectConstraints
-// straight into context.knownProjectConstraints, the same array reference,
-// no defensive copy - so this constant must be immutable, or a future
-// context-mutating consumer could silently corrupt shared production
-// guidance (and, in the long-lived `node --test` process, every later
-// test that reads this same singleton).
-test("TARGOMO_PROJECT_PROFILE: is frozen and cannot be mutated", () => {
-  assert.equal(Object.isFrozen(TARGOMO_PROJECT_PROFILE), true);
-  assert.throws(() => {
-    "use strict";
-    TARGOMO_PROJECT_PROFILE.id = "something-else";
-  }, TypeError);
-});
-
-test("TARGOMO_PROJECT_PROFILE.knownProjectConstraints: the array itself is frozen and cannot be mutated", () => {
-  assert.equal(Object.isFrozen(TARGOMO_PROJECT_PROFILE.knownProjectConstraints), true);
-  assert.throws(() => {
-    "use strict";
-    TARGOMO_PROJECT_PROFILE.knownProjectConstraints.push("a new constraint");
-  }, TypeError);
-});
-
-test("validateProjectProfile: accepts the production Targomo profile", () => {
-  const { valid, errors } = validateProjectProfile(TARGOMO_PROJECT_PROFILE);
-  assert.equal(valid, true);
-  assert.deepEqual(errors, []);
-});
-
-test("validateProjectProfile: accepts a well-formed synthetic profile shaped like a future second project", () => {
+test("validateProjectProfile: accepts a well-formed synthetic profile", () => {
   const { valid, errors } = validateProjectProfile({
     id: "synthetic-project",
     displayName: "Synthetic Application",
@@ -118,4 +63,34 @@ test("validateProjectProfile: rejects null/non-object input without throwing", (
   assert.equal(validateProjectProfile(undefined).valid, false);
   assert.equal(validateProjectProfile("external-poi-sut").valid, false);
   assert.equal(validateProjectProfile([]).valid, false);
+});
+
+// --- assertValidProjectProfile (Roadmap TI-1) ---------------------------
+
+test("assertValidProjectProfile: returns the profile unchanged when valid", () => {
+  const profile = {
+    id: "synthetic-project",
+    displayName: "Synthetic Application",
+    knownProjectConstraints: ["Synthetic project constraint."],
+  };
+  assert.equal(assertValidProjectProfile(profile, "test caller"), profile);
+});
+
+test("assertValidProjectProfile: throws PROJECT_PROFILE_REQUIRED for undefined", () => {
+  assert.throws(() => assertValidProjectProfile(undefined, "test caller"), /PROJECT_PROFILE_REQUIRED: test caller/);
+});
+
+test("assertValidProjectProfile: throws PROJECT_PROFILE_REQUIRED for null", () => {
+  assert.throws(() => assertValidProjectProfile(null, "test caller"), /PROJECT_PROFILE_REQUIRED: test caller/);
+});
+
+test("assertValidProjectProfile: throws PROJECT_PROFILE_INVALID for a malformed non-null profile, naming the caller and the reason", () => {
+  assert.throws(
+    () => assertValidProjectProfile({ id: "", displayName: "x", knownProjectConstraints: ["y"] }, "test caller"),
+    /PROJECT_PROFILE_INVALID: test caller.*id/
+  );
+});
+
+test("assertValidProjectProfile: throws PROJECT_PROFILE_INVALID for an empty object", () => {
+  assert.throws(() => assertValidProjectProfile({}, "test caller"), /PROJECT_PROFILE_INVALID: test caller/);
 });

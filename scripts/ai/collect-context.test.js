@@ -16,12 +16,22 @@ const {
   RELEVANT_FILES_POLICIES,
   main,
 } = require("./collect-context");
-const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const cypressAdapter = require("./adapters/cypress-adapter");
 const playwrightAdapter = require("./adapters/playwright-adapter");
 const { normalizeSpecPath } = require("./context-utils");
 
 const ROOT = path.resolve(__dirname, "..", "..");
+
+// Roadmap TI-1: this generic core test file uses a synthetic profile for
+// every generic-behavior proof - it must never depend on the real
+// Targomo profile merely to exercise generic collector wiring. Targomo
+// production-compatibility is proven separately by
+// scripts/targets/targomo/collect-context.test.js.
+const SYNTHETIC_TEST_PROFILE = Object.freeze({
+  id: "synthetic-test-project",
+  displayName: "Synthetic Test Project",
+  knownProjectConstraints: Object.freeze(["Synthetic test constraint."]),
+});
 
 // Roadmap #19.7H-B (structural fix, supersedes the #19.7C retry-based
 // mitigation this function used to apply): this file's real-path tests
@@ -145,9 +155,13 @@ test("getMetadata: TEST_BROWSER takes priority over BROWSER/CYPRESS_BROWSER", (t
   assert.equal(meta.ci, true);
 });
 
-test("getMetadata: projectId is the stable production project identity (Roadmap #19.2)", () => {
-  assert.equal(getMetadata().projectId, "external-poi-sut");
-  assert.equal(getMetadata().projectId, TARGOMO_PROJECT_PROFILE.id);
+// Roadmap TI-1: getMetadata()'s projectId is now an explicit second
+// parameter - this generic function has no concrete project identity of
+// its own. Targomo's own "external-poi-sut" production identity is
+// proven by scripts/targets/targomo/collect-context.test.js instead.
+test("getMetadata: projectId is whatever the caller explicitly supplies, and is undefined when omitted (Roadmap TI-1)", () => {
+  assert.equal(getMetadata(undefined, "synthetic-test-project").projectId, "synthetic-test-project");
+  assert.equal(getMetadata().projectId, undefined);
 });
 
 // Roadmap #19.6B: framework is now sourced from the Cypress adapter's own
@@ -210,7 +224,7 @@ test("main(): writes context.json whose testResults/failedTests/warnings/metadat
     })
   );
 
-  main();
+  main({ profile: SYNTHETIC_TEST_PROFILE });
 
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   assert.equal(written.metadata.framework, cypressAdapter.id);
@@ -252,7 +266,7 @@ test("main({adapter}): an explicitly injected adapter is authoritative even when
     },
   };
 
-  main({ adapter: fakeAdapter });
+  main({ adapter: fakeAdapter, profile: SYNTHETIC_TEST_PROFILE });
   assert.equal(collectCalled, true);
 
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
@@ -260,23 +274,24 @@ test("main({adapter}): an explicitly injected adapter is authoritative even when
   assert.notEqual(written.metadata.framework, "playwright");
 });
 
-// D21E-1 (pre-#21G hardening): the real, spawned, actual production CLI
-// (`node scripts/ai/collect-context.js`, not selectRuntimeAdapter() or
-// main({adapter}) called directly) with QA_FRAMEWORK genuinely absent from
-// the child's environment - the strongest possible proof that the
-// zero-configuration production entrypoint really does select Cypress
-// end-to-end, upgrading ZERO_ARG_CYPRESS_RUNTIME_EQUIVALENCE from the
-// prior source-level/referential-equality evidence to a full spawned-
-// process proof. Uses this file's own owned reports/cypress and
+// Roadmap TI-1 (supersedes the pre-TI-1 "D21E-1" scenario, which proved
+// the raw generic core CLI zero-config-selected Cypress AND silently
+// defaulted to the Targomo profile - the exact silent-default behavior
+// TI-1 removes). The real, spawned, actual generic-core CLI (`node
+// scripts/ai/collect-context.js`) with no injected profile - anywhere -
+// must now fail closed: no context.json written, non-zero exit, a
+// deterministic PROJECT_PROFILE_REQUIRED message. Zero-config Cypress
+// selection end-to-end is now proven against the TARGET bootstrap
+// instead - see scripts/targets/targomo/collect-context.test.js's own
+// spawned-CLI proof. Uses this file's own owned reports/cypress and
 // reports/ai/context.json paths (cleanOwnedReportPaths()), so it cannot
 // collide with any other test file's real-path main() usage.
-test("D21E-1 spawned CLI, QA_FRAMEWORK absent: the actual production entrypoint selects Cypress end-to-end", () => {
+test("TI-1: the raw generic core CLI, spawned directly with no profile, fails closed - no context.json written, non-zero exit", () => {
   const outputFile = path.join(ROOT, "reports", "ai", "context.json");
   const reportsDir = path.join(ROOT, "reports", "cypress");
   cleanOwnedReportPaths();
   try {
     fs.mkdirSync(reportsDir, { recursive: true });
-    const marker = "D21E1_ZERO_CONFIG_CYPRESS_MARKER";
     fs.writeFileSync(
       path.join(reportsDir, "report.json"),
       JSON.stringify({
@@ -284,9 +299,7 @@ test("D21E-1 spawned CLI, QA_FRAMEWORK absent: the actual production entrypoint 
         results: [
           {
             file: "cypress/e2e/tests/category_tree_behavior.cy.js",
-            suites: [
-              { title: marker, suites: [], tests: [{ title: "spawned CLI fixture test", state: "passed", duration: 3 }] },
-            ],
+            suites: [{ title: "TI-1 fail-closed marker", suites: [], tests: [{ title: "spawned CLI fixture test", state: "passed", duration: 3 }] }],
           },
         ],
       })
@@ -294,7 +307,6 @@ test("D21E-1 spawned CLI, QA_FRAMEWORK absent: the actual production entrypoint 
 
     const env = { ...process.env };
     delete env.QA_FRAMEWORK;
-    assert.equal(Object.prototype.hasOwnProperty.call(env, "QA_FRAMEWORK"), false, "sanity: QA_FRAMEWORK must be genuinely absent from the child's environment");
 
     const result = spawnSync(process.execPath, [path.join(ROOT, "scripts", "ai", "collect-context.js")], {
       cwd: ROOT,
@@ -302,17 +314,9 @@ test("D21E-1 spawned CLI, QA_FRAMEWORK absent: the actual production entrypoint 
       encoding: "utf8",
     });
 
-    assert.equal(result.status, 0, "the zero-config production CLI must exit successfully");
-    assert.ok(!result.stdout.includes("playwright"), "stdout must never mention Playwright for a zero-config Cypress run");
-
-    const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
-    assert.equal(written.metadata.framework, "cypress");
-    assert.equal(written.metadata.projectId, TARGOMO_PROJECT_PROFILE.id);
-    // Provenance: the normalized context genuinely derives from THIS
-    // controlled fixture, not a stale or fabricated one - the marker only
-    // exists in the fixture report just written above.
-    assert.equal(written.testResults.totals.tests, 1);
-    assert.equal(written.testResults.totals.passed, 1);
+    assert.notEqual(result.status, 0, "generic core CLI with no injected profile must exit non-zero");
+    assert.match(result.stderr + result.stack, /PROJECT_PROFILE_REQUIRED/);
+    assert.equal(fs.existsSync(outputFile), false, "no context.json may be written under a missing/unknown project identity");
   } finally {
     cleanOwnedReportPaths();
   }
@@ -457,7 +461,7 @@ test("S1 full-context: current collector wiring matches the historical oracle's 
 
   let written;
   withControlledEnv(() => {
-    main();
+    main({ profile: SYNTHETIC_TEST_PROFILE });
     written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   });
 
@@ -468,7 +472,7 @@ test("S1 full-context: current collector wiring matches the historical oracle's 
 
   assert.deepStrictEqual(projectFullContext(written), {
     metadata: {
-      projectId: "external-poi-sut",
+      projectId: SYNTHETIC_TEST_PROFILE.id,
       framework: "cypress",
       repository: "example/repository",
       commit: "0123456789abcdef0123456789abcdef01234567",
@@ -503,7 +507,7 @@ test("S1 full-context: current collector wiring matches the historical oracle's 
       "cypress/e2e/pageObjects/categories.js": { truncated: false },
       "cypress/e2e/pageObjects/subCategories.js": { truncated: false },
     },
-    knownProjectConstraints: TARGOMO_PROJECT_PROFILE.knownProjectConstraints,
+    knownProjectConstraints: SYNTHETIC_TEST_PROFILE.knownProjectConstraints,
     warnings: [],
   });
 });
@@ -533,7 +537,7 @@ test("S11 warning merge order: current collector wiring matches the historical o
 
   let written;
   withControlledEnv(() => {
-    main();
+    main({ profile: SYNTHETIC_TEST_PROFILE });
     written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   });
 
@@ -566,7 +570,7 @@ test("S11 warning merge order: current collector wiring matches the historical o
 // browser, no live SUT, no provider call anywhere in this file.
 // =========================================================================
 
-test("O1/O2: main() with no arguments and main({adapter: cypressAdapter}) produce byte-identical context.json for the same fixture (excluding only generatedAt)", (t) => {
+test("O1/O2: main({profile}) with the default adapter and main({adapter: cypressAdapter, profile}) produce byte-identical context.json for the same fixture (excluding only generatedAt)", (t) => {
   const reportsDir = path.join(ROOT, "reports", "cypress");
   const outputFile = path.join(ROOT, "reports", "ai", "context.json");
   const fixtureReport = JSON.stringify({
@@ -584,13 +588,13 @@ test("O1/O2: main() with no arguments and main({adapter: cypressAdapter}) produc
   cleanOwnedReportPaths();
   fs.mkdirSync(reportsDir, { recursive: true });
   fs.writeFileSync(path.join(reportsDir, "report.json"), fixtureReport);
-  withControlledEnv(() => main());
+  withControlledEnv(() => main({ profile: SYNTHETIC_TEST_PROFILE }));
   const written1 = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   cleanOwnedReportPaths();
 
   fs.mkdirSync(reportsDir, { recursive: true });
   fs.writeFileSync(path.join(reportsDir, "report.json"), fixtureReport);
-  withControlledEnv(() => main({ adapter: cypressAdapter }));
+  withControlledEnv(() => main({ adapter: cypressAdapter, profile: SYNTHETIC_TEST_PROFILE }));
   const written2 = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   t.after(() => cleanOwnedReportPaths());
 
@@ -647,7 +651,7 @@ test("O3-O7: an injected playwrightAdapter traverses the generic collector fully
   cleanOwnedReportPaths();
   t.after(() => cleanOwnedReportPaths());
 
-  withControlledEnv(() => main({ adapter: playwrightAdapter, adapterOptions: { reportFile } }));
+  withControlledEnv(() => main({ adapter: playwrightAdapter, adapterOptions: { reportFile }, profile: SYNTHETIC_TEST_PROFILE }));
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
 
   // metadata.framework comes exclusively from the injected adapter's own id.
@@ -687,8 +691,8 @@ test("O3-O7: an injected playwrightAdapter traverses the generic collector fully
   assert.ok(!("tests/orchestration.spec.ts" in written.relevantFiles));
 
   // ProjectProfile ownership is entirely adapter-independent.
-  assert.equal(written.metadata.projectId, TARGOMO_PROJECT_PROFILE.id);
-  assert.deepEqual(written.knownProjectConstraints, TARGOMO_PROJECT_PROFILE.knownProjectConstraints);
+  assert.equal(written.metadata.projectId, SYNTHETIC_TEST_PROFILE.id);
+  assert.deepEqual(written.knownProjectConstraints, SYNTHETIC_TEST_PROFILE.knownProjectConstraints);
 
   // browser/CI metadata remain generic - owned by getMetadata(), never the adapter.
   assert.ok("browser" in written.metadata);
@@ -718,6 +722,29 @@ test("main(): rejects an adapter missing a usable id/collect() with a clear prog
   assert.throws(() => main({ adapter: {} }), /adapter must have a non-empty string id and a collect\(\) function/);
   assert.throws(() => main({ adapter: { id: "broken" } }), /adapter must have a non-empty string id and a collect\(\) function/);
   assert.throws(() => main({ adapter: { id: "", collect: () => ({}) } }), /adapter must have a non-empty string id and a collect\(\) function/);
+});
+
+// Roadmap TI-1: generic core fails closed on a missing/invalid profile -
+// never silently selects a concrete target's identity. Validated after
+// the adapter check (an invalid adapter is still the first, unrelated
+// programmer error reported), before any output directory/file write.
+test("main(): fails closed with PROJECT_PROFILE_REQUIRED when no profile is supplied, before any output write (Roadmap TI-1)", () => {
+  cleanOwnedReportPaths();
+  const outputFile = path.join(ROOT, "reports", "ai", "context.json");
+  assert.throws(() => main({ adapter: cypressAdapter }), /PROJECT_PROFILE_REQUIRED/);
+  assert.equal(fs.existsSync(outputFile), false);
+});
+
+test("main(): fails closed with PROJECT_PROFILE_INVALID for a malformed profile", () => {
+  assert.throws(() => main({ adapter: cypressAdapter, profile: {} }), /PROJECT_PROFILE_INVALID/);
+  assert.throws(
+    () => main({ adapter: cypressAdapter, profile: { id: "", displayName: "x", knownProjectConstraints: ["y"] } }),
+    /PROJECT_PROFILE_INVALID/
+  );
+});
+
+test("getMetadata(): a missing profile is not this function's concern - it simply produces projectId: undefined, never a fabricated identity", () => {
+  assert.equal(getMetadata(cypressAdapter.id).projectId, undefined);
 });
 
 test("getMetadata: an explicit frameworkId argument overrides the default, without a second caller-supplied 'framework' parameter existing anywhere", () => {
@@ -935,7 +962,7 @@ test("Unknown framework (synthetic adapter): relevantFiles stays empty and no ab
   cleanOwnedReportPaths();
   t.after(() => cleanOwnedReportPaths());
 
-  withControlledEnv(() => main({ adapter: unknownAdapter, adapterOptions: { reportFile } }));
+  withControlledEnv(() => main({ adapter: unknownAdapter, adapterOptions: { reportFile }, profile: SYNTHETIC_TEST_PROFILE }));
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
 
   assert.equal(written.metadata.framework, "unknown-framework");

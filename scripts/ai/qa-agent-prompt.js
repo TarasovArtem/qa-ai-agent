@@ -16,7 +16,7 @@
 
 "use strict";
 
-const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const { assertValidProjectProfile } = require("./project-profile");
 const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
 
 // Single source of truth for valid classifications - reused by
@@ -47,12 +47,15 @@ const EXAMPLE_RESULT_ITEM = {
 };
 
 // `projectProfile` supplies stable project identity/display text (see
-// scripts/ai/project-profile.js, Roadmap #19.2) - defaults to
-// this repository's single production project so every existing caller
-// (analyze-failure.js, and every test in this file that calls
-// buildSystemPrompt() with no arguments) keeps working unchanged. A
-// future second project is supplied by passing a different profile
-// object here - never by editing this function.
+// scripts/ai/project-profile.js, Roadmap #19.2). Roadmap TI-1: this is
+// now a REQUIRED parameter with no default - this generic core module
+// owns no concrete project instance of its own and must not silently
+// select one (previously defaulted to Targomo's profile). Every caller
+// (analyze-failure.js's production main(), every test in this file) must
+// supply an explicit ProjectProfile; a missing/invalid one fails closed
+// via project-profile.js's assertValidProjectProfile(). A second project
+// is supplied by passing a different profile object here - never by
+// editing this function.
 //
 // `frameworkId` (Roadmap #19.5B) supplies the current test-framework
 // identity, read by analyze-failure.js straight off
@@ -63,7 +66,8 @@ const EXAMPLE_RESULT_ITEM = {
 // execution/context-level only - this parameter is never per-failure, and
 // this function performs no framework-specific branching: it only
 // interpolates the string it's given, exactly like projectProfile.
-function buildSystemPrompt(projectProfile = TARGOMO_PROJECT_PROFILE, frameworkId = "cypress") {
+function buildSystemPrompt(projectProfile, frameworkId = "cypress") {
+  assertValidProjectProfile(projectProfile, "qa-agent-prompt.buildSystemPrompt()");
   return `You are a Senior QA Automation Engineer performing failure triage for an end-to-end test suite (current test framework: ${frameworkId}) that tests ${projectProfile.displayName}. The test suite does not control that application's code, infrastructure, or uptime.
 
 For each failed test you are given, classify it using ONLY the evidence provided. Do not assume or invent anything not present in the supplied context.

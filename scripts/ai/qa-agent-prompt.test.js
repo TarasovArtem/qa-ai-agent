@@ -6,7 +6,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { CLASSIFICATIONS, buildSystemPrompt, buildUserPrompt, pickPromptMetadata, projectPromptFailure } = require("./qa-agent-prompt");
-const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const { collect: collectPlaywright } = require("./adapters/playwright-adapter");
 
 // Roadmap #19.2 - project-identity parameterization proof. A unit
@@ -20,23 +19,25 @@ const SYNTHETIC_PROJECT_PROFILE = {
   knownProjectConstraints: ["Synthetic project constraint."],
 };
 
-// Pins the exact current default sentence, not just a substring match -
-// Roadmap #19.2's original claim (byte-for-byte-unchanged production
-// output) was intentionally superseded by Roadmap #19.5B, which
-// deliberately generalized the persona away from a hardcoded "Cypress"
-// noun and interpolated an explicit, defaulted frameworkId instead (see
-// buildSystemPrompt()'s own doc comment) - this pins the new, equally
-// exact, current production-default sentence.
-const EXACT_PRODUCTION_PERSONA_SENTENCE =
-  "You are a Senior QA Automation Engineer performing failure triage for an end-to-end test suite (current test framework: cypress) that tests a live, externally hosted third-party application (poi.targomo.com). The test suite does not control that application's code, infrastructure, or uptime.";
+// Roadmap TI-1: buildSystemPrompt() no longer defaults to Targomo's
+// profile - it is a required, explicitly injected parameter (this
+// generic core module owns no concrete project instance of its own).
+// The exact current Targomo production persona sentence is proven
+// separately, against the real profile, by
+// scripts/targets/targomo/qa-agent-prompt.test.js - this generic core
+// test file uses only synthetic profiles.
+const SYNTHETIC_PROJECT_PROFILE_2 = {
+  id: "synthetic-project-2",
+  displayName: "Second Synthetic Application",
+  knownProjectConstraints: ["Second synthetic project constraint."],
+};
 
-test("buildSystemPrompt: default (no arguments) renders the exact, byte-for-byte current production persona sentence", () => {
-  const prompt = buildSystemPrompt();
-  assert.ok(prompt.startsWith(EXACT_PRODUCTION_PERSONA_SENTENCE), "persona sentence must be byte-identical to the current production text");
+test("buildSystemPrompt: requires an explicit profile - fails closed with PROJECT_PROFILE_REQUIRED when omitted (Roadmap TI-1)", () => {
+  assert.throws(() => buildSystemPrompt(), /PROJECT_PROFILE_REQUIRED/);
 });
 
-test("buildSystemPrompt: an explicit Targomo profile argument renders identically to the default", () => {
-  assert.equal(buildSystemPrompt(TARGOMO_PROJECT_PROFILE), buildSystemPrompt());
+test("buildSystemPrompt: fails closed with PROJECT_PROFILE_INVALID for a malformed profile", () => {
+  assert.throws(() => buildSystemPrompt({}), /PROJECT_PROFILE_INVALID/);
 });
 
 test("buildSystemPrompt: a synthetic second project renders its own identity and NOT Targomo's, supplied purely as data", () => {
@@ -49,26 +50,26 @@ test("buildSystemPrompt: a synthetic second project renders its own identity and
 // --- Roadmap #19.5B: frameworkId parameterization --------------------------
 
 test("buildSystemPrompt: omitting frameworkId defaults to 'cypress', matching current production behavior, regardless of project profile", () => {
-  assert.match(buildSystemPrompt(), /current test framework: cypress/);
   assert.match(buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE), /current test framework: cypress/);
+  assert.match(buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE_2), /current test framework: cypress/);
 });
 
 test("buildSystemPrompt: an explicit frameworkId overrides the default and is supplied purely as data - no framework-specific branching", () => {
-  const prompt = buildSystemPrompt(TARGOMO_PROJECT_PROFILE, "playwright");
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE, "playwright");
   assert.match(prompt, /current test framework: playwright/);
   assert.doesNotMatch(prompt, /current test framework: cypress/);
 });
 
 test("buildSystemPrompt: the persona no longer hardcodes 'Cypress' as an unconditional noun - it appears only via the (now-defaulted) frameworkId interpolation", () => {
-  const cypressDefault = buildSystemPrompt();
+  const cypressDefault = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const personaLine = cypressDefault.slice(0, cypressDefault.indexOf("\n"));
   assert.doesNotMatch(personaLine, /Cypress end-to-end suite/i, "the old hardcoded phrase must be gone");
   assert.match(personaLine, /current test framework: cypress/);
 });
 
 test("buildSystemPrompt: swapping frameworkId changes only the persona sentence - every generic rule stays byte-identical", () => {
-  const cypressPrompt = buildSystemPrompt(TARGOMO_PROJECT_PROFILE, "cypress");
-  const playwrightPrompt = buildSystemPrompt(TARGOMO_PROJECT_PROFILE, "playwright");
+  const cypressPrompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE, "cypress");
+  const playwrightPrompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE, "playwright");
 
   const afterPersonaCypress = cypressPrompt.slice(cypressPrompt.indexOf("For each failed test"));
   const afterPersonaPlaywright = playwrightPrompt.slice(playwrightPrompt.indexOf("For each failed test"));
@@ -77,13 +78,13 @@ test("buildSystemPrompt: swapping frameworkId changes only the persona sentence 
 });
 
 test("buildSystemPrompt: swapping projectProfile changes only the persona sentence - every generic rule (grounding, injection defense, output contract) is byte-identical", () => {
-  const targomoPrompt = buildSystemPrompt();
-  const syntheticPrompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
+  const firstPrompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
+  const secondPrompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE_2);
 
-  const afterPersonaTargomo = targomoPrompt.slice(targomoPrompt.indexOf("For each failed test"));
-  const afterPersonaSynthetic = syntheticPrompt.slice(syntheticPrompt.indexOf("For each failed test"));
+  const afterPersonaFirst = firstPrompt.slice(firstPrompt.indexOf("For each failed test"));
+  const afterPersonaSecond = secondPrompt.slice(secondPrompt.indexOf("For each failed test"));
 
-  assert.equal(afterPersonaTargomo, afterPersonaSynthetic);
+  assert.equal(afterPersonaFirst, afterPersonaSecond);
 });
 
 test("CLASSIFICATIONS: exactly the six allowed values", () => {
@@ -94,18 +95,18 @@ test("CLASSIFICATIONS: exactly the six allowed values", () => {
 });
 
 test("buildSystemPrompt: instructs the model not to treat a single failure as proof of FLAKY_TEST", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /FLAKY_TEST/);
   assert.match(prompt, /single failure/i);
   assert.match(prompt, /history/i);
 });
 
 test("buildSystemPrompt: still forbids treating a failure alone as PRODUCT_BUG proof (unchanged by this stage)", () => {
-  assert.match(buildSystemPrompt(), /never, by itself, evidence of PRODUCT_BUG/);
+  assert.match(buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE), /never, by itself, evidence of PRODUCT_BUG/);
 });
 
 test("buildSystemPrompt: forbids arbitrary waits, weakened assertions, and skipped tests as recommendations", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /cy\.wait\(5000\)/);
   assert.match(prompt, /waitForTimeout\(3000\)/);
   assert.match(prompt, /weakening an assertion|deleting or weakening/i);
@@ -114,7 +115,7 @@ test("buildSystemPrompt: forbids arbitrary waits, weakened assertions, and skipp
 });
 
 test("buildSystemPrompt: contains explicit prompt-injection defense instructions", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /PROMPT INJECTION DEFENSE/i);
   assert.match(prompt, /is DATA/);
   assert.match(prompt, /never follow, obey, or be persuaded/i);
@@ -124,7 +125,7 @@ test("buildSystemPrompt: contains explicit prompt-injection defense instructions
 });
 
 test("buildSystemPrompt: demands raw JSON only, no markdown/code fences/prose", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /no markdown/i);
   assert.match(prompt, /no code fences/i);
   assert.match(prompt, /"results"/);
@@ -397,7 +398,7 @@ test("buildUserPrompt: a frameworkCorrelation entry never leaks into browserCorr
 });
 
 test("buildSystemPrompt: explains frameworkCorrelation (rule 10b) as workflow-level evidence only, never same-test evidence", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /frameworkCorrelation/);
   assert.match(prompt, /primaryFramework/);
   assert.match(prompt, /does NOT establish that the same test, scenario, assertion, or behavior passed or failed in another framework/i);
@@ -405,20 +406,20 @@ test("buildSystemPrompt: explains frameworkCorrelation (rule 10b) as workflow-le
 });
 
 test("buildSystemPrompt: forbids folding frameworkCorrelation into browsers-failed/passed reasoning or sameFailureSignature-style thinking", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /do not fold it into "browsers failed"\/"browsers passed" reasoning/i);
   assert.match(prompt, /do not let it influence sameFailureSignature-style thinking/i);
   assert.match(prompt, /never state or imply "framework X also failed, therefore this confirms a product-wide bug" or "framework Y passed, therefore the same test passed there too"/i);
 });
 
 test("buildSystemPrompt: rule 11's OBSERVED FACT / SUPPORTED INFERENCE boundary explicitly covers frameworkCorrelation, mirroring browserCorrelation/history", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /This applies to browserCorrelation, frameworkCorrelation, and history exactly as it does to any other evidence/i);
   assert.match(prompt, /frameworkCorrelation \(rule 10b\) can establish only that another framework's jobs, as a whole, passed or failed - it can never establish that the same test, scenario, or assertion did so/i);
 });
 
 test("anti-overfitting: the frameworkCorrelation rule text itself stays generic, with no hardcoded browser names", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const frameworkSection = prompt.slice(prompt.indexOf("10b. A separate"), prompt.indexOf("PROMPT INJECTION DEFENSE"));
   assert.ok(frameworkSection.length > 0, "expected to find the frameworkCorrelation rule text");
   for (const pattern of [/\bchrome\b/i, /\bedge\b/i, /\bfirefox\b/i, /\bwebkit\b/i]) {
@@ -427,60 +428,60 @@ test("anti-overfitting: the frameworkCorrelation rule text itself stays generic,
 });
 
 test("buildSystemPrompt: explains browserCorrelation as corroborating evidence, not a classification rule", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /browserCorrelation/);
   assert.match(prompt, /primaryBrowser/);
   assert.match(prompt, /sameFailureSignature/);
 });
 
 test("buildSystemPrompt: does not let multi-browser failures force PRODUCT_BUG, or single-browser failures force ENVIRONMENT", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /does not by itself prove PRODUCT_BUG/i);
   assert.match(prompt, /does not prove\)? a browser-specific cause|does not (by itself )?prove.*browser-specific/i);
   assert.match(prompt, /Never state or imply/i);
 });
 
 test("buildSystemPrompt: sameFailureSignature=true is corroborating evidence for a shared cause, not an automatic classification", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /sameFailureSignature: true\)/);
   assert.match(prompt, /argues against a browser-specific cause/i);
   assert.match(prompt, /does not by itself prove PRODUCT_BUG/i);
 });
 
 test("buildSystemPrompt: sameFailureSignature=false means compared signatures differ, but does not itself establish a browser/environment cause", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /sameFailureSignature: false/);
   assert.match(prompt, /actually compared and found to differ/i);
   assert.match(prompt, /does not by itself establish ENVIRONMENT, FLAKY_TEST/i);
 });
 
 test("buildSystemPrompt: sameFailureSignature=null explicitly means insufficient/incomparable evidence, never treated as false", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /sameFailureSignature: null is not the same as false/i);
   assert.match(prompt, /no comparison could be made at all/i);
   assert.match(prompt, /must never be read as "the signatures differed\."/i);
 });
 
 test("buildSystemPrompt: requires reconciling browserCorrelation with direct evidence rather than reasoning about it in isolation", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /reconcile it with the direct current-run evidence, source code, and any history/i);
   assert.match(prompt, /direct evidence always takes precedence when the two conflict/i);
 });
 
 test("buildSystemPrompt: requires making correlation's diagnostic role visible when materially relevant, without requiring raw-field parroting", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /materially relevant to your diagnosis, make its role explicit in "rootCause" or "evidence"/i);
   assert.match(prompt, /do not satisfy this requirement by merely restating the raw browserCorrelation fields verbatim/i);
 });
 
 test("buildSystemPrompt: permits browserCorrelation to remain inconclusive rather than forcing manufactured significance", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /Correlation is allowed to be inconclusive/i);
   assert.match(prompt, /say so briefly rather than manufacturing significance it doesn't have/i);
 });
 
 test("anti-overfitting: the prompt never references specific controlled-experiment scenarios, PRs, or fixture names", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const forbidden = [
     /Scenario A/i,
     /Scenario B/i,
@@ -505,58 +506,58 @@ test("anti-overfitting: the prompt never references specific controlled-experime
 // inference / unknown) -----------------------------------------------------
 
 test("grounding rule: observed facts must be directly established by supplied evidence", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /OBSERVED FACT/);
   assert.match(prompt, /something the supplied evidence.*directly establishes/i);
 });
 
 test("grounding rule: reasoning beyond directly observed facts (supported inference) is explicitly allowed", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /SUPPORTED INFERENCE/);
   assert.match(prompt, /a reasonable conclusion that goes beyond what is directly observed but is still grounded in and consistent with the evidence/i);
 });
 
 test("grounding rule: an inference must not be presented as an observed fact", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /Never state an inference as if it were an observed fact/i);
 });
 
 test("grounding rule: unknown/not-established mechanisms are explicitly permitted, and plausible is not the same as established", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /UNKNOWN or NOT ESTABLISHED/);
   assert.match(prompt, /rather than inventing a plausible-sounding cause merely because it would explain the symptoms/i);
   assert.match(prompt, /a plausible explanation is not the same as an established one/i);
 });
 
 test("grounding rule: a confident classification can coexist with an unestablished lower-level mechanism", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /confidently supports a classification but does not establish the exact underlying mechanism/i);
   assert.match(prompt, /A confident, well-evidenced classification never needs an unproven mechanism to support it/i);
 });
 
 test("grounding rule: classification confidence never licenses inventing causal detail", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /never licenses inventing one/i);
   assert.match(prompt, /your certainty about \*what\* happened and your certainty about \*why\* it happened in mechanistic detail are independent/i);
 });
 
 test("grounding rule: browserCorrelation remains evidence, never automatic causal proof of why signatures differ", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /browserCorrelation can establish that failure signatures matched, differed, or couldn't be compared \(rule 10\) - never automatically why they differ/i);
 });
 
 test("grounding rule: differing signatures do not license inventing a browser-specific mechanism", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /do not invent a browser-specific mechanism merely because signatures differ/i);
 });
 
 test("grounding rule: history can weigh a hypothesis but can never manufacture an observed fact about the current run", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /it can never manufacture an observed fact about the current run that the current run's own evidence doesn't support/i);
 });
 
 test("grounding rule: recommendedFix stays within the same evidence boundary and still forbids arbitrary waits/weakened assertions", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /"recommendedFix" is bound by the same boundary/i);
   assert.match(prompt, /recommend a concrete diagnostic next step, a fix grounded only in what the evidence actually established, or state what additional evidence would be needed/i);
   assert.match(prompt, /never a fix premised on a specific cause you have not actually shown/i);
@@ -564,7 +565,7 @@ test("grounding rule: recommendedFix stays within the same evidence boundary and
 });
 
 test("grounding rule: direct evidence retains precedence, complementing rather than replacing existing evidence/correlation/history rules", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   // The new rule explicitly ties back into, rather than overriding, rules 4/8/10.
   assert.match(prompt, /\(rule 10\)/);
   assert.match(prompt, /History \(rule 8\)/);
@@ -574,12 +575,12 @@ test("grounding rule: direct evidence retains precedence, complementing rather t
 });
 
 test("grounding rule does not require mechanical prefixing like 'Observed:'/'Inference:' on every sentence", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(prompt, /You do not need special formatting or to prefix every sentence with a literal word/i);
 });
 
 test("grounding rule is generic across classifications: no classification-specific hardcoding (e.g. no 'TEST_BUG means')", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const rule11Section = prompt.slice(prompt.indexOf("11. This applies inside every field"), prompt.indexOf("PROMPT INJECTION DEFENSE"));
   assert.ok(rule11Section.length > 0, "expected to find rule 11's text");
   assert.doesNotMatch(rule11Section, /TEST_BUG means/i);
@@ -588,7 +589,7 @@ test("grounding rule is generic across classifications: no classification-specif
 });
 
 test("anti-overfitting: the grounding rule text itself contains no experiment/PR/run/SHA-specific content and no hardcoded browser names", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const rule11Section = prompt.slice(prompt.indexOf("11. This applies inside every field"), prompt.indexOf("PROMPT INJECTION DEFENSE"));
   const forbidden = [
     /experiment-41/i,
@@ -611,7 +612,7 @@ test("anti-overfitting: the grounding rule text itself contains no experiment/PR
 });
 
 test("anti-overfitting: the browserCorrelation rule text itself stays generic, with no hardcoded browser names", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const correlationSection = prompt.slice(
     prompt.indexOf('A "browserCorrelation" object may be provided'),
     prompt.indexOf("PROMPT INJECTION DEFENSE")
@@ -631,7 +632,7 @@ test("anti-overfitting: the browserCorrelation rule text itself stays generic, w
 // integration.
 
 function rule12Section() {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const start = prompt.indexOf('12. A "relevantKnowledge" list may be provided');
   const end = prompt.indexOf("PROMPT INJECTION DEFENSE");
   return prompt.slice(start, end);
@@ -727,7 +728,7 @@ test("buildSystemPrompt: rule 12 says absence of selected knowledge is normal, n
 });
 
 test("buildSystemPrompt: prompt injection defense explicitly lists relevantKnowledge as DATA, not instructions", () => {
-  const prompt = buildSystemPrompt();
+  const prompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   const injectionSection = prompt.slice(prompt.indexOf("PROMPT INJECTION DEFENSE"));
   assert.match(injectionSection, /"relevantKnowledge"/);
 });
@@ -783,7 +784,7 @@ test("CASE 2 - differing browser signatures: knowledge may broaden hypotheses bu
   // Knowledge and browserCorrelation stay separate top-level fields.
   assert.equal(payload.browserCorrelation.sameFailureSignature, false);
   assert.equal(payload.relevantKnowledge.length, 1);
-  const system = buildSystemPrompt();
+  const system = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   assert.match(system, /do not invent a browser-specific mechanism merely because signatures differ/i);
   assert.match(rule12Section(), /relevantKnowledge can never override any of them/i);
 });
@@ -811,7 +812,7 @@ test("CASE 3 - Firefox historical execution-environment constraint must not be p
 test("CASE 4 - Cypress retry/timeout guidance must not turn a deterministic test bug into an unsupported flaky/timing claim", () => {
   const section = rule12Section();
   assert.match(section, /must never by itself establish/i);
-  const system = buildSystemPrompt();
+  const system = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE);
   // Rule 8's existing flaky-classification discipline (a single failure is
   // never sufficient) is untouched by rule 12's addition.
   assert.match(system, /A single failure alone is never sufficient evidence for this classification/i);
@@ -1269,7 +1270,7 @@ test("PROMPT_1/WARN_1: a marker embedded in an out-of-root Playwright spec path 
     relevantFiles: {},
   };
 
-  const systemPrompt = buildSystemPrompt(TARGOMO_PROJECT_PROFILE, "playwright");
+  const systemPrompt = buildSystemPrompt(SYNTHETIC_PROJECT_PROFILE, "playwright");
   const userPrompt = buildUserPrompt(context);
 
   assert.equal(systemPrompt.includes(MARKER), false);
