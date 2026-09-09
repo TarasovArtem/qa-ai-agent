@@ -197,6 +197,7 @@ test("validateFrameworkRuntimeConfig: rejects a Playwright reportFile without a 
 const INVALID_RELATIVE_PATHS = [
   ["absolute POSIX", "/etc/passwd"],
   ["Windows drive absolute", "C:\\tests"],
+  ["Windows drive-relative (FPI1-R-4)", "C:foo"],
   ["UNC", "\\\\server\\share"],
   ["traversal", "../secrets"],
   ["embedded traversal", "cypress/../../../etc/passwd"],
@@ -316,4 +317,181 @@ test("assertValidFrameworkRuntimeConfig: bounded error never reflects unrelated 
   assert.ok(thrown);
   assert.equal(thrown.message.includes(longSecret), false);
   assert.ok(thrown.message.length < 2000);
+});
+
+// --- Roadmap FPI-1 corrective hardening (FPI1-R-1/R-2/R-3/R-4) -------------
+//
+// Regression coverage for the independent strict adversarial review's
+// exact reproduced findings. Each test below documents the OLD (rejected)
+// behavior it replaces, so a future regression that reintroduces any of
+// these defects fails loudly.
+
+// FPI1-R-1: prototype-inheritance validation bypass -------------------------
+
+test("FPI1-R-1: an object with ZERO own properties that inherits every required field is REJECTED (was: ACCEPTED)", () => {
+  const hostile = Object.create(validCypressConfig());
+  assert.deepEqual(Object.keys(hostile), []);
+  assert.equal(hostile.schemaVersion, 1); // inherited, not own
+  assert.equal(validateFrameworkRuntimeConfig(hostile).valid, false);
+});
+
+test("FPI1-R-1: a reports object with ZERO own properties that inherits reportsDir/screenshotsDir is REJECTED (was: ACCEPTED)", () => {
+  const hostileReports = Object.create({ reportsDir: "reports/cypress", screenshotsDir: "cypress/screenshots" });
+  assert.deepEqual(Object.keys(hostileReports), []);
+  assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ reports: hostileReports })).valid, false);
+});
+
+test("FPI1-R-1: a Playwright reports object inheriting reportFile is REJECTED", () => {
+  const hostileReports = Object.create({ reportFile: "reports/playwright/report.json" });
+  assert.equal(validateFrameworkRuntimeConfig(validPlaywrightConfig({ reports: hostileReports })).valid, false);
+});
+
+test("FPI1-R-1: a config with every field own EXCEPT schemaVersion (inherited) is REJECTED", () => {
+  const proto = { schemaVersion: 1 };
+  const config = Object.create(proto, {
+    projectId: { value: "x", enumerable: true },
+    framework: { value: "cypress", enumerable: true },
+    frameworkConfigPath: { value: "cypress.config.js", enumerable: true },
+    testSourceRoot: { value: "cypress", enumerable: true },
+    reports: { value: { reportsDir: "reports/cypress", screenshotsDir: "cypress/screenshots" }, enumerable: true },
+    historyWorkflowFile: { value: "cypress.yml", enumerable: true },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(config, "schemaVersion"), false);
+  assert.equal(validateFrameworkRuntimeConfig(config).valid, false);
+});
+
+test("FPI1-R-1: a class instance is REJECTED as a config object", () => {
+  class HostileConfig {}
+  const instance = Object.assign(new HostileConfig(), validCypressConfig());
+  assert.equal(validateFrameworkRuntimeConfig(instance).valid, false);
+});
+
+test("FPI1-R-1: a Date/Map/RegExp is REJECTED as a config object", () => {
+  assert.equal(validateFrameworkRuntimeConfig(new Date()).valid, false);
+  assert.equal(validateFrameworkRuntimeConfig(new Map(Object.entries(validCypressConfig()))).valid, false);
+  assert.equal(validateFrameworkRuntimeConfig(new RegExp("x")).valid, false);
+});
+
+test("FPI1-R-1: Object.create(null) with all required OWN fields is ACCEPTED (null-prototype plain data)", () => {
+  const config = Object.assign(Object.create(null), validCypressConfig());
+  assert.equal(Object.getPrototypeOf(config), null);
+  assert.equal(validateFrameworkRuntimeConfig(config).valid, true);
+});
+
+test("FPI1-R-1: an ordinary plain-object literal remains valid after JSON round-trip (JSON.parse(JSON.stringify(...)))", () => {
+  const roundTripped = JSON.parse(JSON.stringify(validCypressConfig()));
+  assert.equal(validateFrameworkRuntimeConfig(roundTripped).valid, true);
+  const roundTrippedPw = JSON.parse(JSON.stringify(validPlaywrightConfig()));
+  assert.equal(validateFrameworkRuntimeConfig(roundTrippedPw).valid, true);
+});
+
+// FPI1-R-2: unbounded unknown-key diagnostics --------------------------------
+
+test("FPI1-R-2: a single 100,000-character unknown outer key produces a bounded validate() result and a bounded assert() message (was: ~100KB each)", () => {
+  const config = validCypressConfig();
+  config["X".repeat(100000)] = "irrelevant";
+
+  const { valid, errors } = validateFrameworkRuntimeConfig(config);
+  assert.equal(valid, false);
+  assert.ok(errors.join("; ").length < 500, `expected a bounded joined message, got length ${errors.join("; ").length}`);
+
+  let thrown;
+  try {
+    assertValidFrameworkRuntimeConfig(config, "probe");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.ok(thrown.message.length < 1500, `expected a bounded assert message, got length ${thrown.message.length}`);
+  assert.ok(thrown.message.startsWith("FRAMEWORK_RUNTIME_CONFIG_INVALID:"));
+});
+
+test("FPI1-R-2: 500 unknown outer keys produce a bounded validate() result and a bounded assert() message (was: ~23KB)", () => {
+  const config = validCypressConfig();
+  for (let i = 0; i < 500; i++) config["unknownKey" + i] = i;
+
+  const { errors } = validateFrameworkRuntimeConfig(config);
+  assert.ok(errors.length <= 9, `expected at most 8 reported unknown keys + 1 summary line, got ${errors.length}`);
+
+  let thrown;
+  try {
+    assertValidFrameworkRuntimeConfig(config, "probe");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown.message.length < 1500, `expected a bounded assert message, got length ${thrown.message.length}`);
+});
+
+test("FPI1-R-2: a huge unknown key inside the nested Cypress reports object is bounded", () => {
+  const config = validCypressConfig({
+    reports: { reportsDir: "reports/cypress", screenshotsDir: "cypress/screenshots", ["X".repeat(100000)]: "x" },
+  });
+  const { valid, errors } = validateFrameworkRuntimeConfig(config);
+  assert.equal(valid, false);
+  assert.ok(errors.join("; ").length < 500);
+});
+
+test("FPI1-R-2: a huge unknown key inside the nested Playwright reports object is bounded", () => {
+  const config = validPlaywrightConfig({
+    reports: { reportFile: "reports/playwright/report.json", ["X".repeat(100000)]: "x" },
+  });
+  const { valid, errors } = validateFrameworkRuntimeConfig(config);
+  assert.equal(valid, false);
+  assert.ok(errors.join("; ").length < 500);
+});
+
+// FPI1-R-3: schemaVersion coercion side effect -------------------------------
+
+test("FPI1-R-3: a schemaVersion with a throwing toString() produces the stable UNSUPPORTED_VERSION error, never the coercion side effect (was: uncontrolled thrown exception)", () => {
+  const evilVersion = {
+    toString() {
+      throw new Error("COERCION_SIDE_EFFECT");
+    },
+  };
+  let thrown;
+  try {
+    assertValidFrameworkRuntimeConfig(validCypressConfig({ schemaVersion: evilVersion }), "probe");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.ok(thrown.message.startsWith("FRAMEWORK_RUNTIME_CONFIG_UNSUPPORTED_VERSION:"));
+  assert.equal(thrown.message.includes("COERCION_SIDE_EFFECT"), false);
+});
+
+test("FPI1-R-3: a schemaVersion whose toString() returns a huge string is never reflected into the error (was: ~100KB message)", () => {
+  const hugeVersion = {
+    toString() {
+      return "X".repeat(100000);
+    },
+  };
+  let thrown;
+  try {
+    assertValidFrameworkRuntimeConfig(validCypressConfig({ schemaVersion: hugeVersion }), "probe");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.ok(thrown.message.length < 500, `expected a bounded message, got length ${thrown.message.length}`);
+  assert.ok(thrown.message.startsWith("FRAMEWORK_RUNTIME_CONFIG_UNSUPPORTED_VERSION:"));
+});
+
+// FPI1-R-4: Windows drive-relative path --------------------------------------
+
+test("FPI1-R-4: Windows drive-relative paths (no separator after the drive letter) are REJECTED in frameworkConfigPath and testSourceRoot (was: ACCEPTED)", () => {
+  for (const value of ["C:foo", "c:foo", "Z:tests/e2e"]) {
+    assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: value })).valid, false, value);
+    assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ frameworkConfigPath: value })).valid, false, value);
+  }
+});
+
+test("FPI1-R-4: Windows drive-absolute and UNC paths remain REJECTED (unchanged)", () => {
+  assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "C:/foo" })).valid, false);
+  assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "C:\\foo" })).valid, false);
+  assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "\\\\server\\share" })).valid, false);
+});
+
+test("FPI1-R-4: ordinary repository-relative paths remain ACCEPTED (unchanged)", () => {
+  assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "cypress" })).valid, true);
+  assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "tests/e2e" })).valid, true);
 });

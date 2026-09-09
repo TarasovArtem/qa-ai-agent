@@ -40,6 +40,18 @@
  * This module is a pure, dependency-free contract validator - it makes
  * no filesystem call, reads no environment variable, and is not consumed
  * by any production runtime path yet.
+ *
+ * INPUT TRUST MODEL (Roadmap FPI-1 corrective hardening, closing
+ * FPI1-R-1/R-2/R-4 from the strict independent adversarial review - see
+ * scripts/ai/framework-runtime-config.js's own module docstring for the
+ * full rationale, identical here): a valid config represents plain,
+ * operator-owned, JSON-like data - it must be a plain data object (see
+ * isPlainDataObject() below), every required field must be that object's
+ * OWN property (never merely inherited), and the optional
+ * `projectKnowledgeUnitsDir` field is likewise never consumed unless it
+ * is an own property. Diagnostics are bounded regardless of caller-
+ * supplied key size (see safeKeyDisplay()/MAX_REPORTED_UNKNOWN_KEYS
+ * below).
  */
 
 "use strict";
@@ -49,7 +61,26 @@
 // finite bound.
 const MAX_STRING_LENGTH = 200;
 
+// Roadmap FPI-1 corrective (FPI1-R-2): matching
+// scripts/ai/framework-runtime-config.js's own bounds exactly.
+const MAX_UNKNOWN_KEY_DISPLAY_LENGTH = 80;
+const MAX_REPORTED_UNKNOWN_KEYS = 8;
+const MAX_VALIDATION_DETAIL_LENGTH = 1024;
+
 const ALLOWED_KEYS = Object.freeze(["projectId", "projectKnowledgeUnitsDir"]);
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+// Roadmap FPI-1 corrective (FPI1-R-1): matching
+// scripts/ai/framework-runtime-config.js's own isPlainDataObject()
+// exactly - see that module's docstring for the full rationale.
+function isPlainDataObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -77,12 +108,17 @@ function hasControlChar(value) {
 // duplicated primitives over premature shared abstraction" convention
 // (see that module's own docstring for the full rationale: no filesystem
 // call, no cross-module dependency).
+//
+// Roadmap FPI-1 corrective (FPI1-R-4): the Windows drive check now
+// rejects ANY leading "<letter>:" prefix (drive-absolute AND
+// drive-relative forms), matching framework-runtime-config.js's own
+// corrected rule exactly.
 function isSafeCanonicalRelativePath(value) {
   if (!isBoundedString(value)) return false;
   if (hasControlChar(value)) return false;
   if (value.includes("\\")) return false;
   if (value.startsWith("/")) return false;
-  if (/^[A-Za-z]:[\\/]/.test(value)) return false; // Windows drive-absolute
+  if (/^[A-Za-z]:/.test(value)) return false; // Windows drive-absolute or drive-relative
   if (/^(\\\\|\/\/)/.test(value)) return false; // UNC / doubled-leading-slash
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) return false; // URL-like scheme
   if (value === "." || value.startsWith("./")) return false;
@@ -91,28 +127,66 @@ function isSafeCanonicalRelativePath(value) {
   return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
+// Roadmap FPI-1 corrective (FPI1-R-2): matching
+// scripts/ai/framework-runtime-config.js's own safeKeyDisplay() exactly.
+function safeKeyDisplay(key) {
+  let display = "";
+  const limit = Math.min(key.length, MAX_UNKNOWN_KEY_DISPLAY_LENGTH);
+  for (let i = 0; i < limit; i++) {
+    const code = key.charCodeAt(i);
+    display += code < 32 || code === 127 ? "?" : key[i];
+  }
+  if (key.length > MAX_UNKNOWN_KEY_DISPLAY_LENGTH) display += "...";
+  return display;
+}
+
+// Roadmap FPI-1 corrective (FPI1-R-2): matching
+// scripts/ai/framework-runtime-config.js's own pushUnknownKeyErrors()
+// exactly.
+function pushUnknownKeyErrors(object, allowedKeys, errors, describe) {
+  const unknown = Object.keys(object).filter((key) => !allowedKeys.includes(key));
+  const shown = unknown.slice(0, MAX_REPORTED_UNKNOWN_KEYS);
+  for (const key of shown) {
+    errors.push(describe(safeKeyDisplay(key)));
+  }
+  const omitted = unknown.length - shown.length;
+  if (omitted > 0) {
+    errors.push(`${omitted} additional unknown key(s) omitted`);
+  }
+}
+
+// Roadmap FPI-1 corrective (FPI1-R-2): matching
+// scripts/ai/framework-runtime-config.js's own boundedDetail() exactly.
+function boundedDetail(errors) {
+  const joined = errors.join("; ");
+  if (joined.length <= MAX_VALIDATION_DETAIL_LENGTH) return joined;
+  return `${joined.slice(0, MAX_VALIDATION_DETAIL_LENGTH)}...`;
+}
+
 // Lightweight, dependency-free shape check - matching
 // scripts/ai/project-profile.js's validateProjectProfile() convention.
 function validateProjectKnowledgeConfig(config) {
   const errors = [];
 
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return { valid: false, errors: ["config must be an object"] };
+  if (!isPlainDataObject(config)) {
+    return { valid: false, errors: ["config must be a plain, JSON-like object"] };
   }
 
-  for (const key of Object.keys(config)) {
-    if (!ALLOWED_KEYS.includes(key)) {
-      errors.push(`unknown key "${key}" is not permitted`);
-    }
+  pushUnknownKeyErrors(config, ALLOWED_KEYS, errors, (key) => `unknown key "${key}" is not permitted`);
+
+  if (!hasOwn(config, "projectId") || !isBoundedString(config.projectId)) {
+    errors.push("projectId must be a non-empty, bounded own string property");
   }
 
-  if (!isBoundedString(config.projectId)) {
-    errors.push("projectId must be a non-empty, bounded string");
-  }
-
-  if (config.projectKnowledgeUnitsDir !== undefined) {
+  // The optional field is never consumed unless it is an OWN property
+  // (Roadmap FPI-1 corrective, FPI1-R-1) - an inherited value is treated
+  // identically to the field being absent, never validated or accepted.
+  // An own property explicitly set to `undefined` is likewise treated as
+  // absent, preserving this module's original "optional means omittable"
+  // semantics.
+  if (hasOwn(config, "projectKnowledgeUnitsDir") && config.projectKnowledgeUnitsDir !== undefined) {
     if (!isSafeCanonicalRelativePath(config.projectKnowledgeUnitsDir)) {
-      errors.push("projectKnowledgeUnitsDir must be a safe, canonical, repository-relative directory path when supplied");
+      errors.push("projectKnowledgeUnitsDir must be a safe, canonical, repository-relative own directory path when supplied");
     }
   }
 
@@ -132,7 +206,7 @@ function assertValidProjectKnowledgeConfig(config, callerLabel) {
   const { valid, errors } = validateProjectKnowledgeConfig(config);
   if (!valid) {
     throw new Error(
-      `PROJECT_KNOWLEDGE_CONFIG_INVALID: ${callerLabel} received an invalid ProjectKnowledgeConfig (${errors.join("; ")}).`
+      `PROJECT_KNOWLEDGE_CONFIG_INVALID: ${callerLabel} received an invalid ProjectKnowledgeConfig (${boundedDetail(errors)}).`
     );
   }
   return config;
