@@ -37,6 +37,7 @@ const { createProvider } = require("./providers");
 const { PROVIDER_ERROR_CODES, normalizeProviderError } = require("./providers/provider-error");
 const { validateProvider, validateProviderResponse } = require("./providers/provider-contract");
 const { applyAgentPolicy } = require("./agent-policy");
+const { assertValidProjectProfile } = require("./project-profile");
 const { loadKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
 const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
@@ -660,7 +661,19 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-async function main() {
+// Roadmap TI-1: `projectProfile` is required and validated FIRST - before
+// readContext(), before the output directory is created, and before the
+// zero-failed-tests early-return's own artifact write below. A generic,
+// target-aware runtime invocation must never produce ANY report artifact
+// (empty or otherwise) under an unknown/invalid target identity. A
+// target-owned bootstrap (see scripts/targets/targomo/analyze-failure.js)
+// supplies the real production profile; this function's own rejection on
+// a missing/invalid one is caught by the same require.main===module
+// handler at the bottom of this file that already handles every other
+// main() failure, so no separate error path is needed here.
+async function main({ projectProfile } = {}) {
+  assertValidProjectProfile(projectProfile, "analyze-failure.main()");
+
   let context;
   try {
     context = readContext();
@@ -695,7 +708,7 @@ async function main() {
 
   let report;
   try {
-    report = await buildFailureReport(context);
+    report = await buildFailureReport(context, { projectProfile });
   } catch (err) {
     fail(err.message);
     return;
@@ -713,6 +726,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  main,
   runProviderAnalysis,
   buildFailureReport,
   validateAnalysisItem,

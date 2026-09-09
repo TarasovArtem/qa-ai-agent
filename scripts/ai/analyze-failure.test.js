@@ -94,8 +94,32 @@ function providerFailingThenSucceeding(failCount, err, resultsPayload) {
 
 const noopSleep = async () => {};
 
+// Roadmap TI-1: rpa()/bfr() both require an
+// explicit projectProfile now (this generic core module owns no concrete
+// project instance of its own) - a synthetic, valid, non-Targomo profile
+// used as the default test fixture throughout this file, matching this
+// codebase's own established "prefer synthetic fixture for core-unit
+// behavior" convention. Individual tests that specifically exercise
+// profile-related behavior (see the Roadmap #19.4S/TI-1 block later in
+// this file) call rpa()/bfr() directly
+// instead of through these wrappers, so their own explicit
+// (missing/invalid/real) profile is never silently overridden.
+const SYNTHETIC_PROFILE_SENTINEL = {
+  id: "synthetic-project",
+  displayName: "SYNTHETIC_PROFILE_DISPLAY_SENTINEL",
+  knownProjectConstraints: ["SYNTHETIC_PROFILE_CONSTRAINT_SENTINEL"],
+};
+
+function rpa(provider, ctx, options = {}) {
+  return runProviderAnalysis(provider, ctx, { projectProfile: SYNTHETIC_PROFILE_SENTINEL, ...options });
+}
+
+function bfr(ctx, options = {}) {
+  return buildFailureReport(ctx, { projectProfile: SYNTHETIC_PROFILE_SENTINEL, ...options });
+}
+
 test("runProviderAnalysis: happy path returns results that pass validation", async () => {
-  const { results } = await runProviderAnalysis(providerReturning([goodItem()]), context);
+  const { results } = await rpa(providerReturning([goodItem()]), context);
   assert.equal(results.length, 1);
   assert.deepEqual(validateAnalysisItem(results[0], 0), []);
   assert.equal(recommendsArbitraryWait(results[0]), false);
@@ -109,7 +133,7 @@ test("runProviderAnalysis: calls provider.analyze with a systemPrompt and userPr
       return JSON.stringify({ results: [goodItem()] });
     },
   };
-  await runProviderAnalysis(provider, context);
+  await rpa(provider, context);
   assert.equal(typeof captured.systemPrompt, "string");
   assert.equal(typeof captured.userPrompt, "string");
   assert.ok(captured.systemPrompt.length > 0);
@@ -118,29 +142,29 @@ test("runProviderAnalysis: calls provider.analyze with a systemPrompt and userPr
 
 test("runProviderAnalysis: strips a markdown code fence around the JSON if the provider added one anyway", async () => {
   const provider = { analyze: async () => "```json\n" + JSON.stringify({ results: [goodItem()] }) + "\n```" };
-  const { results } = await runProviderAnalysis(provider, context);
+  const { results } = await rpa(provider, context);
   assert.equal(results.length, 1);
 });
 
 test("runProviderAnalysis: result count mismatch is left for the caller to detect", async () => {
-  const { results } = await runProviderAnalysis(providerReturning([goodItem(), goodItem()]), context);
+  const { results } = await rpa(providerReturning([goodItem(), goodItem()]), context);
   assert.notEqual(results.length, context.failedTests.length);
 });
 
 test("validateAnalysisItem: rejects an invalid classification enum value", async () => {
-  const { results } = await runProviderAnalysis(providerReturning([goodItem({ classification: "TOTALLY_MADE_UP" })]), context);
+  const { results } = await rpa(providerReturning([goodItem({ classification: "TOTALLY_MADE_UP" })]), context);
   const errors = validateAnalysisItem(results[0], 0);
   assert.ok(errors.some((e) => e.includes("classification")));
 });
 
 test("validateAnalysisItem: rejects out-of-range confidence", async () => {
-  const { results } = await runProviderAnalysis(providerReturning([goodItem({ confidence: 1.5 })]), context);
+  const { results } = await rpa(providerReturning([goodItem({ confidence: 1.5 })]), context);
   const errors = validateAnalysisItem(results[0], 0);
   assert.ok(errors.some((e) => e.includes("confidence")));
 });
 
 test("recommendsArbitraryWait: flags a fixed-duration wait recommendation", async () => {
-  const { results } = await runProviderAnalysis(
+  const { results } = await rpa(
     providerReturning([
       goodItem({ recommendedFix: { file: context.failedTests[0].specFile, description: "Just add cy.wait(5000) after the click." } }),
     ]),
@@ -168,7 +192,7 @@ test("stripCodeFences: strips a ```json fence, leaves plain JSON untouched", () 
 test("runProviderAnalysis: a non-retryable ProviderError surfaces cleanly, using the safe allowlisted message - never the raw error text", async () => {
   const err = new ProviderError("Unauthorized (401)", { code: 401, retryable: false });
   await assert.rejects(
-    () => runProviderAnalysis(providerThrowing(err), context, { sleep: noopSleep }),
+    () => rpa(providerThrowing(err), context, { sleep: noopSleep }),
     (thrown) => {
       assert.match(thrown.message, /Unknown provider error/);
       assert.equal(thrown.message.includes("Unauthorized"), false, "the raw provider error text must never reach the terminal message");
@@ -179,7 +203,7 @@ test("runProviderAnalysis: a non-retryable ProviderError surfaces cleanly, using
 
 test("runProviderAnalysis: a non-retryable error is never retried, even with attempts remaining", async () => {
   const provider = providerFailingThenSucceeding(99, new ProviderError("Forbidden", { code: 403, retryable: false }), [goodItem()]);
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
   assert.equal(provider.calls, 1);
 });
 
@@ -189,7 +213,7 @@ test("runProviderAnalysis: retries a retryable ProviderError and succeeds on a l
     new ProviderError("Service Unavailable", { code: 503, retryable: true }),
     [goodItem()]
   );
-  const { results } = await runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 });
+  const { results } = await rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 });
   assert.equal(provider.calls, 3, "should have retried twice before succeeding on the third attempt");
   assert.equal(results.length, 1);
 });
@@ -198,13 +222,13 @@ test("runProviderAnalysis: gives up after maxAttempts on a persistently retryabl
   const provider = providerFailingThenSucceeding(99, new ProviderError("Internal Server Error", { code: 500, retryable: true }), [
     goodItem(),
   ]);
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
   assert.equal(provider.calls, 3);
 });
 
 test("runProviderAnalysis: a plain (non-ProviderError) throw is treated as non-retryable", async () => {
   const provider = providerFailingThenSucceeding(99, new Error("boom"), [goodItem()]);
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
   assert.equal(provider.calls, 1);
 });
 
@@ -219,7 +243,7 @@ test("runProviderAnalysis: a fake-secret-shaped raw provider error message never
     retryable: false,
   });
   await assert.rejects(
-    () => runProviderAnalysis(providerThrowing(err), context, { sleep: noopSleep }),
+    () => rpa(providerThrowing(err), context, { sleep: noopSleep }),
     (thrown) => {
       assert.equal(thrown.message.includes("FAKE_API_KEY_123456"), false, "the fake secret-shaped raw text must never reach the terminal message");
       assert.match(thrown.message, /Provider network request failed/);
@@ -241,28 +265,28 @@ test("runProviderAnalysis: a fake-secret-shaped raw provider error message never
 // the shared safe INVALID_RESPONSE message.
 test("runProviderAnalysis: empty response content produces a clear, safely-worded error, not a crash", async () => {
   const provider = { analyze: async () => "" };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: a whitespace-only response is treated the same as empty", async () => {
   const provider = { analyze: async () => "   \n  " };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: a non-string response produces a clear, safely-worded error, not a crash", async () => {
   const provider = { analyze: async () => null };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: an object response (not yet a string) is rejected before ever reaching JSON.parse", async () => {
   const provider = { analyze: async () => ({ results: [goodItem()] }) };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep }), /Provider returned an invalid response/i);
 });
 
 test("runProviderAnalysis: a provider object missing analyze() fails immediately with a clear error, no retries spent", async () => {
   let sleepCalls = 0;
   await assert.rejects(
-    () => runProviderAnalysis({}, context, { sleep: async () => { sleepCalls += 1; }, maxAttempts: 3 }),
+    () => rpa({}, context, { sleep: async () => { sleepCalls += 1; }, maxAttempts: 3 }),
     (err) => {
       assert.match(err.message, /analyze\(\) function is required/);
       return true;
@@ -279,18 +303,18 @@ test("runProviderAnalysis: an invalid-response failure is not retried by default
       return "";
     },
   };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
   assert.equal(calls, 1);
 });
 
 test("runProviderAnalysis: unexpected response shape (no results array) produces a clear error", async () => {
   const provider = { analyze: async () => JSON.stringify({ unexpected: true }) };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /missing "results" array/);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep }), /missing "results" array/);
 });
 
 test("runProviderAnalysis: invalid JSON in the response produces a clear error, not a fabricated analysis", async () => {
   const provider = { analyze: async () => "this is not json at all" };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep }), /not valid JSON/);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep }), /not valid JSON/);
 });
 
 // --- Roadmap #18.3: provider-attempt provenance ----------------------------
@@ -303,7 +327,7 @@ test("runProviderAnalysis: invalid JSON in the response produces a clear error, 
 // a later attempt's error.
 
 test("runProviderAnalysis: providerAttempts is 1 and firstAttemptError is null on immediate success", async () => {
-  const { providerAttempts, firstAttemptError } = await runProviderAnalysis(providerReturning([goodItem()]), context);
+  const { providerAttempts, firstAttemptError } = await rpa(providerReturning([goodItem()]), context);
   assert.equal(providerAttempts, 1);
   assert.equal(firstAttemptError, null);
 });
@@ -311,7 +335,7 @@ test("runProviderAnalysis: providerAttempts is 1 and firstAttemptError is null o
 test("runProviderAnalysis: one retryable failure then success - providerAttempts is 2, firstAttemptError describes attempt 1 only, using the fixed safe message for its code", async () => {
   const err = new ProviderError("Service Unavailable", { code: PROVIDER_ERROR_CODES.UNKNOWN, retryable: true });
   const provider = providerFailingThenSucceeding(1, err, [goodItem()]);
-  const { providerAttempts, firstAttemptError } = await runProviderAnalysis(provider, context, {
+  const { providerAttempts, firstAttemptError } = await rpa(provider, context, {
     sleep: noopSleep,
     maxAttempts: 3,
   });
@@ -332,7 +356,7 @@ test("runProviderAnalysis: two retryable failures then success - providerAttempt
       return JSON.stringify({ results: [goodItem()] });
     },
   };
-  const { providerAttempts, firstAttemptError } = await runProviderAnalysis(provider, context, {
+  const { providerAttempts, firstAttemptError } = await rpa(provider, context, {
     sleep: noopSleep,
     maxAttempts: 3,
   });
@@ -354,7 +378,7 @@ test("runProviderAnalysis: firstAttemptError is a safe normalized summary - only
     cause: causeWithSecrets,
   });
   const provider = providerFailingThenSucceeding(1, err, [goodItem()]);
-  const { firstAttemptError } = await runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 });
+  const { firstAttemptError } = await rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 });
 
   assert.deepEqual(Object.keys(firstAttemptError).sort(), ["code", "message", "retryable"]);
   assert.equal("cause" in firstAttemptError, false);
@@ -394,7 +418,7 @@ test("summarizeProviderError: an arbitrary Error's sensitive-looking message, on
 test("runProviderAnalysis: an arbitrary Error is always terminal (never retried), so it can never actually reach a persisted report in the first place - the safety net above is defense-in-depth, not the only protection", async () => {
   const sensitiveErr = new Error("SECRET=https://internal.example/token=super-secret-value");
   const provider = providerFailingThenSucceeding(99, sensitiveErr, [goodItem()]);
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }));
   assert.equal(provider.calls, 1, "a non-retryable first failure must never be retried, so no later successful attempt - and no report - can ever occur");
 });
 
@@ -404,7 +428,7 @@ test("runProviderAnalysis: a NETWORK-coded ProviderError carrying a sensitive-lo
     retryable: true,
   });
   const provider = providerFailingThenSucceeding(1, err, [goodItem()]);
-  const { providerAttempts, firstAttemptError } = await runProviderAnalysis(provider, context, {
+  const { providerAttempts, firstAttemptError } = await rpa(provider, context, {
     sleep: noopSleep,
     maxAttempts: 3,
   });
@@ -427,7 +451,7 @@ test("runProviderAnalysis: two different NETWORK raw messages produce the identi
   for (const raw of rawMessages) {
     const err = new ProviderError(raw, { code: PROVIDER_ERROR_CODES.NETWORK, retryable: true });
     const provider = providerFailingThenSucceeding(1, err, [goodItem()]);
-    const { firstAttemptError } = await runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 });
+    const { firstAttemptError } = await rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 });
     persistedMessages.push(firstAttemptError.message);
   }
 
@@ -468,7 +492,7 @@ test("runProviderAnalysis: a non-empty response containing malformed QA JSON sti
       return "this is not json at all";
     },
   };
-  await assert.rejects(() => runProviderAnalysis(provider, context, { sleep: noopSleep, maxAttempts: 3 }), /not valid JSON/);
+  await assert.rejects(() => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }), /not valid JSON/);
   assert.equal(calls, 1, "malformed QA JSON must not trigger a retry - that behavior is intentionally out of scope for #18.3");
 });
 
@@ -899,13 +923,13 @@ test("readHistory: three-generation transition - generation C (synthetic Playwri
 // `history: null` is passed explicitly so this never touches the real
 // reports/ai/history.json (avoiding any interaction with the readHistory
 // tests above, which do use that file). Exercises the real MockProvider -
-// not a hand-rolled fake - through the real buildFailureReport(), the same
+// not a hand-rolled fake - through the real bfr(), the same
 // function main() calls, so this is the closest thing to an end-to-end
 // check of "fixture context -> MockProvider -> validated ai-report.json
 // shape" this test suite has, while staying fully deterministic.
 test("buildFailureReport: fixture context through the real MockProvider produces a valid, fully-populated report", async () => {
   const provider = new MockProvider();
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
 
   assert.equal(report.results.length, 1);
   const [result] = report.results;
@@ -923,19 +947,19 @@ test("buildFailureReport: fixture context through the real MockProvider produces
 
 test("buildFailureReport: a provider without a .name still produces a report, falling back to 'unknown'", async () => {
   const provider = { analyze: async () => JSON.stringify({ results: [goodItem()] }) };
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
   assert.equal(report.analysis.provider, "unknown");
 });
 
 // --- Roadmap #18.3: provider-attempt provenance on the persisted report ---
 //
-// LEVEL 2 (report plumbing) only: does runProviderAnalysis()'s
+// LEVEL 2 (report plumbing) only: does rpa()'s
 // providerAttempts/firstAttemptError land under report.analysis at all?
 // LEVEL 1 (retry orchestration itself - attempt counting for 1/2/3
 // attempts, first-error-only capture, safe-summary mapping) is already
 // exhaustively covered above at the runProviderAnalysis level, with
-// noopSleep, at zero real-time cost. buildFailureReport() has no way to
-// inject a zero-delay sleep (it calls runProviderAnalysis(provider,
+// noopSleep, at zero real-time cost. bfr() has no way to
+// inject a zero-delay sleep (it calls rpa(provider,
 // context) with no options), so a buildFailureReport-level test that
 // forces an actual retry would pay a real ~500ms backoff wait for
 // coverage that already exists elsewhere at zero cost - not worth it,
@@ -945,7 +969,7 @@ test("buildFailureReport: a provider without a .name still produces a report, fa
 // branching), together with policy/classification fields.
 test("buildFailureReport: analysis.providerAttempts is 1 and analysis.firstAttemptError is null for a first-attempt-success report", async () => {
   const provider = new MockProvider();
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
   assert.equal(report.analysis.providerAttempts, 1);
   assert.equal(report.analysis.firstAttemptError, null);
   assert.equal(report.results.length, 1);
@@ -956,7 +980,7 @@ test("buildFailureReport: analysis.providerAttempts is 1 and analysis.firstAttem
 
 test("buildFailureReport: sourceContext.browserCorrelation is null when context has no correlation metadata", async () => {
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
   assert.equal(report.sourceContext.browserCorrelation, null);
 });
 
@@ -971,7 +995,7 @@ test("buildFailureReport: sourceContext.browserCorrelation carries through uncha
     sameFailureSignature: true,
   };
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport({ ...context, browserCorrelation: correlation }, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr({ ...context, browserCorrelation: correlation }, { provider, history: null, relevantKnowledge: [] });
   assert.deepEqual(report.sourceContext.browserCorrelation, correlation);
 });
 
@@ -979,7 +1003,7 @@ test("buildFailureReport: sourceContext.browserCorrelation carries through uncha
 
 test("buildFailureReport: sourceContext.frameworkCorrelation is null when context has no cross-framework metadata", async () => {
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
   assert.equal(report.sourceContext.frameworkCorrelation, null);
 });
 
@@ -1001,7 +1025,7 @@ test("buildFailureReport: sourceContext.frameworkCorrelation carries through unc
     ],
   };
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(
+  const report = await bfr(
     { ...context, browserCorrelation, frameworkCorrelation },
     { provider, history: null, relevantKnowledge: [] }
   );
@@ -1026,7 +1050,7 @@ test("buildFailureReport: an adversarial extra property on browserCorrelation ca
     privateMarker: "PRIVATE_BROWSERCORRELATION_MARKER_21H",
   };
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport({ ...context, browserCorrelation }, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr({ ...context, browserCorrelation }, { provider, history: null, relevantKnowledge: [] });
   assert.ok(!("privateMarker" in report.sourceContext.browserCorrelation));
   assert.ok(!JSON.stringify(report.sourceContext).includes("PRIVATE_BROWSERCORRELATION_MARKER_21H"));
 });
@@ -1042,7 +1066,7 @@ test("buildFailureReport: adversarial extra properties on frameworkCorrelation (
     nested: { secret: "PRIVATE_NESTED_MARKER_21H" },
   };
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport({ ...context, frameworkCorrelation }, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr({ ...context, frameworkCorrelation }, { provider, history: null, relevantKnowledge: [] });
   const serialized = JSON.stringify(report.sourceContext);
   assert.ok(!serialized.includes("PRIVATE_FRAMEWORK_MARKER_21H"));
   assert.ok(!serialized.includes("PRIVATE_NESTED_MARKER_21H"));
@@ -1063,7 +1087,7 @@ test("buildFailureReport: adversarial extra properties on frameworkCorrelation (
 
 test("buildFailureReport: regression - TEST_BUG + shouldCreateBug=true from the provider is forced to false in the final report", async () => {
   const provider = providerReturning([goodItem({ classification: "TEST_BUG", shouldCreateBug: true })]);
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
 
   const [result] = report.results;
   assert.equal(result.classification, "TEST_BUG");
@@ -1074,7 +1098,7 @@ test("buildFailureReport: regression - TEST_BUG + shouldCreateBug=true from the 
 
 test("buildFailureReport: PRODUCT_BUG + shouldCreateBug=true from the provider is preserved in the final report", async () => {
   const provider = providerReturning([goodItem({ classification: "PRODUCT_BUG", shouldCreateBug: true })]);
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
 
   const [result] = report.results;
   assert.equal(result.classification, "PRODUCT_BUG");
@@ -1096,7 +1120,7 @@ test("buildFailureReport: policy is applied per-result, not just to the first it
     goodItem({ test: { title: "test bug test", specFile: context.failedTests[0].specFile }, classification: "TEST_BUG", shouldCreateBug: true }),
   ]);
 
-  const report = await buildFailureReport(multiTestContext, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(multiTestContext, { provider, history: null, relevantKnowledge: [] });
 
   assert.equal(report.results.length, 2);
   assert.equal(report.results[0].classification, "PRODUCT_BUG");
@@ -1106,7 +1130,7 @@ test("buildFailureReport: policy is applied per-result, not just to the first it
 });
 
 // --- QA Knowledge production integration (Roadmap #16A) --------------------
-// computeRelevantKnowledge()/buildFailureReport()'s relevantKnowledge option
+// computeRelevantKnowledge()/bfr()'s relevantKnowledge option
 // wire scripts/ai/knowledge/'s (Roadmap #15) loader+selector into the real
 // production analysis path. See qa-agent-prompt.test.js for the prompt's
 // textual authority-contract tests; these prove the actual wiring.
@@ -1132,7 +1156,7 @@ test("Roadmap #16A A: relevant knowledge selected from current-run context reach
 
   // No relevantKnowledge override - exercises the REAL loadKnowledgeUnits()
   // + selectKnowledge() default against the real production corpus.
-  await buildFailureReport(timeoutContext, { provider, history: null });
+  await bfr(timeoutContext, { provider, history: null });
 
   assert.match(captured.userPrompt, /"qa-timeout-error-multiple-causes"/);
   assert.match(captured.userPrompt, /A 'Timed out retrying' error can arise from several distinct mechanisms/);
@@ -1175,7 +1199,7 @@ test("Roadmap #16A B / #16B.1: units unrelated to the current failure (firefox/c
     },
   };
 
-  const report = await buildFailureReport(noMatchContext, { provider, history: null });
+  const report = await bfr(noMatchContext, { provider, history: null });
 
   assert.doesNotMatch(captured.userPrompt, /"project-firefox-execution-environment-split"/);
   assert.doesNotMatch(captured.userPrompt, /"cross-browser-differing-signature-caution"/);
@@ -1196,7 +1220,7 @@ test("Roadmap #16A C / Phase 10: selectKnowledge() genuinely returning [] still 
   assert.deepEqual(selectKnowledge(context, []), []);
 
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
 
   assert.equal(report.results.length, 1);
   assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
@@ -1256,7 +1280,7 @@ test("Roadmap #16A F: knowledge selection is already complete by the time provid
   };
   const timeoutContext = { ...context, failedTests: [timeoutFailedTest()] };
 
-  await buildFailureReport(timeoutContext, { provider, history: null });
+  await bfr(timeoutContext, { provider, history: null });
 
   assert.match(userPromptAtCallTime, /"qa-timeout-error-multiple-causes"/);
 });
@@ -1273,7 +1297,7 @@ test("Roadmap #16A G/H: provider.analyze() is called exactly once, regardless of
   };
   const timeoutContext = { ...context, failedTests: [timeoutFailedTest()] };
 
-  await buildFailureReport(timeoutContext, { provider, history: null });
+  await bfr(timeoutContext, { provider, history: null });
 
   assert.equal(callCount, 1);
 });
@@ -1298,7 +1322,7 @@ test("Roadmap #16A I: computeRelevantKnowledge is a plain synchronous function w
 test("Roadmap #16A CASE 7: knowledge suggesting a plausible bug does not bypass application policy - TEST_BUG + shouldCreateBug=true is still forced to false", async () => {
   const provider = providerReturning([goodItem({ classification: "TEST_BUG", shouldCreateBug: true })]);
 
-  const report = await buildFailureReport(context, {
+  const report = await bfr(context, {
     provider,
     history: null,
     relevantKnowledge: [
@@ -1332,7 +1356,7 @@ test("Roadmap #16C 1/2: selected knowledge appears in report.sourceContext.relev
     },
   };
 
-  const report = await buildFailureReport(timeoutContext, { provider, history: null });
+  const report = await bfr(timeoutContext, { provider, history: null });
 
   assert.ok(Array.isArray(report.sourceContext.relevantKnowledge));
   assert.ok(report.sourceContext.relevantKnowledge.length > 0);
@@ -1343,7 +1367,7 @@ test("Roadmap #16C 1/2: selected knowledge appears in report.sourceContext.relev
 
 test("Roadmap #16C 3: zero selected knowledge persists as sourceContext.relevantKnowledge = [], not omitted", async () => {
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
   assert.deepEqual(report.sourceContext.relevantKnowledge, []);
   assert.ok("relevantKnowledge" in report.sourceContext);
 });
@@ -1357,7 +1381,7 @@ test("Roadmap #16C 4: relevantKnowledge is not regenerated after provider analys
   const injectedKnowledge = [{ id: "synthetic-test-only-unit", statement: "A statement that the real selector would never produce for this context." }];
   const provider = providerReturning([goodItem()]);
 
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: injectedKnowledge });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: injectedKnowledge });
 
   assert.deepEqual(report.sourceContext.relevantKnowledge, injectedKnowledge);
   // Sanity check: the real selector genuinely would not have produced this
@@ -1377,7 +1401,7 @@ test("Roadmap #16C 5: persisting relevantKnowledge into sourceContext adds zero 
   };
   const timeoutContext = { ...context, failedTests: [timeoutFailedTest()] };
 
-  const report = await buildFailureReport(timeoutContext, { provider, history: null });
+  const report = await bfr(timeoutContext, { provider, history: null });
 
   assert.equal(callCount, 1);
   assert.ok(report.sourceContext.relevantKnowledge.length > 0);
@@ -1385,7 +1409,7 @@ test("Roadmap #16C 5: persisting relevantKnowledge into sourceContext adds zero 
 
 test("Roadmap #16C 6: sourceContext observability does not affect classification/policy behavior", async () => {
   const provider = providerReturning([goodItem({ classification: "TEST_BUG", shouldCreateBug: true })]);
-  const report = await buildFailureReport(context, {
+  const report = await bfr(context, {
     provider,
     history: null,
     relevantKnowledge: [{ id: "qa-timeout-error-multiple-causes", statement: "A timeout error can indicate several distinct mechanisms." }],
@@ -1410,7 +1434,7 @@ test("Roadmap #16C 7: existing sourceContext fields (browserCorrelation, browser
     sameFailureSignature: true,
   };
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(
+  const report = await bfr(
     { ...context, browserCorrelation: correlation },
     { provider, history: null, relevantKnowledge: [] }
   );
@@ -1431,7 +1455,7 @@ test("Roadmap #16C 7: existing sourceContext fields (browserCorrelation, browser
 // provider selection, provider provenance, or policy shape.
 test("Roadmap #19.2: sourceContext.projectId equals the production project id when context.metadata carries it", async () => {
   const provider = providerReturning([goodItem()]);
-  const report = await buildFailureReport(
+  const report = await bfr(
     { ...context, metadata: { ...context.metadata, projectId: "external-poi-sut" } },
     { provider, history: null, relevantKnowledge: [] }
   );
@@ -1441,7 +1465,7 @@ test("Roadmap #19.2: sourceContext.projectId equals the production project id wh
 
 test("Roadmap #19.2: projectId is additive only - provider provenance and policy field shape are unchanged", async () => {
   const provider = providerReturning([goodItem({ shouldCreateBug: true })]);
-  const report = await buildFailureReport(
+  const report = await bfr(
     { ...context, metadata: { ...context.metadata, projectId: "external-poi-sut" } },
     { provider, history: null, relevantKnowledge: [] }
   );
@@ -1484,28 +1508,33 @@ test("Roadmap #16C Phase 10: prompt-visible relevantKnowledge and report.sourceC
     },
   };
 
-  const report = await buildFailureReport(allMatchingContext, { provider, history: null });
+  const report = await bfr(allMatchingContext, { provider, history: null });
 
   const promptPayload = JSON.parse(captured.userPrompt.slice(captured.userPrompt.indexOf("{"), captured.userPrompt.lastIndexOf("}") + 1));
   assert.ok(promptPayload.relevantKnowledge.length > 1, "expected multiple units to genuinely match this multi-signal context");
   assert.deepEqual(report.sourceContext.relevantKnowledge, promptPayload.relevantKnowledge);
 });
 
-// --- Roadmap #19.4S: projectProfile orchestration seam ---------------------
-// Prerequisite discovered while attempting Roadmap #19.4: buildSystemPrompt()
-// has accepted an optional projectProfile since Roadmap #19.2, but no caller
-// in the real analysis pipeline (runProviderAnalysis/buildFailureReport)
-// ever threaded one through - so the ACTUAL provider-visible system prompt
-// always used the production default regardless of context. These tests
-// prove the new `projectProfile` option (a) changes nothing for every
-// existing caller, and (b) has exactly one responsibility - system-prompt
+// --- Roadmap #19.4S / TI-1: projectProfile orchestration seam --------------
+// Roadmap #19.4S originally proved buildSystemPrompt()'s optional
+// projectProfile threads all the way through runProviderAnalysis()/
+// buildFailureReport() and has exactly one responsibility - system-prompt
 // profile selection - never touching context, report provenance, the user
-// prompt, or policy.
+// prompt, or policy. Roadmap TI-1 removed the implicit Targomo default
+// these tests originally exercised (buildSystemPrompt()/runProviderAnalysis()/
+// buildFailureReport() now REQUIRE an explicit profile, generic core owns no
+// concrete project instance) - the tests below are adapted accordingly:
+// fail-closed behavior is proven directly against the real, un-wrapped
+// functions (never through this file's own bfr()/rpa() convenience
+// wrappers, which supply a default profile that would mask exactly the
+// behavior being tested here); every other #19.4S orchestration-boundary
+// proof now compares two explicit, distinct synthetic profiles instead of
+// "explicit vs. implicit-Targomo-default".
 
-const SYNTHETIC_PROFILE_SENTINEL = {
-  id: "synthetic-project",
-  displayName: "SYNTHETIC_PROFILE_DISPLAY_SENTINEL",
-  knownProjectConstraints: ["SYNTHETIC_PROFILE_CONSTRAINT_SENTINEL"],
+const SYNTHETIC_PROFILE_SENTINEL_B = {
+  id: "synthetic-project-b",
+  displayName: "SYNTHETIC_PROFILE_DISPLAY_SENTINEL_B",
+  knownProjectConstraints: ["SYNTHETIC_PROFILE_CONSTRAINT_SENTINEL_B"],
 };
 
 function capturingProvider(resultOverrides = {}) {
@@ -1524,24 +1553,29 @@ test("Roadmap #19.4S: SYNTHETIC_PROFILE_SENTINEL is a valid ProjectProfile under
   assert.equal(validateProjectProfile(SYNTHETIC_PROFILE_SENTINEL).valid, true);
 });
 
-test("Roadmap #19.4S: omitting projectProfile leaves the actual provider-visible system prompt on the production default", async () => {
-  const { provider, captured } = capturingProvider();
-  await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
-  assert.match(captured[0].systemPrompt, /poi\.targomo\.com/);
-  assert.equal(captured[0].systemPrompt.includes("SYNTHETIC_PROFILE_DISPLAY_SENTINEL"), false);
+test("Roadmap TI-1: omitting projectProfile fails closed with PROJECT_PROFILE_REQUIRED - the real analysis pipeline no longer has an implicit default", async () => {
+  const { provider } = capturingProvider();
+  await assert.rejects(() => buildFailureReport(context, { provider, history: null, relevantKnowledge: [] }), /PROJECT_PROFILE_REQUIRED/);
 });
 
-test("Roadmap #19.4S: an explicit projectProfile: undefined produces a byte-identical system prompt to omitting the option", async () => {
+test("Roadmap TI-1: an explicit projectProfile: undefined fails closed identically to omitting the option", async () => {
   const omitted = capturingProvider();
   const explicitUndefined = capturingProvider();
-  await buildFailureReport(context, { provider: omitted.provider, history: null, relevantKnowledge: [] });
-  await buildFailureReport(context, { provider: explicitUndefined.provider, history: null, relevantKnowledge: [], projectProfile: undefined });
-  assert.equal(omitted.captured[0].systemPrompt, explicitUndefined.captured[0].systemPrompt);
+  await assert.rejects(() => buildFailureReport(context, { provider: omitted.provider, history: null, relevantKnowledge: [] }), /PROJECT_PROFILE_REQUIRED/);
+  await assert.rejects(
+    () => buildFailureReport(context, { provider: explicitUndefined.provider, history: null, relevantKnowledge: [], projectProfile: undefined }),
+    /PROJECT_PROFILE_REQUIRED/
+  );
+});
+
+test("Roadmap TI-1: an invalid (malformed, non-null) projectProfile fails closed with PROJECT_PROFILE_INVALID", async () => {
+  const { provider } = capturingProvider();
+  await assert.rejects(() => buildFailureReport(context, { provider, history: null, relevantKnowledge: [], projectProfile: {} }), /PROJECT_PROFILE_INVALID/);
 });
 
 test("Roadmap #19.4S: an explicit synthetic projectProfile reaches the ACTUAL provider request - not merely a separate buildSystemPrompt() call", async () => {
   const { provider, captured } = capturingProvider();
-  await buildFailureReport(context, { provider, history: null, relevantKnowledge: [], projectProfile: SYNTHETIC_PROFILE_SENTINEL });
+  await bfr(context, { provider, history: null, relevantKnowledge: [], projectProfile: SYNTHETIC_PROFILE_SENTINEL });
   assert.match(captured[0].systemPrompt, /SYNTHETIC_PROFILE_DISPLAY_SENTINEL/);
   assert.equal(captured[0].systemPrompt.includes("poi.targomo.com"), false);
 });
@@ -1561,7 +1595,7 @@ test("Roadmap #19.4S: the seam has one narrow responsibility - a mismatched proj
   const constraintsBefore = JSON.stringify(localContext.knownProjectConstraints);
 
   const { provider, captured } = capturingProvider();
-  const report = await buildFailureReport(localContext, {
+  const report = await bfr(localContext, {
     provider,
     history: null,
     relevantKnowledge: [],
@@ -1586,43 +1620,44 @@ test("Roadmap #19.4S: the seam has one narrow responsibility - a mismatched proj
 });
 
 test("Roadmap #19.4S: the userPrompt is unchanged for identical context regardless of which projectProfile is supplied", async () => {
-  const defaultRun = capturingProvider();
-  const syntheticRun = capturingProvider();
-  await buildFailureReport({ ...context }, { provider: defaultRun.provider, history: null, relevantKnowledge: [] });
-  await buildFailureReport({ ...context }, {
-    provider: syntheticRun.provider,
+  const firstRun = capturingProvider();
+  const secondRun = capturingProvider();
+  await bfr({ ...context }, { provider: firstRun.provider, history: null, relevantKnowledge: [], projectProfile: SYNTHETIC_PROFILE_SENTINEL });
+  await bfr({ ...context }, {
+    provider: secondRun.provider,
     history: null,
     relevantKnowledge: [],
-    projectProfile: SYNTHETIC_PROFILE_SENTINEL,
+    projectProfile: SYNTHETIC_PROFILE_SENTINEL_B,
   });
-  assert.equal(defaultRun.captured[0].userPrompt, syntheticRun.captured[0].userPrompt);
-  assert.notEqual(defaultRun.captured[0].systemPrompt, syntheticRun.captured[0].systemPrompt);
+  assert.equal(firstRun.captured[0].userPrompt, secondRun.captured[0].userPrompt);
+  assert.notEqual(firstRun.captured[0].systemPrompt, secondRun.captured[0].systemPrompt);
 });
 
 test("Roadmap #19.4S: provider request carries only the existing {systemPrompt, userPrompt} shape - no third projectProfile key leaks into the provider contract", async () => {
   const { provider, captured } = capturingProvider();
-  await buildFailureReport(context, { provider, history: null, relevantKnowledge: [], projectProfile: SYNTHETIC_PROFILE_SENTINEL });
+  await bfr(context, { provider, history: null, relevantKnowledge: [], projectProfile: SYNTHETIC_PROFILE_SENTINEL });
   assert.deepEqual(Object.keys(captured[0]).sort(), ["systemPrompt", "userPrompt"]);
 });
 
 test("Roadmap #19.4S: a fixed provider response produces identical deterministic policy behavior regardless of projectProfile - project identity never reaches applyAgentPolicy()", async () => {
   const fixedOverrides = { classification: "TEST_BUG", confidence: 0.8, shouldCreateBug: true };
-  const defaultRun = await buildFailureReport(context, {
-    provider: capturingProvider(fixedOverrides).provider,
-    history: null,
-    relevantKnowledge: [],
-  });
-  const syntheticRun = await buildFailureReport(context, {
+  const firstRun = await bfr(context, {
     provider: capturingProvider(fixedOverrides).provider,
     history: null,
     relevantKnowledge: [],
     projectProfile: SYNTHETIC_PROFILE_SENTINEL,
   });
-  assert.equal(defaultRun.results[0].classification, syntheticRun.results[0].classification);
-  assert.equal(defaultRun.results[0].confidence, syntheticRun.results[0].confidence);
+  const secondRun = await bfr(context, {
+    provider: capturingProvider(fixedOverrides).provider,
+    history: null,
+    relevantKnowledge: [],
+    projectProfile: SYNTHETIC_PROFILE_SENTINEL_B,
+  });
+  assert.equal(firstRun.results[0].classification, secondRun.results[0].classification);
+  assert.equal(firstRun.results[0].confidence, secondRun.results[0].confidence);
   // Policy safeguard: TEST_BUG can never keep shouldCreateBug=true, for either profile.
-  assert.equal(defaultRun.results[0].shouldCreateBug, false);
-  assert.equal(syntheticRun.results[0].shouldCreateBug, false);
+  assert.equal(firstRun.results[0].shouldCreateBug, false);
+  assert.equal(secondRun.results[0].shouldCreateBug, false);
 });
 
 test("Roadmap #19.4S: the selected projectProfile/systemPrompt is preserved unchanged across a retried provider attempt", async () => {
@@ -1640,7 +1675,7 @@ test("Roadmap #19.4S: the selected projectProfile/systemPrompt is preserved unch
     },
   };
 
-  await runProviderAnalysis(retryProvider, context, {
+  await rpa(retryProvider, context, {
     projectProfile: SYNTHETIC_PROFILE_SENTINEL,
     sleep: async () => {},
   });
@@ -1654,19 +1689,19 @@ test("Roadmap #19.4S: the selected projectProfile/systemPrompt is preserved unch
 // The shared `context` fixture above never set metadata.framework, so every
 // existing test above this section already covers the legacy/absent path
 // unmodified. These tests exercise the new, additive canonical-framework
-// behavior specifically, through the same real buildFailureReport()/
-// runProviderAnalysis() core - never a separate fake path.
+// behavior specifically, through the same real bfr()/
+// rpa() core - never a separate fake path.
 
 test("Roadmap #19.5B: report.sourceContext.framework is null for a legacy context that never set metadata.framework", async () => {
   const { provider } = capturingProvider();
-  const report = await buildFailureReport(context, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(context, { provider, history: null, relevantKnowledge: [] });
   assert.equal(report.sourceContext.framework, null);
 });
 
 test("Roadmap #19.5B: report.sourceContext.framework reflects the current context's canonical metadata.framework - additive, no other field changes", async () => {
   const cypressContext = { ...context, metadata: { ...context.metadata, framework: "cypress" } };
   const { provider } = capturingProvider();
-  const report = await buildFailureReport(cypressContext, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(cypressContext, { provider, history: null, relevantKnowledge: [] });
 
   assert.equal(report.sourceContext.framework, "cypress");
   // Additive only - every other sourceContext field keeps its own,
@@ -1675,10 +1710,10 @@ test("Roadmap #19.5B: report.sourceContext.framework reflects the current contex
   assert.equal(report.sourceContext.repository, "o/r");
 });
 
-test("Roadmap #19.5B: the actual provider-visible systemPrompt identifies the current context's real canonical framework, through the real buildFailureReport() core - not a separate fake path", async () => {
+test("Roadmap #19.5B: the actual provider-visible systemPrompt identifies the current context's real canonical framework, through the real bfr() core - not a separate fake path", async () => {
   const cypressContext = { ...context, metadata: { ...context.metadata, framework: "cypress" } };
   const { provider, captured } = capturingProvider();
-  await buildFailureReport(cypressContext, { provider, history: null, relevantKnowledge: [] });
+  await bfr(cypressContext, { provider, history: null, relevantKnowledge: [] });
 
   assert.match(captured[0].systemPrompt, /current test framework: cypress/);
 });
@@ -1686,7 +1721,7 @@ test("Roadmap #19.5B: the actual provider-visible systemPrompt identifies the cu
 test("Roadmap #19.5B: a synthetic non-Cypress context reaches the actual provider systemPrompt through the SAME generic core - not Playwright support, only identity threading", async () => {
   const syntheticFrameworkContext = { ...context, metadata: { ...context.metadata, framework: "playwright" } };
   const { provider, captured } = capturingProvider();
-  const report = await buildFailureReport(syntheticFrameworkContext, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(syntheticFrameworkContext, { provider, history: null, relevantKnowledge: [] });
 
   assert.match(captured[0].systemPrompt, /current test framework: playwright/);
   assert.doesNotMatch(captured[0].systemPrompt, /current test framework: cypress/);
@@ -1699,7 +1734,7 @@ test("Roadmap #19.5B: the actual provider userPrompt metadata carries framework 
     metadata: { ...context.metadata, framework: "cypress", projectId: "external-poi-sut" },
   };
   const { provider, captured } = capturingProvider();
-  await buildFailureReport(cypressContext, { provider, history: null, relevantKnowledge: [] });
+  await bfr(cypressContext, { provider, history: null, relevantKnowledge: [] });
 
   const payload = JSON.parse(captured[0].userPrompt.slice(captured[0].userPrompt.indexOf("{"), captured[0].userPrompt.lastIndexOf("}") + 1));
   assert.equal(payload.metadata.framework, "cypress");
@@ -1721,8 +1756,8 @@ test("Roadmap #19.5B: framework identity is orthogonal to ProjectProfile - chang
 
   const runA = capturingProvider();
   const runB = capturingProvider();
-  const reportA = await buildFailureReport(cypressContext, { provider: runA.provider, projectProfile: profile, history: null, relevantKnowledge: [] });
-  const reportB = await buildFailureReport(playwrightContext, { provider: runB.provider, projectProfile: profile, history: null, relevantKnowledge: [] });
+  const reportA = await bfr(cypressContext, { provider: runA.provider, projectProfile: profile, history: null, relevantKnowledge: [] });
+  const reportB = await bfr(playwrightContext, { provider: runB.provider, projectProfile: profile, history: null, relevantKnowledge: [] });
 
   assert.match(runA.captured[0].systemPrompt, /ORTHOGONALITY_DISPLAY_SENTINEL/);
   assert.match(runB.captured[0].systemPrompt, /ORTHOGONALITY_DISPLAY_SENTINEL/);
@@ -1743,7 +1778,7 @@ test("Roadmap #19.5B: framework identity is orthogonal to ProjectProfile - chang
 test("Roadmap #19.5B correction: a canonical framework value with incidental whitespace/casing is normalized identically in the actual systemPrompt, userPrompt, and report - matching what Knowledge would treat as canonical", async () => {
   const rawContext = { ...context, metadata: { ...context.metadata, framework: " PlayWright " } };
   const { provider, captured } = capturingProvider();
-  const report = await buildFailureReport(rawContext, { provider, history: null, relevantKnowledge: [] });
+  const report = await bfr(rawContext, { provider, history: null, relevantKnowledge: [] });
 
   assert.match(captured[0].systemPrompt, /current test framework: playwright\)/);
   assert.doesNotMatch(captured[0].systemPrompt, /PlayWright/);
@@ -1756,7 +1791,7 @@ test("Roadmap #19.5B correction: a present-but-malformed canonical framework nev
   for (const malformed of [null, "", "   ", 123, {}, []]) {
     const malformedContext = { ...context, metadata: { ...context.metadata, framework: malformed } };
     const { provider, captured } = capturingProvider();
-    const report = await buildFailureReport(malformedContext, { provider, history: null, relevantKnowledge: [] });
+    const report = await bfr(malformedContext, { provider, history: null, relevantKnowledge: [] });
 
     assert.match(captured[0].systemPrompt, /current test framework: unknown\)/, `expected 'unknown' for ${JSON.stringify(malformed)}`);
     assert.doesNotMatch(captured[0].systemPrompt, /\[object Object\]/, `must never render [object Object] for ${JSON.stringify(malformed)}`);
@@ -1771,8 +1806,8 @@ test("Roadmap #19.5B correction: INVALID present framework ('unknown') is determ
 
   const invalidRun = capturingProvider();
   const absentRun = capturingProvider();
-  await buildFailureReport(invalidContext, { provider: invalidRun.provider, history: null, relevantKnowledge: [] });
-  await buildFailureReport(absentContext, { provider: absentRun.provider, history: null, relevantKnowledge: [] });
+  await bfr(invalidContext, { provider: invalidRun.provider, history: null, relevantKnowledge: [] });
+  await bfr(absentContext, { provider: absentRun.provider, history: null, relevantKnowledge: [] });
 
   assert.match(invalidRun.captured[0].systemPrompt, /current test framework: unknown\)/);
   assert.match(absentRun.captured[0].systemPrompt, /current test framework: cypress\)/);

@@ -8,7 +8,6 @@ const path = require("path");
 
 const { buildAutomationRepositoryContext, LIMITS, EVIDENCE_KIND_REPOSITORY, isPlanningRelevantScriptName } = require("./automation-repository-context");
 const { validateEvidenceRef } = require("../generation/primitives");
-const { TARGOMO_PROJECT_PROFILE } = require("../project-profile");
 
 function validProjectProfile(overrides = {}) {
   return {
@@ -1778,7 +1777,7 @@ test("real-repository smoke: builds a valid Cypress context using actual reposit
   const repoRoot = path.resolve(__dirname, "..", "..", "..");
   const result = buildAutomationRepositoryContext({
     repoRoot,
-    projectProfile: TARGOMO_PROJECT_PROFILE,
+    projectProfile: validProjectProfile({ id: "external-poi-sut" }),
     framework: "cypress",
     relevantFiles: ["cypress/e2e/tests/poi_data_requests.cy.js", "cypress/e2e/pageObjects/categories.js"],
   });
@@ -1797,7 +1796,7 @@ test("real-repository smoke: builds a valid Playwright context using actual repo
   const repoRoot = path.resolve(__dirname, "..", "..", "..");
   const result = buildAutomationRepositoryContext({
     repoRoot,
-    projectProfile: TARGOMO_PROJECT_PROFILE,
+    projectProfile: validProjectProfile({ id: "external-poi-sut" }),
     framework: "playwright",
     relevantFiles: ["playwright/tests/smoke.spec.js"],
   });

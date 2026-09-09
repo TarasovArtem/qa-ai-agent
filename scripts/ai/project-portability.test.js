@@ -45,7 +45,13 @@ const {
   classifyProjectId,
   isHistoryProjectEligible,
 } = require("./analyze-failure");
-const { TARGOMO_PROJECT_PROFILE, validateProjectProfile } = require("./project-profile");
+const { validateProjectProfile } = require("./project-profile");
+// Roadmap TI-1: the real Targomo profile is now target-owned - imported
+// here only as reference/comparison DATA for this file's own "Project A
+// (real) vs Project B (synthetic)" genericity proof, exactly like this
+// file's own module docstring already describes; it is never re-exported
+// or used as a production default by any generic core module.
+const { TARGOMO_PROJECT_PROFILE } = require("../targets/targomo/project-profile");
 const { loadKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
 const { validateKnowledgeUnit } = require("./knowledge/schema");

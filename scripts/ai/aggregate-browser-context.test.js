@@ -17,6 +17,21 @@ const {
 } = require("./aggregate-browser-context");
 const { buildFailureReport, validateAnalysisItem } = require("./analyze-failure");
 
+// Roadmap TI-1: bfr() requires an explicit projectProfile
+// now (this generic core module owns no concrete project instance of its
+// own) - a synthetic, valid, non-Targomo profile used throughout this
+// file, which is unrelated to project-profile behavior itself (it exists
+// to test browser-aggregation/correlation wiring).
+const SYNTHETIC_TEST_PROFILE = {
+  id: "synthetic-test-project",
+  displayName: "Synthetic Test Project",
+  knownProjectConstraints: ["Synthetic test constraint."],
+};
+
+function bfr(ctx, options = {}) {
+  return buildFailureReport(ctx, { projectProfile: SYNTHETIC_TEST_PROFILE, ...options });
+}
+
 function browserInput(browser, outcome, overrides = {}) {
   return {
     browser,
@@ -439,7 +454,7 @@ test("readBrowserInputs: called with NO explicit browser list discovers all of c
 
 // --- integration: the actual Definition-of-Done claim -------------------
 // Proves "two failed browsers -> exactly one provider.analyze() call"
-// using the real aggregation decision plus the real buildFailureReport()
+// using the real aggregation decision plus the real bfr()
 // (the same function main() in analyze-failure.js calls) - not just an
 // architectural claim about the YAML.
 
@@ -474,7 +489,7 @@ test("integration: two failed browser inputs still result in exactly one provide
     },
   };
 
-  const report = await buildFailureReport(primary.context, { provider: countingProvider, history: null });
+  const report = await bfr(primary.context, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once for a two-browser-failure run");
   assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
@@ -517,7 +532,7 @@ test("integration: three failed browser inputs (chrome, edge, firefox) still res
     },
   };
 
-  const report = await buildFailureReport(primary.context, { provider: countingProvider, history: null });
+  const report = await bfr(primary.context, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once even with three browsers failing");
   assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
@@ -562,7 +577,7 @@ test("integration: multi-browser correlation reaches provider.analyze()'s userPr
     },
   };
 
-  const report = await buildFailureReport(contextWithCorrelation, { provider: countingProvider, history: null });
+  const report = await bfr(contextWithCorrelation, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once even with multi-browser correlation attached");
   assert.match(seenUserPrompt, /"primaryBrowser": "chrome"/);
@@ -680,7 +695,7 @@ test("integration: Playwright-only failure (all Cypress passes) still routes thr
     },
   };
   const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation, frameworkCorrelation };
-  const report = await buildFailureReport(contextWithCorrelation, { provider: countingProvider, history: null });
+  const report = await bfr(contextWithCorrelation, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once for a Playwright-only failure");
   assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
@@ -743,7 +758,7 @@ test("T3 CYPRESS_AND_PLAYWRIGHT_FAIL: both fail -> Cypress canonical, Playwright
     },
   };
   const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation, frameworkCorrelation };
-  const report = await buildFailureReport(contextWithCorrelation, { provider: countingProvider, history: null });
+  const report = await bfr(contextWithCorrelation, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once even when Cypress AND Playwright both fail");
   assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
@@ -943,7 +958,7 @@ test("integration: single-browser correlation (one pass, one fail) also reaches 
     },
   };
 
-  await buildFailureReport(contextWithCorrelation, { provider, history: null });
+  await bfr(contextWithCorrelation, { provider, history: null });
 
   assert.match(seenUserPrompt, /"failureScope": "single-browser"/);
   assert.match(seenUserPrompt, /"passedBrowsers": \[\s*"edge"\s*\]/);
@@ -998,7 +1013,7 @@ test("I3 descriptor 'cypress' contradicting context.metadata.framework 'playwrig
   // identityMismatch branch immediately above it) is what actually
   // prevents analysis - proven here structurally: primary is null, so
   // there is no context object any caller could pass to
-  // buildFailureReport()/the provider at all. Zero calls is not merely
+  // bfr()/the provider at all. Zero calls is not merely
   // asserted, it is unreachable by construction.
   assert.equal(result.primary, null);
 });
