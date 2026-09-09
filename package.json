@@ -1,8 +1,10 @@
 {
   "name": "qa-ai-agent",
   "version": "1.0.0",
-  "description": "E2E Tests",
-  "main": "index.js",
+  "description": "AI-assisted QA agent for E2E failure triage, test design, safe automation generation, controlled execution, and regression evaluation.",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "cypress:open": "cypress open",
     "test:e2e": "cypress run",
