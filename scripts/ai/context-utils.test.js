@@ -16,14 +16,26 @@ const {
 
 const ROOT = path.resolve(__dirname, "..", "..");
 
+// Roadmap FPI-2: normalizeSpecPath()/resolveSafeSpecPath()/
+// resolveSafeLocalAttachmentPath() no longer derive their own root from
+// this module's __dirname - every call site below now supplies an
+// explicit `root: { lexicalRoot, realRoot }` boundary (see
+// scripts/ai/repository-root.js), matching production's own
+// collect-context.js/adapters wiring. This repository's own checkout is
+// used as the fixture target repository throughout this file - a
+// separate, physically-external fixture root is exercised instead in
+// scripts/targets/targomo/*-repository-root proofs and the dedicated
+// FPI-2 root-portability tests in collect-context.test.js.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
+
 test("normalizeSpecPath: strips the repo root and leading slashes, normalizes backslashes", () => {
   assert.equal(
-    normalizeSpecPath(path.join(ROOT, "cypress", "e2e", "tests", "x.cy.js")),
+    normalizeSpecPath(path.join(ROOT, "cypress", "e2e", "tests", "x.cy.js"), TEST_ROOT),
     "cypress/e2e/tests/x.cy.js"
   );
-  assert.equal(normalizeSpecPath("\\cypress\\e2e\\tests\\x.cy.js"), "cypress/e2e/tests/x.cy.js");
-  assert.equal(normalizeSpecPath(null), null);
-  assert.equal(normalizeSpecPath(""), null);
+  assert.equal(normalizeSpecPath("\\cypress\\e2e\\tests\\x.cy.js", TEST_ROOT), "cypress/e2e/tests/x.cy.js");
+  assert.equal(normalizeSpecPath(null, TEST_ROOT), null);
+  assert.equal(normalizeSpecPath("", TEST_ROOT), null);
 });
 
 // --- classifyPathString (Roadmap #21D, R2/R3) -------------------------------
@@ -118,7 +130,7 @@ test("classifyPathString: normal relative reporter paths are unaffected by the f
 
 test("D21D-2 resolveSafeSpecPath: malformed file:-URI-like values are rejected, never preserved as a spec path", () => {
   for (const raw of ["file:C:\\foo", "file:/tmp/foo", "FILE:C:\\foo", "FILE:/tmp/foo"]) {
-    const result = resolveSafeSpecPath(raw);
+    const result = resolveSafeSpecPath(raw, TEST_ROOT);
     assert.equal(result.value, null, `expected null value for ${raw}`);
     assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
   }
@@ -126,7 +138,7 @@ test("D21D-2 resolveSafeSpecPath: malformed file:-URI-like values are rejected, 
 
 test("D21D-2 resolveSafeLocalAttachmentPath: malformed file:-URI-like values are rejected, never resolved against the filesystem", () => {
   for (const raw of ["file:C:\\foo", "file:/tmp/foo", "FILE:C:\\foo", "FILE:/tmp/foo"]) {
-    const result = resolveSafeLocalAttachmentPath(raw);
+    const result = resolveSafeLocalAttachmentPath(raw, TEST_ROOT);
     assert.equal(result.value, null, `expected null value for ${raw}`);
     assert.equal(result.rejected, true, `expected rejected:true for ${raw}`);
   }
@@ -234,17 +246,17 @@ test("isCanonicalPathInsideRoot: defaults platform to the real running host when
   assert.equal(result, true);
 });
 
-// --- resolveSafeSpecPath (Roadmap #21D, R2) ---------------------------------
+// --- resolveSafeSpecPath (Roadmap #21D, R2; Roadmap FPI-2, explicit root) ---
 
 test("PATH_1 resolveSafeSpecPath: a safe relative spec path is preserved, normalized to forward slashes", () => {
-  assert.deepEqual(resolveSafeSpecPath("tests/foo.spec.js"), { value: "tests/foo.spec.js", rejected: false });
-  assert.deepEqual(resolveSafeSpecPath("playwright\\tests\\foo.spec.js"), { value: "playwright/tests/foo.spec.js", rejected: false });
-  assert.deepEqual(resolveSafeSpecPath("./proof.spec.js"), { value: "proof.spec.js", rejected: false });
+  assert.deepEqual(resolveSafeSpecPath("tests/foo.spec.js", TEST_ROOT), { value: "tests/foo.spec.js", rejected: false });
+  assert.deepEqual(resolveSafeSpecPath("playwright\\tests\\foo.spec.js", TEST_ROOT), { value: "playwright/tests/foo.spec.js", rejected: false });
+  assert.deepEqual(resolveSafeSpecPath("./proof.spec.js", TEST_ROOT), { value: "proof.spec.js", rejected: false });
 });
 
 test("PATH_2 resolveSafeSpecPath: a repo-local absolute spec path (not required to exist) becomes repo-relative, never absolute", (t) => {
   const absoluteUnderRoot = path.join(ROOT, "tests", "path-2-does-not-exist.spec.js");
-  const result = resolveSafeSpecPath(absoluteUnderRoot);
+  const result = resolveSafeSpecPath(absoluteUnderRoot, TEST_ROOT);
   assert.equal(result.rejected, false);
   assert.equal(result.value, "tests/path-2-does-not-exist.spec.js");
   assert.equal(path.isAbsolute(result.value), false);
@@ -256,7 +268,7 @@ test("PATH_2b resolveSafeSpecPath: a repo-local absolute spec path that genuinel
   const specFile = path.join(tmpDir, "real.spec.js");
   fs.writeFileSync(specFile, "");
 
-  const result = resolveSafeSpecPath(specFile);
+  const result = resolveSafeSpecPath(specFile, TEST_ROOT);
   assert.equal(result.rejected, false);
   assert.equal(path.isAbsolute(result.value), false);
   assert.equal(path.resolve(ROOT, result.value), fs.realpathSync(specFile));
@@ -265,27 +277,27 @@ test("PATH_2b resolveSafeSpecPath: a repo-local absolute spec path that genuinel
 test("PATH_3 resolveSafeSpecPath: an out-of-root absolute spec path is never preserved raw - redacted to null, marked rejected", () => {
   const outsideMarker = "OUTSIDE_PRIVATE_PATH_MARKER_21D";
   const outsidePath = path.join(os.tmpdir(), outsideMarker, "foo.spec.js");
-  const result = resolveSafeSpecPath(outsidePath);
+  const result = resolveSafeSpecPath(outsidePath, TEST_ROOT);
   assert.deepEqual(result, { value: null, rejected: true });
 });
 
 test("PATH_4 resolveSafeSpecPath: traversal-relative spec paths are rejected, never preserved", () => {
-  assert.deepEqual(resolveSafeSpecPath("../foo.spec.js"), { value: null, rejected: true });
-  assert.deepEqual(resolveSafeSpecPath("tests/../../../foo.spec.js"), { value: null, rejected: true });
+  assert.deepEqual(resolveSafeSpecPath("../foo.spec.js", TEST_ROOT), { value: null, rejected: true });
+  assert.deepEqual(resolveSafeSpecPath("tests/../../../foo.spec.js", TEST_ROOT), { value: null, rejected: true });
 });
 
 test("PATH_5/PATH_6 resolveSafeSpecPath: cross-platform absolute-looking paths never become an apparently-safe relative value on this host", () => {
-  const posixLike = resolveSafeSpecPath("/tmp/foo.spec.js");
+  const posixLike = resolveSafeSpecPath("/tmp/foo.spec.js", TEST_ROOT);
   assert.equal(posixLike.value, null);
   assert.equal(posixLike.rejected, true);
 
-  const uncBackslash = resolveSafeSpecPath("\\\\server\\share\\foo.spec.js");
+  const uncBackslash = resolveSafeSpecPath("\\\\server\\share\\foo.spec.js", TEST_ROOT);
   assert.deepEqual(uncBackslash, { value: null, rejected: true });
 
-  const uncSlash = resolveSafeSpecPath("//server/share/foo.spec.js");
+  const uncSlash = resolveSafeSpecPath("//server/share/foo.spec.js", TEST_ROOT);
   assert.deepEqual(uncSlash, { value: null, rejected: true });
 
-  const windowsDrive = resolveSafeSpecPath("C:\\Users\\someone\\foo.spec.js");
+  const windowsDrive = resolveSafeSpecPath("C:\\Users\\someone\\foo.spec.js", TEST_ROOT);
   // On a genuine Windows host this drive path may lexically resolve under
   // ROOT only if ROOT itself is literally "C:\Users\someone" - in every
   // realistic case (including this repository's own checkout path) it
@@ -299,16 +311,16 @@ test("PATH_5/PATH_6 resolveSafeSpecPath: cross-platform absolute-looking paths n
 });
 
 test("PATH_7 resolveSafeSpecPath: a URL-like spec value is rejected, never dereferenced or treated as a filesystem path", () => {
-  assert.deepEqual(resolveSafeSpecPath("https://example.invalid/foo.spec.js"), { value: null, rejected: true });
-  assert.deepEqual(resolveSafeSpecPath("file:///tmp/foo.spec.js"), { value: null, rejected: true });
+  assert.deepEqual(resolveSafeSpecPath("https://example.invalid/foo.spec.js", TEST_ROOT), { value: null, rejected: true });
+  assert.deepEqual(resolveSafeSpecPath("file:///tmp/foo.spec.js", TEST_ROOT), { value: null, rejected: true });
 });
 
 test("resolveSafeSpecPath: absent/empty input is null but NOT marked rejected (nothing unsafe was ever supplied)", () => {
-  assert.deepEqual(resolveSafeSpecPath(null), { value: null, rejected: false });
-  assert.deepEqual(resolveSafeSpecPath(""), { value: null, rejected: false });
+  assert.deepEqual(resolveSafeSpecPath(null, TEST_ROOT), { value: null, rejected: false });
+  assert.deepEqual(resolveSafeSpecPath("", TEST_ROOT), { value: null, rejected: false });
 });
 
-// --- resolveSafeLocalAttachmentPath (Roadmap #21D, R3) ----------------------
+// --- resolveSafeLocalAttachmentPath (Roadmap #21D, R3; Roadmap FPI-2) -------
 
 test("ATT_1 resolveSafeLocalAttachmentPath: a repo-local existing file is accepted as a repo-relative, never-absolute path", (t) => {
   const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-att1-"));
@@ -316,7 +328,7 @@ test("ATT_1 resolveSafeLocalAttachmentPath: a repo-local existing file is accept
   const filePath = path.join(tmpDir, "shot.png");
   fs.writeFileSync(filePath, "");
 
-  const result = resolveSafeLocalAttachmentPath(filePath);
+  const result = resolveSafeLocalAttachmentPath(filePath, TEST_ROOT);
   assert.equal(result.rejected, false);
   assert.equal(path.isAbsolute(result.value), false);
   assert.equal(path.resolve(ROOT, result.value), fs.realpathSync(filePath));
@@ -327,7 +339,7 @@ test("ATT_2 resolveSafeLocalAttachmentPath: an out-of-root existing file is reje
   try {
     const filePath = path.join(outsideDir, "shot.png");
     fs.writeFileSync(filePath, "");
-    assert.deepEqual(resolveSafeLocalAttachmentPath(filePath), { value: null, rejected: true });
+    assert.deepEqual(resolveSafeLocalAttachmentPath(filePath, TEST_ROOT), { value: null, rejected: true });
   } finally {
     fs.rmSync(outsideDir, { recursive: true, force: true });
   }
@@ -351,7 +363,7 @@ test("ATT_3 resolveSafeLocalAttachmentPath: a repo-local symlink to an outside f
   }
   if (!symlinkSupported) return; // environment cannot create filesystem symlinks - nothing to prove here
 
-  assert.deepEqual(resolveSafeLocalAttachmentPath(symlinkPath), { value: null, rejected: true });
+  assert.deepEqual(resolveSafeLocalAttachmentPath(symlinkPath, TEST_ROOT), { value: null, rejected: true });
 });
 
 test("ATT_4 resolveSafeLocalAttachmentPath: a repo-local symlink to another repo-local file is accepted, returning the TARGET's own canonical repo-relative path", (t) => {
@@ -369,8 +381,8 @@ test("ATT_4 resolveSafeLocalAttachmentPath: a repo-local symlink to another repo
   }
   if (!symlinkSupported) return;
 
-  const viaSymlink = resolveSafeLocalAttachmentPath(symlinkPath);
-  const viaRealFile = resolveSafeLocalAttachmentPath(realFile);
+  const viaSymlink = resolveSafeLocalAttachmentPath(symlinkPath, TEST_ROOT);
+  const viaRealFile = resolveSafeLocalAttachmentPath(realFile, TEST_ROOT);
   assert.equal(viaSymlink.rejected, false);
   assert.ok(viaSymlink.value);
   // The returned value represents the canonical TARGET, not the symlink's
@@ -380,17 +392,17 @@ test("ATT_4 resolveSafeLocalAttachmentPath: a repo-local symlink to another repo
 });
 
 test("ATT_6 resolveSafeLocalAttachmentPath: a URL-like attachment path is rejected outright, no filesystem access implied", () => {
-  assert.deepEqual(resolveSafeLocalAttachmentPath("https://example.invalid/screenshot.png"), { value: null, rejected: true });
+  assert.deepEqual(resolveSafeLocalAttachmentPath("https://example.invalid/screenshot.png", TEST_ROOT), { value: null, rejected: true });
 });
 
 test("ATT_7 resolveSafeLocalAttachmentPath: a nonexistent local-looking path fails safely - null, not rejected (never existed, nothing to redact)", () => {
   const missing = path.join(os.tmpdir(), "context-utils-att7-does-not-exist", "shot.png");
-  assert.deepEqual(resolveSafeLocalAttachmentPath(missing), { value: null, rejected: false });
+  assert.deepEqual(resolveSafeLocalAttachmentPath(missing, TEST_ROOT), { value: null, rejected: false });
 });
 
 test("resolveSafeLocalAttachmentPath: absent/empty input is null but not rejected", () => {
-  assert.deepEqual(resolveSafeLocalAttachmentPath(null), { value: null, rejected: false });
-  assert.deepEqual(resolveSafeLocalAttachmentPath(""), { value: null, rejected: false });
+  assert.deepEqual(resolveSafeLocalAttachmentPath(null, TEST_ROOT), { value: null, rejected: false });
+  assert.deepEqual(resolveSafeLocalAttachmentPath("", TEST_ROOT), { value: null, rejected: false });
 });
 
 // =========================================================================
@@ -399,23 +411,24 @@ test("resolveSafeLocalAttachmentPath: absent/empty input is null but not rejecte
 // - a genuinely relative attachment.path (the shape #21B's own real
 // Playwright reporter proof never actually produced, since it always
 // emitted absolute paths, but which resolveSafeLocalAttachmentPath() has
-// always handled via `path.join(ROOT, rawPath)`) is anchored to the
-// repository ROOT constant, never to whatever process.cwd() the caller
-// happens to be running from - proven here with a real, genuinely
-// separate child process, not an unsafe process.chdir() mutation shared
-// with every other test in this file.
+// always handled via `path.join(root.lexicalRoot, rawPath)`) is anchored to
+// the caller's own explicitly-supplied `root` boundary (Roadmap FPI-2 -
+// formerly this module's own module-level ROOT constant), never to
+// whatever process.cwd() the caller happens to be running from - proven
+// here with a real, genuinely separate child process, not an unsafe
+// process.chdir() mutation shared with every other test in this file.
 // =========================================================================
 
 const { execFileSync } = require("node:child_process");
 
-test("D21D-1 relative attachment.path resolves anchored to repository ROOT, accepted as canonical repo-relative text", (t) => {
+test("D21D-1 relative attachment.path resolves anchored to the caller's explicit root, accepted as canonical repo-relative text", (t) => {
   const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-d21d1-"));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   const absoluteFixture = path.join(tmpDir, "shot.png");
   fs.writeFileSync(absoluteFixture, "");
 
   const relativeFromRoot = path.relative(ROOT, absoluteFixture).split(path.sep).join("/");
-  const result = resolveSafeLocalAttachmentPath(relativeFromRoot);
+  const result = resolveSafeLocalAttachmentPath(relativeFromRoot, TEST_ROOT);
 
   assert.equal(result.rejected, false);
   assert.equal(result.value, relativeFromRoot);
@@ -433,20 +446,20 @@ test("D21D-1 relative attachment.path resolution is independent of the caller's 
   // Baseline: resolved from this process, whose cwd already happens to be
   // the repo root (the standard `node --test` invocation convention this
   // repository uses throughout).
-  const fromRepoRootCwd = resolveSafeLocalAttachmentPath(relativeFromRoot);
+  const fromRepoRootCwd = resolveSafeLocalAttachmentPath(relativeFromRoot, TEST_ROOT);
   assert.equal(fromRepoRootCwd.rejected, false);
   assert.ok(fromRepoRootCwd.value);
 
   // A genuinely separate child process, with cwd deliberately set to OS
   // temp (never the repo root, never any repo subdirectory) - proves the
-  // resolution is anchored to context-utils.js's own ROOT constant
-  // (path.resolve(__dirname, "..", "..")), never to the invoking
-  // process's own cwd.
+  // resolution is anchored to the explicitly-passed `root` argument
+  // (Roadmap FPI-2), never to the invoking process's own cwd.
   const foreignCwd = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-d21d1-foreign-cwd-"));
   t.after(() => fs.rmSync(foreignCwd, { recursive: true, force: true }));
   const probeScript = `
     const { resolveSafeLocalAttachmentPath } = require(${JSON.stringify(path.join(__dirname, "context-utils.js"))});
-    process.stdout.write(JSON.stringify(resolveSafeLocalAttachmentPath(${JSON.stringify(relativeFromRoot)})));
+    const root = ${JSON.stringify(TEST_ROOT)};
+    process.stdout.write(JSON.stringify(resolveSafeLocalAttachmentPath(${JSON.stringify(relativeFromRoot)}, root)));
   `;
   const childOutput = execFileSync(process.execPath, ["-e", probeScript], { cwd: foreignCwd, encoding: "utf8" });
   const fromForeignCwd = JSON.parse(childOutput);

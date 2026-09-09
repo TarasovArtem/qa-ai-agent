@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
+const { TARGOMO_REPOSITORY_ROOT } = require("./repository-root");
 const { run, core } = require("./collect-context");
 const cypressAdapter = require("../../ai/adapters/cypress-adapter");
 
@@ -114,4 +115,28 @@ test("spawned CLI, QA_FRAMEWORK absent: the real Targomo production entrypoint s
 
 test("cypressAdapter re-export sanity: the generic core default adapter used by run() is the real one", () => {
   assert.equal(cypressAdapter.id, "cypress");
+});
+
+// Roadmap FPI-2 argument-identity proof (not just "was called"): spies on
+// core.runCli() and asserts the EXACT object identity of both the
+// profile and repositoryRoot arguments run() forwards - proving neither
+// is copied, re-derived, or substituted for a different value. The
+// original core.runCli is restored unconditionally, including on failure.
+test("Targomo bootstrap: run() threads the exact TARGOMO_PROJECT_PROFILE and TARGOMO_REPOSITORY_ROOT values into core.runCli - argument identity, not merely invocation", (t) => {
+  const originalRunCli = core.runCli;
+  let captured = null;
+  core.runCli = (args) => {
+    captured = args;
+    return "SENTINEL_RETURN_VALUE";
+  };
+  t.after(() => {
+    core.runCli = originalRunCli;
+  });
+
+  const returned = run();
+
+  assert.ok(captured, "core.runCli must have been called");
+  assert.equal(captured.profile, TARGOMO_PROJECT_PROFILE, "profile must be the exact TARGOMO_PROJECT_PROFILE object, not a copy");
+  assert.equal(captured.repositoryRoot, TARGOMO_REPOSITORY_ROOT, "repositoryRoot must be the exact TARGOMO_REPOSITORY_ROOT value, not a copy or a different root");
+  assert.equal(returned, "SENTINEL_RETURN_VALUE", "run() must return core.runCli()'s own return value unchanged");
 });

@@ -62,7 +62,7 @@ test("architecture boundary: no generic core runtime file imports scripts/target
 });
 
 test("architecture boundary (positive proof): the target-owned Targomo tree does import from generic core", () => {
-  const bootstrapFiles = ["collect-context.js", "collect-history.js", "analyze-failure.js"];
+  const bootstrapFiles = ["collect-context.js", "collect-history.js", "analyze-failure.js", "aggregate-browser-context.js"];
   for (const name of bootstrapFiles) {
     const content = fs.readFileSync(path.join(TARGETS_TARGOMO_ROOT, name), "utf8");
     assert.match(content, /require\(["']\.\.\/\.\.\/ai\//, `${name} must import the generic core`);
@@ -75,4 +75,60 @@ test("architecture boundary: the target profile itself lives only under scripts/
   assert.equal("TARGOMO_PROJECT_PROFILE" in coreProfileExports, false, "the generic core contract must not export a concrete target profile");
   const coreProfileSource = fs.readFileSync(path.join(AI_ROOT, "project-profile.js"), "utf8");
   assert.doesNotMatch(coreProfileSource, /poi\.targomo\.com/, "the target's own hostname must never appear in generic core source");
+});
+
+// Roadmap FPI-2: dependency-free, source-text regression proving the
+// second architectural invariant this stage establishes:
+//
+//   generic target-RUNTIME core files no longer derive the TARGET
+//   repository from their own module location (__dirname) or from
+//   process.cwd() - every one now requires an explicit, caller-supplied
+//   repositoryRoot (see scripts/ai/repository-root.js).
+//
+// This deliberately does NOT ban every `__dirname` in scripts/ai/** -
+// core-owned resource paths (e.g. the Knowledge corpus's own
+// DEFAULT_UNITS_DIR, which legitimately IS core's own data directory,
+// see scripts/ai/knowledge/loader.js) are untouched and out of scope.
+// Only the specific files known to read/write TARGET-repository
+// artifacts are guarded here, and only against the exact pattern FPI-2
+// eliminated: a module-level ROOT/REAL_ROOT constant built from this
+// file's own __dirname.
+const FPI2_TARGET_RUNTIME_FILES = [
+  "collect-context.js",
+  "context-utils.js",
+  "collect-history.js",
+  "analyze-failure.js",
+  "aggregate-browser-context.js",
+  path.join("adapters", "cypress-adapter.js"),
+  path.join("adapters", "playwright-adapter.js"),
+];
+
+const TARGET_ROOT_FROM_DIRNAME_PATTERN = /\b(?:const|let)\s+\w*ROOT\w*\s*=\s*(?:path\.resolve|fs\.realpathSync)\(\s*(?:path\.resolve\()?\s*__dirname/;
+
+test("architecture boundary (FPI-2): no generic target-runtime file derives a target repository root from its own __dirname", () => {
+  const violations = [];
+  for (const relPath of FPI2_TARGET_RUNTIME_FILES) {
+    const fullPath = path.join(AI_ROOT, relPath);
+    const content = fs.readFileSync(fullPath, "utf8");
+    if (TARGET_ROOT_FROM_DIRNAME_PATTERN.test(content)) {
+      violations.push(relPath);
+    }
+  }
+  assert.deepEqual(violations, [], `generic target-runtime files must receive repositoryRoot explicitly, never derive it from __dirname:\n${violations.join("\n")}`);
+});
+
+test("architecture boundary (FPI-2, positive proof): scripts/ai/repository-root.js exists and is imported by every FPI-2 target-runtime entry point", () => {
+  assert.equal(fs.existsSync(path.join(AI_ROOT, "repository-root.js")), true);
+  const entryPoints = ["collect-context.js", "collect-history.js", "analyze-failure.js", "aggregate-browser-context.js"];
+  for (const name of entryPoints) {
+    const content = fs.readFileSync(path.join(AI_ROOT, name), "utf8");
+    assert.match(content, /require\(["']\.\/repository-root["']\)/, `${name} must import scripts/ai/repository-root.js`);
+  }
+});
+
+test("architecture boundary (FPI-2, positive proof): the Targomo target owns TARGOMO_REPOSITORY_ROOT, never the generic core", () => {
+  const repoRootPath = path.join(TARGETS_TARGOMO_ROOT, "repository-root.js");
+  assert.equal(fs.existsSync(repoRootPath), true);
+  const content = fs.readFileSync(repoRootPath, "utf8");
+  assert.match(content, /TARGOMO_REPOSITORY_ROOT/);
 });

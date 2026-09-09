@@ -19,6 +19,15 @@ const { normalizeSpecPath } = require("./context-utils");
 const { validateNormalizedFailure } = require("./normalized-failure");
 
 const ROOT = path.resolve(__dirname, "..", "..");
+// Roadmap FPI-2: extractFailedTests()/summarizeTestResults()/
+// resolveScreenshotPath()/collect() no longer derive their own target
+// repository root from this module's __dirname - every call site below
+// now supplies an explicit `root: { lexicalRoot, realRoot }` boundary
+// (see scripts/ai/repository-root.js), matching production's own
+// collect-context.js wiring. This repository's own checkout is used as
+// the fixture target repository throughout this file.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
+const CYPRESS_SCREENSHOTS_DIR = path.join(ROOT, "cypress", "screenshots");
 
 // --- id ----------------------------------------------------------------
 
@@ -60,7 +69,7 @@ test("extractFailedTests: walks nested suites and collects only failed tests", (
     },
   ];
 
-  const failed = extractFailedTests(reports);
+  const failed = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.length, 1);
   assert.equal(failed[0].title, "fails");
   assert.equal(failed[0].suite, "Outer > Inner");
@@ -90,7 +99,7 @@ test("extractFailedTests: truncates a very long stack trace but never the error 
     },
   ];
 
-  const [failed] = extractFailedTests(reports);
+  const [failed] = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.error.message, criticalMessage, "the message must never be truncated");
   assert.ok(failed.error.stack.length < hugeStack.length, "the stack must be truncated");
   assert.match(failed.error.stack, /truncated/);
@@ -109,7 +118,7 @@ test("extractFailedTests: recognizes the test.fail===true && !test.pending fallb
       ],
     },
   ];
-  const failed = extractFailedTests(reports);
+  const failed = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.length, 1);
   assert.equal(failed[0].title, "fails via fail flag");
 });
@@ -134,7 +143,7 @@ test("extractFailedTests: a pending test is never classified as failed, even if 
       ],
     },
   ];
-  const failed = extractFailedTests(reports);
+  const failed = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.length, 0);
 });
 
@@ -149,7 +158,7 @@ test("extractFailedTests: prefers err.estack, falls back to err.stack when estac
       ],
     },
   ];
-  const [failed] = extractFailedTests(reports);
+  const [failed] = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.error.stack, "plain stack only");
 });
 
@@ -164,7 +173,7 @@ test("extractFailedTests: duration is null when absent or non-numeric", () => {
       ],
     },
   ];
-  const [failed] = extractFailedTests(reports);
+  const [failed] = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.duration, null);
 });
 
@@ -173,7 +182,7 @@ test("extractFailedTests: aggregates failures across multiple report objects", (
     { results: [{ file: "/a.cy.js", suites: [{ title: "S", suites: [], tests: [{ title: "t1", state: "failed", err: { message: "m1" } }] }] }] },
     { results: [{ file: "/b.cy.js", suites: [{ title: "S", suites: [], tests: [{ title: "t2", state: "failed", err: { message: "m2" } }] }] }] },
   ];
-  const failed = extractFailedTests(reports);
+  const failed = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.length, 2);
   assert.deepEqual(failed.map((f) => f.specFile).sort(), ["a.cy.js", "b.cy.js"]);
 });
@@ -198,7 +207,7 @@ test("extractFailedTests: every emitted failure satisfies validateNormalizedFail
       ],
     },
   ];
-  const failed = extractFailedTests(reports);
+  const failed = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.length, 2);
   for (const failure of failed) {
     const result = validateNormalizedFailure(failure);
@@ -214,7 +223,7 @@ test("summarizeTestResults: aggregates totals across multiple spec reports", () 
     { stats: { tests: 3, passes: 2, failures: 1, pending: 0, duration: 100 }, results: [{ file: "/a.cy.js", suites: [] }] },
     { stats: { tests: 2, passes: 2, failures: 0, pending: 0, duration: 50 }, results: [{ file: "/b.cy.js", suites: [] }] },
   ];
-  const summary = summarizeTestResults(reports);
+  const summary = summarizeTestResults(reports, TEST_ROOT);
   assert.equal(summary.found, true);
   assert.deepEqual(summary.totals, { tests: 5, passed: 4, failed: 1, pending: 0, duration: 150 });
   assert.equal(summary.specs.length, 2);
@@ -239,11 +248,11 @@ test("resolveScreenshotPath: matches only the exact '(failed)' filename, never a
   fs.writeFileSync(path.join(specDir, "Suite -- my test extra long title (failed).png"), "");
   fs.writeFileSync(path.join(specDir, "Suite -- my test.png"), ""); // no (failed) suffix - not our test's failure shot
 
-  const noMatch = resolveScreenshotPath("cypress/e2e/tests/fixture.cy.js", ["Suite"], "my test");
+  const noMatch = resolveScreenshotPath("cypress/e2e/tests/fixture.cy.js", ["Suite"], "my test", CYPRESS_SCREENSHOTS_DIR, TEST_ROOT);
   assert.equal(noMatch, null, "must not match on prefix alone or a non-failed screenshot");
 
   fs.writeFileSync(path.join(specDir, "Suite -- my test (failed).png"), "");
-  const match = resolveScreenshotPath("cypress/e2e/tests/fixture.cy.js", ["Suite"], "my test");
+  const match = resolveScreenshotPath("cypress/e2e/tests/fixture.cy.js", ["Suite"], "my test", CYPRESS_SCREENSHOTS_DIR, TEST_ROOT);
   assert.equal(match, "cypress/screenshots/fixture.cy.js/Suite -- my test (failed).png");
 });
 
@@ -257,12 +266,12 @@ test("resolveScreenshotPath: with multiple attempts, picks the highest-numbered 
   fs.writeFileSync(path.join(specDir, "Suite -- flaky test (failed) (1).png"), "");
   fs.writeFileSync(path.join(specDir, "Suite -- flaky test (failed) (2).png"), "");
 
-  const match = resolveScreenshotPath("cypress/e2e/tests/fixture2.cy.js", ["Suite"], "flaky test");
+  const match = resolveScreenshotPath("cypress/e2e/tests/fixture2.cy.js", ["Suite"], "flaky test", CYPRESS_SCREENSHOTS_DIR, TEST_ROOT);
   assert.equal(match, "cypress/screenshots/fixture2.cy.js/Suite -- flaky test (failed) (2).png");
 });
 
 test("resolveScreenshotPath: returns null when the spec's screenshot directory doesn't exist", () => {
-  assert.equal(resolveScreenshotPath("cypress/e2e/tests/never_ran.cy.js", ["Suite"], "test"), null);
+  assert.equal(resolveScreenshotPath("cypress/e2e/tests/never_ran.cy.js", ["Suite"], "test", CYPRESS_SCREENSHOTS_DIR, TEST_ROOT), null);
 });
 
 test("resolveScreenshotPath: an overridden screenshotsDir is honored without touching the real cypress/screenshots directory", (t) => {
@@ -272,8 +281,8 @@ test("resolveScreenshotPath: an overridden screenshotsDir is honored without tou
   fs.mkdirSync(specDir, { recursive: true });
   fs.writeFileSync(path.join(specDir, "Suite -- isolated test (failed).png"), "");
 
-  const match = resolveScreenshotPath("cypress/e2e/tests/isolated.cy.js", ["Suite"], "isolated test", tmpRoot);
-  assert.equal(match, normalizeSpecPath(path.join(specDir, "Suite -- isolated test (failed).png")));
+  const match = resolveScreenshotPath("cypress/e2e/tests/isolated.cy.js", ["Suite"], "isolated test", tmpRoot, TEST_ROOT);
+  assert.equal(match, normalizeSpecPath(path.join(specDir, "Suite -- isolated test (failed).png"), TEST_ROOT));
 });
 
 // --- loadReports (moved from collect-context.test.js) ------------------
@@ -350,7 +359,7 @@ test("collect: with no reports directory returns found:false testResults, empty 
   fs.rmSync(tmpRoot, { recursive: true, force: true }); // directory itself must not exist
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
-  const result = collect({ reportsDir: tmpRoot });
+  const result = collect({ root: TEST_ROOT, reportsDir: tmpRoot });
   assert.deepEqual(result.testResults, { found: false });
   assert.deepEqual(result.failedTests, []);
   assert.ok(result.warnings.some((w) => w.includes("No report directory")));
@@ -377,7 +386,7 @@ test("collect: with a real report, returns testResults/failedTests/warnings deri
     })
   );
 
-  const result = collect({ reportsDir: tmpReportsDir, screenshotsDir: tmpScreenshotsDir });
+  const result = collect({ root: TEST_ROOT, reportsDir: tmpReportsDir, screenshotsDir: tmpScreenshotsDir });
   assert.equal(result.testResults.found, true);
   assert.equal(result.testResults.totals.failed, 1);
   assert.equal(result.failedTests.length, 1);

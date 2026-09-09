@@ -28,6 +28,13 @@ const { selectKnowledge } = require("./knowledge/selector");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const HISTORY_FILE = path.join(ROOT, "reports", "ai", "history.json");
+// Roadmap FPI-2: readHistory()/readContext() no longer derive their own
+// target repository root from this module's __dirname - every call below
+// now supplies an explicit `root: {lexicalRoot, realRoot}` boundary (see
+// scripts/ai/repository-root.js), matching production's own main() wiring.
+// This repository's own checkout is used as the fixture target repository
+// throughout this file.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 
 const context = {
   metadata: { repository: "o/r", commit: "abc123", branch: "main", runId: null, event: null, browser: "chrome", ci: false },
@@ -500,7 +507,7 @@ test("readHistory: returns null when reports/ai/history.json doesn't exist", (t)
   fs.rmSync(HISTORY_FILE, { force: true });
   t.after(() => fs.rmSync(HISTORY_FILE, { force: true }));
 
-  assert.equal(readHistory(), null);
+  assert.equal(readHistory(undefined, TEST_ROOT), null);
 });
 
 test("readHistory: returns null when history.json is marked unavailable", (t) => {
@@ -508,7 +515,7 @@ test("readHistory: returns null when history.json is marked unavailable", (t) =>
   fs.writeFileSync(HISTORY_FILE, JSON.stringify({ available: false, reason: "no prior runs" }));
   t.after(() => fs.rmSync(HISTORY_FILE, { force: true }));
 
-  assert.equal(readHistory(), null);
+  assert.equal(readHistory(undefined, TEST_ROOT), null);
 });
 
 test("readHistory: returns null for unparseable JSON instead of throwing", (t) => {
@@ -516,8 +523,8 @@ test("readHistory: returns null for unparseable JSON instead of throwing", (t) =
   fs.writeFileSync(HISTORY_FILE, "{ not json");
   t.after(() => fs.rmSync(HISTORY_FILE, { force: true }));
 
-  assert.doesNotThrow(() => readHistory());
-  assert.equal(readHistory(), null);
+  assert.doesNotThrow(() => readHistory(undefined, TEST_ROOT));
+  assert.equal(readHistory(undefined, TEST_ROOT), null);
 });
 
 test("readHistory: strips internal bookkeeping fields, keeping only the compact aggregate counts", (t) => {
@@ -537,7 +544,7 @@ test("readHistory: strips internal bookkeeping fields, keeping only the compact 
   );
   t.after(() => fs.rmSync(HISTORY_FILE, { force: true }));
 
-  assert.deepEqual(readHistory(), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
+  assert.deepEqual(readHistory(undefined, TEST_ROOT), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
 });
 
 // =========================================================================
@@ -595,25 +602,25 @@ test("isValidHistoryMetrics: missing metrics entirely are rejected, not silently
 
 test("readHistory: a malformed metric (string runsConsidered) makes the whole record unavailable - null, never a partially-forwarded value", (t) => {
   writeHistoryFixtureDirect(t, { available: true, runsConsidered: "10", passes: 7, failures: 3, retryPasses: 2 });
-  assert.equal(readHistory(), null);
+  assert.equal(readHistory(undefined, TEST_ROOT), null);
 });
 
 test("readHistory: a negative metric makes the whole record unavailable", (t) => {
   writeHistoryFixtureDirect(t, { available: true, runsConsidered: 3, passes: 3, failures: -1, retryPasses: 0 });
-  assert.equal(readHistory(), null);
+  assert.equal(readHistory(undefined, TEST_ROOT), null);
 });
 
 test("readHistory: an arithmetically inconsistent record is unavailable, never forwarded as false historical signal", (t) => {
   writeHistoryFixtureDirect(t, { available: true, runsConsidered: 3, passes: 10, failures: 10, retryPasses: 0 });
-  assert.equal(readHistory(), null);
+  assert.equal(readHistory(undefined, TEST_ROOT), null);
 });
 
 test("readHistory: 'unavailable' (malformed metrics) is distinguishable from a genuine zero-failure history - never synthesized as {runsConsidered:0,...}", (t) => {
   writeHistoryFixtureDirect(t, { available: true, runsConsidered: "bad", passes: 3, failures: 0, retryPasses: 0 });
-  const malformedResult = readHistory();
+  const malformedResult = readHistory(undefined, TEST_ROOT);
 
   writeHistoryFixtureDirect(t, { available: true, runsConsidered: 3, passes: 3, failures: 0, retryPasses: 0 });
-  const genuineZeroFailureResult = readHistory();
+  const genuineZeroFailureResult = readHistory(undefined, TEST_ROOT);
 
   assert.equal(malformedResult, null, "malformed metrics collapse to the same 'unavailable' null as a missing file");
   assert.deepEqual(genuineZeroFailureResult, { runsConsidered: 3, passes: 3, failures: 0, retryPasses: 0 }, "a real zero-failure history is never confused with unavailable");
@@ -632,7 +639,7 @@ test("readHistory: the exact #21I-B observed live shape (3/3/0/0) remains valid 
     failures: 0,
     retryPasses: 0,
   });
-  assert.deepEqual(readHistory({ projectId: "external-poi-sut", framework: "playwright" }), {
+  assert.deepEqual(readHistory({ projectId: "external-poi-sut", framework: "playwright" }, TEST_ROOT), {
     runsConsidered: 3,
     passes: 3,
     failures: 0,
@@ -742,7 +749,7 @@ const VALID_AGGREGATE_FIELDS = { runsConsidered: 10, passes: 7, failures: 3, ret
 test("readHistory: matching project (VALID + same VALID) -> History returned unchanged", (t) => {
   writeHistoryFixture(t, { available: true, projectId: "external-poi-sut", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
 
-  assert.deepEqual(readHistory({ projectId: "external-poi-sut" }), {
+  assert.deepEqual(readHistory({ projectId: "external-poi-sut" }, TEST_ROOT), {
     runsConsidered: 10,
     passes: 7,
     failures: 3,
@@ -753,13 +760,13 @@ test("readHistory: matching project (VALID + same VALID) -> History returned unc
 test("readHistory: different project (VALID + different VALID) -> null - primary cross-project leakage regression proof", (t) => {
   writeHistoryFixture(t, { available: true, projectId: "synthetic-project", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
 
-  assert.equal(readHistory({ projectId: "external-poi-sut" }), null);
+  assert.equal(readHistory({ projectId: "external-poi-sut" }, TEST_ROOT), null);
 });
 
 test("readHistory: scoped current + ABSENT history projectId -> null (the primary correction from the earlier #19.3A proposal)", (t) => {
   writeHistoryFixture(t, { available: true, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
 
-  assert.equal(readHistory({ projectId: "external-poi-sut" }), null);
+  assert.equal(readHistory({ projectId: "external-poi-sut" }, TEST_ROOT), null);
 });
 
 test("readHistory: scoped current + malformed history projectId -> null for null/empty/whitespace/non-string, never treated as legacy absence", (t) => {
@@ -771,44 +778,44 @@ test("readHistory: scoped current + malformed history projectId -> null for null
       branch: "main",
       ...VALID_AGGREGATE_FIELDS,
     });
-    assert.equal(readHistory({ projectId: "external-poi-sut" }), null, `expected null for history.projectId=${JSON.stringify(malformed)}`);
+    assert.equal(readHistory({ projectId: "external-poi-sut" }, TEST_ROOT), null, `expected null for history.projectId=${JSON.stringify(malformed)}`);
   }
 });
 
 test("readHistory: ABSENT current + ABSENT history -> History returned unchanged (ALLOW_LEGACY, narrow compatibility)", (t) => {
   writeHistoryFixture(t, { available: true, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
 
-  assert.deepEqual(readHistory({}), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
-  assert.deepEqual(readHistory(undefined), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
+  assert.deepEqual(readHistory({}, TEST_ROOT), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
+  assert.deepEqual(readHistory(undefined, TEST_ROOT), { runsConsidered: 10, passes: 7, failures: 3, retryPasses: 2 });
 });
 
 test("readHistory: ABSENT current + scoped (VALID) history -> null - an unscoped analysis cannot consume scoped history", (t) => {
   writeHistoryFixture(t, { available: true, projectId: "external-poi-sut", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
 
-  assert.equal(readHistory({}), null);
+  assert.equal(readHistory({}, TEST_ROOT), null);
 });
 
 test("readHistory: INVALID current identity excludes all history, including otherwise-matching and ABSENT history", (t) => {
   writeHistoryFixture(t, { available: true, projectId: "external-poi-sut", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
   for (const malformed of [null, "", "   ", 123]) {
-    assert.equal(readHistory({ projectId: malformed }), null, `expected null for current metadata.projectId=${JSON.stringify(malformed)}`);
+    assert.equal(readHistory({ projectId: malformed }, TEST_ROOT), null, `expected null for current metadata.projectId=${JSON.stringify(malformed)}`);
   }
 
   writeHistoryFixture(t, { available: true, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.equal(readHistory({ projectId: "" }), null, "INVALID current + ABSENT history must also be null");
+  assert.equal(readHistory({ projectId: "" }, TEST_ROOT), null, "INVALID current + ABSENT history must also be null");
 });
 
 test("readHistory: VALID identity comparison is whitespace-normalized (trimmed) on both sides", (t) => {
   writeHistoryFixture(t, { available: true, projectId: "external-poi-sut", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: " external-poi-sut " }), null, "leading/trailing whitespace on the current side must still match");
+  assert.notEqual(readHistory({ projectId: " external-poi-sut " }, TEST_ROOT), null, "leading/trailing whitespace on the current side must still match");
 
   writeHistoryFixture(t, { available: true, projectId: " external-poi-sut ", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: "external-poi-sut" }), null, "leading/trailing whitespace on the history side must still match");
+  assert.notEqual(readHistory({ projectId: "external-poi-sut" }, TEST_ROOT), null, "leading/trailing whitespace on the history side must still match");
 });
 
 test("readHistory: available:false remains unusable regardless of project identity on either side - project match never overrides availability", (t) => {
   writeHistoryFixture(t, { available: false, reason: "no prior runs", projectId: "external-poi-sut" });
-  assert.equal(readHistory({ projectId: "external-poi-sut" }), null);
+  assert.equal(readHistory({ projectId: "external-poi-sut" }, TEST_ROOT), null);
 });
 
 // --- Roadmap #19.9B: readHistory() framework-namespace integration -------
@@ -824,63 +831,63 @@ const SAME_PROJECT = "external-poi-sut";
 
 test("H1: current cypress + history cypress -> included", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null);
 });
 
 test("H2: current playwright + history playwright -> included", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null);
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }, TEST_ROOT), null);
 });
 
 test("H3: current cypress + history playwright -> excluded", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null);
 });
 
 test("H4: current playwright + history cypress -> excluded", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null);
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }, TEST_ROOT), null);
 });
 
 test("H5: current cypress + history framework absent -> included as legacy Cypress", (t) => {
   // No `framework` key at all - models a real pre-#19.9B history.json,
   // written before collect-history.js ever stamped this field.
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "legacy absent-framework history must remain usable by Cypress");
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null, "legacy absent-framework history must remain usable by Cypress");
 });
 
 test("H6: current playwright + history framework absent -> excluded", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "Playwright must never inherit legacy Cypress history");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }, TEST_ROOT), null, "Playwright must never inherit legacy Cypress history");
 });
 
 test("H7: invalid history framework -> excluded", (t) => {
   for (const malformed of [null, "", "   ", 123]) {
     writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: malformed, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-    assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, `expected null for history.framework=${JSON.stringify(malformed)}`);
+    assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null, `expected null for history.framework=${JSON.stringify(malformed)}`);
   }
 });
 
 test("H8: invalid current framework -> excluded, fails closed even against an otherwise-matching record", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
   for (const malformed of [null, "", "   ", 123]) {
-    assert.equal(readHistory({ projectId: SAME_PROJECT, framework: malformed }), null, `expected null for current framework=${JSON.stringify(malformed)}`);
+    assert.equal(readHistory({ projectId: SAME_PROJECT, framework: malformed }, TEST_ROOT), null, `expected null for current framework=${JSON.stringify(malformed)}`);
   }
 });
 
 test("H9: same framework + different project -> excluded (project gate still applies independently)", (t) => {
   writeHistoryFixture(t, { available: true, projectId: "synthetic-project", framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null);
 });
 
 test("H10: same project + different framework -> excluded (framework gate still applies independently)", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null);
 });
 
 test("H11: matching project + matching framework -> included", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.deepEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), {
+  assert.deepEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), {
     runsConsidered: VALID_AGGREGATE_FIELDS.runsConsidered,
     passes: VALID_AGGREGATE_FIELDS.passes,
     failures: VALID_AGGREGATE_FIELDS.failures,
@@ -890,32 +897,32 @@ test("H11: matching project + matching framework -> included", (t) => {
 
 test("H12: current framework absent + history framework absent -> legacy eligibility per the frozen rule (narrow, project gate still applies)", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT }), null, "ABSENT current framework + ABSENT history framework -> eligible");
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT }, TEST_ROOT), null, "ABSENT current framework + ABSENT history framework -> eligible");
 });
 
 test("readHistory: project AND framework composition - neither namespace can rescue the other", (t) => {
   // same project + same framework -> eligible (positive control)
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null);
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null);
 });
 
 test("readHistory: three-generation producer/reader transition - legacy Cypress, new Cypress, and synthetic Playwright history are each correctly scoped", (t) => {
   // Generation A: legacy history fixture predating the framework field.
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "generation A: legacy Cypress history is eligible for current Cypress");
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "generation A: legacy Cypress history is never eligible for current Playwright");
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null, "generation A: legacy Cypress history is eligible for current Cypress");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }, TEST_ROOT), null, "generation A: legacy Cypress history is never eligible for current Playwright");
 });
 
 test("readHistory: three-generation transition - generation B (new Cypress history with explicit framework)", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "cypress", browser: "chrome", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "generation B: new Cypress history is eligible for current Cypress");
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "generation B: new Cypress history is never eligible for current Playwright");
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null, "generation B: new Cypress history is eligible for current Cypress");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }, TEST_ROOT), null, "generation B: new Cypress history is never eligible for current Playwright");
 });
 
 test("readHistory: three-generation transition - generation C (synthetic Playwright history)", (t) => {
   writeHistoryFixture(t, { available: true, projectId: SAME_PROJECT, framework: "playwright", browser: "chromium", branch: "main", ...VALID_AGGREGATE_FIELDS });
-  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }), null, "generation C: synthetic Playwright history is eligible for current Playwright");
-  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }), null, "generation C: synthetic Playwright history is never eligible for current Cypress");
+  assert.notEqual(readHistory({ projectId: SAME_PROJECT, framework: "playwright" }, TEST_ROOT), null, "generation C: synthetic Playwright history is eligible for current Playwright");
+  assert.equal(readHistory({ projectId: SAME_PROJECT, framework: "cypress" }, TEST_ROOT), null, "generation C: synthetic Playwright history is never eligible for current Cypress");
 });
 
 // --- pipeline (contract-boundary integration) test ------------------------

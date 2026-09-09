@@ -15,6 +15,17 @@
  * used to live directly in collect-context.js - see that file's git
  * history for the pre-extraction version. No parsing/matching semantics
  * were changed by the move itself.
+ *
+ * Roadmap FPI-2: this adapter owns NO repository root of its own.
+ * `collect({ root, reportsDir, screenshotsDir })` receives the caller's
+ * (collect-context.js's) already-validated trusted target repository
+ * boundary (`root: { lexicalRoot, realRoot }`, see
+ * scripts/ai/repository-root.js) and resolves its own default report/
+ * screenshot conventions ("reports/cypress", "cypress/screenshots")
+ * underneath it - never underneath this generic core's own `__dirname`.
+ * `reportsDir`/`screenshotsDir` remain available as explicit test/caller
+ * overrides for the SAME target repository; they are a framework-
+ * specific convenience, never a second, competing root authority.
  */
 
 "use strict";
@@ -22,10 +33,6 @@
 const fs = require("fs");
 const path = require("path");
 const { normalizeSpecPath } = require("../context-utils");
-
-const ROOT = path.resolve(__dirname, "..", "..", "..");
-const REPORTS_DIR = path.join(ROOT, "reports", "cypress");
-const SCREENSHOTS_DIR = path.join(ROOT, "cypress", "screenshots");
 
 // Stack traces can run very long (deep call chains, webpack-wrapped
 // frames); the error *message* is the critical, never-truncated part -
@@ -38,7 +45,7 @@ const MAX_STACK_CHARS = 4000;
 // context.metadata.framework.
 const id = "cypress";
 
-function loadReports(reportsDir = REPORTS_DIR) {
+function loadReports(reportsDir) {
   const warnings = [];
 
   if (!fs.existsSync(reportsDir)) {
@@ -94,7 +101,7 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir = SCREENSHOTS_DIR) {
+function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir, root) {
   if (!specFile) return null;
   try {
     const specDir = path.join(screenshotsDir, path.basename(specFile));
@@ -117,7 +124,7 @@ function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir 
     candidates.sort();
     const failedShot = candidates[candidates.length - 1];
 
-    return normalizeSpecPath(path.join(specDir, failedShot));
+    return normalizeSpecPath(path.join(specDir, failedShot), root);
   } catch {
     return null;
   }
@@ -131,12 +138,12 @@ function truncateText(text, maxChars) {
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n/* ...truncated... */` : text;
 }
 
-function extractFailedTests(reports, screenshotsDir = SCREENSHOTS_DIR) {
+function extractFailedTests(reports, screenshotsDir, root) {
   const failedTests = [];
 
   for (const report of reports) {
     for (const rootSuite of report.results || []) {
-      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile);
+      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile, root);
 
       for (const { test, suiteTitles } of walkSuite(rootSuite, [])) {
         const isFailed = test.state === "failed" || (test.fail === true && test.pending !== true);
@@ -154,7 +161,7 @@ function extractFailedTests(reports, screenshotsDir = SCREENSHOTS_DIR) {
             message: (test.err && test.err.message) || null,
             stack: truncateText((test.err && (test.err.estack || test.err.stack)) || null, MAX_STACK_CHARS),
           },
-          screenshot: resolveScreenshotPath(specFile, suiteTitles, test.title || "", screenshotsDir),
+          screenshot: resolveScreenshotPath(specFile, suiteTitles, test.title || "", screenshotsDir, root),
         });
       }
     }
@@ -163,13 +170,13 @@ function extractFailedTests(reports, screenshotsDir = SCREENSHOTS_DIR) {
   return failedTests;
 }
 
-function summarizeTestResults(reports) {
+function summarizeTestResults(reports, root) {
   const specs = [];
   const totals = { tests: 0, passed: 0, failed: 0, pending: 0, duration: 0 };
 
   for (const report of reports) {
     for (const rootSuite of report.results || []) {
-      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile);
+      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile, root);
       const stats = report.stats || {};
 
       specs.push({
@@ -199,16 +206,26 @@ function summarizeTestResults(reports) {
 // instead of writing a file or knowing about metadata/ProjectProfile/
 // relevantFiles, all of which remain the generic collector's own
 // responsibility.
-function collect({ reportsDir = REPORTS_DIR, screenshotsDir = SCREENSHOTS_DIR } = {}) {
-  const { reports, warnings } = loadReports(reportsDir);
+//
+// Roadmap FPI-2: `root` is required - the caller (collect-context.js)
+// always supplies its own already-validated trusted target repository
+// boundary. `reportsDir`/`screenshotsDir` default to the same
+// "reports/cypress"/"cypress/screenshots" convention as before, now
+// resolved underneath `root.realRoot` rather than this file's own former
+// module-level ROOT constant.
+function collect({ root, reportsDir, screenshotsDir } = {}) {
+  const resolvedReportsDir = reportsDir || path.join(root.realRoot, "reports", "cypress");
+  const resolvedScreenshotsDir = screenshotsDir || path.join(root.realRoot, "cypress", "screenshots");
+
+  const { reports, warnings } = loadReports(resolvedReportsDir);
 
   if (reports.length === 0) {
     return { testResults: { found: false }, failedTests: [], warnings };
   }
 
   return {
-    testResults: summarizeTestResults(reports),
-    failedTests: extractFailedTests(reports, screenshotsDir),
+    testResults: summarizeTestResults(reports, root),
+    failedTests: extractFailedTests(reports, resolvedScreenshotsDir, root),
     warnings,
   };
 }
@@ -222,6 +239,4 @@ module.exports = {
   extractFailedTests,
   summarizeTestResults,
   truncateText,
-  REPORTS_DIR,
-  SCREENSHOTS_DIR,
 };

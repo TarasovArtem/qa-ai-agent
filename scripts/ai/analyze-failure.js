@@ -38,35 +38,37 @@ const { PROVIDER_ERROR_CODES, normalizeProviderError } = require("./providers/pr
 const { validateProvider, validateProviderResponse } = require("./providers/provider-contract");
 const { applyAgentPolicy } = require("./agent-policy");
 const { assertValidProjectProfile } = require("./project-profile");
+const { assertValidRepositoryRoot } = require("./repository-root");
 const { loadKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
 const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
 
-const ROOT = path.resolve(__dirname, "..", "..");
-const CONTEXT_FILE = path.join(ROOT, "reports", "ai", "context.json");
-const HISTORY_FILE = path.join(ROOT, "reports", "ai", "history.json");
-const OUTPUT_FILE = path.join(ROOT, "reports", "ai", "ai-report.json");
-
 class AnalyzerError extends Error {}
 
-function readContext() {
-  if (!fs.existsSync(CONTEXT_FILE)) {
+// Roadmap FPI-2: `root` (the caller's already-validated
+// `{ lexicalRoot, realRoot }` boundary, see scripts/ai/repository-root.js)
+// replaces this file's former module-level ROOT/CONTEXT_FILE constants -
+// context.json is always read from underneath the TARGET repository,
+// never this generic core's own `__dirname`.
+function readContext(root) {
+  const contextFile = path.join(root.realRoot, "reports", "ai", "context.json");
+  if (!fs.existsSync(contextFile)) {
     throw new AnalyzerError(
-      `${path.relative(ROOT, CONTEXT_FILE)} not found. Run "npm run ai:collect" (after a test run) first.`
+      `${path.relative(root.realRoot, contextFile)} not found. Run "npm run ai:collect" (after a test run) first.`
     );
   }
 
   let raw;
   try {
-    raw = fs.readFileSync(CONTEXT_FILE, "utf8");
+    raw = fs.readFileSync(contextFile, "utf8");
   } catch (err) {
-    throw new AnalyzerError(`Could not read ${path.relative(ROOT, CONTEXT_FILE)}: ${err.message}`);
+    throw new AnalyzerError(`Could not read ${path.relative(root.realRoot, contextFile)}: ${err.message}`);
   }
 
   try {
     return JSON.parse(raw);
   } catch (err) {
-    throw new AnalyzerError(`${path.relative(ROOT, CONTEXT_FILE)} is not valid JSON: ${err.message}`);
+    throw new AnalyzerError(`${path.relative(root.realRoot, contextFile)} is not valid JSON: ${err.message}`);
   }
 }
 
@@ -199,12 +201,16 @@ function isValidHistoryMetrics(parsed) {
   return true;
 }
 
-function readHistory(currentMetadata) {
-  if (!fs.existsSync(HISTORY_FILE)) return null;
+// Roadmap FPI-2: `root` replaces this file's former module-level ROOT/
+// HISTORY_FILE constants - history.json is always read from underneath
+// the TARGET repository, never this generic core's own `__dirname`.
+function readHistory(currentMetadata, root) {
+  const historyFile = path.join(root.realRoot, "reports", "ai", "history.json");
+  if (!fs.existsSync(historyFile)) return null;
 
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
+    parsed = JSON.parse(fs.readFileSync(historyFile, "utf8"));
   } catch {
     return null;
   }
@@ -565,7 +571,8 @@ async function buildFailureReport(
   context,
   {
     provider = createProvider(),
-    history = readHistory(context.metadata),
+    root,
+    history = readHistory(context.metadata, root),
     relevantKnowledge = computeRelevantKnowledge(context),
     projectProfile,
   } = {}
@@ -671,18 +678,27 @@ function fail(message) {
 // a missing/invalid one is caught by the same require.main===module
 // handler at the bottom of this file that already handles every other
 // main() failure, so no separate error path is needed here.
-async function main({ projectProfile } = {}) {
+//
+// Roadmap FPI-2: `repositoryRoot` is validated immediately after
+// `projectProfile` - also before readContext(), before the output
+// directory is created, and before the zero-failed-tests early-return's
+// own artifact write. context.json/history.json/ai-report.json are all
+// resolved from this single validated `root` boundary, never from this
+// generic core's own `__dirname`.
+async function main({ projectProfile, repositoryRoot } = {}) {
   assertValidProjectProfile(projectProfile, "analyze-failure.main()");
+  const root = assertValidRepositoryRoot(repositoryRoot, "analyze-failure.main()");
+  const outputFile = path.join(root.realRoot, "reports", "ai", "ai-report.json");
 
   let context;
   try {
-    context = readContext();
+    context = readContext(root);
   } catch (err) {
     fail(err.message);
     return;
   }
 
-  fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
+  fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 
   const failedTests = context.failedTests || [];
   if (failedTests.length === 0) {
@@ -696,8 +712,8 @@ async function main({ projectProfile } = {}) {
       warnings: [],
       note: "No failed tests were present in reports/ai/context.json; nothing to analyze.",
     };
-    fs.writeFileSync(OUTPUT_FILE, JSON.stringify(emptyReport, null, 2));
-    console.log(`[ai:analyze] No failed tests to analyze. Wrote ${path.relative(ROOT, OUTPUT_FILE)}.`);
+    fs.writeFileSync(outputFile, JSON.stringify(emptyReport, null, 2));
+    console.log(`[ai:analyze] No failed tests to analyze. Wrote ${path.relative(root.realRoot, outputFile)}.`);
     return;
   }
 
@@ -708,14 +724,14 @@ async function main({ projectProfile } = {}) {
 
   let report;
   try {
-    report = await buildFailureReport(context, { projectProfile });
+    report = await buildFailureReport(context, { projectProfile, root });
   } catch (err) {
     fail(err.message);
     return;
   }
 
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(report, null, 2));
-  console.log(`[ai:analyze] wrote ${path.relative(ROOT, OUTPUT_FILE)} (${report.results.length} result(s)).`);
+  fs.writeFileSync(outputFile, JSON.stringify(report, null, 2));
+  console.log(`[ai:analyze] wrote ${path.relative(root.realRoot, outputFile)} (${report.results.length} result(s)).`);
   for (const w of report.warnings) console.log(`[ai:analyze] warning: ${w}`);
 }
 

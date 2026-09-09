@@ -75,12 +75,14 @@ const { classifyPathString, PATH_KIND, isCanonicalPathInsideRoot } = require("..
 
 // context-utils.js's own equivalent (resolveRealPathSafe) is a private,
 // unexported helper there (that module only exports the higher-level
-// resolveSafeSpecPath()/resolveSafeLocalAttachmentPath() wrappers, which
-// are hardcoded to that module's own repository ROOT rather than a
-// caller-supplied repoRoot - unusable for this module's explicit-repoRoot
-// testability requirement). This is the same one-line try/catch shape,
-// reimplemented locally rather than exporting a new surface from F0-owned
-// context-utils.js merely for import convenience.
+// resolveSafeSpecPath()/resolveSafeLocalAttachmentPath() wrappers, whose
+// own shape - even since Roadmap FPI-2 made them accept an explicit
+// `root` boundary rather than deriving one from that module's own
+// __dirname - is still specific to the reactive collector's spec-path/
+// attachment-locality contract, not this module's own #23-owned
+// generation-time repoRoot semantics). This is the same one-line
+// try/catch shape, reimplemented locally rather than exporting a new
+// surface from context-utils.js merely for import convenience.
 function resolveRealPathSafe(absPath) {
   try {
     return fs.realpathSync(absPath);

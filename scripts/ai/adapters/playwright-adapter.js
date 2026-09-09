@@ -34,6 +34,15 @@
  * attempt failed. Only test.status === "unexpected" produces a
  * failedTests entry, and exactly one per logical test, built from the
  * FINAL (last) result as primary evidence.
+ *
+ * Roadmap FPI-2: this adapter owns NO repository root of its own.
+ * `collect({ root, reportFile })` receives the caller's (collect-
+ * context.js's) already-validated trusted target repository boundary
+ * (`root: { lexicalRoot, realRoot }`, see scripts/ai/repository-root.js)
+ * and resolves its default report location ("reports/playwright/
+ * report.json") underneath it - never underneath this generic core's
+ * own `__dirname`. `reportFile` remains available as an explicit test/
+ * caller override for the SAME target repository.
  */
 
 "use strict";
@@ -42,14 +51,11 @@ const fs = require("fs");
 const path = require("path");
 const { resolveSafeSpecPath, resolveSafeLocalAttachmentPath } = require("../context-utils");
 
-const ROOT = path.resolve(__dirname, "..", "..", "..");
-const DEFAULT_REPORT_FILE = path.join(ROOT, "reports", "playwright", "report.json");
-
 // Roadmap #19.8A/#19.8B: this adapter's own stable, canonical,
 // machine-readable identity - never inferred, always this constant.
 const id = "playwright";
 
-function loadReport(reportFile = DEFAULT_REPORT_FILE) {
+function loadReport(reportFile) {
   const warnings = [];
 
   if (!fs.existsSync(reportFile)) {
@@ -86,17 +92,17 @@ function loadReport(reportFile = DEFAULT_REPORT_FILE) {
 // report.suites[] represents a *file*, not a describe block - its own
 // title is deliberately never folded into suiteTitles (see buildFailure's
 // fullTitle construction), only nested suite.suites[] entries are.
-function walkReportSuites(suites, warnings = []) {
+function walkReportSuites(suites, warnings = [], root) {
   const entries = [];
   for (const fileSuite of Array.isArray(suites) ? suites : []) {
     if (!fileSuite || typeof fileSuite !== "object") continue;
     const fileHint = typeof fileSuite.file === "string" && fileSuite.file ? fileSuite.file : null;
-    walkGroup(fileSuite, [], fileHint, entries, warnings);
+    walkGroup(fileSuite, [], fileHint, entries, warnings, root);
   }
   return entries;
 }
 
-function walkGroup(suite, ancestorTitles, fileHint, entries, warnings) {
+function walkGroup(suite, ancestorTitles, fileHint, entries, warnings, root) {
   for (const spec of Array.isArray(suite.specs) ? suite.specs : []) {
     if (!spec || typeof spec !== "object") continue;
     // Roadmap #19.8B Phase 9: spec.file is preferred; the nearest
@@ -108,7 +114,7 @@ function walkGroup(suite, ancestorTitles, fileHint, entries, warnings) {
     // model-visible; a genuinely-supplied-but-unsafe value produces one
     // bounded, path-free warning, never the raw string.
     const specFileRaw = (typeof spec.file === "string" && spec.file) || fileHint || null;
-    const { value: specFile, rejected } = resolveSafeSpecPath(specFileRaw);
+    const { value: specFile, rejected } = resolveSafeSpecPath(specFileRaw, root);
     if (rejected) {
       warnings.push(
         `Playwright spec path for "${typeof spec.title === "string" ? spec.title : "(untitled)"}" was outside the repository/workspace boundary and was redacted.`
@@ -120,7 +126,7 @@ function walkGroup(suite, ancestorTitles, fileHint, entries, warnings) {
     if (!child || typeof child !== "object") continue;
     const childFileHint = (typeof child.file === "string" && child.file) || fileHint;
     const childTitles = typeof child.title === "string" && child.title ? [...ancestorTitles, child.title] : ancestorTitles;
-    walkGroup(child, childTitles, childFileHint, entries, warnings);
+    walkGroup(child, childTitles, childFileHint, entries, warnings, root);
   }
 }
 
@@ -177,7 +183,7 @@ function buildFailureError(primary) {
 // symlink escapes) before it can ever become the normalized screenshot
 // value - and even then returns a repo-relative path, never an absolute
 // one.
-function resolveScreenshot(primary, title, warnings) {
+function resolveScreenshot(primary, title, warnings, root) {
   if (!primary || !Array.isArray(primary.attachments)) return null;
 
   const screenshotAttachments = primary.attachments.filter(
@@ -192,7 +198,7 @@ function resolveScreenshot(primary, title, warnings) {
     return null;
   }
 
-  const { value, rejected } = resolveSafeLocalAttachmentPath(chosen.path);
+  const { value, rejected } = resolveSafeLocalAttachmentPath(chosen.path, root);
   if (value) return value;
 
   // Never interpolates the actual (possibly absolute/temp/remote) path
@@ -276,7 +282,7 @@ function summarizeTestResults(entries, warnings) {
 // scripts/ai/normalized-failure.js's validateNormalizedFailure() contract
 // unchanged; projectId/projectName are preserved as allowed extra fields
 // (Roadmap #19.8B Phase 19), never required by the generic validator.
-function extractFailedTests(entries, warnings) {
+function extractFailedTests(entries, warnings, root) {
   const failedTests = [];
 
   for (const { spec, suiteTitles, specFile } of entries) {
@@ -304,7 +310,7 @@ function extractFailedTests(entries, warnings) {
         status: "failed",
         duration,
         error: buildFailureError(primary),
-        screenshot: resolveScreenshot(primary, title, warnings),
+        screenshot: resolveScreenshot(primary, title, warnings, root),
       };
       if (typeof test.projectId === "string" && test.projectId) failure.projectId = test.projectId;
       if (typeof test.projectName === "string" && test.projectName) failure.projectName = test.projectName;
@@ -321,16 +327,24 @@ function extractFailedTests(entries, warnings) {
 // (reportFile, a single JSON report path) is intentionally different
 // from Cypress's reportsDir/screenshotsDir - the generic OUTPUT contract
 // is identical.
-function collect({ reportFile = DEFAULT_REPORT_FILE } = {}) {
-  const { report, warnings } = loadReport(reportFile);
+//
+// Roadmap FPI-2: `root` is required - the caller (collect-context.js)
+// always supplies its own already-validated trusted target repository
+// boundary. `reportFile` defaults to the same "reports/playwright/
+// report.json" convention as before, now resolved underneath
+// `root.realRoot` rather than this file's own former module-level ROOT
+// constant.
+function collect({ root, reportFile } = {}) {
+  const resolvedReportFile = reportFile || path.join(root.realRoot, "reports", "playwright", "report.json");
+  const { report, warnings } = loadReport(resolvedReportFile);
 
   if (!report) {
     return { testResults: { found: false }, failedTests: [], warnings };
   }
 
-  const entries = walkReportSuites(report.suites, warnings);
+  const entries = walkReportSuites(report.suites, warnings, root);
   const testResults = summarizeTestResults(entries, warnings);
-  const failedTests = extractFailedTests(entries, warnings);
+  const failedTests = extractFailedTests(entries, warnings, root);
 
   // Top-level errors[] are not attached to any individual test (e.g. a
   // global setup failure) - never fabricated into a fake failedTests
@@ -351,5 +365,4 @@ module.exports = {
   selectPrimaryResult,
   summarizeTestResults,
   extractFailedTests,
-  DEFAULT_REPORT_FILE,
 };

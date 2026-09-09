@@ -10,6 +10,17 @@
  * adapters/cypress-adapter.js; the reverse would be circular), so this one
  * generic primitive - unchanged from its pre-#19.6B implementation - lives
  * here instead, dependency-free and with no Cypress-specific knowledge.
+ *
+ * Roadmap FPI-2: this module owns NO repository root of its own.
+ * normalizeSpecPath(), resolveSafeSpecPath(), and
+ * resolveSafeLocalAttachmentPath() are root-DEPENDENT (they anchor a
+ * lexical/canonical containment decision to some repository boundary) and
+ * therefore each now take an explicit `root: { lexicalRoot, realRoot }`
+ * argument (see scripts/ai/repository-root.js) instead of deriving it
+ * from this file's own `__dirname`. classifyPathString()/PATH_KIND/
+ * isCanonicalPathInsideRoot() are root-INDEPENDENT (they already took
+ * their comparison root as an explicit parameter, or take none at all)
+ * and are unchanged.
  */
 
 "use strict";
@@ -17,22 +28,12 @@
 const fs = require("fs");
 const path = require("path");
 
-const ROOT = path.resolve(__dirname, "..", "..");
-
-// Roadmap #21D: the real, symlink-resolved location of ROOT itself,
-// computed once so every canonical containment check below is anchored to
-// the same value regardless of whether the checkout path passes through a
-// symlink - the same convention collect-context.js's own REAL_ROOT already
-// uses for Roadmap #21C, kept as an independent constant here rather than
-// imported, so this file stays dependency-free of collect-context.js (see
-// the module docstring: neither file may require the other).
-const REAL_ROOT = fs.realpathSync(ROOT);
-
-function normalizeSpecPath(rawFile) {
+function normalizeSpecPath(rawFile, root) {
   if (!rawFile) return null;
+  const lexicalRoot = root.lexicalRoot.replace(/\\/g, "/");
   let p = rawFile.replace(/\\/g, "/");
-  if (p.startsWith(ROOT.replace(/\\/g, "/"))) {
-    p = p.slice(ROOT.replace(/\\/g, "/").length);
+  if (p.startsWith(lexicalRoot)) {
+    p = p.slice(lexicalRoot.length);
   }
   p = p.replace(/^\/+/, "");
   return p || null;
@@ -178,7 +179,12 @@ function stripLeadingDotSlash(raw) {
 // unsafe/absent), rejected is true only when a genuinely unsafe value was
 // supplied (never merely absent) - callers use this to decide whether a
 // bounded, path-free warning is warranted.
-function resolveSafeSpecPath(rawSpecPath) {
+//
+// Roadmap FPI-2: `root` (`{ lexicalRoot, realRoot }`, see
+// scripts/ai/repository-root.js) replaces this file's former module-level
+// ROOT/REAL_ROOT constants - every containment decision below is anchored
+// to the caller's own explicitly-supplied target repository boundary.
+function resolveSafeSpecPath(rawSpecPath, root) {
   const kind = classifyPathString(rawSpecPath);
 
   if (kind === PATH_KIND.INVALID) return { value: null, rejected: false };
@@ -194,7 +200,7 @@ function resolveSafeSpecPath(rawSpecPath) {
     // gate eligibility" convention) - a path lexically outside the
     // repository is rejected immediately, no filesystem access needed.
     const lexical = path.resolve(rawSpecPath);
-    if (!isCanonicalPathInsideRoot({ root: ROOT, candidate: lexical })) {
+    if (!isCanonicalPathInsideRoot({ root: root.lexicalRoot, candidate: lexical })) {
       return { value: null, rejected: true };
     }
 
@@ -208,14 +214,14 @@ function resolveSafeSpecPath(rawSpecPath) {
     // proven-safe lexical location.
     const real = resolveRealPathSafe(lexical);
     if (real) {
-      if (isCanonicalPathInsideRoot({ root: REAL_ROOT, candidate: real })) {
-        const rel = path.relative(REAL_ROOT, real).split(path.sep).join("/");
+      if (isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
+        const rel = path.relative(root.realRoot, real).split(path.sep).join("/");
         return { value: rel || null, rejected: false };
       }
       return { value: null, rejected: true }; // symlink escape
     }
 
-    const rel = path.relative(ROOT, lexical).split(path.sep).join("/");
+    const rel = path.relative(root.lexicalRoot, lexical).split(path.sep).join("/");
     return { value: rel || null, rejected: false };
   }
 
@@ -239,7 +245,11 @@ function resolveSafeSpecPath(rawSpecPath) {
 // outside-repo), never for a path that simply doesn't exist (that fails
 // safely with rejected:false, matching the pre-existing
 // "does not exist on disk" warning path).
-function resolveSafeLocalAttachmentPath(rawPath) {
+//
+// Roadmap FPI-2: `root` replaces this file's former module-level ROOT/
+// REAL_ROOT constants - see resolveSafeSpecPath() above for the same
+// change and rationale.
+function resolveSafeLocalAttachmentPath(rawPath, root) {
   const kind = classifyPathString(rawPath);
 
   if (kind === PATH_KIND.INVALID) return { value: null, rejected: false };
@@ -254,11 +264,11 @@ function resolveSafeLocalAttachmentPath(rawPath) {
     return { value: null, rejected: true }; // foreign-OS absolute form
   }
 
-  const candidateAbs = isAbsoluteKind ? rawPath : path.join(ROOT, rawPath);
+  const candidateAbs = isAbsoluteKind ? rawPath : path.join(root.lexicalRoot, rawPath);
   const real = resolveRealPathSafe(candidateAbs);
   if (!real) return { value: null, rejected: false }; // does not exist / broken symlink
 
-  if (!isCanonicalPathInsideRoot({ root: REAL_ROOT, candidate: real })) {
+  if (!isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
     return { value: null, rejected: true }; // outside repository, including via symlink
   }
 
@@ -270,7 +280,7 @@ function resolveSafeLocalAttachmentPath(rawPath) {
   }
   if (!stat.isFile()) return { value: null, rejected: true };
 
-  const rel = path.relative(REAL_ROOT, real).split(path.sep).join("/");
+  const rel = path.relative(root.realRoot, real).split(path.sep).join("/");
   return { value: rel || null, rejected: false };
 }
 

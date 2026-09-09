@@ -75,11 +75,15 @@
 
 const fs = require("fs");
 const path = require("path");
+const { assertValidRepositoryRoot } = require("./repository-root");
 
-const ROOT = path.resolve(__dirname, "..", "..");
-const DEFAULT_BROWSER_INPUTS_DIR = path.join(ROOT, "reports", "ai", "browser-inputs");
-const CONTEXT_FILE = path.join(ROOT, "reports", "ai", "context.json");
-const HISTORY_FILE = path.join(ROOT, "reports", "ai", "history.json");
+// Roadmap FPI-2: this module owns no repository root of its own -
+// readBrowserInputs()'s own `baseDir` override already existed before
+// FPI-2 (see below); only its DEFAULT changes, from this file's former
+// module-level ROOT constant to main()'s own caller-supplied, validated
+// `root.realRoot`. See scripts/targets/targomo/aggregate-browser-context.js
+// for the target-owned bootstrap that supplies the real production
+// target repository root.
 
 // Matches the CI browsers declared in .github/workflows/cypress.yml
 // (cypress-tests' matrix: [chrome, edge], plus firefox-tests since
@@ -136,7 +140,7 @@ function readJsonIfExists(filePath) {
 // shape (browser+outcome only, no framework field) - every job this
 // workflow actually runs today writes it explicitly, so this default is
 // never the source of truth in production, only a compatibility fallback.
-function readBrowserInputs(baseDir = DEFAULT_BROWSER_INPUTS_DIR, browsers = DEFAULT_BROWSER_PRIORITY) {
+function readBrowserInputs(baseDir, browsers = DEFAULT_BROWSER_PRIORITY) {
   const inputs = [];
 
   for (const id of browsers) {
@@ -420,8 +424,17 @@ function aggregateBrowserInputs(browserInputs, priorityOrder = DEFAULT_BROWSER_P
   return { shouldRun: true, primary, otherFailedBrowsers, correlation, frameworkCorrelation, identityMismatch: null };
 }
 
-function main() {
-  const browserInputs = readBrowserInputs();
+// Roadmap FPI-2: `repositoryRoot` is validated FIRST - before any
+// browser-input read and before any output write. browser-inputs/
+// context.json/history.json are all resolved from this single validated
+// `root` boundary, never from this generic core's own `__dirname`.
+function main({ repositoryRoot } = {}) {
+  const root = assertValidRepositoryRoot(repositoryRoot, "aggregate-browser-context.main()");
+  const browserInputsDir = path.join(root.realRoot, "reports", "ai", "browser-inputs");
+  const contextFile = path.join(root.realRoot, "reports", "ai", "context.json");
+  const historyFile = path.join(root.realRoot, "reports", "ai", "history.json");
+
+  const browserInputs = readBrowserInputs(browserInputsDir);
   const { shouldRun, primary, otherFailedBrowsers, correlation, frameworkCorrelation, identityMismatch } = aggregateBrowserInputs(browserInputs);
 
   if (!shouldRun) {
@@ -463,10 +476,10 @@ function main() {
   // deliberately separate fields - never merged into one structure.
   const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation, frameworkCorrelation };
 
-  fs.mkdirSync(path.dirname(CONTEXT_FILE), { recursive: true });
-  fs.writeFileSync(CONTEXT_FILE, JSON.stringify(contextWithCorrelation, null, 2));
+  fs.mkdirSync(path.dirname(contextFile), { recursive: true });
+  fs.writeFileSync(contextFile, JSON.stringify(contextWithCorrelation, null, 2));
   if (primary.history) {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(primary.history, null, 2));
+    fs.writeFileSync(historyFile, JSON.stringify(primary.history, null, 2));
   }
 
   const otherNote = otherFailedBrowsers.length
@@ -475,6 +488,12 @@ function main() {
   log(`Selected '${primary.browser}' as the primary failing browser for AI triage.${otherNote}`);
 }
 
+// Roadmap FPI-2: generic direct invocation of this file supplies no
+// repositoryRoot, so main() always rejects with REPOSITORY_ROOT_REQUIRED
+// - a hard configuration failure, exits non-zero via the uncaught
+// rejection. A target-owned bootstrap (see
+// scripts/targets/targomo/aggregate-browser-context.js) supplies a real
+// repository root and therefore never hits this branch in production.
 if (require.main === module) {
   main();
 }
@@ -488,6 +507,7 @@ module.exports = {
   aggregateBrowserInputs,
   buildBrowserCorrelation,
   buildFrameworkCorrelation,
+  main,
   DEFAULT_BROWSER_PRIORITY,
   FRAMEWORK_PRIORITY,
 };
