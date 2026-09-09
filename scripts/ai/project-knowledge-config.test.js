@@ -224,3 +224,106 @@ test("FPI1-R-4: ordinary repository-relative projectKnowledgeUnitsDir remains AC
     true
   );
 });
+
+// --- Roadmap FPI-1 corrective C2 (FPI1-R-5/R-6) -----------------------------
+//
+// Regression coverage mirrored from
+// scripts/ai/framework-runtime-config.test.js's own corrective C2 section -
+// own-ness alone (FPI1-R-1's fix) is not sufficient; required/consumed
+// fields must also be ENUMERABLE (FPI1-R-5) and DATA descriptors, never
+// accessors (FPI1-R-6).
+
+test("FPI1-R-5: a non-enumerable own projectId is REJECTED, and validate() agrees before and after a JSON round-trip (was: valid before, invalid after)", () => {
+  const config = {};
+  Object.defineProperty(config, "projectId", { value: "shop-demo", enumerable: false, writable: true, configurable: true });
+  const original = validateProjectKnowledgeConfig(config);
+  const roundTripped = validateProjectKnowledgeConfig(JSON.parse(JSON.stringify(config)));
+  assert.equal(original.valid, false);
+  assert.equal(roundTripped.valid, false);
+});
+
+test("FPI1-R-5: a non-enumerable own projectKnowledgeUnitsDir is REJECTED as present-but-invalid, never silently treated as absent", () => {
+  const config = { projectId: "shop-demo" };
+  Object.defineProperty(config, "projectKnowledgeUnitsDir", {
+    value: "qa/knowledge",
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  assert.equal(validateProjectKnowledgeConfig(config).valid, false);
+});
+
+test("FPI1-R-5: a normal valid config remains valid after a JSON round-trip (unchanged, still true)", () => {
+  const original = { projectId: "shop-demo", projectKnowledgeUnitsDir: "qa/knowledge" };
+  assert.equal(validateProjectKnowledgeConfig(JSON.parse(JSON.stringify(original))).valid, true);
+});
+
+// --- FPI1-R-6: accessor-backed fields must never execute --------------------
+
+test("FPI1-R-6: a stable (non-throwing) accessor-backed projectId is REJECTED and its getter is NEVER invoked (was: getter invoked, field accepted)", () => {
+  let calls = 0;
+  const config = {};
+  Object.defineProperty(config, "projectId", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      return "shop-demo";
+    },
+  });
+  const result = validateProjectKnowledgeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0, "the getter must never be invoked during validation");
+});
+
+test("FPI1-R-6: a throwing accessor-backed projectId never escapes validateProjectKnowledgeConfig() (was: uncontrolled exception)", () => {
+  let calls = 0;
+  const config = {};
+  Object.defineProperty(config, "projectId", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      throw new Error("GETTER_SIDE_EFFECT");
+    },
+  });
+  const result = validateProjectKnowledgeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0);
+});
+
+test("FPI1-R-6: a throwing accessor-backed optional projectKnowledgeUnitsDir never escapes validateProjectKnowledgeConfig() and is never invoked (was: uncontrolled exception)", () => {
+  let calls = 0;
+  const config = { projectId: "shop-demo" };
+  Object.defineProperty(config, "projectKnowledgeUnitsDir", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      throw new Error("DIR_GETTER_SIDE_EFFECT");
+    },
+  });
+  const result = validateProjectKnowledgeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0, "the throwing optional-field getter must never be invoked");
+});
+
+test("FPI1-R-6: assertValidProjectKnowledgeConfig() with a throwing accessor field produces the stable PROJECT_KNOWLEDGE_CONFIG_INVALID error, never the raw getter exception", () => {
+  const config = {};
+  Object.defineProperty(config, "projectId", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      throw new Error("PROJECT_ID_GETTER_SIDE_EFFECT");
+    },
+  });
+  let thrown;
+  try {
+    assertValidProjectKnowledgeConfig(config, "test caller");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.ok(thrown.message.startsWith("PROJECT_KNOWLEDGE_CONFIG_INVALID: test caller"));
+  assert.equal(thrown.message.includes("PROJECT_ID_GETTER_SIDE_EFFECT"), false);
+});

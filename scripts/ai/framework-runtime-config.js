@@ -46,25 +46,43 @@
  * time concern (Roadmap FPI-2/FPI-3), never validated here.
  *
  * INPUT TRUST MODEL (Roadmap FPI-1 corrective hardening, closing
- * FPI1-R-1/R-2/R-3/R-4 from the strict independent adversarial review):
- * a valid config represents plain, operator-owned, JSON-like data - every
- * valid instance must remain valid after a JSON.parse(JSON.stringify(...))
- * round-trip, and conversely nothing that ISN'T representable as ordinary
- * JSON (a value living only on a prototype, a class instance, a Map/Date/
- * RegExp/etc.) may satisfy this contract. Concretely: the top-level config
- * and its nested `reports` object must both be plain data objects (see
- * isPlainDataObject() below), and every required field must be that
- * object's OWN property, never one merely inherited through a prototype
- * chain - Object.keys()-based unknown-key scanning already only sees own
- * enumerable keys, so without an equivalent own-property gate on the
- * REQUIRED-field reads, an object with zero own properties (e.g.
- * Object.create(aFullyValidConfig)) could satisfy every requirement
- * through inheritance alone. Diagnostics are bounded regardless of
- * caller-supplied key/value size (see safeKeyDisplay()/
- * MAX_REPORTED_UNKNOWN_KEYS/boundedDetail() below) - an attacker/author
- * mistake supplying a huge or numerous unknown key, or a schemaVersion
- * value with a hostile toString(), must never produce an unbounded or
- * uncontrolled thrown error.
+ * FPI1-R-1/R-2/R-3/R-4 from the strict independent adversarial review, and
+ * FPI1-R-5/R-6 from the independent corrective exact-head review that
+ * followed): a valid config represents plain, operator-owned, JSON-like
+ * data - every valid instance must remain valid after a
+ * JSON.parse(JSON.stringify(...)) round-trip, and conversely nothing that
+ * ISN'T representable as ordinary JSON (a value living only on a
+ * prototype, a class instance, a Map/Date/RegExp/etc., a non-enumerable
+ * property, or an accessor) may satisfy this contract. Concretely:
+ *
+ *  - the top-level config and its nested `reports` object must both be
+ *    plain data objects (see isPlainDataObject() below);
+ *  - every required field must be that object's OWN property, never one
+ *    merely inherited through a prototype chain (FPI1-R-1);
+ *  - every required field must additionally be ENUMERABLE - a property
+ *    JSON.stringify() would actually serialize - because own-ness alone
+ *    is not sufficient: Object.defineProperty(obj, key, {enumerable:
+ *    false, ...}) creates an own property that satisfies
+ *    hasOwnProperty() yet vanishes on JSON.stringify(), which would
+ *    otherwise let an object validate successfully while its round-trip
+ *    silently fails (FPI1-R-5);
+ *  - every required field must additionally be a DATA descriptor, never
+ *    an accessor (get/set) - validation reads a certified descriptor's
+ *    `.value` directly and NEVER invokes a getter, so a hostile or merely
+ *    buggy accessor (including one that throws) can never execute code
+ *    or escape as an uncontrolled exception from what must remain a pure,
+ *    always-returns-{valid,errors} function (FPI1-R-6, closed identically
+ *    in scripts/ai/project-knowledge-config.js).
+ *
+ * See getOwnEnumerableDataProperty() below for the single primitive that
+ * enforces all three of own/enumerable/data-descriptor together, and read
+ * ONLY its returned `.value` - never the original property - throughout
+ * validation. Diagnostics are bounded regardless of caller-supplied key/
+ * value size (see safeKeyDisplay()/MAX_REPORTED_UNKNOWN_KEYS/
+ * boundedDetail() below) - an attacker/author mistake supplying a huge or
+ * numerous unknown key, or a schemaVersion value with a hostile
+ * toString(), must never produce an unbounded or uncontrolled thrown
+ * error.
  */
 
 "use strict";
@@ -108,8 +126,27 @@ const OUTER_ALLOWED_KEYS = Object.freeze([
 const CYPRESS_REPORTS_ALLOWED_KEYS = Object.freeze(["reportsDir", "screenshotsDir"]);
 const PLAYWRIGHT_REPORTS_ALLOWED_KEYS = Object.freeze(["reportFile"]);
 
-function hasOwn(object, key) {
-  return Object.prototype.hasOwnProperty.call(object, key);
+// Roadmap FPI-1 corrective (FPI1-R-5/R-6): the single primitive every
+// required-field read goes through. Object.getOwnPropertyDescriptor()
+// NEVER invokes a getter - it only inspects the property's own shape -
+// so this can be called unconditionally, even on a hostile accessor,
+// without any risk of executing caller-supplied code. `present` is true
+// for ANY own property (data or accessor, enumerable or not) - used only
+// to distinguish "absent" from "present but unacceptable" for optional
+// fields. `valid` is true only for an own, ENUMERABLE, DATA descriptor -
+// exactly the shape JSON.stringify() would itself serialize - and only
+// then is `.value` (the descriptor's own captured value, not a live
+// re-read of the property) safe to use.
+function getOwnEnumerableDataProperty(object, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (!descriptor) {
+    return { present: false, valid: false, value: undefined };
+  }
+  const isDataDescriptor = Object.prototype.hasOwnProperty.call(descriptor, "value");
+  if (!descriptor.enumerable || !isDataDescriptor) {
+    return { present: true, valid: false, value: undefined };
+  }
+  return { present: true, valid: true, value: descriptor.value };
 }
 
 // Roadmap FPI-1 corrective (FPI1-R-1): a valid config (and its nested
@@ -251,11 +288,13 @@ function validateReports(reports, framework, errors) {
       errors,
       (key) => `reports.${key} is not permitted for framework "cypress"`
     );
-    if (!hasOwn(reports, "reportsDir") || !isSafeCanonicalRelativePath(reports.reportsDir)) {
-      errors.push("reports.reportsDir must be a safe, canonical, repository-relative own directory path");
+    const reportsDirField = getOwnEnumerableDataProperty(reports, "reportsDir");
+    if (!reportsDirField.valid || !isSafeCanonicalRelativePath(reportsDirField.value)) {
+      errors.push("reports.reportsDir must be a safe, canonical, repository-relative own enumerable data directory path");
     }
-    if (!hasOwn(reports, "screenshotsDir") || !isSafeCanonicalRelativePath(reports.screenshotsDir)) {
-      errors.push("reports.screenshotsDir must be a safe, canonical, repository-relative own directory path");
+    const screenshotsDirField = getOwnEnumerableDataProperty(reports, "screenshotsDir");
+    if (!screenshotsDirField.valid || !isSafeCanonicalRelativePath(screenshotsDirField.value)) {
+      errors.push("reports.screenshotsDir must be a safe, canonical, repository-relative own enumerable data directory path");
     }
   } else if (framework === "playwright") {
     pushUnknownKeyErrors(
@@ -264,12 +303,9 @@ function validateReports(reports, framework, errors) {
       errors,
       (key) => `reports.${key} is not permitted for framework "playwright"`
     );
-    if (
-      !hasOwn(reports, "reportFile") ||
-      !isSafeCanonicalRelativePath(reports.reportFile) ||
-      !reports.reportFile.endsWith(".json")
-    ) {
-      errors.push("reports.reportFile must be a safe, canonical, repository-relative own .json file path");
+    const reportFileField = getOwnEnumerableDataProperty(reports, "reportFile");
+    if (!reportFileField.valid || !isSafeCanonicalRelativePath(reportFileField.value) || !reportFileField.value.endsWith(".json")) {
+      errors.push("reports.reportFile must be a safe, canonical, repository-relative own enumerable data .json file path");
     }
   } else {
     // framework itself is already invalid and separately reported by the
@@ -293,34 +329,41 @@ function validateFrameworkRuntimeConfig(config) {
 
   pushUnknownKeyErrors(config, OUTER_ALLOWED_KEYS, errors, (key) => `unknown key "${key}" is not permitted`);
 
-  if (!hasOwn(config, "schemaVersion") || config.schemaVersion !== 1) {
-    errors.push("schemaVersion must be exactly the integer 1 as an own property");
+  const schemaVersionField = getOwnEnumerableDataProperty(config, "schemaVersion");
+  if (!schemaVersionField.valid || schemaVersionField.value !== 1) {
+    errors.push("schemaVersion must be exactly the integer 1 as an own enumerable data property");
   }
 
-  if (!hasOwn(config, "projectId") || !isBoundedString(config.projectId)) {
-    errors.push("projectId must be a non-empty, bounded own string property");
+  const projectIdField = getOwnEnumerableDataProperty(config, "projectId");
+  if (!projectIdField.valid || !isBoundedString(projectIdField.value)) {
+    errors.push("projectId must be a non-empty, bounded own enumerable data string property");
   }
 
-  if (!hasOwn(config, "framework") || !SUPPORTED_FRAMEWORKS.includes(config.framework)) {
-    errors.push(`framework must be an own property equal to one of ${SUPPORTED_FRAMEWORKS.join(", ")}`);
+  const frameworkField = getOwnEnumerableDataProperty(config, "framework");
+  if (!frameworkField.valid || !SUPPORTED_FRAMEWORKS.includes(frameworkField.value)) {
+    errors.push(`framework must be an own enumerable data property equal to one of ${SUPPORTED_FRAMEWORKS.join(", ")}`);
   }
 
-  if (!hasOwn(config, "frameworkConfigPath") || !isSafeCanonicalRelativePath(config.frameworkConfigPath)) {
-    errors.push("frameworkConfigPath must be a safe, canonical, repository-relative own file path");
+  const frameworkConfigPathField = getOwnEnumerableDataProperty(config, "frameworkConfigPath");
+  if (!frameworkConfigPathField.valid || !isSafeCanonicalRelativePath(frameworkConfigPathField.value)) {
+    errors.push("frameworkConfigPath must be a safe, canonical, repository-relative own enumerable data file path");
   }
 
-  if (!hasOwn(config, "testSourceRoot") || !isSafeCanonicalRelativePath(config.testSourceRoot)) {
-    errors.push("testSourceRoot must be a safe, canonical, repository-relative own directory path");
+  const testSourceRootField = getOwnEnumerableDataProperty(config, "testSourceRoot");
+  if (!testSourceRootField.valid || !isSafeCanonicalRelativePath(testSourceRootField.value)) {
+    errors.push("testSourceRoot must be a safe, canonical, repository-relative own enumerable data directory path");
   }
 
-  if (!hasOwn(config, "reports")) {
-    errors.push("reports must be present as an own property");
+  const reportsField = getOwnEnumerableDataProperty(config, "reports");
+  if (!reportsField.valid) {
+    errors.push("reports must be present as an own enumerable data property");
   } else {
-    validateReports(config.reports, config.framework, errors);
+    validateReports(reportsField.value, frameworkField.valid ? frameworkField.value : undefined, errors);
   }
 
-  if (!hasOwn(config, "historyWorkflowFile") || !isSafeWorkflowFilename(config.historyWorkflowFile)) {
-    errors.push("historyWorkflowFile must be a safe .yml/.yaml own filename with no path segments");
+  const historyWorkflowFileField = getOwnEnumerableDataProperty(config, "historyWorkflowFile");
+  if (!historyWorkflowFileField.valid || !isSafeWorkflowFilename(historyWorkflowFileField.value)) {
+    errors.push("historyWorkflowFile must be a safe .yml/.yaml own enumerable data filename with no path segments");
   }
 
   return { valid: errors.length === 0, errors };
@@ -345,6 +388,15 @@ function validateFrameworkRuntimeConfig(config) {
 // deterministic error with an uncontrolled one. The fixed message text
 // below is sufficient for an operator to diagnose the mismatch without
 // ever evaluating attacker/author-supplied code.
+//
+// Roadmap FPI-1 corrective (FPI1-R-6): this specialized branch only fires
+// for a schemaVersion that is itself a certified own/enumerable/data
+// property (getOwnEnumerableDataProperty().valid) - a malformed
+// schemaVersion (non-enumerable, or an accessor, whose getter must never
+// be invoked here or anywhere else in this module) is never read at all
+// and instead falls through to the general validator below, which
+// reports it as an ordinary FRAMEWORK_RUNTIME_CONFIG_INVALID shape
+// defect - there is no safe version value to classify in that case.
 function assertValidFrameworkRuntimeConfig(config, callerLabel) {
   if (config === undefined || config === null) {
     throw new Error(
@@ -352,10 +404,13 @@ function assertValidFrameworkRuntimeConfig(config, callerLabel) {
     );
   }
 
-  if (isPlainDataObject(config) && hasOwn(config, "schemaVersion") && config.schemaVersion !== 1) {
-    throw new Error(
-      `FRAMEWORK_RUNTIME_CONFIG_UNSUPPORTED_VERSION: ${callerLabel} received a FrameworkRuntimeConfig with an unsupported schemaVersion; only schemaVersion 1 is supported.`
-    );
+  if (isPlainDataObject(config)) {
+    const schemaVersionField = getOwnEnumerableDataProperty(config, "schemaVersion");
+    if (schemaVersionField.valid && schemaVersionField.value !== 1) {
+      throw new Error(
+        `FRAMEWORK_RUNTIME_CONFIG_UNSUPPORTED_VERSION: ${callerLabel} received a FrameworkRuntimeConfig with an unsupported schemaVersion; only schemaVersion 1 is supported.`
+      );
+    }
   }
 
   const { valid, errors } = validateFrameworkRuntimeConfig(config);

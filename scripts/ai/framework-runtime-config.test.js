@@ -495,3 +495,181 @@ test("FPI1-R-4: ordinary repository-relative paths remain ACCEPTED (unchanged)",
   assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "cypress" })).valid, true);
   assert.equal(validateFrameworkRuntimeConfig(validCypressConfig({ testSourceRoot: "tests/e2e" })).valid, true);
 });
+
+// --- Roadmap FPI-1 corrective C2 (FPI1-R-5/R-6) -----------------------------
+//
+// Regression coverage for the independent corrective exact-head review's
+// exact reproduced findings: an own property alone (FPI1-R-1's fix) is not
+// sufficient - it must also be ENUMERABLE (FPI1-R-5: JSON.stringify()
+// silently drops non-enumerable own properties) and a DATA descriptor,
+// never an accessor (FPI1-R-6: reading an accessor can execute/throw
+// caller-controlled code). Each test below documents the C1 (still
+// FAILING) behavior it replaces.
+
+const OUTER_REQUIRED_FIELDS = [
+  "schemaVersion",
+  "projectId",
+  "framework",
+  "frameworkConfigPath",
+  "testSourceRoot",
+  "reports",
+  "historyWorkflowFile",
+];
+
+for (const field of OUTER_REQUIRED_FIELDS) {
+  test(`FPI1-R-5: a non-enumerable own "${field}" is REJECTED, and validate() agrees before and after a JSON round-trip (was: valid before, invalid after)`, () => {
+    const config = validCypressConfig();
+    const value = config[field];
+    delete config[field];
+    Object.defineProperty(config, field, { value, enumerable: false, writable: true, configurable: true });
+
+    const original = validateFrameworkRuntimeConfig(config);
+    const roundTripped = validateFrameworkRuntimeConfig(JSON.parse(JSON.stringify(config)));
+    assert.equal(original.valid, false, `${field}: original config with a non-enumerable own value must be rejected`);
+    assert.equal(roundTripped.valid, false, `${field}: JSON round-tripped config (field now absent) must also be rejected`);
+  });
+}
+
+test("FPI1-R-5: a non-enumerable own reports.reportsDir is REJECTED (Cypress)", () => {
+  const config = validCypressConfig();
+  const value = config.reports.reportsDir;
+  delete config.reports.reportsDir;
+  Object.defineProperty(config.reports, "reportsDir", { value, enumerable: false, writable: true, configurable: true });
+  assert.equal(validateFrameworkRuntimeConfig(config).valid, false);
+});
+
+test("FPI1-R-5: a non-enumerable own reports.screenshotsDir is REJECTED (Cypress)", () => {
+  const config = validCypressConfig();
+  const value = config.reports.screenshotsDir;
+  delete config.reports.screenshotsDir;
+  Object.defineProperty(config.reports, "screenshotsDir", { value, enumerable: false, writable: true, configurable: true });
+  assert.equal(validateFrameworkRuntimeConfig(config).valid, false);
+});
+
+test("FPI1-R-5: a non-enumerable own reports.reportFile is REJECTED (Playwright)", () => {
+  const config = validPlaywrightConfig();
+  const value = config.reports.reportFile;
+  delete config.reports.reportFile;
+  Object.defineProperty(config.reports, "reportFile", { value, enumerable: false, writable: true, configurable: true });
+  assert.equal(validateFrameworkRuntimeConfig(config).valid, false);
+});
+
+test("FPI1-R-5: a normal valid Cypress/Playwright config remains valid after a JSON round-trip (unchanged, still true)", () => {
+  assert.equal(validateFrameworkRuntimeConfig(JSON.parse(JSON.stringify(validCypressConfig()))).valid, true);
+  assert.equal(validateFrameworkRuntimeConfig(JSON.parse(JSON.stringify(validPlaywrightConfig()))).valid, true);
+});
+
+// --- FPI1-R-6: accessor-backed fields must never execute --------------------
+
+test("FPI1-R-6: a stable (non-throwing) accessor-backed outer field is REJECTED and its getter is NEVER invoked (was: getter invoked, field accepted)", () => {
+  let calls = 0;
+  const config = validCypressConfig();
+  delete config.projectId;
+  Object.defineProperty(config, "projectId", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      return "external-poi-sut";
+    },
+  });
+  const result = validateFrameworkRuntimeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0, "the getter must never be invoked during validation");
+});
+
+test("FPI1-R-6: a throwing accessor-backed outer field never escapes validateFrameworkRuntimeConfig() - it returns {valid:false} (was: uncontrolled exception)", () => {
+  let calls = 0;
+  const config = validCypressConfig();
+  delete config.projectId;
+  Object.defineProperty(config, "projectId", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      throw new Error("GETTER_SIDE_EFFECT");
+    },
+  });
+  const result = validateFrameworkRuntimeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0, "the throwing getter must never be invoked during validation");
+});
+
+test("FPI1-R-6: a throwing accessor-backed schemaVersion falls through to FRAMEWORK_RUNTIME_CONFIG_INVALID, never UNSUPPORTED_VERSION and never the raw getter exception", () => {
+  let calls = 0;
+  const config = validCypressConfig();
+  delete config.schemaVersion;
+  Object.defineProperty(config, "schemaVersion", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      throw new Error("SCHEMA_GETTER_SIDE_EFFECT");
+    },
+  });
+  let thrown;
+  try {
+    assertValidFrameworkRuntimeConfig(config, "test caller");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.ok(thrown.message.startsWith("FRAMEWORK_RUNTIME_CONFIG_INVALID:"));
+  assert.equal(thrown.message.includes("SCHEMA_GETTER_SIDE_EFFECT"), false);
+  assert.equal(calls, 0, "the throwing schemaVersion getter must never be invoked");
+});
+
+test("FPI1-R-6: a throwing accessor-backed nested reports.reportsDir never escapes validateFrameworkRuntimeConfig() (Cypress)", () => {
+  let calls = 0;
+  const config = validCypressConfig();
+  delete config.reports.reportsDir;
+  Object.defineProperty(config.reports, "reportsDir", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      throw new Error("NESTED_GETTER_SIDE_EFFECT");
+    },
+  });
+  const result = validateFrameworkRuntimeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0);
+});
+
+test("FPI1-R-6: a throwing accessor-backed nested reports.reportFile never escapes validateFrameworkRuntimeConfig() (Playwright)", () => {
+  let calls = 0;
+  const config = validPlaywrightConfig();
+  delete config.reports.reportFile;
+  Object.defineProperty(config.reports, "reportFile", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      calls++;
+      throw new Error("NESTED_GETTER_SIDE_EFFECT");
+    },
+  });
+  const result = validateFrameworkRuntimeConfig(config);
+  assert.equal(result.valid, false);
+  assert.equal(calls, 0);
+});
+
+test("FPI1-R-6: assertValidFrameworkRuntimeConfig() with a throwing accessor field produces the stable FRAMEWORK_RUNTIME_CONFIG_INVALID error, never the raw getter exception", () => {
+  const config = validCypressConfig();
+  delete config.testSourceRoot;
+  Object.defineProperty(config, "testSourceRoot", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      throw new Error("TEST_SOURCE_ROOT_GETTER_SIDE_EFFECT");
+    },
+  });
+  let thrown;
+  try {
+    assertValidFrameworkRuntimeConfig(config, "test caller");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.ok(thrown.message.startsWith("FRAMEWORK_RUNTIME_CONFIG_INVALID: test caller"));
+  assert.equal(thrown.message.includes("TEST_SOURCE_ROOT_GETTER_SIDE_EFFECT"), false);
+});

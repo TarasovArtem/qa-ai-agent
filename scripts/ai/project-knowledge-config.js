@@ -42,16 +42,23 @@
  * by any production runtime path yet.
  *
  * INPUT TRUST MODEL (Roadmap FPI-1 corrective hardening, closing
- * FPI1-R-1/R-2/R-4 from the strict independent adversarial review - see
- * scripts/ai/framework-runtime-config.js's own module docstring for the
- * full rationale, identical here): a valid config represents plain,
- * operator-owned, JSON-like data - it must be a plain data object (see
- * isPlainDataObject() below), every required field must be that object's
- * OWN property (never merely inherited), and the optional
- * `projectKnowledgeUnitsDir` field is likewise never consumed unless it
- * is an own property. Diagnostics are bounded regardless of caller-
- * supplied key size (see safeKeyDisplay()/MAX_REPORTED_UNKNOWN_KEYS
- * below).
+ * FPI1-R-1/R-2/R-4 from the strict independent adversarial review, and
+ * FPI1-R-5/R-6 from the independent corrective exact-head review that
+ * followed - see scripts/ai/framework-runtime-config.js's own module
+ * docstring for the full rationale, identical here): a valid config
+ * represents plain, operator-owned, JSON-like data - it must be a plain
+ * data object (see isPlainDataObject() below), and `projectId` (required)
+ * and `projectKnowledgeUnitsDir` (optional, when supplied) must each be
+ * an own, ENUMERABLE, DATA-descriptor property - never one merely
+ * inherited (FPI1-R-1), never one that would silently vanish on a
+ * JSON.parse(JSON.stringify(...)) round-trip because it was non-
+ * enumerable (FPI1-R-5), and never an accessor whose getter could execute
+ * or throw during what must remain a pure, always-returns-{valid,errors}
+ * validation (FPI1-R-6). See getOwnEnumerableDataProperty() below - the
+ * same primitive scripts/ai/framework-runtime-config.js uses - and read
+ * only its returned `.value`, never the original property. Diagnostics
+ * are bounded regardless of caller-supplied key size (see
+ * safeKeyDisplay()/MAX_REPORTED_UNKNOWN_KEYS below).
  */
 
 "use strict";
@@ -69,8 +76,22 @@ const MAX_VALIDATION_DETAIL_LENGTH = 1024;
 
 const ALLOWED_KEYS = Object.freeze(["projectId", "projectKnowledgeUnitsDir"]);
 
-function hasOwn(object, key) {
-  return Object.prototype.hasOwnProperty.call(object, key);
+// Roadmap FPI-1 corrective (FPI1-R-5/R-6): matching
+// scripts/ai/framework-runtime-config.js's own
+// getOwnEnumerableDataProperty() exactly - Object.getOwnPropertyDescriptor()
+// never invokes a getter, so this is always safe to call, even on a
+// hostile accessor. Only a `valid` result's `.value` (the descriptor's
+// own captured value) may ever be read.
+function getOwnEnumerableDataProperty(object, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (!descriptor) {
+    return { present: false, valid: false, value: undefined };
+  }
+  const isDataDescriptor = Object.prototype.hasOwnProperty.call(descriptor, "value");
+  if (!descriptor.enumerable || !isDataDescriptor) {
+    return { present: true, valid: false, value: undefined };
+  }
+  return { present: true, valid: true, value: descriptor.value };
 }
 
 // Roadmap FPI-1 corrective (FPI1-R-1): matching
@@ -174,18 +195,25 @@ function validateProjectKnowledgeConfig(config) {
 
   pushUnknownKeyErrors(config, ALLOWED_KEYS, errors, (key) => `unknown key "${key}" is not permitted`);
 
-  if (!hasOwn(config, "projectId") || !isBoundedString(config.projectId)) {
-    errors.push("projectId must be a non-empty, bounded own string property");
+  const projectIdField = getOwnEnumerableDataProperty(config, "projectId");
+  if (!projectIdField.valid || !isBoundedString(projectIdField.value)) {
+    errors.push("projectId must be a non-empty, bounded own enumerable data string property");
   }
 
-  // The optional field is never consumed unless it is an OWN property
-  // (Roadmap FPI-1 corrective, FPI1-R-1) - an inherited value is treated
-  // identically to the field being absent, never validated or accepted.
-  // An own property explicitly set to `undefined` is likewise treated as
-  // absent, preserving this module's original "optional means omittable"
-  // semantics.
-  if (hasOwn(config, "projectKnowledgeUnitsDir") && config.projectKnowledgeUnitsDir !== undefined) {
-    if (!isSafeCanonicalRelativePath(config.projectKnowledgeUnitsDir)) {
+  // The optional field is never consumed unless it is a certified own,
+  // enumerable, DATA property (Roadmap FPI-1 corrective, FPI1-R-1/R-5/
+  // R-6) - an inherited, non-enumerable, or accessor-backed value is
+  // rejected outright (present but invalid), never silently treated as
+  // absent and never read (an accessor's getter is never invoked).
+  // Genuinely absent (no own property at all) remains valid - this field
+  // is optional. A certified own/enumerable/data property explicitly set
+  // to `undefined` is likewise treated as absent, preserving this
+  // module's original "optional means omittable" semantics.
+  const dirField = getOwnEnumerableDataProperty(config, "projectKnowledgeUnitsDir");
+  if (dirField.present) {
+    if (!dirField.valid) {
+      errors.push("projectKnowledgeUnitsDir must be an own enumerable data property when supplied");
+    } else if (dirField.value !== undefined && !isSafeCanonicalRelativePath(dirField.value)) {
       errors.push("projectKnowledgeUnitsDir must be a safe, canonical, repository-relative own directory path when supplied");
     }
   }
