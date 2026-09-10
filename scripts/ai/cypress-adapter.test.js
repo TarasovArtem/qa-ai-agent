@@ -698,3 +698,152 @@ test("FPI2-R-6: ordinary (non-symlinked) default reportsDir/screenshotsDir conti
   assert.equal(result.failedTests[0].title, "t");
   assert.equal(result.failedTests[0].screenshot, "cypress/screenshots/ordinary.cy.js/Suite -- t (failed).png");
 });
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C3 (independent adversarial review of PR #123,
+// finding FPI2-R-7) - the NESTED specDir (screenshotsDir/<spec basename>)
+// must be proven repository-local BEFORE any enumeration, exactly like
+// the top-level screenshotsDir itself (FPI2-R-6).
+// =========================================================================
+
+test("FPI2-R-7: a nested specDir that is a symlink escaping the repository is rejected BEFORE any outside enumeration - the outside directory is never readdirSync()'d", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c3-r7-nested-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c3-r7-nested-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outsideDir, "Suite -- failed test (failed).png"), "OUTSIDE_SCREENSHOT_CONTENT");
+  fs.writeFileSync(path.join(outsideDir, "UNRELATED_PRIVATE_MARKER_R7.png"), "unrelated");
+
+  // screenshotsDir ITSELF is a real, safe, in-root directory (passes the
+  // C2 top-level gate) - only the NESTED per-spec entry is a symlink.
+  const screenshotsDir = path.join(target, "cypress", "screenshots");
+  fs.mkdirSync(screenshotsDir, { recursive: true });
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(outsideDir, path.join(screenshotsDir, "example.cy.js"), "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  fs.mkdirSync(path.join(target, "reports", "cypress"), { recursive: true });
+  fs.writeFileSync(
+    path.join(target, "reports", "cypress", "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "example.cy.js"), suites: [{ title: "Suite", suites: [], tests: [{ title: "failed test", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const originalReaddirSync = fs.readdirSync;
+  const enumeratedReal = [];
+  fs.readdirSync = (p, ...args) => {
+    const listing = originalReaddirSync.call(fs, p, ...args);
+    enumeratedReal.push(fs.realpathSync(p));
+    return listing;
+  };
+  let result;
+  try {
+    result = collect({ root });
+  } finally {
+    fs.readdirSync = originalReaddirSync;
+  }
+
+  assert.equal(result.failedTests[0].screenshot, null, "the escaping screenshot must never surface");
+  assert.equal(
+    enumeratedReal.some((realPath) => path.resolve(realPath) === path.resolve(fs.realpathSync(outsideDir))),
+    false,
+    "the outside directory must NEVER have been enumerated (readdirSync), not merely have its content ultimately unused"
+  );
+  assert.deepEqual(result.warnings, []);
+});
+
+test("FPI2-R-7: a safe in-root nested specDir symlink (pointing elsewhere inside the SAME repository) remains functional", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c3-r7-safe-nested-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const realInternalSpecDir = path.join(target, "internal", "screenshots", "example.cy.js");
+  fs.mkdirSync(realInternalSpecDir, { recursive: true });
+  fs.writeFileSync(path.join(realInternalSpecDir, "Suite -- failed test (failed).png"), "");
+
+  const screenshotsDir = path.join(target, "cypress", "screenshots");
+  fs.mkdirSync(screenshotsDir, { recursive: true });
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(realInternalSpecDir, path.join(screenshotsDir, "example.cy.js"), "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  fs.mkdirSync(path.join(target, "reports", "cypress"), { recursive: true });
+  fs.writeFileSync(
+    path.join(target, "reports", "cypress", "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "example.cy.js"), suites: [{ title: "Suite", suites: [], tests: [{ title: "failed test", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const result = collect({ root });
+  assert.equal(result.failedTests[0].screenshot, "internal/screenshots/example.cy.js/Suite -- failed test (failed).png");
+});
+
+test("FPI2-R-7: an ordinary (non-symlinked) nested specDir directory continues to resolve exactly as before", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c3-r7-ordinary-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const specDir = path.join(target, "cypress", "screenshots", "example.cy.js");
+  fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(path.join(specDir, "Suite -- failed test (failed).png"), "");
+  fs.mkdirSync(path.join(target, "reports", "cypress"), { recursive: true });
+  fs.writeFileSync(
+    path.join(target, "reports", "cypress", "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "example.cy.js"), suites: [{ title: "Suite", suites: [], tests: [{ title: "failed test", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const result = collect({ root });
+  assert.equal(result.failedTests[0].screenshot, "cypress/screenshots/example.cy.js/Suite -- failed test (failed).png");
+});
+
+test("FPI2-R-7: a missing nested specDir still yields screenshot:null, never a throw", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c3-r7-missing-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(target, "cypress", "screenshots"), { recursive: true });
+  fs.mkdirSync(path.join(target, "reports", "cypress"), { recursive: true });
+  fs.writeFileSync(
+    path.join(target, "reports", "cypress", "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "example.cy.js"), suites: [{ title: "Suite", suites: [], tests: [{ title: "failed test", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const result = collect({ root });
+  assert.equal(result.failedTests[0].screenshot, null);
+});
+
+test("FPI2-R-7: a nested specDir that is a regular file (not a directory) is handled gracefully, never a crash", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c3-r7-regularfile-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const screenshotsDir = path.join(target, "cypress", "screenshots");
+  fs.mkdirSync(screenshotsDir, { recursive: true });
+  fs.writeFileSync(path.join(screenshotsDir, "example.cy.js"), "not a directory");
+  fs.mkdirSync(path.join(target, "reports", "cypress"), { recursive: true });
+  fs.writeFileSync(
+    path.join(target, "reports", "cypress", "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "example.cy.js"), suites: [{ title: "Suite", suites: [], tests: [{ title: "failed test", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  assert.doesNotThrow(() => collect({ root }));
+  const result = collect({ root });
+  assert.equal(result.failedTests[0].screenshot, null);
+});

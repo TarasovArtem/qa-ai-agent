@@ -146,10 +146,32 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Roadmap FPI-2 Corrective C3 (FPI2-R-7, independent adversarial review of
+// PR #123): `screenshotsDir` itself is already validated as repository-
+// local by the caller (collect()'s own resolveRepositoryLocalPath() gate),
+// but `specDir` below is a NESTED path dynamically derived from
+// `specFile` (ultimately report-content-derived) - `screenshotsDir` being
+// safe does not guarantee one of its own entries is not itself a symlink
+// escaping the repository. `specDir` is now independently re-validated
+// via the SAME resolveRepositoryLocalPath() gate BEFORE existsSync()/
+// readdirSync() ever touch it - previously, an outside-pointing specDir
+// was silently readdirSync()'d (a full, unfiltered directory-listing read
+// against an outside location), with only the FINAL selected file
+// checked afterward. A specDir that is lexically inside the repository
+// but whose real target escapes it (or one that simply doesn't exist yet)
+// is handled by resolveRepositoryLocalPath() exactly like any other
+// override candidate; any rejection here is caught by this function's own
+// existing try/catch and normalizes to null, exactly like a genuinely
+// missing screenshot - this function's public contract (null on any
+// failure) is unchanged.
 function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir, root) {
   if (!specFile) return null;
   try {
-    const specDir = path.join(screenshotsDir, path.basename(specFile));
+    const specDir = resolveRepositoryLocalPath(
+      path.join(screenshotsDir, path.basename(specFile)),
+      root,
+      "cypress-adapter.resolveScreenshotPath(): specDir"
+    );
     if (!fs.existsSync(specDir)) return null;
 
     const baseName = [...suiteTitles, testTitle].join(" -- ");
