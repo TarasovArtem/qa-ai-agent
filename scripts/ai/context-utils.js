@@ -76,23 +76,45 @@ function relativeToRepositoryNamespace(absCandidate, root) {
   return null;
 }
 
-// Roadmap FPI-2 Corrective C1 (FPI2-R-1): a relative rawFile is passed
-// through unchanged (this function's original, pre-FPI-2 contract - a
-// reporter-relative spec/attachment path is never itself a containment
-// decision). An absolute rawFile is now ALWAYS resolved through
-// relativeToRepositoryNamespace() - it becomes repository-relative only
-// when it is genuinely, segment-wise contained by the repository (either
-// namespace); an absolute path that is not - a same-prefix sibling, an
-// unrelated absolute path, or a genuine escape - normalizes to null,
-// never to a misleadingly relative-looking string and never to the raw
-// absolute string itself.
+// Roadmap FPI-2 Corrective C2 (FPI2-R-5, independent adversarial review of
+// PR #123): a bare `path.isAbsolute(rawFile)` check is not sufficient to
+// classify a reporter-supplied path string - it silently treats every
+// non-host-absolute input as an already-safe relative path, including a
+// TRAVERSAL_RELATIVE string ("../outside.cy.js"), a URL_LIKE string
+// ("https://...", "file:///..."), and a WINDOWS_UNC string that happens
+// not to parse as absolute on the CURRENT host. normalizeSpecPath() now
+// routes through the SAME classifyPathString()/PATH_KIND vocabulary
+// resolveSafeSpecPath() already uses, so both functions agree on what
+// counts as safe reporter-relative text - never a one-off `.startsWith("../")`
+// patch. Only SAFE_RELATIVE and (genuinely host-absolute-and-contained)
+// WINDOWS_DRIVE_ABSOLUTE/POSIX_ABSOLUTE/HOST_ABSOLUTE ever normalize to a
+// repository-relative value; TRAVERSAL_RELATIVE, WINDOWS_UNC, URL_LIKE,
+// and INVALID all normalize to null, exactly like resolveSafeSpecPath()'s
+// own final catch-all - an escaping or foreign path can never become
+// model-visible as though it were repository-local provenance.
+//
+// Roadmap FPI-2 Corrective C1 (FPI2-R-1): a genuinely host-absolute
+// rawFile is resolved through relativeToRepositoryNamespace() - it
+// becomes repository-relative only when it is segment-wise contained by
+// the repository (either namespace); an absolute path that is not - a
+// same-prefix sibling, an unrelated absolute path, or a genuine escape -
+// normalizes to null, never to a misleadingly relative-looking string and
+// never to the raw absolute string itself.
 function normalizeSpecPath(rawFile, root) {
   if (!rawFile) return null;
 
-  if (!path.isAbsolute(rawFile)) {
-    const p = rawFile.replace(/\\/g, "/");
-    return p.replace(/^\/+/, "") || null;
+  const kind = classifyPathString(rawFile);
+
+  if (kind === PATH_KIND.INVALID || kind === PATH_KIND.TRAVERSAL_RELATIVE || kind === PATH_KIND.WINDOWS_UNC || kind === PATH_KIND.URL_LIKE) {
+    return null;
   }
+
+  if (kind === PATH_KIND.SAFE_RELATIVE) {
+    return stripLeadingDotSlash(rawFile);
+  }
+
+  // WINDOWS_DRIVE_ABSOLUTE / POSIX_ABSOLUTE / HOST_ABSOLUTE
+  if (!path.isAbsolute(rawFile)) return null; // foreign-OS absolute form - can never resolve against this host
 
   return relativeToRepositoryNamespace(path.resolve(rawFile), root);
 }

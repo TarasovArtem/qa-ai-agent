@@ -526,3 +526,175 @@ test("FPI2-R-2: a relative reportsDir override still works correctly (safe overr
   assert.equal(result.failedTests.length, 1);
   assert.equal(result.failedTests[0].title, "IN_ROOT_RELATIVE_OVERRIDE");
 });
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C2 (independent adversarial review of PR #123,
+// finding FPI2-R-6) - the DEFAULT reportsDir/screenshotsDir conventions
+// must be proven repository-local BEFORE any filesystem enumeration, the
+// same way an explicit override already is.
+// =========================================================================
+
+function makeTargetRepoC2(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return { dir, root: { lexicalRoot: dir, realRoot: fs.realpathSync(dir) } };
+}
+
+test("FPI2-R-6: a symlinked DEFAULT reports/cypress directory is rejected BEFORE any outside enumeration - no filename leak", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c2-r6-reports-target-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c2-r6-reports-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(outsideDir, "PRIVATE_OUTSIDE_FILENAME_R6.json"),
+    JSON.stringify({ stats: {}, results: [{ file: "x", suites: [{ title: "S", suites: [], tests: [{ title: "SHOULD_NOT_LEAK", state: "failed" }] }] }] })
+  );
+
+  fs.mkdirSync(path.join(target, "reports"), { recursive: true });
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(outsideDir, path.join(target, "reports", "cypress"), "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const originalReaddirSync = fs.readdirSync;
+  const enumerated = [];
+  fs.readdirSync = (p, ...args) => {
+    enumerated.push(p);
+    return originalReaddirSync.call(fs, p, ...args);
+  };
+  let threw = false;
+  let thrownMessage = null;
+  try {
+    collect({ root });
+  } catch (err) {
+    threw = true;
+    thrownMessage = err.message;
+  } finally {
+    fs.readdirSync = originalReaddirSync;
+  }
+
+  assert.equal(threw, true, "collect() must reject a symlinked default reportsDir");
+  assert.match(thrownMessage, /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+  assert.equal(
+    enumerated.some((p) => path.resolve(p) === path.resolve(path.join(target, "reports", "cypress"))),
+    false,
+    "the outside directory must never have been enumerated (readdirSync) at all"
+  );
+  assert.equal(thrownMessage.includes("PRIVATE_OUTSIDE_FILENAME_R6"), false, "the outside filename must never appear in the thrown error");
+});
+
+test("FPI2-R-6: a symlinked DEFAULT cypress/screenshots directory is rejected BEFORE any outside enumeration", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c2-r6-shots-target-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const outsideShots = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c2-r6-shots-outside-"));
+  t.after(() => fs.rmSync(outsideShots, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(target, "cypress"), { recursive: true });
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(outsideShots, path.join(target, "cypress", "screenshots"), "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const originalReaddirSync = fs.readdirSync;
+  const enumerated = [];
+  fs.readdirSync = (p, ...args) => {
+    enumerated.push(p);
+    return originalReaddirSync.call(fs, p, ...args);
+  };
+  let threw = false;
+  try {
+    collect({ root });
+  } catch (err) {
+    threw = true;
+    assert.match(err.message, /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+  } finally {
+    fs.readdirSync = originalReaddirSync;
+  }
+
+  assert.equal(threw, true, "collect() must reject a symlinked default screenshotsDir");
+  assert.equal(
+    enumerated.some((p) => path.resolve(p).startsWith(path.resolve(path.join(target, "cypress", "screenshots")))),
+    false,
+    "the outside screenshots directory must never have been enumerated at all"
+  );
+});
+
+test("FPI2-R-6: a safe in-root symlinked default reports/cypress directory (pointing elsewhere inside the SAME repository) remains functional", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c2-r6-safe-symlink-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const realInternalDir = path.join(target, "internal", "cypress-reports");
+  fs.mkdirSync(realInternalDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(realInternalDir, "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "x.cy.js"), suites: [{ title: "S", suites: [], tests: [{ title: "SAFE_IN_ROOT_SYMLINK", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+  fs.mkdirSync(path.join(target, "reports"), { recursive: true });
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(realInternalDir, path.join(target, "reports", "cypress"), "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const result = collect({ root });
+  assert.equal(result.failedTests.length, 1);
+  assert.equal(result.failedTests[0].title, "SAFE_IN_ROOT_SYMLINK");
+});
+
+test("FPI2-R-6: an absent default reports/cypress directory still yields the existing graceful found:false + bounded warning, never a throw", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c2-r6-absent-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const result = collect({ root });
+  assert.deepEqual(result.testResults, { found: false });
+  assert.deepEqual(result.failedTests, []);
+  assert.ok(result.warnings.some((w) => w.includes("No report directory")));
+});
+
+test("FPI2-R-6: an absent default cypress/screenshots directory still yields screenshot:null, never a throw", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c2-r6-absent-shots-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const reportsDir = path.join(target, "reports", "cypress");
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(reportsDir, "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "x.cy.js"), suites: [{ title: "S", suites: [], tests: [{ title: "t", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const result = collect({ root });
+  assert.equal(result.failedTests[0].screenshot, null);
+});
+
+test("FPI2-R-6: ordinary (non-symlinked) default reportsDir/screenshotsDir continue to work exactly as before", (t) => {
+  const { dir: target, root } = makeTargetRepoC2("cypress-adapter-c2-r6-ordinary-");
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(target, "reports", "cypress"), { recursive: true });
+  fs.mkdirSync(path.join(target, "cypress", "screenshots", "ordinary.cy.js"), { recursive: true });
+  fs.writeFileSync(path.join(target, "cypress", "screenshots", "ordinary.cy.js", "Suite -- t (failed).png"), "");
+  fs.writeFileSync(
+    path.join(target, "reports", "cypress", "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: path.join(target, "cypress", "e2e", "ordinary.cy.js"), suites: [{ title: "Suite", suites: [], tests: [{ title: "t", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const result = collect({ root });
+  assert.equal(result.failedTests[0].title, "t");
+  assert.equal(result.failedTests[0].screenshot, "cypress/screenshots/ordinary.cy.js/Suite -- t (failed).png");
+});

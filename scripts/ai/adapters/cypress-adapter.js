@@ -275,13 +275,34 @@ function summarizeTestResults(reports, root) {
 // `root`, never a second, independent filesystem authority. An override
 // outside the repository throws a bounded ADAPTER_PATH_OUTSIDE_REPOSITORY
 // error rather than being silently enumerated.
+//
+// Roadmap FPI-2 Corrective C2 (FPI2-R-6, independent adversarial review of
+// PR #123): the DEFAULT "reports/cypress"/"cypress/screenshots"
+// conventions now go through the exact SAME resolveRepositoryLocalPath()
+// gate as an explicit override - they are no longer handed straight to
+// fs.existsSync()/fs.readdirSync() unchecked. This closes the gap where
+// the default directory ITSELF (not an individually discovered file
+// inside it) is a symlink escaping the repository: resolveRepositoryLocalPath()'s
+// canonical re-verification (a single realpathSync on the candidate
+// directory, never a directory listing) rejects that BEFORE any
+// enumeration of its contents ever happens - previously, an
+// outside-pointing default directory was silently readdirSync()'d, and
+// any file the per-file check then rejected had its filename echoed into
+// a warning. A default directory that simply does not exist yet is
+// unaffected (resolveRepositoryLocalPath() only re-verifies a REAL
+// target when realpathSync can resolve one at all), preserving the
+// existing "no reports found" bounded-warning behavior.
 function collect({ root, reportsDir, screenshotsDir } = {}) {
-  const resolvedReportsDir = reportsDir
-    ? resolveRepositoryLocalPath(reportsDir, root, "cypress-adapter.collect(): reportsDir")
-    : path.join(root.realRoot, "reports", "cypress");
-  const resolvedScreenshotsDir = screenshotsDir
-    ? resolveRepositoryLocalPath(screenshotsDir, root, "cypress-adapter.collect(): screenshotsDir")
-    : path.join(root.realRoot, "cypress", "screenshots");
+  const resolvedReportsDir = resolveRepositoryLocalPath(
+    reportsDir || "reports/cypress",
+    root,
+    "cypress-adapter.collect(): reportsDir"
+  );
+  const resolvedScreenshotsDir = resolveRepositoryLocalPath(
+    screenshotsDir || "cypress/screenshots",
+    root,
+    "cypress-adapter.collect(): screenshotsDir"
+  );
 
   const { reports, warnings } = loadReports(resolvedReportsDir, root);
 

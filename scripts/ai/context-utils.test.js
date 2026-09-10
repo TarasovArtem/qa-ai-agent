@@ -633,3 +633,80 @@ test("resolveRepositoryLocalPath: non-string/empty override throws ADAPTER_PATH_
   assert.throws(() => resolveRepositoryLocalPath("", TEST_ROOT, "test-caller"), /ADAPTER_PATH_INVALID/);
   assert.throws(() => resolveRepositoryLocalPath(undefined, TEST_ROOT, "test-caller"), /ADAPTER_PATH_INVALID/);
 });
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C2 (independent adversarial review of PR #123,
+// finding FPI2-R-5) - normalizeSpecPath() must classify reporter-supplied
+// paths through the SAME vocabulary as resolveSafeSpecPath(), never a
+// bare path.isAbsolute() check.
+// =========================================================================
+
+const FPI2_C2_ROOT = Object.freeze({ lexicalRoot: path.join(os.tmpdir(), "fpi2-c2-project"), realRoot: path.join(os.tmpdir(), "fpi2-c2-project") });
+
+test("FPI2-R-5: normalizeSpecPath rejects (null) an escaping relative traversal path, never passing it through raw", () => {
+  assert.equal(normalizeSpecPath("../outside.cy.js", FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath("../../outside.cy.js", FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath("foo/../../outside.cy.js", FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath(String.raw`.\..\outside.cy.js`, FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath(String.raw`foo\..\..\outside.cy.js`, FPI2_C2_ROOT), null);
+});
+
+test("FPI2-R-5: normalizeSpecPath still accepts safe relative paths, including ones that dip via '..' but never net negative", () => {
+  assert.equal(normalizeSpecPath("tests/a.cy.js", FPI2_C2_ROOT), "tests/a.cy.js");
+  assert.equal(normalizeSpecPath("./tests/a.cy.js", FPI2_C2_ROOT), "tests/a.cy.js");
+  assert.equal(normalizeSpecPath("tests/../tests/a.cy.js", FPI2_C2_ROOT), "tests/../tests/a.cy.js");
+  assert.equal(normalizeSpecPath("foo/./bar.cy.js", FPI2_C2_ROOT), "foo/./bar.cy.js");
+});
+
+test("FPI2-R-5: normalizeSpecPath rejects (null) a URL-like or file:-URI-like reporter path, never passing it through raw", () => {
+  assert.equal(normalizeSpecPath("https://example.invalid/a.cy.js", FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath("file:///tmp/a.cy.js", FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath("file:/tmp/a.cy.js", FPI2_C2_ROOT), null);
+});
+
+test("FPI2-R-5: normalizeSpecPath rejects (null) a Windows UNC path regardless of slash direction", () => {
+  assert.equal(normalizeSpecPath(String.raw`\\server\share\a.cy.js`, FPI2_C2_ROOT), null);
+  assert.equal(normalizeSpecPath("//server/share/a.cy.js", FPI2_C2_ROOT), null);
+});
+
+test("FPI2-R-5: normalizeSpecPath rejects (null) a foreign-OS-looking Windows drive path even on a host where it might not parse as absolute", () => {
+  // On POSIX this would classify as WINDOWS_DRIVE_ABSOLUTE (a real Windows
+  // path syntax) but fail path.isAbsolute() on that host - the foreign-OS
+  // guard must still reject it, never fall through to the relative branch.
+  const result = normalizeSpecPath(String.raw`C:\outside\a.cy.js`, FPI2_C2_ROOT);
+  if (process.platform === "win32") {
+    assert.equal(result, null); // genuinely absolute here, but outside FPI2_C2_ROOT
+  } else {
+    assert.equal(result, null); // foreign-OS absolute form on POSIX
+  }
+});
+
+test("FPI2-R-5: a genuine host-absolute path under either legitimate root namespace still normalizes correctly (R3 preserved)", () => {
+  const realRoot = ROOT; // this repository's own real checkout
+  const testRoot = Object.freeze({ lexicalRoot: realRoot, realRoot });
+  assert.equal(normalizeSpecPath(path.join(realRoot, "cypress", "e2e", "a.cy.js"), testRoot), "cypress/e2e/a.cy.js");
+});
+
+test("FPI2-R-5: same-prefix sibling absolute path remains rejected (R1 preserved)", () => {
+  assert.equal(normalizeSpecPath(FPI2_C2_ROOT.lexicalRoot + "-evil/a.cy.js", FPI2_C2_ROOT), null);
+});
+
+test("FPI2-R-5 production pipeline: a Cypress adapter fed a relative-traversal spec.file redacts it end to end, never leaking the raw string", () => {
+  const cypressAdapter = require("./adapters/cypress-adapter");
+  const reports = [
+    {
+      results: [
+        {
+          file: "../OUTSIDE_TRAVERSAL_MARKER.cy.js",
+          suites: [{ title: "S", suites: [], tests: [{ title: "t", state: "failed", err: { message: "m" } }] }],
+        },
+      ],
+    },
+  ];
+  const failed = cypressAdapter.extractFailedTests(reports, undefined, TEST_ROOT);
+  assert.equal(failed[0].specFile, null);
+  const summarized = cypressAdapter.summarizeTestResults(reports, TEST_ROOT);
+  assert.equal(summarized.specs[0].specFile, null); // redacted, matching Playwright's own S21D_6 "redacted end-to-end" convention
+  assert.ok(!JSON.stringify(failed).includes("OUTSIDE_TRAVERSAL_MARKER"));
+  assert.ok(!JSON.stringify(summarized).includes("OUTSIDE_TRAVERSAL_MARKER"));
+});
