@@ -13,6 +13,7 @@ const {
   resolveSafeSpecPath,
   resolveSafeLocalAttachmentPath,
   resolveRepositoryLocalPath,
+  resolveSafeRepositoryWritePath,
 } = require("./context-utils");
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -709,4 +710,111 @@ test("FPI2-R-5 production pipeline: a Cypress adapter fed a relative-traversal s
   assert.equal(summarized.specs[0].specFile, null); // redacted, matching Playwright's own S21D_6 "redacted end-to-end" convention
   assert.ok(!JSON.stringify(failed).includes("OUTSIDE_TRAVERSAL_MARKER"));
   assert.ok(!JSON.stringify(summarized).includes("OUTSIDE_TRAVERSAL_MARKER"));
+});
+
+// --- resolveSafeRepositoryWritePath (FPI2-R-9, Roadmap FPI-2 Corrective C4) -
+// each test below uses its own throwaway fixture repository root (never
+// this actual checkout's own reports/ directory) so fresh-directory-
+// creation and ancestor-symlink scenarios can be exercised in isolation.
+
+function freshWriteRoot(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
+  return { lexicalRoot: dir, realRoot: fs.realpathSync(dir) };
+}
+
+test("resolveSafeRepositoryWritePath: a fresh repository with no reports/ai directory yet can still create its intended output structure", () => {
+  const root = freshWriteRoot("write-path-fresh");
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+  const safePath = resolveSafeRepositoryWritePath(intended, root, "test-caller");
+  assert.equal(safePath, intended);
+  fs.writeFileSync(safePath, "{}");
+  assert.ok(fs.existsSync(path.join(root.realRoot, "reports", "ai", "context.json")));
+});
+
+test("resolveSafeRepositoryWritePath: an existing regular in-root output file is accepted for ordinary overwrite (pre-C4 behavior preserved)", () => {
+  const root = freshWriteRoot("write-path-existing");
+  fs.mkdirSync(path.join(root.realRoot, "reports", "ai"), { recursive: true });
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+  fs.writeFileSync(intended, "old");
+
+  const safePath = resolveSafeRepositoryWritePath(intended, root, "test-caller");
+  assert.equal(safePath, intended);
+  fs.writeFileSync(safePath, "new");
+  assert.equal(fs.readFileSync(intended, "utf8"), "new");
+});
+
+test("resolveSafeRepositoryWritePath: an output leaf symlinked to an outside target is rejected and the outside target is never modified", () => {
+  const root = freshWriteRoot("write-path-leaf-outside");
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "write-path-leaf-outside-victim-"));
+  const outsideFile = path.join(outsideDir, "victim.json");
+  fs.writeFileSync(outsideFile, "ORIGINAL");
+  fs.mkdirSync(path.join(root.realRoot, "reports", "ai"), { recursive: true });
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+  fs.symlinkSync(outsideFile, intended, "file");
+
+  assert.throws(() => resolveSafeRepositoryWritePath(intended, root, "test-caller"), /WRITE_PATH_UNSAFE/);
+  assert.equal(fs.readFileSync(outsideFile, "utf8"), "ORIGINAL", "the outside target must be completely untouched, never followed/overwritten/unlinked");
+});
+
+test("resolveSafeRepositoryWritePath: a symlink AT the exact output leaf is rejected outright even when its current target is inside the repository", () => {
+  const root = freshWriteRoot("write-path-leaf-in-repo-symlink");
+  fs.mkdirSync(path.join(root.realRoot, "reports", "ai"), { recursive: true });
+  const realInRepoTarget = path.join(root.realRoot, "reports", "ai", "real-target.json");
+  fs.writeFileSync(realInRepoTarget, "{}");
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+  fs.symlinkSync(realInRepoTarget, intended, "file");
+
+  // Mission Section 6.6: the output leaf is expected to be repository-owned
+  // storage, never an indirection point - reject even an in-repo target.
+  assert.throws(() => resolveSafeRepositoryWritePath(intended, root, "test-caller"), /WRITE_PATH_UNSAFE/);
+});
+
+test("resolveSafeRepositoryWritePath: reports/ai itself being a symlink to an outside directory is rejected before any write (C3's exact aggregate-browser-context.js reproduction)", () => {
+  const root = freshWriteRoot("write-path-dirlevel");
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "write-path-dirlevel-outside-"));
+  fs.mkdirSync(path.join(root.realRoot, "reports"), { recursive: true });
+  fs.symlinkSync(outsideDir, path.join(root.realRoot, "reports", "ai"), "dir");
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+
+  assert.throws(() => resolveSafeRepositoryWritePath(intended, root, "test-caller"), /WRITE_PATH_OUTSIDE_REPOSITORY/);
+  assert.equal(fs.existsSync(path.join(outsideDir, "context.json")), false);
+});
+
+test("resolveSafeRepositoryWritePath: a higher ancestor (reports itself) symlinked to an outside directory is rejected", () => {
+  const root = freshWriteRoot("write-path-ancestor");
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "write-path-ancestor-outside-"));
+  fs.symlinkSync(outsideDir, path.join(root.realRoot, "reports"), "dir");
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+
+  assert.throws(() => resolveSafeRepositoryWritePath(intended, root, "test-caller"), /WRITE_PATH_OUTSIDE_REPOSITORY/);
+  assert.equal(fs.existsSync(path.join(outsideDir, "ai")), false);
+});
+
+test("resolveSafeRepositoryWritePath: an existing directory at the exact output leaf path is rejected, never silently written through", () => {
+  const root = freshWriteRoot("write-path-leaf-is-dir");
+  fs.mkdirSync(path.join(root.realRoot, "reports", "ai", "context.json"), { recursive: true }); // leaf name reused as a directory
+  const intended = path.join(root.realRoot, "reports", "ai", "context.json");
+
+  assert.throws(() => resolveSafeRepositoryWritePath(intended, root, "test-caller"), /WRITE_PATH_UNSAFE/);
+});
+
+test("resolveSafeRepositoryWritePath: a same-prefix sibling path is rejected, never accepted merely because it shares a string prefix", () => {
+  const root = freshWriteRoot("write-path-prefix");
+  const evilSibling = `${root.realRoot}-evil`;
+  const intended = path.join(evilSibling, "reports", "ai", "context.json");
+
+  assert.throws(() => resolveSafeRepositoryWritePath(intended, root, "test-caller"), /WRITE_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("resolveSafeRepositoryWritePath: never leaks the raw intended output path into the thrown error message", () => {
+  const root = freshWriteRoot("write-path-bounded-error");
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "write-path-bounded-error-SECRET_MARKER-"));
+  const intended = path.join(outsideDir, "context.json");
+
+  try {
+    resolveSafeRepositoryWritePath(intended, root, "test-caller");
+    assert.fail("expected resolveSafeRepositoryWritePath to throw");
+  } catch (err) {
+    assert.ok(!err.message.includes("SECRET_MARKER"));
+  }
 });

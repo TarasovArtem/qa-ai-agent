@@ -409,6 +409,144 @@ function resolveSafeLocalAttachmentPath(rawPath, root) {
   return { value: rel || null, rejected: false };
 }
 
+// Roadmap FPI-2 Corrective C4 (FPI2-R-9, independent adversarial review of
+// PR #123, terminal C3 review): the WRITE-side counterpart to
+// resolveRepositoryLocalPath()/resolveSafeLocalAttachmentPath() above. Every
+// generic-core writer (collect-context.js, collect-history.js,
+// analyze-failure.js, aggregate-browser-context.js) previously resolved its
+// own fixed output path (e.g. "reports/ai/context.json") directly underneath
+// `root.realRoot` and then called `fs.mkdirSync(dirname, {recursive:true})` +
+// `fs.writeFileSync(outputFile, ...)` with NO containment check at all - a
+// pre-existing repository-local symlink at any ancestor directory (`reports`,
+// `reports/ai`) or at the exact output leaf itself silently redirected the
+// write outside `root.realRoot` (confirmed by the terminal C3 review for all
+// four writers, both an ancestor-directory vector and a final-leaf vector).
+//
+// `intendedOutputPath` MUST already be an absolute path constructed by the
+// caller itself via `path.join(root.realRoot, ...)` using ONLY fixed,
+// hardcoded literal segments (e.g. "reports", "ai", "context.json") - this
+// function is not a general-purpose sanitizer for attacker-influenced output
+// paths, and never needs to be: every real caller's output filename is a
+// compile-time constant, never derived from report/PR/provider content. Its
+// job is narrower and different from the read-side helpers above: prove that
+// no PRE-EXISTING filesystem object along that fixed lexical path can
+// silently redirect the write outside the trusted root, and refuse the
+// write (never "repair" the attacker/misconfigured state) when one does.
+//
+// Algorithm (mirrors the read-side "validate before observe" ordering used
+// throughout this module and cypress-adapter.js's own layered defenses):
+//   1. Walk the path one directory component at a time, starting from
+//      `root.realRoot` (already fully canonical) down to the output file's
+//      parent directory.
+//   2. For each component that already exists, canonically re-verify
+//      (fs.realpathSync) that it still resolves inside `root.realRoot`
+//      before treating it as the next trusted ancestor - this is exactly
+//      the "recursive descendant rule" (see cypress-adapter.js's own R6/R7
+//      commentary): a safe parent does not authorize an unverified child.
+//   3. For each component that does not yet exist, create it directly
+//      (fs.mkdirSync, non-recursive - it can only ever create an ordinary
+//      new directory, never follow or replace an existing filesystem
+//      object), then re-verify its canonical location before proceeding -
+//      satisfies "re-establish enough filesystem state to ensure the
+//      resulting parent remains physically beneath root.realRoot" without
+//      claiming a stronger concurrent-race guarantee than that.
+//   4. The final leaf (the output FILE itself) is inspected with
+//      `fs.lstatSync` - deliberately never `fs.statSync`, which would follow
+//      a symlink - so an existing symlink at the exact output path is always
+//      rejected outright, even when its CURRENT target happens to be inside
+//      the repository: the output leaf is expected to be repository-owned
+//      storage, never an indirection point, and this function never follows,
+//      unlinks, or otherwise "fixes" an attacker/misconfiguration-created
+//      symlink there. An existing plain regular file is accepted (ordinary
+//      overwrite/update, preserving every pre-C4 legitimate write). A
+//      genuinely absent leaf is accepted (first-run / fresh-repository
+//      case) - the caller's own subsequent fs.writeFileSync creates it fresh
+//      underneath the now-validated parent.
+//
+// Returns the absolute path the caller may safely pass to fs.writeFileSync.
+// Throws a bounded, deterministic, path-free WRITE_PATH_* error (never
+// reflecting caller-supplied path text) on any containment violation.
+//
+// TOCTOU boundary (Roadmap FPI-2 Corrective C4, mission Section 6.8): this
+// closes every STATIC repository-controlled symlink escape reproduced by the
+// terminal C3 review (a symlink already in place before this function runs).
+// It does NOT provide, and never claims to provide, a race-free guarantee
+// against a filesystem object being swapped out concurrently between this
+// function's own checks and the caller's subsequent fs.writeFileSync (Node's
+// ordinary path-based fs APIs have no atomic "open-relative-to-verified-fd"
+// primitive available here) - callers should invoke this function as close
+// as reasonably possible to their actual write, which every C4 call site
+// does.
+function resolveSafeRepositoryWritePath(intendedOutputPath, root, callerLabel) {
+  if (typeof intendedOutputPath !== "string" || intendedOutputPath.length === 0) {
+    throw new Error(`WRITE_PATH_INVALID: ${callerLabel} received a non-string/empty output path.`);
+  }
+  if (!root || typeof root.realRoot !== "string") {
+    throw new Error(`WRITE_PATH_INVALID: ${callerLabel} received an output path without a valid repository root.`);
+  }
+
+  const relSegments = path
+    .relative(root.realRoot, path.resolve(intendedOutputPath))
+    .split(path.sep)
+    .filter((s) => s.length > 0);
+
+  if (relSegments.length === 0 || relSegments[0] === "..") {
+    throw new Error(`WRITE_PATH_OUTSIDE_REPOSITORY: ${callerLabel} intended output path is not repository-local.`);
+  }
+
+  let currentDir = root.realRoot;
+  for (let i = 0; i < relSegments.length - 1; i++) {
+    const nextDir = path.join(currentDir, relSegments[i]);
+
+    if (fs.existsSync(nextDir)) {
+      let real;
+      try {
+        real = fs.realpathSync(nextDir);
+      } catch {
+        throw new Error(`WRITE_PATH_UNSAFE: ${callerLabel} could not canonically resolve an existing output directory component.`);
+      }
+      if (!isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
+        throw new Error(`WRITE_PATH_OUTSIDE_REPOSITORY: ${callerLabel} output directory component escapes the trusted repository root.`);
+      }
+      let stat;
+      try {
+        stat = fs.statSync(real);
+      } catch {
+        throw new Error(`WRITE_PATH_UNSAFE: ${callerLabel} could not stat an existing output directory component.`);
+      }
+      if (!stat.isDirectory()) {
+        throw new Error(`WRITE_PATH_UNSAFE: ${callerLabel} output directory component is not a directory.`);
+      }
+      currentDir = real;
+    } else {
+      fs.mkdirSync(nextDir);
+      const real = fs.realpathSync(nextDir);
+      if (!isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
+        throw new Error(`WRITE_PATH_OUTSIDE_REPOSITORY: ${callerLabel} output directory component escaped the trusted repository root after creation.`);
+      }
+      currentDir = real;
+    }
+  }
+
+  const leafName = relSegments[relSegments.length - 1];
+  const leafPath = path.join(currentDir, leafName);
+
+  let leafStat;
+  try {
+    leafStat = fs.lstatSync(leafPath);
+  } catch {
+    return leafPath; // does not exist yet - safe to create fresh under the validated parent
+  }
+
+  if (leafStat.isSymbolicLink()) {
+    throw new Error(`WRITE_PATH_UNSAFE: ${callerLabel} output file is a symlink; refusing to write through it.`);
+  }
+  if (!leafStat.isFile()) {
+    throw new Error(`WRITE_PATH_UNSAFE: ${callerLabel} output path exists but is not a regular file.`);
+  }
+  return leafPath; // existing repository-local regular file - safe to overwrite
+}
+
 module.exports = {
   normalizeSpecPath,
   PATH_KIND,
@@ -417,4 +555,5 @@ module.exports = {
   resolveSafeSpecPath,
   resolveSafeLocalAttachmentPath,
   resolveRepositoryLocalPath,
+  resolveSafeRepositoryWritePath,
 };

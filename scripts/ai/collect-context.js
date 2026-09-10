@@ -18,7 +18,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
-const { normalizeSpecPath } = require("./context-utils");
+const { normalizeSpecPath, resolveSafeRepositoryWritePath } = require("./context-utils");
 const cypressAdapter = require("./adapters/cypress-adapter");
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 
@@ -457,10 +457,7 @@ function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoo
   assertValidProjectProfile(profile, "collect-context.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "collect-context.main()");
 
-  const outputDir = path.join(root.realRoot, "reports", "ai");
-  const outputFile = path.join(outputDir, "context.json");
-
-  fs.mkdirSync(outputDir, { recursive: true });
+  const outputFile = path.join(root.realRoot, "reports", "ai", "context.json");
 
   const metadata = getMetadata(adapter.id, profile.id, root.realRoot);
   const adapterResult = adapter.collect({ ...adapterOptions, root });
@@ -489,7 +486,13 @@ function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoo
     warnings,
   };
 
-  fs.writeFileSync(outputFile, JSON.stringify(context, null, 2));
+  // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
+  // reasonably possible to the actual write - see
+  // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js)
+  // for why this replaces the former unconditional
+  // fs.mkdirSync(outputDir, {recursive:true}).
+  const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-context.main(): context.json");
+  fs.writeFileSync(safeOutputFile, JSON.stringify(context, null, 2));
 
   log(
     `wrote ${path.relative(root.realRoot, outputFile)} ` +

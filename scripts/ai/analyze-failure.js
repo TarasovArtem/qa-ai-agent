@@ -39,6 +39,7 @@ const { validateProvider, validateProviderResponse } = require("./providers/prov
 const { applyAgentPolicy } = require("./agent-policy");
 const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
+const { resolveSafeRepositoryWritePath } = require("./context-utils");
 const { loadKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
 const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
@@ -698,8 +699,6 @@ async function main({ projectProfile, repositoryRoot } = {}) {
     return;
   }
 
-  fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-
   const failedTests = context.failedTests || [];
   if (failedTests.length === 0) {
     const emptyReport = {
@@ -712,7 +711,11 @@ async function main({ projectProfile, repositoryRoot } = {}) {
       warnings: [],
       note: "No failed tests were present in reports/ai/context.json; nothing to analyze.",
     };
-    fs.writeFileSync(outputFile, JSON.stringify(emptyReport, null, 2));
+    // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
+    // reasonably possible to the actual write - see
+    // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js).
+    const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "analyze-failure.main(): ai-report.json (empty)");
+    fs.writeFileSync(safeOutputFile, JSON.stringify(emptyReport, null, 2));
     console.log(`[ai:analyze] No failed tests to analyze. Wrote ${path.relative(root.realRoot, outputFile)}.`);
     return;
   }
@@ -730,7 +733,14 @@ async function main({ projectProfile, repositoryRoot } = {}) {
     return;
   }
 
-  fs.writeFileSync(outputFile, JSON.stringify(report, null, 2));
+  // Roadmap FPI-2 Corrective C4 (FPI2-R-9): re-validated here, immediately
+  // before this write (not hoisted above the `await buildFailureReport`
+  // call above) - see resolveSafeRepositoryWritePath()'s own documentation
+  // (context-utils.js) for why validation should happen as close as
+  // reasonably possible to the protected write, especially across an
+  // await boundary.
+  const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "analyze-failure.main(): ai-report.json");
+  fs.writeFileSync(safeOutputFile, JSON.stringify(report, null, 2));
   console.log(`[ai:analyze] wrote ${path.relative(root.realRoot, outputFile)} (${report.results.length} result(s)).`);
   for (const w of report.warnings) console.log(`[ai:analyze] warning: ${w}`);
 }

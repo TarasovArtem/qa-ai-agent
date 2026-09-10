@@ -31,6 +31,7 @@ const fs = require("fs");
 const path = require("path");
 const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
+const { resolveSafeRepositoryWritePath } = require("./context-utils");
 const cypressAdapter = require("./adapters/cypress-adapter");
 // Roadmap #21H: the exact same trusted selection mechanism collect-context.js's
 // own CLI bootstrap already uses (Roadmap #21E) - QA_FRAMEWORK absent still
@@ -88,9 +89,17 @@ function log(message) {
   process.stdout.write(`[ai:history] ${message}\n`);
 }
 
-function writeUnavailable(reason, outputFile) {
-  fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-  fs.writeFileSync(outputFile, JSON.stringify({ available: false, reason }, null, 2));
+// Roadmap FPI-2 Corrective C4 (FPI2-R-9): `root` is required so the actual
+// write can be routed through resolveSafeRepositoryWritePath() - see that
+// function's own documentation (context-utils.js) for the containment
+// algorithm. A thrown WRITE_PATH_* error here is a hard, fail-closed
+// security condition (the output location itself is unsafe) and is
+// deliberately NOT downgraded to another writeUnavailable() marker - it
+// propagates to main()'s own try/catch, which is exactly what already
+// happens for any other unexpected error at this point.
+function writeUnavailable(reason, outputFile, root) {
+  const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-history.writeUnavailable(): history.json");
+  fs.writeFileSync(safeOutputFile, JSON.stringify({ available: false, reason }, null, 2));
   log(`history unavailable: ${reason}`);
 }
 
@@ -233,9 +242,9 @@ async function main({ profile, repositoryRoot } = {}) {
     // default.
     const jobName = process.env.HISTORY_JOB_NAME || `Cypress - ${browser}`;
 
-    if (!token) return writeUnavailable("GITHUB_TOKEN not set", outputFile);
-    if (!repo) return writeUnavailable("GITHUB_REPOSITORY not set", outputFile);
-    if (!browser) return writeUnavailable("TEST_BROWSER not set", outputFile);
+    if (!token) return writeUnavailable("GITHUB_TOKEN not set", outputFile, root);
+    if (!repo) return writeUnavailable("GITHUB_REPOSITORY not set", outputFile, root);
+    if (!browser) return writeUnavailable("TEST_BROWSER not set", outputFile, root);
 
     let runsResponse;
     try {
@@ -247,13 +256,13 @@ async function main({ profile, repositoryRoot } = {}) {
         }`
       );
     } catch (err) {
-      return writeUnavailable(`could not list workflow runs: ${err.message}`, outputFile);
+      return writeUnavailable(`could not list workflow runs: ${err.message}`, outputFile, root);
     }
 
     const runs = (runsResponse.workflow_runs || []).filter((r) => r.id !== currentRunId).slice(0, runsWanted);
 
     if (runs.length === 0) {
-      return writeUnavailable(`no prior completed runs found on branch '${branch}' yet`, outputFile);
+      return writeUnavailable(`no prior completed runs found on branch '${branch}' yet`, outputFile, root);
     }
 
     const { passes, failures, retryPasses, inspected } = await aggregateHistory({
@@ -267,7 +276,7 @@ async function main({ profile, repositoryRoot } = {}) {
     });
 
     if (inspected === 0) {
-      return writeUnavailable(`no prior '${jobName}' job history found in the last ${runs.length} run(s) on '${branch}'`, outputFile);
+      return writeUnavailable(`no prior '${jobName}' job history found in the last ${runs.length} run(s) on '${branch}'`, outputFile, root);
     }
 
     const history = {
@@ -302,13 +311,16 @@ async function main({ profile, repositoryRoot } = {}) {
       generatedAt: new Date().toISOString(),
     };
 
-    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-    fs.writeFileSync(outputFile, JSON.stringify(history, null, 2));
+    // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
+    // reasonably possible to the actual write - see
+    // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js).
+    const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-history.main(): history.json");
+    fs.writeFileSync(safeOutputFile, JSON.stringify(history, null, 2));
     log(
       `wrote ${path.relative(root.realRoot, outputFile)} (${passes} pass, ${failures} fail, ${retryPasses} retry-pass of ${inspected} run(s) considered)`
     );
   } catch (err) {
-    return writeUnavailable(`unexpected error: ${err.message}`, outputFile);
+    return writeUnavailable(`unexpected error: ${err.message}`, outputFile, root);
   }
 }
 
