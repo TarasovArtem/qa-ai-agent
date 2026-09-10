@@ -15,17 +15,51 @@
  * used to live directly in collect-context.js - see that file's git
  * history for the pre-extraction version. No parsing/matching semantics
  * were changed by the move itself.
+ *
+ * Roadmap FPI-2: this adapter owns NO repository root of its own.
+ * `collect({ root, reportsDir, screenshotsDir })` receives the caller's
+ * (collect-context.js's) already-validated trusted target repository
+ * boundary (`root: { lexicalRoot, realRoot }`, see
+ * scripts/ai/repository-root.js) and resolves its own default report/
+ * screenshot conventions ("reports/cypress", "cypress/screenshots")
+ * underneath it - never underneath this generic core's own `__dirname`.
+ * `reportsDir`/`screenshotsDir` remain available as explicit test/caller
+ * overrides for the SAME target repository; they are a framework-
+ * specific convenience, never a second, competing root authority.
+ *
+ * Roadmap FPI-2 Corrective C1 (FPI2-R-1/R-2, independent adversarial
+ * review of PR #123): `reportsDir`/`screenshotsDir` overrides are now
+ * validated via context-utils.js's resolveRepositoryLocalPath() before
+ * ever being used for a filesystem read - an override is a location hint
+ * inside the already-trusted `root`, never a second, independent
+ * filesystem authority; a directory outside the repository (or a
+ * repository-local symlink whose real target escapes it) is rejected
+ * with a bounded error rather than silently enumerated.
+ * loadReports() additionally re-verifies each individually DISCOVERED
+ * report file's own real location, closing the narrower gap where
+ * `reportsDir` itself is safe but one file inside it is a symlink to
+ * somewhere else. The final screenshot value now goes through
+ * context-utils.js's resolveSafeLocalAttachmentPath() (the same
+ * canonical-containment/existence/file-type check Playwright's own
+ * attachment handling already used) instead of the weaker
+ * normalizeSpecPath() - a discovered screenshot whose real location
+ * escapes the repository can no longer surface as a raw absolute path in
+ * model-visible evidence.
  */
 
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
-const { normalizeSpecPath } = require("../context-utils");
+const { normalizeSpecPath, resolveSafeLocalAttachmentPath, resolveRepositoryLocalPath, isCanonicalPathInsideRoot } = require("../context-utils");
 
-const ROOT = path.resolve(__dirname, "..", "..", "..");
-const REPORTS_DIR = path.join(ROOT, "reports", "cypress");
-const SCREENSHOTS_DIR = path.join(ROOT, "cypress", "screenshots");
+function resolveRealPathSafe(absPath) {
+  try {
+    return fs.realpathSync(absPath);
+  } catch {
+    return null;
+  }
+}
 
 // Stack traces can run very long (deep call chains, webpack-wrapped
 // frames); the error *message* is the critical, never-truncated part -
@@ -38,7 +72,16 @@ const MAX_STACK_CHARS = 4000;
 // context.metadata.framework.
 const id = "cypress";
 
-function loadReports(reportsDir = REPORTS_DIR) {
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2, section 24): `root` is optional
+// here (existing direct unit tests of this function exercise its report-
+// discovery/parsing behavior without needing a repository boundary at
+// all), but `collect()` below always supplies it - reportsDir itself was
+// already validated as repository-local by resolveRepositoryLocalPath()
+// before this function is ever called from there, but an INDIVIDUAL
+// discovered file could still be a symlink whose own real target escapes
+// the repository; this closes that gap file-by-file, not merely
+// directory-by-directory.
+function loadReports(reportsDir, root) {
   const warnings = [];
 
   if (!fs.existsSync(reportsDir)) {
@@ -64,6 +107,15 @@ function loadReports(reportsDir = REPORTS_DIR) {
   const reports = [];
   for (const filename of filenames) {
     const fullPath = path.join(reportsDir, filename);
+
+    if (root) {
+      const real = resolveRealPathSafe(fullPath);
+      if (real && !isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
+        warnings.push(`Skipped ${filename}: report file escapes the repository boundary.`);
+        continue;
+      }
+    }
+
     try {
       const parsed = JSON.parse(fs.readFileSync(fullPath, "utf8"));
       reports.push(parsed);
@@ -94,10 +146,32 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir = SCREENSHOTS_DIR) {
+// Roadmap FPI-2 Corrective C3 (FPI2-R-7, independent adversarial review of
+// PR #123): `screenshotsDir` itself is already validated as repository-
+// local by the caller (collect()'s own resolveRepositoryLocalPath() gate),
+// but `specDir` below is a NESTED path dynamically derived from
+// `specFile` (ultimately report-content-derived) - `screenshotsDir` being
+// safe does not guarantee one of its own entries is not itself a symlink
+// escaping the repository. `specDir` is now independently re-validated
+// via the SAME resolveRepositoryLocalPath() gate BEFORE existsSync()/
+// readdirSync() ever touch it - previously, an outside-pointing specDir
+// was silently readdirSync()'d (a full, unfiltered directory-listing read
+// against an outside location), with only the FINAL selected file
+// checked afterward. A specDir that is lexically inside the repository
+// but whose real target escapes it (or one that simply doesn't exist yet)
+// is handled by resolveRepositoryLocalPath() exactly like any other
+// override candidate; any rejection here is caught by this function's own
+// existing try/catch and normalizes to null, exactly like a genuinely
+// missing screenshot - this function's public contract (null on any
+// failure) is unchanged.
+function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir, root) {
   if (!specFile) return null;
   try {
-    const specDir = path.join(screenshotsDir, path.basename(specFile));
+    const specDir = resolveRepositoryLocalPath(
+      path.join(screenshotsDir, path.basename(specFile)),
+      root,
+      "cypress-adapter.resolveScreenshotPath(): specDir"
+    );
     if (!fs.existsSync(specDir)) return null;
 
     const baseName = [...suiteTitles, testTitle].join(" -- ");
@@ -117,7 +191,17 @@ function resolveScreenshotPath(specFile, suiteTitles, testTitle, screenshotsDir 
     candidates.sort();
     const failedShot = candidates[candidates.length - 1];
 
-    return normalizeSpecPath(path.join(specDir, failedShot));
+    // Roadmap FPI-2 Corrective C1 (FPI2-R-1/R-2): the discovered file's
+    // FINAL normalized value now goes through resolveSafeLocalAttachmentPath()
+    // - the same canonical-containment/existence/file-type check
+    // Playwright's own attachment handling already used - rather than the
+    // weaker normalizeSpecPath(). This closes two gaps at once: a
+    // screenshotsDir override whose real location escapes the repository
+    // (R-2) and a discovered file that is itself a symlink escaping the
+    // repository, even when screenshotsDir is otherwise safe (R-1/#24).
+    // Never returns a raw absolute path - a rejected/escaping candidate
+    // normalizes to null, exactly like a genuinely missing screenshot.
+    return resolveSafeLocalAttachmentPath(path.join(specDir, failedShot), root).value;
   } catch {
     return null;
   }
@@ -131,12 +215,12 @@ function truncateText(text, maxChars) {
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n/* ...truncated... */` : text;
 }
 
-function extractFailedTests(reports, screenshotsDir = SCREENSHOTS_DIR) {
+function extractFailedTests(reports, screenshotsDir, root) {
   const failedTests = [];
 
   for (const report of reports) {
     for (const rootSuite of report.results || []) {
-      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile);
+      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile, root);
 
       for (const { test, suiteTitles } of walkSuite(rootSuite, [])) {
         const isFailed = test.state === "failed" || (test.fail === true && test.pending !== true);
@@ -154,7 +238,7 @@ function extractFailedTests(reports, screenshotsDir = SCREENSHOTS_DIR) {
             message: (test.err && test.err.message) || null,
             stack: truncateText((test.err && (test.err.estack || test.err.stack)) || null, MAX_STACK_CHARS),
           },
-          screenshot: resolveScreenshotPath(specFile, suiteTitles, test.title || "", screenshotsDir),
+          screenshot: resolveScreenshotPath(specFile, suiteTitles, test.title || "", screenshotsDir, root),
         });
       }
     }
@@ -163,13 +247,13 @@ function extractFailedTests(reports, screenshotsDir = SCREENSHOTS_DIR) {
   return failedTests;
 }
 
-function summarizeTestResults(reports) {
+function summarizeTestResults(reports, root) {
   const specs = [];
   const totals = { tests: 0, passed: 0, failed: 0, pending: 0, duration: 0 };
 
   for (const report of reports) {
     for (const rootSuite of report.results || []) {
-      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile);
+      const specFile = normalizeSpecPath(rootSuite.file || rootSuite.fullFile, root);
       const stats = report.stats || {};
 
       specs.push({
@@ -199,16 +283,58 @@ function summarizeTestResults(reports) {
 // instead of writing a file or knowing about metadata/ProjectProfile/
 // relevantFiles, all of which remain the generic collector's own
 // responsibility.
-function collect({ reportsDir = REPORTS_DIR, screenshotsDir = SCREENSHOTS_DIR } = {}) {
-  const { reports, warnings } = loadReports(reportsDir);
+//
+// Roadmap FPI-2: `root` is required - the caller (collect-context.js)
+// always supplies its own already-validated trusted target repository
+// boundary. `reportsDir`/`screenshotsDir` default to the same
+// "reports/cypress"/"cypress/screenshots" convention as before, now
+// resolved underneath `root.realRoot` rather than this file's own former
+// module-level ROOT constant.
+//
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): an explicit override is
+// validated via resolveRepositoryLocalPath() before it is ever used for a
+// filesystem read - it is a location hint inside the already-trusted
+// `root`, never a second, independent filesystem authority. An override
+// outside the repository throws a bounded ADAPTER_PATH_OUTSIDE_REPOSITORY
+// error rather than being silently enumerated.
+//
+// Roadmap FPI-2 Corrective C2 (FPI2-R-6, independent adversarial review of
+// PR #123): the DEFAULT "reports/cypress"/"cypress/screenshots"
+// conventions now go through the exact SAME resolveRepositoryLocalPath()
+// gate as an explicit override - they are no longer handed straight to
+// fs.existsSync()/fs.readdirSync() unchecked. This closes the gap where
+// the default directory ITSELF (not an individually discovered file
+// inside it) is a symlink escaping the repository: resolveRepositoryLocalPath()'s
+// canonical re-verification (a single realpathSync on the candidate
+// directory, never a directory listing) rejects that BEFORE any
+// enumeration of its contents ever happens - previously, an
+// outside-pointing default directory was silently readdirSync()'d, and
+// any file the per-file check then rejected had its filename echoed into
+// a warning. A default directory that simply does not exist yet is
+// unaffected (resolveRepositoryLocalPath() only re-verifies a REAL
+// target when realpathSync can resolve one at all), preserving the
+// existing "no reports found" bounded-warning behavior.
+function collect({ root, reportsDir, screenshotsDir } = {}) {
+  const resolvedReportsDir = resolveRepositoryLocalPath(
+    reportsDir || "reports/cypress",
+    root,
+    "cypress-adapter.collect(): reportsDir"
+  );
+  const resolvedScreenshotsDir = resolveRepositoryLocalPath(
+    screenshotsDir || "cypress/screenshots",
+    root,
+    "cypress-adapter.collect(): screenshotsDir"
+  );
+
+  const { reports, warnings } = loadReports(resolvedReportsDir, root);
 
   if (reports.length === 0) {
     return { testResults: { found: false }, failedTests: [], warnings };
   }
 
   return {
-    testResults: summarizeTestResults(reports),
-    failedTests: extractFailedTests(reports, screenshotsDir),
+    testResults: summarizeTestResults(reports, root),
+    failedTests: extractFailedTests(reports, resolvedScreenshotsDir, root),
     warnings,
   };
 }
@@ -222,6 +348,4 @@ module.exports = {
   extractFailedTests,
   summarizeTestResults,
   truncateText,
-  REPORTS_DIR,
-  SCREENSHOTS_DIR,
 };

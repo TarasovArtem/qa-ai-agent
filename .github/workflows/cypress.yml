@@ -850,10 +850,17 @@ jobs:
       # full "pick one, don't merge" contract. reports/ai/context.json
       # existing afterward is this step's own signal for whether analysis
       # is needed, exposed as a step output for the steps below.
+      #
+      # Roadmap FPI-2: the generic scripts/ai/aggregate-browser-context.js
+      # now requires an explicit trusted repositoryRoot (it no longer
+      # discovers its own target repository implicitly) - this invokes
+      # the thin Targomo target bootstrap that supplies it, exactly
+      # mirroring the existing ai:collect/ai:history/ai:analyze bootstrap
+      # pattern (Roadmap TI-1). No aggregation/correlation logic moved.
       - name: Aggregate browser inputs
         id: aggregate
         run: |
-          node scripts/ai/aggregate-browser-context.js
+          node scripts/targets/targomo/aggregate-browser-context.js
           if [ -f reports/ai/context.json ]; then
             echo "has-failures=true" >> "$GITHUB_OUTPUT"
           else

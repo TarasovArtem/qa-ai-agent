@@ -21,6 +21,16 @@ const playwrightAdapter = require("./adapters/playwright-adapter");
 const { normalizeSpecPath } = require("./context-utils");
 
 const ROOT = path.resolve(__dirname, "..", "..");
+// Roadmap FPI-2: isPathAllowed()/readFileSafe()/buildRelevantFiles() no
+// longer derive their own target repository root from this module's
+// __dirname - every call site below now supplies an explicit
+// `root: {lexicalRoot, realRoot}` boundary (see scripts/ai/repository-
+// root.js), matching production's own main() wiring. main() itself takes
+// the trusted `repositoryRoot` as a plain string (it validates/wraps it
+// internally) - see the `repositoryRoot: ROOT` argument added to every
+// main({...}) call below. This repository's own checkout is used as the
+// fixture target repository throughout this file.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 
 // Roadmap TI-1: this generic core test file uses a synthetic profile for
 // every generic-behavior proof - it must never depend on the real
@@ -65,23 +75,23 @@ test("isPathAllowed: allows cypress/ files and the two named root files", () => 
   // no longer be given a real security verdict, so this uses a real,
   // existing Cypress spec file rather than a placeholder filename.
   assert.equal(
-    isPathAllowed(path.join(ROOT, "cypress", "e2e", "tests", "category_tree_behavior.cy.js"), CYPRESS_RF_POLICY),
+    isPathAllowed(path.join(ROOT, "cypress", "e2e", "tests", "category_tree_behavior.cy.js"), CYPRESS_RF_POLICY, TEST_ROOT),
     true
   );
-  assert.equal(isPathAllowed(path.join(ROOT, "cypress.config.js"), CYPRESS_RF_POLICY), true);
-  assert.equal(isPathAllowed(path.join(ROOT, "package.json"), CYPRESS_RF_POLICY), true);
+  assert.equal(isPathAllowed(path.join(ROOT, "cypress.config.js"), CYPRESS_RF_POLICY, TEST_ROOT), true);
+  assert.equal(isPathAllowed(path.join(ROOT, "package.json"), CYPRESS_RF_POLICY, TEST_ROOT), true);
 });
 
 test("isPathAllowed: denies anything outside the allowlist, even if it exists", () => {
-  assert.equal(isPathAllowed(path.join(ROOT, "package-lock.json"), CYPRESS_RF_POLICY), false);
-  assert.equal(isPathAllowed(path.join(ROOT, ".git", "config"), CYPRESS_RF_POLICY), false);
-  assert.equal(isPathAllowed(path.join(ROOT, "..", "outside-repo.txt"), CYPRESS_RF_POLICY), false);
+  assert.equal(isPathAllowed(path.join(ROOT, "package-lock.json"), CYPRESS_RF_POLICY, TEST_ROOT), false);
+  assert.equal(isPathAllowed(path.join(ROOT, ".git", "config"), CYPRESS_RF_POLICY, TEST_ROOT), false);
+  assert.equal(isPathAllowed(path.join(ROOT, "..", "outside-repo.txt"), CYPRESS_RF_POLICY, TEST_ROOT), false);
 });
 
 test("isPathAllowed: denies secret-shaped filenames even under cypress/", () => {
-  assert.equal(isPathAllowed(path.join(ROOT, "cypress", ".env"), CYPRESS_RF_POLICY), false);
-  assert.equal(isPathAllowed(path.join(ROOT, "cypress", "secrets.json"), CYPRESS_RF_POLICY), false);
-  assert.equal(isPathAllowed(path.join(ROOT, "cypress", "api.key"), CYPRESS_RF_POLICY), false);
+  assert.equal(isPathAllowed(path.join(ROOT, "cypress", ".env"), CYPRESS_RF_POLICY, TEST_ROOT), false);
+  assert.equal(isPathAllowed(path.join(ROOT, "cypress", "secrets.json"), CYPRESS_RF_POLICY, TEST_ROOT), false);
+  assert.equal(isPathAllowed(path.join(ROOT, "cypress", "api.key"), CYPRESS_RF_POLICY, TEST_ROOT), false);
 });
 
 test("isPathAllowed: a falsy/missing policy fails closed regardless of path", () => {
@@ -93,7 +103,7 @@ test("resolveLocalImports: resolves the real page objects a real spec file impor
   const specPath = path.join(ROOT, "cypress", "e2e", "tests", "category_tree_behavior.cy.js");
   const source = fs.readFileSync(specPath, "utf8");
   const resolved = resolveLocalImports(source, path.dirname(specPath));
-  const relResolved = resolved.map((p) => normalizeSpecPath(p)).sort();
+  const relResolved = resolved.map((p) => normalizeSpecPath(p, TEST_ROOT)).sort();
 
   assert.deepEqual(relResolved, [
     "cypress/e2e/pageObjects/categories.js",
@@ -113,7 +123,7 @@ test("buildRelevantFiles: always includes cypress.config.js and package.json, pl
     { specFile: "cypress/e2e/tests/poi_data_requests.cy.js" }, // imports the same navigation.js/categories.js
   ];
   const warnings = [];
-  const files = buildRelevantFiles(failedTests, warnings, "cypress");
+  const files = buildRelevantFiles(failedTests, warnings, "cypress", TEST_ROOT);
   const keys = Object.keys(files);
 
   assert.ok(keys.includes("cypress.config.js"));
@@ -127,14 +137,14 @@ test("buildRelevantFiles: always includes cypress.config.js and package.json, pl
 
 test("buildRelevantFiles: warns instead of throwing when a failed spec no longer exists on disk", () => {
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "cypress/e2e/tests/does_not_exist.cy.js" }], warnings, "cypress");
+  const files = buildRelevantFiles([{ specFile: "cypress/e2e/tests/does_not_exist.cy.js" }], warnings, "cypress", TEST_ROOT);
   assert.ok(!("cypress/e2e/tests/does_not_exist.cy.js" in files));
   assert.ok(warnings.some((w) => w.includes("not found on disk")));
 });
 
 test("buildRelevantFiles: an unrecognized frameworkId fails closed - empty relevantFiles, one bounded warning, never a Cypress fallback", () => {
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "cypress/e2e/tests/category_tree_behavior.cy.js" }], warnings, "unknown-framework");
+  const files = buildRelevantFiles([{ specFile: "cypress/e2e/tests/category_tree_behavior.cy.js" }], warnings, "unknown-framework", TEST_ROOT);
   assert.deepEqual(files, {});
   assert.deepEqual(warnings, [
     'No relevantFiles source policy exists for framework "unknown-framework"; relevantFiles will be empty.',
@@ -224,7 +234,7 @@ test("main(): writes context.json whose testResults/failedTests/warnings/metadat
     })
   );
 
-  main({ profile: SYNTHETIC_TEST_PROFILE });
+  main({ profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT });
 
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   assert.equal(written.metadata.framework, cypressAdapter.id);
@@ -266,7 +276,7 @@ test("main({adapter}): an explicitly injected adapter is authoritative even when
     },
   };
 
-  main({ adapter: fakeAdapter, profile: SYNTHETIC_TEST_PROFILE });
+  main({ adapter: fakeAdapter, profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT });
   assert.equal(collectCalled, true);
 
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
@@ -461,7 +471,7 @@ test("S1 full-context: current collector wiring matches the historical oracle's 
 
   let written;
   withControlledEnv(() => {
-    main({ profile: SYNTHETIC_TEST_PROFILE });
+    main({ profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT });
     written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   });
 
@@ -537,7 +547,7 @@ test("S11 warning merge order: current collector wiring matches the historical o
 
   let written;
   withControlledEnv(() => {
-    main({ profile: SYNTHETIC_TEST_PROFILE });
+    main({ profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT });
     written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   });
 
@@ -588,13 +598,13 @@ test("O1/O2: main({profile}) with the default adapter and main({adapter: cypress
   cleanOwnedReportPaths();
   fs.mkdirSync(reportsDir, { recursive: true });
   fs.writeFileSync(path.join(reportsDir, "report.json"), fixtureReport);
-  withControlledEnv(() => main({ profile: SYNTHETIC_TEST_PROFILE }));
+  withControlledEnv(() => main({ profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT }));
   const written1 = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   cleanOwnedReportPaths();
 
   fs.mkdirSync(reportsDir, { recursive: true });
   fs.writeFileSync(path.join(reportsDir, "report.json"), fixtureReport);
-  withControlledEnv(() => main({ adapter: cypressAdapter, profile: SYNTHETIC_TEST_PROFILE }));
+  withControlledEnv(() => main({ adapter: cypressAdapter, profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT }));
   const written2 = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   t.after(() => cleanOwnedReportPaths());
 
@@ -622,7 +632,11 @@ function pwResult({ status, duration, error }) {
 }
 
 test("O3-O7: an injected playwrightAdapter traverses the generic collector fully offline - metadata.framework, testResults, failedTests, warnings, ProjectProfile, browser/CI metadata", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "collect-context-playwright-orchestration-"));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): reportFile is a location hint
+  // INSIDE the trusted repository, never an independent filesystem
+  // authority - main() now validates this override resolves inside
+  // `repositoryRoot` before it is ever read.
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "collect-context-playwright-orchestration-"));
   const reportFile = path.join(tmpDir, "report.json");
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -651,7 +665,7 @@ test("O3-O7: an injected playwrightAdapter traverses the generic collector fully
   cleanOwnedReportPaths();
   t.after(() => cleanOwnedReportPaths());
 
-  withControlledEnv(() => main({ adapter: playwrightAdapter, adapterOptions: { reportFile }, profile: SYNTHETIC_TEST_PROFILE }));
+  withControlledEnv(() => main({ adapter: playwrightAdapter, adapterOptions: { reportFile }, profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT }));
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
 
   // metadata.framework comes exclusively from the injected adapter's own id.
@@ -783,7 +797,7 @@ test("P_RF_1: getRelevantFilesPolicy('playwright') returns the explicit, narrow 
 });
 
 test("P_RF_2: package.json is allowed under the Playwright policy (shared baseline file, real on-disk)", () => {
-  assert.equal(isPathAllowed(path.join(ROOT, "package.json"), PLAYWRIGHT_RF_POLICY), true);
+  assert.equal(isPathAllowed(path.join(ROOT, "package.json"), PLAYWRIGHT_RF_POLICY, TEST_ROOT), true);
 });
 
 test("P_RF_3: playwright.config.js is allowed and collected when it genuinely exists at the repo root", () => {
@@ -796,10 +810,10 @@ test("P_RF_3: playwright.config.js is allowed and collected when it genuinely ex
   const configPath = path.join(ROOT, "playwright.config.js");
   assert.ok(fs.existsSync(configPath), "test precondition: the real production playwright.config.js (Roadmap #21F) must exist");
 
-  assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY), true);
+  assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), true);
 
   const warnings = [];
-  const files = buildRelevantFiles([], warnings, "playwright");
+  const files = buildRelevantFiles([], warnings, "playwright", TEST_ROOT);
   assert.ok("playwright.config.js" in files);
   assert.ok(files["playwright.config.js"].content.includes("testDir"));
 });
@@ -816,7 +830,7 @@ test("P_RF_4: a repo-relative playwright/tests/foo.spec.js failedTests specFile 
   t.after(() => fs.rmSync(specPath, { force: true }));
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/tests/p_rf_4.spec.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/tests/p_rf_4.spec.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok("playwright/tests/p_rf_4.spec.js" in files);
   assert.deepEqual(warnings, []);
 });
@@ -831,7 +845,7 @@ test("P_RF_5: a testDir-relative 'tests/foo.spec.js' specFile safely re-resolves
   // No "playwright/" prefix - exactly the real reporter shape Roadmap #21B
   // observed (spec.file relative to Playwright's own testDir).
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "tests/p_rf_5.spec.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "tests/p_rf_5.spec.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok("playwright/tests/p_rf_5.spec.js" in files, `expected playwright/tests/p_rf_5.spec.js in ${Object.keys(files)}`);
   assert.deepEqual(warnings, []);
 });
@@ -847,29 +861,29 @@ test("P_RF_6: a bare testDir-relative 'foo.spec.js' (no subdirectory) safely re-
   t.after(() => fs.rmSync(specPath, { force: true }));
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "p_rf_6.spec.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "p_rf_6.spec.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok("playwright/p_rf_6.spec.js" in files);
   assert.deepEqual(warnings, []);
 });
 
 test("P_RF_7: cypress.config.js is never allowed under the Playwright policy", () => {
-  assert.equal(isPathAllowed(path.join(ROOT, "cypress.config.js"), PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(path.join(ROOT, "cypress.config.js"), PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 });
 
 test("P_RF_8: a real Cypress spec source file is never allowed under the Playwright policy", () => {
   const cypressSpec = path.join(ROOT, "cypress", "e2e", "tests", "category_tree_behavior.cy.js");
   assert.ok(fs.existsSync(cypressSpec), "test precondition: the real Cypress spec must exist");
-  assert.equal(isPathAllowed(cypressSpec, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(cypressSpec, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 });
 
 test("P_RF_9: scripts/ai's own Playwright reporter-proof fixtures (Roadmap #21B) are never Playwright RelevantFiles", () => {
   const realFixture = path.join(ROOT, "scripts", "ai", "__fixtures__", "playwright-real-report.json");
   assert.ok(fs.existsSync(realFixture), "test precondition: the #21B sanitized fixture must exist");
-  assert.equal(isPathAllowed(realFixture, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(realFixture, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   const proofSpec = path.join(ROOT, "scripts", "ai", "__fixtures__", "playwright-reporter-proof", "proof.spec.js");
   assert.ok(fs.existsSync(proofSpec), "test precondition: the #21B proof spec must exist");
-  assert.equal(isPathAllowed(proofSpec, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(proofSpec, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 });
 
 test("P_RF_10: a '../' traversal segment can never escape the Playwright policy's own explicit source root", () => {
@@ -877,14 +891,14 @@ test("P_RF_10: a '../' traversal segment can never escape the Playwright policy'
   // in alwaysCollectFiles nor under playwright/ after resolution.
   const escapePath = path.join(ROOT, "playwright", "..", "package-lock.json");
   assert.ok(fs.existsSync(escapePath), "test precondition: the escape target must exist on disk to prove policy (not mere absence) rejects it");
-  assert.equal(isPathAllowed(escapePath, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(escapePath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   // Same shape, but via the actual failedTests specFile -> buildRelevantFiles
   // path, which is the real, adapter-facing attack surface. package.json is
   // still legitimately collected regardless (alwaysCollectFiles); the point
   // here is narrower: package-lock.json must never appear via this escape.
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "../package-lock.json" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "../package-lock.json" }], warnings, "playwright", TEST_ROOT);
   assert.ok(!("package-lock.json" in files));
   assert.ok(!Object.keys(files).some((k) => k.includes("package-lock.json")));
   assert.ok(warnings.some((w) => w.includes("not found on disk")));
@@ -892,13 +906,13 @@ test("P_RF_10: a '../' traversal segment can never escape the Playwright policy'
 
 test("P_RF_11: an absolute out-of-repository path can never be read as Playwright RelevantFiles", () => {
   const outsideRepo = path.resolve(ROOT, "..", "outside-repo-secret.txt");
-  assert.equal(isPathAllowed(outsideRepo, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(outsideRepo, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   // package.json is still legitimately collected regardless (it's in
   // alwaysCollectFiles, unconditional on failedTests content) - the point
   // here is narrower: the malicious specFile itself must never appear.
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: outsideRepo }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: outsideRepo }], warnings, "playwright", TEST_ROOT);
   assert.ok(!(outsideRepo in files));
   assert.ok(!Object.keys(files).some((k) => k.includes("outside-repo-secret")));
 });
@@ -910,14 +924,14 @@ test("P_RF_12: a denylisted filename under playwright/ is still rejected, exactl
   fs.writeFileSync(secretPath, "SECRET=1\n");
   t.after(() => fs.rmSync(secretPath, { force: true }));
 
-  assert.equal(isPathAllowed(secretPath, PLAYWRIGHT_RF_POLICY), false);
-  assert.equal(isPathAllowed(path.join(pwDir, "api.key"), PLAYWRIGHT_RF_POLICY), false);
-  assert.equal(isPathAllowed(path.join(pwDir, "secrets.json"), PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(secretPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
+  assert.equal(isPathAllowed(path.join(pwDir, "api.key"), PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
+  assert.equal(isPathAllowed(path.join(pwDir, "secrets.json"), PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 });
 
 test("P_RF_13: an unrecognized framework never yields arbitrary RelevantFiles, even for an otherwise-readable repository file", () => {
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "package.json" }], warnings, "unknown-framework");
+  const files = buildRelevantFiles([{ specFile: "package.json" }], warnings, "unknown-framework", TEST_ROOT);
   assert.deepEqual(files, {});
   assert.equal(warnings.length, 1);
   assert.ok(warnings[0].includes("unknown-framework"));
@@ -936,7 +950,7 @@ test("P_RF_14: the Playwright per-file size cap matches Cypress's (MAX_FILE_BYTE
   t.after(() => fs.rmSync(bigPath, { force: true }));
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/p_rf_14.spec.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/p_rf_14.spec.js" }], warnings, "playwright", TEST_ROOT);
   const entry = files["playwright/p_rf_14.spec.js"];
   assert.ok(entry, "expected the oversized spec to still be collected, truncated");
   assert.equal(entry.truncated, true);
@@ -962,7 +976,7 @@ test("Unknown framework (synthetic adapter): relevantFiles stays empty and no ab
   cleanOwnedReportPaths();
   t.after(() => cleanOwnedReportPaths());
 
-  withControlledEnv(() => main({ adapter: unknownAdapter, adapterOptions: { reportFile }, profile: SYNTHETIC_TEST_PROFILE }));
+  withControlledEnv(() => main({ adapter: unknownAdapter, adapterOptions: { reportFile }, profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT }));
   const written = JSON.parse(fs.readFileSync(outputFile, "utf8"));
 
   assert.equal(written.metadata.framework, "unknown-framework");
@@ -1042,13 +1056,13 @@ test("S_RF_1: a Playwright direct-file symlink to a real file outside the reposi
   t.after(() => fs.rmSync(linkPath1, { force: true }));
   fs.symlinkSync(outsideFile, linkPath1, "file");
 
-  assert.equal(isPathAllowed(linkPath1, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(linkPath1, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   // Real pipeline, not just the internal helper (Roadmap #21C-C1 Phase 18) -
   // #21C-R reproduced the original bypass through buildRelevantFiles()
   // itself, so the fix must be proven there too.
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_1_link.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_1_link.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok(!("playwright/s_rf_1_link.js" in files));
   assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
 });
@@ -1064,10 +1078,10 @@ test("S_RF_2: a harmless-named Playwright symlink to a real .env file outside th
   t.after(() => fs.rmSync(linkPath, { force: true }));
   fs.symlinkSync(outsideEnv, linkPath, "file");
 
-  assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_2_harmless.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_2_harmless.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok(!("playwright/s_rf_2_harmless.js" in files));
   // Prove the secret content never enters provider-visible source evidence,
   // not merely that isPathAllowed() returned false (Roadmap #21C-C1 Phase 19).
@@ -1088,10 +1102,10 @@ test("S_RF_3: a harmless-named Playwright symlink to a real .env file INSIDE pla
   fs.writeFileSync(realEnv, MARK);
   fs.symlinkSync(realEnv, linkPath, "file");
 
-  assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(linkPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_3_harmless.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_3_harmless.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok(!("playwright/s_rf_3_harmless.js" in files));
   assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
 });
@@ -1111,10 +1125,10 @@ test("S_RF_4: a Playwright symlinked PARENT DIRECTORY pointing outside the repos
   // The final path component ("foo.js") is an ordinary file, never itself a
   // symlink - a final-component-only lstat check would miss this; only
   // resolving the FULL path (fs.realpathSync) reveals the redirection.
-  assert.equal(isPathAllowed(path.join(pwDir, "link-dir", "foo.js"), PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(path.join(pwDir, "link-dir", "foo.js"), PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/link-dir/foo.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/link-dir/foo.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok(!("playwright/link-dir/foo.js" in files));
   assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
 });
@@ -1133,10 +1147,10 @@ test("S_RF_5: a Cypress symlink to a real file outside the repository is rejecte
     if (!preexisting) fs.rmSync(cyDir, { recursive: true, force: true });
   });
 
-  assert.equal(isPathAllowed(linkPath, CYPRESS_RF_POLICY), false);
+  assert.equal(isPathAllowed(linkPath, CYPRESS_RF_POLICY, TEST_ROOT), false);
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "cypress/s_rf_5_link.js" }], warnings, "cypress");
+  const files = buildRelevantFiles([{ specFile: "cypress/s_rf_5_link.js" }], warnings, "cypress", TEST_ROOT);
   assert.ok(!("cypress/s_rf_5_link.js" in files));
   assert.ok(!Object.values(files).some((f) => f.content.includes(MARK)));
 });
@@ -1149,7 +1163,7 @@ test("S_RF_6: an ordinary non-symlink Playwright file is still collected correct
   fs.writeFileSync(normalPath, "// ordinary file, no symlink");
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_6_normal.spec.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "playwright/s_rf_6_normal.spec.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok("playwright/s_rf_6_normal.spec.js" in files);
 });
 
@@ -1157,7 +1171,8 @@ test("S_RF_7: an ordinary non-symlink Cypress file is still collected correctly 
   const files = buildRelevantFiles(
     [{ specFile: "cypress/e2e/tests/category_tree_behavior.cy.js" }],
     [],
-    "cypress"
+    "cypress",
+    TEST_ROOT
   );
   assert.ok("cypress/e2e/tests/category_tree_behavior.cy.js" in files);
 });
@@ -1170,13 +1185,13 @@ test("S_RF_8: a broken (dangling) Playwright symlink fails safely - no throw, no
   const nonExistentTarget = path.join(os.tmpdir(), `s-rf-8-does-not-exist-${Date.now()}.js`);
   fs.symlinkSync(nonExistentTarget, brokenLinkPath, "file");
 
-  assert.doesNotThrow(() => isPathAllowed(brokenLinkPath, PLAYWRIGHT_RF_POLICY));
-  assert.equal(isPathAllowed(brokenLinkPath, PLAYWRIGHT_RF_POLICY), false);
+  assert.doesNotThrow(() => isPathAllowed(brokenLinkPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT));
+  assert.equal(isPathAllowed(brokenLinkPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   const warnings = [];
   let files;
   assert.doesNotThrow(() => {
-    files = buildRelevantFiles([{ specFile: "playwright/s_rf_8_broken.js" }], warnings, "playwright");
+    files = buildRelevantFiles([{ specFile: "playwright/s_rf_8_broken.js" }], warnings, "playwright", TEST_ROOT);
   });
   assert.ok(!("playwright/s_rf_8_broken.js" in files));
   assert.ok(warnings.some((w) => w.includes("Failed spec source not found on disk: playwright/s_rf_8_broken.js")));
@@ -1201,10 +1216,10 @@ test("Always-collect identity cannot be aliased via symlink: a symlinked playwri
   fs.rmSync(configPath, { force: true });
   fs.symlinkSync(readmePath, configPath, "file");
 
-  assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY), false);
+  assert.equal(isPathAllowed(configPath, PLAYWRIGHT_RF_POLICY, TEST_ROOT), false);
 
   const warnings = [];
-  const files = buildRelevantFiles([], warnings, "playwright");
+  const files = buildRelevantFiles([], warnings, "playwright", TEST_ROOT);
   assert.ok(!("playwright.config.js" in files));
 });
 
@@ -1227,7 +1242,7 @@ test("In-root symlink policy: a symlink whose REAL target independently satisfie
   // repository-containment/framework-policy/denylist checks a non-symlinked
   // candidate at that location would have to pass. This is a deliberate
   // design choice (Roadmap #21C-C1 Phase 10), not an oversight.
-  const result = readFileSafe(linkFile, PLAYWRIGHT_RF_POLICY);
+  const result = readFileSafe(linkFile, PLAYWRIGHT_RF_POLICY, TEST_ROOT);
   assert.ok(result);
   assert.equal(result.content, MARK);
 });
@@ -1240,7 +1255,7 @@ test("Future testDir contract (Roadmap #21C-C1): a testDir-relative 'tests/foo.s
   t.after(() => fs.rmSync(specPath, { force: true }));
 
   const warnings = [];
-  const files = buildRelevantFiles([{ specFile: "tests/contract_check.spec.js" }], warnings, "playwright");
+  const files = buildRelevantFiles([{ specFile: "tests/contract_check.spec.js" }], warnings, "playwright", TEST_ROOT);
   assert.ok("playwright/tests/contract_check.spec.js" in files);
   assert.deepEqual(warnings, []);
 });

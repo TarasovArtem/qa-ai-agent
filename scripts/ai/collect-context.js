@@ -17,22 +17,10 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { assertValidProjectProfile } = require("./project-profile");
-const { normalizeSpecPath } = require("./context-utils");
+const { assertValidRepositoryRoot } = require("./repository-root");
+const { normalizeSpecPath, resolveSafeRepositoryWritePath } = require("./context-utils");
 const cypressAdapter = require("./adapters/cypress-adapter");
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
-
-const ROOT = path.resolve(__dirname, "..", "..");
-const OUTPUT_DIR = path.join(ROOT, "reports", "ai");
-const OUTPUT_FILE = path.join(OUTPUT_DIR, "context.json");
-
-// Roadmap #21C-C1: the real, symlink-resolved location of ROOT itself,
-// computed once. Every canonical-target comparison below is anchored to
-// this value (never to the lexical ROOT), so the check stays internally
-// consistent regardless of whether the repository checkout path itself
-// involves a symlink somewhere above ROOT - it never matters, because both
-// sides of every comparison are always expressed relative to this same
-// REAL_ROOT.
-const REAL_ROOT = fs.realpathSync(ROOT);
 
 // Keeps the collected context small and safe to hand to an LLM later.
 const MAX_FILE_BYTES = 20 * 1024;
@@ -45,6 +33,14 @@ const MAX_TOTAL_RELEVANT_BYTES = 150 * 1024;
 // explicitly. This file must never import a concrete target profile
 // (e.g. Targomo's) - see scripts/targets/targomo/collect-context.js for
 // the target-owned bootstrap that supplies the real production profile.
+//
+// Roadmap FPI-2: this generic collector likewise owns NO repository root
+// of its own - every filesystem operation below (Git metadata, relevant-
+// file discovery/containment, context.json output) is anchored to a
+// caller-supplied `repositoryRoot` (see scripts/ai/repository-root.js),
+// never to this module's own `__dirname` or `process.cwd()`. See
+// scripts/targets/targomo/collect-context.js for the target-owned
+// bootstrap that supplies the real production target repository root.
 
 // Never read these, even if something inside an allowed policy directory
 // somehow imports them (e.g. a future cypress.env.json or a stray .env in
@@ -139,9 +135,9 @@ function log(message) {
   process.stdout.write(`[ai:collect] ${message}\n`);
 }
 
-function runGit(args) {
+function runGit(args, cwd) {
   try {
-    return execFileSync("git", args, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] })
+    return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] })
       .toString()
       .trim();
   } catch {
@@ -163,7 +159,12 @@ function runGit(args) {
 // a direct call with no projectId simply produces `projectId: undefined`,
 // exactly like any other ordinary missing argument - the fail-closed
 // enforcement lives in main(), not in this pure metadata builder.
-function getMetadata(frameworkId = cypressAdapter.id, projectId) {
+//
+// Roadmap FPI-2: `repositoryRoot` (the caller's own validated `realRoot`,
+// see main() below) is the cwd every Git command runs against - Git
+// metadata must always describe the TARGET repository, never this
+// generic core's own checkout location.
+function getMetadata(frameworkId = cypressAdapter.id, projectId, repositoryRoot) {
   const lifecycleEvent = process.env.npm_lifecycle_event || "";
   const browserFromLifecycle = ["chrome", "firefox", "edge"].includes(lifecycleEvent)
     ? lifecycleEvent
@@ -176,12 +177,12 @@ function getMetadata(frameworkId = cypressAdapter.id, projectId) {
     // must satisfy.
     projectId,
     framework: frameworkId,
-    repository: process.env.GITHUB_REPOSITORY || runGit(["remote", "get-url", "origin"]) || null,
-    commit: process.env.GITHUB_SHA || runGit(["rev-parse", "HEAD"]) || null,
+    repository: process.env.GITHUB_REPOSITORY || runGit(["remote", "get-url", "origin"], repositoryRoot) || null,
+    commit: process.env.GITHUB_SHA || runGit(["rev-parse", "HEAD"], repositoryRoot) || null,
     branch:
       process.env.GITHUB_HEAD_REF ||
       process.env.GITHUB_REF_NAME ||
-      runGit(["rev-parse", "--abbrev-ref", "HEAD"]) ||
+      runGit(["rev-parse", "--abbrev-ref", "HEAD"], repositoryRoot) ||
       null,
     runId: process.env.GITHUB_RUN_ID || null,
     event: process.env.GITHUB_EVENT_NAME || null,
@@ -207,10 +208,10 @@ function getMetadata(frameworkId = cypressAdapter.id, projectId) {
 // anywhere along its path) actually points to on disk. See
 // isRealPathAllowed() below for the second, filesystem-aware check every
 // candidate must also pass before anything is ever read.
-function isUnderAllowedDir(absPath, allowedDirs) {
+function isUnderAllowedDir(absPath, allowedDirs, root) {
   const resolved = path.resolve(absPath);
   return allowedDirs.some((dir) => {
-    const dirAbs = path.resolve(ROOT, dir);
+    const dirAbs = path.resolve(root.lexicalRoot, dir);
     return resolved === dirAbs || resolved.startsWith(dirAbs + path.sep);
   });
 }
@@ -230,13 +231,14 @@ function resolveRealPath(absPath) {
   }
 }
 
-function isRealPathUnderAllowedDir(realPath, allowedDirs) {
+function isRealPathUnderAllowedDir(realPath, allowedDirs, root) {
   return allowedDirs.some((dir) => {
-    // `dir` is appended as a literal path segment onto REAL_ROOT, never
-    // itself realpath'd - this expresses "the canonical, no-symlinks-
-    // involved expected location of this allowed directory," which is
-    // exactly what the candidate's own real target must fall under.
-    const dirReal = path.join(REAL_ROOT, dir);
+    // `dir` is appended as a literal path segment onto the caller's own
+    // realRoot, never itself realpath'd - this expresses "the canonical,
+    // no-symlinks-involved expected location of this allowed directory,"
+    // which is exactly what the candidate's own real target must fall
+    // under.
+    const dirReal = path.join(root.realRoot, dir);
     return realPath === dirReal || realPath.startsWith(dirReal + path.sep);
   });
 }
@@ -262,22 +264,22 @@ function isRealPathUnderAllowedDir(realPath, allowedDirs) {
 // because that would let an attacker substitute a completely different
 // file's content for what the collector believes is package.json/
 // playwright.config.js/cypress.config.js.
-function isRealPathAllowed(absPath, policy) {
+function isRealPathAllowed(absPath, policy, root) {
   const real = resolveRealPath(absPath);
   if (!real) return false;
 
   // Repository containment - boundary-aware (separator-checked), not a
   // bare string prefix, exactly like isUnderAllowedDir() above.
-  if (real !== REAL_ROOT && !real.startsWith(REAL_ROOT + path.sep)) return false;
+  if (real !== root.realRoot && !real.startsWith(root.realRoot + path.sep)) return false;
 
   // Denylist re-applied to the real target's own name - catches a harmless
   // lexical candidate name whose real target is itself sensitive, whether
   // that real target lands inside or outside the repository.
-  const realRel = path.relative(REAL_ROOT, real).split(path.sep).join("/");
+  const realRel = path.relative(root.realRoot, real).split(path.sep).join("/");
   if (DENYLIST_PATTERN.test(realRel)) return false;
 
-  if (policy.alwaysCollectFiles.some((file) => path.join(REAL_ROOT, file) === real)) return true;
-  return isRealPathUnderAllowedDir(real, policy.allowedDirs);
+  if (policy.alwaysCollectFiles.some((file) => path.join(root.realRoot, file) === real)) return true;
+  return isRealPathUnderAllowedDir(real, policy.allowedDirs, root);
 }
 
 // `policy` is required (see getRelevantFilesPolicy()) - a missing/falsy
@@ -288,24 +290,24 @@ function isRealPathAllowed(absPath, policy) {
 // candidate string itself) and the real-filesystem check above (covers
 // symlinks, including a symlinked ancestor directory). Neither replaces the
 // other - see this file's module-level Roadmap #21C-C1 comment.
-function isPathAllowed(absPath, policy) {
+function isPathAllowed(absPath, policy, root) {
   if (!policy) return false;
-  const rel = normalizeSpecPath(absPath);
+  const rel = normalizeSpecPath(absPath, root);
   if (!rel) return false;
   if (DENYLIST_PATTERN.test(rel)) return false;
 
   const resolved = path.resolve(absPath);
   const lexicallyAllowed =
-    policy.alwaysCollectFiles.some((file) => path.resolve(ROOT, file) === resolved) ||
-    isUnderAllowedDir(absPath, policy.allowedDirs);
+    policy.alwaysCollectFiles.some((file) => path.resolve(root.lexicalRoot, file) === resolved) ||
+    isUnderAllowedDir(absPath, policy.allowedDirs, root);
   if (!lexicallyAllowed) return false;
 
-  return isRealPathAllowed(absPath, policy);
+  return isRealPathAllowed(absPath, policy, root);
 }
 
-function readFileSafe(absPath, policy) {
+function readFileSafe(absPath, policy, root) {
   try {
-    if (!isPathAllowed(absPath, policy)) return null;
+    if (!isPathAllowed(absPath, policy, root)) return null;
     const stat = fs.statSync(absPath);
     if (!stat.isFile()) return null;
 
@@ -356,7 +358,7 @@ function resolveLocalImports(sourceCode, fromDir) {
 // relevantFiles and a bounded, path-free warning - fail-closed for source
 // evidence, never a silent fallback to Cypress's own policy or a generic
 // repository scan.
-function buildRelevantFiles(failedTests, warnings, frameworkId) {
+function buildRelevantFiles(failedTests, warnings, frameworkId, root) {
   const policy = getRelevantFilesPolicy(frameworkId);
   if (!policy) {
     warnings.push(`No relevantFiles source policy exists for framework "${frameworkId}"; relevantFiles will be empty.`);
@@ -367,7 +369,7 @@ function buildRelevantFiles(failedTests, warnings, frameworkId) {
   let totalBytes = 0;
 
   const addFile = (absPath) => {
-    const rel = normalizeSpecPath(absPath);
+    const rel = normalizeSpecPath(absPath, root);
     if (!rel || files[rel]) return;
 
     if (totalBytes >= MAX_TOTAL_RELEVANT_BYTES) {
@@ -375,7 +377,7 @@ function buildRelevantFiles(failedTests, warnings, frameworkId) {
       return;
     }
 
-    const result = readFileSafe(absPath, policy);
+    const result = readFileSafe(absPath, policy, root);
     if (!result) return;
 
     files[rel] = result;
@@ -386,7 +388,7 @@ function buildRelevantFiles(failedTests, warnings, frameworkId) {
   // context (browser/base URL config, available scripts/deps) - scoped to
   // whichever framework actually produced this run's evidence.
   for (const configFile of policy.alwaysCollectFiles) {
-    addFile(path.join(ROOT, configFile));
+    addFile(path.join(root.lexicalRoot, configFile));
   }
 
   const specPaths = new Set(failedTests.map((t) => t.specFile).filter(Boolean));
@@ -395,8 +397,8 @@ function buildRelevantFiles(failedTests, warnings, frameworkId) {
     let specResult = null;
     let specAbsPath = null;
     for (const candidate of policy.resolveSpecCandidates(specRelPath)) {
-      const candidateAbsPath = path.join(ROOT, candidate);
-      const candidateResult = readFileSafe(candidateAbsPath, policy);
+      const candidateAbsPath = path.join(root.lexicalRoot, candidate);
+      const candidateResult = readFileSafe(candidateAbsPath, policy, root);
       if (candidateResult) {
         specResult = candidateResult;
         specAbsPath = candidateAbsPath;
@@ -437,16 +439,28 @@ function buildRelevantFiles(failedTests, warnings, frameworkId) {
 // directory/file is touched) via project-profile.js's shared
 // assertValidProjectProfile() - a missing/invalid profile throws and
 // writes nothing.
-function main({ adapter = cypressAdapter, adapterOptions, profile } = {}) {
+//
+// Roadmap FPI-2: `repositoryRoot` is now likewise a required, explicitly
+// injected trusted target repository boundary - validated (fail closed,
+// before profile validation's own output-touching consequences and
+// before any output directory/file is touched) via
+// scripts/ai/repository-root.js's shared assertValidRepositoryRoot(). No
+// fallback to this module's own `__dirname` or `process.cwd()` exists.
+// `adapter.collect()` receives the resolved `root` boundary (never the
+// raw caller string) so the adapter's own default report/screenshot
+// locations resolve underneath the SAME target repository, never this
+// generic core's own checkout.
+function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoot } = {}) {
   if (typeof adapter.id !== "string" || adapter.id.length === 0 || typeof adapter.collect !== "function") {
     throw new Error("main(): adapter must have a non-empty string id and a collect() function");
   }
   assertValidProjectProfile(profile, "collect-context.main()");
+  const root = assertValidRepositoryRoot(repositoryRoot, "collect-context.main()");
 
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  const outputFile = path.join(root.realRoot, "reports", "ai", "context.json");
 
-  const metadata = getMetadata(adapter.id, profile.id);
-  const adapterResult = adapter.collect(adapterOptions);
+  const metadata = getMetadata(adapter.id, profile.id, root.realRoot);
+  const adapterResult = adapter.collect({ ...adapterOptions, root });
   const { testResults, failedTests } = adapterResult;
   // Copied, not mutated in place - Roadmap #19.6B: the adapter's returned
   // result is treated as an immutable contract, even though the resulting
@@ -458,7 +472,7 @@ function main({ adapter = cypressAdapter, adapterOptions, profile } = {}) {
   let knownProjectConstraints = [];
 
   if (failedTests.length > 0) {
-    relevantFiles = buildRelevantFiles(failedTests, warnings, adapter.id);
+    relevantFiles = buildRelevantFiles(failedTests, warnings, adapter.id, root);
     knownProjectConstraints = profile.knownProjectConstraints;
   }
 
@@ -472,10 +486,16 @@ function main({ adapter = cypressAdapter, adapterOptions, profile } = {}) {
     warnings,
   };
 
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(context, null, 2));
+  // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
+  // reasonably possible to the actual write - see
+  // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js)
+  // for why this replaces the former unconditional
+  // fs.mkdirSync(outputDir, {recursive:true}).
+  const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-context.main(): context.json");
+  fs.writeFileSync(safeOutputFile, JSON.stringify(context, null, 2));
 
   log(
-    `wrote ${path.relative(ROOT, OUTPUT_FILE)} ` +
+    `wrote ${path.relative(root.realRoot, outputFile)} ` +
       `(${failedTests.length} failed test(s), ${Object.keys(relevantFiles).length} relevant file(s))`
   );
   for (const warning of warnings) {
@@ -495,12 +515,17 @@ function main({ adapter = cypressAdapter, adapterOptions, profile } = {}) {
 // still the only place QA_FRAMEWORK is read) and passes the caller's
 // profile straight through to main(), which fails closed if it is
 // missing/invalid. This module's own require.main===module block calls
-// runCli() with NO profile - direct invocation of this generic core file
-// therefore always fails closed; only a target-owned bootstrap (see
-// scripts/targets/targomo/collect-context.js) supplies a real profile.
-function runCli({ profile } = {}) {
+// runCli() with NO profile/repositoryRoot - direct invocation of this
+// generic core file therefore always fails closed; only a target-owned
+// bootstrap (see scripts/targets/targomo/collect-context.js) supplies a
+// real profile and repository root.
+//
+// Roadmap FPI-2: `repositoryRoot` passes straight through to main() the
+// same way `profile` already does - this seam performs no root
+// validation/derivation of its own.
+function runCli({ profile, repositoryRoot } = {}) {
   const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
-  return main({ adapter, profile });
+  return main({ adapter, profile, repositoryRoot });
 }
 
 if (require.main === module) {

@@ -14,12 +14,21 @@ const {
   selectPrimaryResult,
   summarizeTestResults,
   extractFailedTests,
-  DEFAULT_REPORT_FILE,
 } = require("./adapters/playwright-adapter");
 const { normalizeSpecPath, resolveSafeLocalAttachmentPath } = require("./context-utils");
 const { validateNormalizedFailure } = require("./normalized-failure");
 
 const ROOT = path.resolve(__dirname, "..", "..");
+// Roadmap FPI-2: this adapter no longer derives its own target repository
+// root from this module's __dirname, and no longer exports a
+// DEFAULT_REPORT_FILE constant - collect({root, reportFile}) now resolves
+// its default report location underneath the caller's explicit, trusted
+// `root: {lexicalRoot, realRoot}` boundary (see scripts/ai/repository-
+// root.js), matching production's own collect-context.js wiring. This
+// repository's own checkout is used as the fixture target repository
+// throughout this file.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
+const DEFAULT_REPORT_FILE_FOR_TEST_ROOT = path.join(TEST_ROOT.realRoot, "reports", "playwright", "report.json");
 
 // --- fixture builders (official JSON-reporter-shaped, Roadmap #19.8B) -----
 // Modeled from Playwright's documented JSONReport*/attachment fields (see
@@ -68,25 +77,37 @@ function result({ status, duration = 0, error, errors, attachments = [], retry =
   return r;
 }
 
-function writeReportFixture(t, reportObj) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-report-"));
-  const reportFile = path.join(tmpDir, "report.json");
-  fs.writeFileSync(reportFile, JSON.stringify(reportObj));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
-  return reportFile;
-}
-
 // Roadmap #21D: a race-safe, canonically-in-repository temp workspace for
 // attachment-locality tests - reports/ai/ already exists and is gitignored
 // (see .gitignore), so this reuses that existing convention rather than
-// introducing a new one. Only the report JSON itself may live outside the
-// repository (writeReportFixture() above) - report *content* is never
-// subject to the attachment-locality boundary, only attachment/screenshot
-// *paths named inside* that content are. Always cleaned up via t.after().
+// introducing a new one. Always cleaned up via t.after().
+//
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): the report JSON file itself
+// (writeReportFixture() below) previously lived under an unrelated
+// os.tmpdir() location, passed to collect() as an explicit `reportFile`
+// override - collect() now validates every override resolves inside the
+// trusted `root` before it is ever read (an override is a location hint
+// inside the repository, never a second, independent filesystem
+// authority), so this repository-local temp workspace is now this file's
+// ONE fixture-materialization convention for both the report JSON and any
+// attachment/screenshot files a test needs to genuinely exist - never
+// os.tmpdir() for anything collect()/loadReport() will actually read.
+// Only a deliberately OUT-OF-ROOT fixture (the specific point of the
+// S21D_1/S21D_2/"out-of-root screenshot" tests further below) still uses
+// os.tmpdir(), and only for the attachment/screenshot path named INSIDE
+// an otherwise repository-local report - never for the report file
+// itself.
 function mkdtempInRepo(t, prefix) {
   const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", prefix));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   return tmpDir;
+}
+
+function writeReportFixture(t, reportObj) {
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-report-");
+  const reportFile = path.join(tmpDir, "report.json");
+  fs.writeFileSync(reportFile, JSON.stringify(reportObj));
+  return reportFile;
 }
 
 // --- id --------------------------------------------------------------------
@@ -95,8 +116,20 @@ test("id: is exactly the stable lowercase 'playwright' identity", () => {
   assert.equal(id, "playwright");
 });
 
-test("DEFAULT_REPORT_FILE: points at the canonical reports/playwright/report.json path", () => {
-  assert.equal(DEFAULT_REPORT_FILE, path.join(ROOT, "reports", "playwright", "report.json"));
+test("collect(): with no reportFile, the default resolves underneath the caller's injected root's reports/playwright/report.json - never underneath this module's own __dirname (Roadmap FPI-2)", (t) => {
+  const backupPath = `${DEFAULT_REPORT_FILE_FOR_TEST_ROOT}.fpi2-default-path-backup`;
+  const hadExisting = fs.existsSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  if (hadExisting) fs.renameSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, backupPath);
+  t.after(() => {
+    fs.rmSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, { force: true });
+    if (hadExisting) fs.renameSync(backupPath, DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  });
+
+  fs.mkdirSync(path.dirname(DEFAULT_REPORT_FILE_FOR_TEST_ROOT), { recursive: true });
+  fs.writeFileSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, JSON.stringify(report({ suites: [] })));
+
+  const out = collect({ root: TEST_ROOT });
+  assert.equal(out.testResults.found, true, "collect({root}) with no reportFile must have read the file placed at root.realRoot/reports/playwright/report.json");
 });
 
 // --- classifyTestStatus (pure) ----------------------------------------------
@@ -155,7 +188,7 @@ test("P1 single expected/pass: not in failedTests, counted as passed", (t) => {
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.failedTests, []);
   assert.equal(out.testResults.found, true);
   assert.deepEqual(out.testResults.totals, { tests: 1, passed: 1, failed: 0, pending: 0, duration: 120 });
@@ -196,7 +229,7 @@ test("P2 single unexpected/failure: exactly one failedTests entry with error/dur
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests.length, 1);
   const [f] = out.failedTests;
   assert.equal(f.title, "renders results");
@@ -247,7 +280,7 @@ test("P3 nested suites: fullTitle joins describe ancestry (excluding the top-lev
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests.length, 2);
   assert.equal(out.failedTests[0].fullTitle, "Results page > shows results");
   assert.equal(out.failedTests[0].suite, "Results page");
@@ -282,7 +315,7 @@ test("P4 mixed pass/fail: totals split correctly, failedTests contains only the 
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults.totals, { tests: 2, passed: 1, failed: 1, pending: 0, duration: 11 });
   assert.equal(out.failedTests.length, 1);
   assert.equal(out.failedTests[0].title, "b fails");
@@ -310,7 +343,7 @@ test("P5 skipped: counted as pending, never in failedTests", (t) => {
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults.totals, { tests: 1, passed: 0, failed: 0, pending: 1, duration: 0 });
   assert.deepEqual(out.failedTests, []);
 });
@@ -342,7 +375,7 @@ test("P6 duration: passed through unchanged (ms), and totals sum per-spec exactl
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].duration, 4567);
   assert.equal(out.testResults.totals.duration, 1234 + 4567);
   assert.deepEqual(out.testResults.specs, [{ specFile: "tests/p6.spec.ts", tests: 2, passed: 1, failed: 1, pending: 0, duration: 5801 }]);
@@ -385,8 +418,8 @@ test("P7 single screenshot attachment: normalized repo-relative path returned wh
     })
   );
 
-  const out = collect({ reportFile });
-  const expected = resolveSafeLocalAttachmentPath(screenshotPath);
+  const out = collect({ root: TEST_ROOT, reportFile });
+  const expected = resolveSafeLocalAttachmentPath(screenshotPath, TEST_ROOT);
   assert.equal(expected.value !== null, true, "sanity: the in-repo fixture file itself must resolve to a safe value");
   assert.equal(out.failedTests[0].screenshot, expected.value);
   assert.equal(path.isAbsolute(out.failedTests[0].screenshot), false, "an accepted screenshot value must never be absolute");
@@ -436,8 +469,8 @@ test("P8 multiple attachments: only name==='screenshot' qualifies, and the LAST 
     })
   );
 
-  const out = collect({ reportFile });
-  assert.equal(out.failedTests[0].screenshot, resolveSafeLocalAttachmentPath(shotB).value);
+  const out = collect({ root: TEST_ROOT, reportFile });
+  assert.equal(out.failedTests[0].screenshot, resolveSafeLocalAttachmentPath(shotB, TEST_ROOT).value);
 });
 
 // --- P9: screenshot metadata without a usable path ----------------------------
@@ -473,7 +506,7 @@ test("P9 screenshot metadata without a usable path: null + warning, never a fabr
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].screenshot, null);
   assert.ok(out.warnings.some((w) => w.includes("no usable path")));
 });
@@ -505,7 +538,7 @@ test("P9b screenshot path that does not exist on disk: null + warning, path itse
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].screenshot, null);
   assert.ok(out.warnings.some((w) => w.includes("does not exist on disk")));
   assert.ok(!out.warnings.some((w) => w.includes(missingPath)), "the absolute temp path must never appear in a warning string");
@@ -514,12 +547,11 @@ test("P9b screenshot path that does not exist on disk: null + warning, path itse
 // --- P10: malformed JSON --------------------------------------------------------
 
 test("P10 malformed JSON: found:false, empty failedTests, one deterministic warning, never throws", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-report-"));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-report-");
   const reportFile = path.join(tmpDir, "report.json");
   fs.writeFileSync(reportFile, "{ not valid json");
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults, { found: false });
   assert.deepEqual(out.failedTests, []);
   assert.ok(out.warnings.some((w) => w.includes("Could not parse")));
@@ -530,18 +562,17 @@ test("P10 malformed JSON: found:false, empty failedTests, one deterministic warn
 test("P11 empty report (valid JSON, suites:[]): found:true with all-zero totals, not found:false", (t) => {
   const reportFile = writeReportFixture(t, report({ suites: [] }));
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults, { found: true, totals: { tests: 0, passed: 0, failed: 0, pending: 0, duration: 0 }, specs: [] });
   assert.deepEqual(out.failedTests, []);
   assert.deepEqual(out.warnings, []);
 });
 
 test("missing report file: found:false with a deterministic 'no report' warning", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-missing-"));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-missing-");
   const reportFile = path.join(tmpDir, "report.json");
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults, { found: false });
   assert.deepEqual(out.failedTests, []);
   assert.ok(out.warnings.some((w) => w.includes("No Playwright JSON report found")));
@@ -577,7 +608,7 @@ test("P12 flaky: excluded from failedTests, counted as passed, exactly one logic
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.failedTests, []);
   assert.deepEqual(out.testResults.totals, { tests: 1, passed: 1, failed: 0, pending: 0, duration: 150 });
 });
@@ -612,7 +643,7 @@ test("P13 unexpected with all retries failed: exactly one failedTests entry, bui
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests.length, 1);
   assert.equal(out.failedTests[0].duration, 60);
   assert.equal(out.failedTests[0].error.message, "final attempt error");
@@ -654,7 +685,7 @@ test("P14 multiple errors on one result: uses errors[0] deterministically, never
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.failedTests[0].error, { message: "first error", stack: "stack1" });
 });
 
@@ -682,7 +713,7 @@ test("P15 path normalization: an absolute under-ROOT spec.file normalizes to a r
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.testResults.specs[0].specFile, "tests/p15.spec.ts");
 });
 
@@ -714,7 +745,7 @@ test("P16 EXPECTED FAILURE: expectedStatus=failed + result.status=failed + test.
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.failedTests, [], "an expected failure must never surface as a generic failedTests entry");
   assert.deepEqual(out.testResults.totals, { tests: 1, passed: 1, failed: 0, pending: 0, duration: 50 }, "must be counted as a logical success");
 });
@@ -754,7 +785,7 @@ test("P17 multi-project: each JSONReportTest entry is a separate logical executi
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.testResults.totals.tests, 2);
   assert.equal(out.testResults.totals.failed, 1);
   assert.equal(out.testResults.totals.passed, 1);
@@ -785,7 +816,7 @@ test("P18 unknown test.status: excluded from passed/failed/pending, excluded fro
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.failedTests, []);
   assert.deepEqual(out.testResults.totals, { tests: 1, passed: 0, failed: 0, pending: 0, duration: 5 });
   assert.ok(out.warnings.some((w) => w.includes('Unknown Playwright test.status "somethingElse"')));
@@ -814,7 +845,7 @@ test("P19 top-level global errors: deterministic count-only warning, never fabri
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.failedTests, []);
   assert.ok(out.warnings.some((w) => w.includes("1 top-level error")));
   assert.ok(!out.warnings.some((w) => w.includes("at globalSetup")), "raw global-error stacks must never be copied into a warning");
@@ -843,7 +874,7 @@ test("malformed spec entry (missing tests array) is skipped with a warning, othe
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.testResults.totals.tests, 1);
   assert.ok(out.warnings.some((w) => w.includes("malformed spec entry")));
 });
@@ -868,7 +899,7 @@ test("an unexpected test with zero result entries still normalizes with null err
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests.length, 1);
   assert.equal(out.failedTests[0].duration, null);
   assert.deepEqual(out.failedTests[0].error, { message: null, stack: null });
@@ -903,7 +934,7 @@ test("every emitted failedTests entry across every fixture in this file satisfie
 
   for (const reportObj of scenarios) {
     const reportFile = writeReportFixture(t, reportObj);
-    const out = collect({ reportFile });
+    const out = collect({ root: TEST_ROOT, reportFile });
     assert.ok(out.failedTests.length > 0);
     for (const failure of out.failedTests) {
       const result_ = validateNormalizedFailure(failure);
@@ -922,7 +953,7 @@ test("walkReportSuites: the top-level file-suite's own title is never folded int
       file: "tests/x.spec.ts",
       specs: [spec({ title: "leaf", file: "tests/x.spec.ts", tests: [] })],
     }),
-  ]);
+  ], [], TEST_ROOT);
   assert.equal(entries.length, 1);
   assert.deepEqual(entries[0].suiteTitles, []);
 });
@@ -949,7 +980,7 @@ test("loadReport: a top-level shape without a suites array is rejected with a wa
 // --- default-path wiring (D21T-1: isolated from real production report state) ---
 //
 // The original version of this coverage asserted collect() with no argument
-// returns found:false, which silently depended on reports/playwright/
+// at all returns found:false, which silently depended on reports/playwright/
 // report.json being ABSENT from the real production filesystem at test-run
 // time (D21T-1). A real local `npx playwright test` run - including the
 // one-purposeful-run pattern this repository's own review process uses for
@@ -958,46 +989,50 @@ test("loadReport: a top-level shape without a suites array is rejected with a wa
 // mechanisms that never depend on that file's real-world presence/absence:
 // an equivalence proof (works identically whether or not the real file
 // exists) and an isolated-path proof (a dedicated OS-temp path that can
-// never collide with the production default). Production adapter behavior
-// (collect()'s `reportFile = DEFAULT_REPORT_FILE` default parameter) is
-// completely unchanged - only this test's fixture strategy changed.
+// never collide with the production default).
+//
+// Roadmap FPI-2: collect() no longer has a truly zero-argument form - a
+// trusted `root` is always required (see scripts/ai/repository-root.js) -
+// so "no argument" below now specifically means "no reportFile", with
+// `root: TEST_ROOT` supplied explicitly, matching production's own
+// collect-context.js call site.
 
-test("collect(): with no argument is equivalent to collect({reportFile: DEFAULT_REPORT_FILE}) - true regardless of whether a real report currently exists on disk", () => {
-  const withNoArgument = collect();
-  const withExplicitDefault = collect({ reportFile: DEFAULT_REPORT_FILE });
-  assert.deepEqual(withNoArgument, withExplicitDefault);
+test("collect(): with no reportFile is equivalent to collect({root: TEST_ROOT, reportFile: <root's own default path>}) - true regardless of whether a real report currently exists on disk", () => {
+  const withNoReportFile = collect({ root: TEST_ROOT });
+  const withExplicitDefault = collect({ root: TEST_ROOT, reportFile: DEFAULT_REPORT_FILE_FOR_TEST_ROOT });
+  assert.deepEqual(withNoReportFile, withExplicitDefault);
 });
 
 test("collect(): a genuinely missing report at an isolated OS-temp path (never the production default) returns found:false, empty failedTests, and the expected warning", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-collect-missing-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-collect-missing-");
   const missingReportFile = path.join(tmpDir, "does-not-exist.json");
 
-  const out = collect({ reportFile: missingReportFile });
+  const out = collect({ root: TEST_ROOT, reportFile: missingReportFile });
   assert.deepEqual(out.testResults, { found: false });
   assert.deepEqual(out.failedTests, []);
   assert.ok(out.warnings.some((w) => w.includes("No Playwright JSON report found")));
 });
 
-// D21T-1 adversarial proof: collect() with no argument must still resolve
-// correctly - reading the real content, not silently failing or picking up
-// stale state - while a legitimate reports/playwright/report.json genuinely
-// exists at the real production default path. Backs up and restores any
-// pre-existing real file exactly, so a developer's or CI's own leftover
-// report is never destroyed by running this test suite.
-test("collect(): with no argument still resolves correctly while a real report exists at the production default location (adversarial proof, exact backup/restore)", (t) => {
-  const backupPath = `${DEFAULT_REPORT_FILE}.d21t1-backup`;
-  const hadExisting = fs.existsSync(DEFAULT_REPORT_FILE);
-  if (hadExisting) fs.renameSync(DEFAULT_REPORT_FILE, backupPath);
+// D21T-1 adversarial proof: collect({root}) with no reportFile must still
+// resolve correctly - reading the real content, not silently failing or
+// picking up stale state - while a legitimate reports/playwright/
+// report.json genuinely exists at root.realRoot's own default location.
+// Backs up and restores any pre-existing real file exactly, so a
+// developer's or CI's own leftover report is never destroyed by running
+// this test suite.
+test("collect(): with no reportFile still resolves correctly while a real report exists at the injected root's default location (adversarial proof, exact backup/restore)", (t) => {
+  const backupPath = `${DEFAULT_REPORT_FILE_FOR_TEST_ROOT}.d21t1-backup`;
+  const hadExisting = fs.existsSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  if (hadExisting) fs.renameSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, backupPath);
   t.after(() => {
-    fs.rmSync(DEFAULT_REPORT_FILE, { force: true });
-    if (hadExisting) fs.renameSync(backupPath, DEFAULT_REPORT_FILE);
+    fs.rmSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, { force: true });
+    if (hadExisting) fs.renameSync(backupPath, DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
   });
 
-  fs.mkdirSync(path.dirname(DEFAULT_REPORT_FILE), { recursive: true });
+  fs.mkdirSync(path.dirname(DEFAULT_REPORT_FILE_FOR_TEST_ROOT), { recursive: true });
   const marker = "D21T1_ADVERSARIAL_MARKER";
   fs.writeFileSync(
-    DEFAULT_REPORT_FILE,
+    DEFAULT_REPORT_FILE_FOR_TEST_ROOT,
     JSON.stringify(
       report({
         suites: [
@@ -1017,15 +1052,16 @@ test("collect(): with no argument still resolves correctly while a real report e
     )
   );
 
-  const out = collect();
+  const out = collect({ root: TEST_ROOT });
   assert.equal(out.testResults.found, true);
   assert.equal(out.testResults.totals.tests, 1);
   assert.equal(out.testResults.totals.passed, 1);
 
   // The isolated missing-report test above is unaffected by this real
-  // file's presence, since it always targets its own dedicated OS-temp
-  // path, never DEFAULT_REPORT_FILE - proven again here for good measure.
-  const missingResult = collect({ reportFile: path.join(os.tmpdir(), "d21t1-unrelated-missing-report.json") });
+  // file's presence, since it always targets its own dedicated,
+  // repository-local nonexistent path, never the injected root's default
+  // location - proven again here for good measure.
+  const missingResult = collect({ root: TEST_ROOT, reportFile: mkdtempInRepo(t, "playwright-adapter-d21t1-unrelated-") + "/does-not-exist.json" });
   assert.deepEqual(missingResult.testResults, { found: false });
 });
 
@@ -1065,8 +1101,12 @@ const REAL_SCREENSHOT_MARKER = "__FIXTURE_SCREENSHOT_PATH__";
 // synthetic fixtures.
 function loadRealReportWithScreenshotFilesIn(t, screenshotDir) {
   const raw = JSON.parse(fs.readFileSync(REAL_REPORT_FIXTURE, "utf8"));
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-real-report-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): the report.json file itself
+  // is always passed to collect() as an explicit reportFile override, so
+  // it must always live inside root - unlike screenshotDir (the
+  // parameter above), which deliberately varies inside/outside per this
+  // helper's two callers.
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-real-report-");
 
   // Every screenshot attachment in the sanitized fixture carries the same
   // placeholder marker instead of the real (machine-specific, temp-directory)
@@ -1105,7 +1145,7 @@ function loadRealReportWithLiveScreenshotFiles(t) {
 
 test("parses sanitized JSON produced by a real installed Playwright reporter (Roadmap #21B) - correct logical status classification for every real outcome", (t) => {
   const reportFile = loadRealReportWithLiveScreenshotFiles(t);
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
 
   assert.deepEqual(Object.keys(out).sort(), ["failedTests", "testResults", "warnings"]);
 
@@ -1131,7 +1171,7 @@ test("parses sanitized JSON produced by a real installed Playwright reporter (Ro
   assert.equal(failure.title, "P_REAL_2 unexpected failure");
   assert.equal(failure.fullTitle, "P_REAL_2 unexpected failure");
   assert.equal(failure.status, "failed");
-  assert.equal(failure.specFile, normalizeSpecPath("proof.spec.js"));
+  assert.equal(failure.specFile, normalizeSpecPath("proof.spec.js", TEST_ROOT));
 
   // Real error shape: buildFailureError() must have used result.error (the
   // real reporter's own "first test error" field, present alongside a
@@ -1173,7 +1213,7 @@ test("real reporter fixture, out-of-root screenshot: the same real reporter shap
   t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
   const reportFile = loadRealReportWithScreenshotFilesIn(t, outsideDir);
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests.length, 1);
   assert.equal(out.failedTests[0].screenshot, null);
   assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
@@ -1212,7 +1252,7 @@ test("S21D_1 out-of-root screenshot: rejected end-to-end through the real adapte
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].screenshot, null);
   assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
   assert.ok(!out.warnings.some((w) => w.includes(outsideShot)), "the raw out-of-root path must never appear in a warning");
@@ -1259,7 +1299,7 @@ test("S21D_2 screenshot symlink escape: a repository-local symlink pointing outs
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].screenshot, null);
   assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
   assert.ok(!out.warnings.some((w) => w.includes(outsideShot) || w.includes("OUTSIDE_PRIVATE_PATH_MARKER_21D")));
@@ -1303,8 +1343,8 @@ test("S21D_3 safe in-repo symlink: a repository-local symlink to a repository-lo
     })
   );
 
-  const out = collect({ reportFile });
-  assert.equal(out.failedTests[0].screenshot, resolveSafeLocalAttachmentPath(realShot).value);
+  const out = collect({ root: TEST_ROOT, reportFile });
+  assert.equal(out.failedTests[0].screenshot, resolveSafeLocalAttachmentPath(realShot, TEST_ROOT).value);
   assert.equal(path.isAbsolute(out.failedTests[0].screenshot), false);
 });
 
@@ -1339,7 +1379,7 @@ test("S21D_4 URL screenshot: never fetched, never materialized, rejected with no
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].screenshot, null);
   assert.ok(out.warnings.some((w) => w.includes("was not a safe repository-local path")));
 });
@@ -1375,7 +1415,7 @@ test("S21D_5 non-image contentType named \"screenshot\" is never treated as a sc
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].screenshot, null);
 });
 
@@ -1401,9 +1441,114 @@ test("S21D_6 out-of-root spec.file: redacted end-to-end (both testResults.specs 
     })
   );
 
-  const out = collect({ reportFile });
+  const out = collect({ root: TEST_ROOT, reportFile });
   assert.equal(out.failedTests[0].specFile, null);
   assert.deepEqual(out.testResults.specs, []);
   assert.ok(out.warnings.some((w) => w.includes("was outside the repository/workspace boundary and was redacted")));
   assert.ok(!out.warnings.some((w) => w.includes(outsideSpecFile) || w.includes("OUTSIDE_PRIVATE_PATH_MARKER_21D")));
+});
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C1 (independent adversarial review of PR #123,
+// finding FPI2-R-2) - reportFile override containment.
+// =========================================================================
+
+test("FPI2-R-2: collect() rejects an out-of-root reportFile override with a bounded ADAPTER_PATH_OUTSIDE_REPOSITORY error, never parsing it", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-c1-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const outsideReportFile = path.join(outsideDir, "report.json");
+  fs.writeFileSync(
+    outsideReportFile,
+    JSON.stringify(
+      report({
+        suites: [
+          fileSuite({
+            title: "outside.spec.ts",
+            file: "outside.spec.ts",
+            specs: [
+              spec({
+                title: "OUTSIDE_ROOT_EVIDENCE_MARKER",
+                file: "outside.spec.ts",
+                tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1, error: { message: "leak", stack: "s" } })] })],
+              }),
+            ],
+          }),
+        ],
+      })
+    )
+  );
+
+  assert.throws(() => collect({ root: TEST_ROOT, reportFile: outsideReportFile }), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("FPI2-R-2/#23: a nominally in-root reportFile that is itself a symlink to an outside file is rejected, never read", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-c1-symreport-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const secretReport = path.join(outsideDir, "secret.json");
+  fs.writeFileSync(
+    secretReport,
+    JSON.stringify(report({ suites: [fileSuite({ title: "s", file: "s", specs: [spec({ title: "SYMLINK_ESCAPE_MARKER", file: "s", tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1 })] })] })] })] }))
+  );
+
+  const insideDir = mkdtempInRepo(t, "playwright-adapter-c1-symreport-inside-");
+  const symlinkReportFile = path.join(insideDir, "report.json");
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(secretReport, symlinkReportFile, "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  // An EXPLICIT reportFile override goes through resolveRepositoryLocalPath()
+  // first, which itself re-verifies the real (symlink-resolved) target and
+  // throws before loadReport() is ever reached - a stronger, earlier
+  // rejection than loadReport()'s own internal per-file check (which
+  // guards the DEFAULT, non-override path - see the sibling default-path
+  // symlink-escape proof covered by loadReport()'s own root-aware check).
+  assert.throws(() => collect({ root: TEST_ROOT, reportFile: symlinkReportFile }), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("FPI2-R-2: a relative reportFile override still works correctly (safe overrides inside the repository are not broken by the new containment check)", (t) => {
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-c1-relative-");
+  const relativeReportFile = path.relative(ROOT, path.join(tmpDir, "report.json")).split(path.sep).join("/");
+  fs.writeFileSync(
+    path.join(ROOT, relativeReportFile),
+    JSON.stringify(report({ suites: [fileSuite({ title: "s", file: "s", specs: [spec({ title: "IN_ROOT_RELATIVE_OVERRIDE", file: "s", tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1 })] })] })] })] }))
+  );
+
+  const out = collect({ root: TEST_ROOT, reportFile: relativeReportFile });
+  assert.equal(out.failedTests.length, 1);
+  assert.equal(out.failedTests[0].title, "IN_ROOT_RELATIVE_OVERRIDE");
+});
+
+test("FPI2-R-2/#23: the DEFAULT report location (no override) is also rejected when it is itself a symlink escaping the repository", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-c1-default-symreport-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const secretReport = path.join(outsideDir, "secret.json");
+  fs.writeFileSync(
+    secretReport,
+    JSON.stringify(report({ suites: [fileSuite({ title: "s", file: "s", specs: [spec({ title: "DEFAULT_SYMLINK_ESCAPE_MARKER", file: "s", tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1 })] })] })] })] }))
+  );
+
+  const hadExisting = fs.existsSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  const backupPath = `${DEFAULT_REPORT_FILE_FOR_TEST_ROOT}.c1-default-symlink-backup`;
+  if (hadExisting) fs.renameSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, backupPath);
+  t.after(() => {
+    fs.rmSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, { force: true });
+    if (hadExisting) fs.renameSync(backupPath, DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  });
+  fs.mkdirSync(path.dirname(DEFAULT_REPORT_FILE_FOR_TEST_ROOT), { recursive: true });
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(secretReport, DEFAULT_REPORT_FILE_FOR_TEST_ROOT, "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const out = collect({ root: TEST_ROOT });
+  assert.deepEqual(out.testResults, { found: false });
+  assert.ok(out.warnings.some((w) => w.includes("escapes the repository boundary")));
 });

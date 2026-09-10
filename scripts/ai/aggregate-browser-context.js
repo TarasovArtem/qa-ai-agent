@@ -75,11 +75,20 @@
 
 const fs = require("fs");
 const path = require("path");
+const { assertValidRepositoryRoot } = require("./repository-root");
+const {
+  resolveRepositoryLocalPath,
+  resolveSafeLocalAttachmentPath,
+  resolveSafeRepositoryWritePath,
+} = require("./context-utils");
 
-const ROOT = path.resolve(__dirname, "..", "..");
-const DEFAULT_BROWSER_INPUTS_DIR = path.join(ROOT, "reports", "ai", "browser-inputs");
-const CONTEXT_FILE = path.join(ROOT, "reports", "ai", "context.json");
-const HISTORY_FILE = path.join(ROOT, "reports", "ai", "history.json");
+// Roadmap FPI-2: this module owns no repository root of its own -
+// readBrowserInputs()'s own `baseDir` override already existed before
+// FPI-2 (see below); only its DEFAULT changes, from this file's former
+// module-level ROOT constant to main()'s own caller-supplied, validated
+// `root.realRoot`. See scripts/targets/targomo/aggregate-browser-context.js
+// for the target-owned bootstrap that supplies the real production
+// target repository root.
 
 // Matches the CI browsers declared in .github/workflows/cypress.yml
 // (cypress-tests' matrix: [chrome, edge], plus firefox-tests since
@@ -113,10 +122,36 @@ function log(message) {
   process.stdout.write(`[ai:aggregate] ${message}\n`);
 }
 
-function readJsonIfExists(filePath) {
-  if (!fs.existsSync(filePath)) return null;
+// Roadmap FPI-2 Corrective C4 (FPI2-R-8, independent adversarial review of
+// PR #123, terminal C3 review): every individual browser-input file this
+// module reads (browser-result.json/context.json/history.json, per known
+// browser) is now independently, canonically validated via
+// resolveSafeLocalAttachmentPath() - the SAME leaf-level containment
+// primitive cypress-adapter.js's/playwright-adapter.js's own final
+// screenshot/attachment checks already use - before its content is ever
+// consumed. fs.realpathSync (inside that helper) resolves the ENTIRE
+// candidate path, so this closes an escape at ANY point in the chain: the
+// top-level browser-inputs directory itself being a symlink (R8 Vector A,
+// see main()'s own resolveRepositoryLocalPath() gate below for the
+// additional top-level check mirroring cypress-adapter.js's R6 default-
+// directory convention), a per-browser subdirectory being a symlink, or the
+// individual file itself being a symlink (R8 Vector B) - all resolve to the
+// same canonical-target check. A candidate whose canonical target escapes
+// `root.realRoot` is a security condition (existing but unsafe), logged
+// distinctly from a candidate that is simply, legitimately absent
+// (rejected:false + value:null, the pre-existing "artifact never uploaded"
+// case) - neither ever crashes the aggregation as a whole, but outside
+// content is never consumed in either case.
+function readJsonIfSafe(filePath, root, label) {
+  const { value, rejected } = resolveSafeLocalAttachmentPath(filePath, root);
+  if (rejected) {
+    log(`Skipped ${label}: path escapes the trusted repository boundary.`);
+    return null;
+  }
+  if (!value) return null; // legitimately missing/unreadable - unchanged pre-C4 behavior
+
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs.readFileSync(path.join(root.realRoot, value), "utf8"));
   } catch {
     return null;
   }
@@ -136,20 +171,25 @@ function readJsonIfExists(filePath) {
 // shape (browser+outcome only, no framework field) - every job this
 // workflow actually runs today writes it explicitly, so this default is
 // never the source of truth in production, only a compatibility fallback.
-function readBrowserInputs(baseDir = DEFAULT_BROWSER_INPUTS_DIR, browsers = DEFAULT_BROWSER_PRIORITY) {
+//
+// Roadmap FPI-2 Corrective C4 (FPI2-R-8): `root` is required - every read
+// below is routed through readJsonIfSafe()'s canonical containment check
+// (see its own documentation above) rather than a bare fs.existsSync()/
+// fs.readFileSync() pair.
+function readBrowserInputs(baseDir, browsers = DEFAULT_BROWSER_PRIORITY, root) {
   const inputs = [];
 
   for (const id of browsers) {
     const dir = path.join(baseDir, id);
-    const result = readJsonIfExists(path.join(dir, "browser-result.json"));
+    const result = readJsonIfSafe(path.join(dir, "browser-result.json"), root, `${id}/browser-result.json`);
     if (!result || (result.outcome !== "success" && result.outcome !== "failure")) continue;
 
     inputs.push({
       browser: result.browser || id,
       framework: result.framework || "cypress",
       outcome: result.outcome,
-      context: readJsonIfExists(path.join(dir, "context.json")),
-      history: readJsonIfExists(path.join(dir, "history.json")),
+      context: readJsonIfSafe(path.join(dir, "context.json"), root, `${id}/context.json`),
+      history: readJsonIfSafe(path.join(dir, "history.json"), root, `${id}/history.json`),
     });
   }
 
@@ -420,8 +460,44 @@ function aggregateBrowserInputs(browserInputs, priorityOrder = DEFAULT_BROWSER_P
   return { shouldRun: true, primary, otherFailedBrowsers, correlation, frameworkCorrelation, identityMismatch: null };
 }
 
-function main() {
-  const browserInputs = readBrowserInputs();
+// Roadmap FPI-2: `repositoryRoot` is validated FIRST - before any
+// browser-input read and before any output write. browser-inputs/
+// context.json/history.json are all resolved from this single validated
+// `root` boundary, never from this generic core's own `__dirname`.
+//
+// Roadmap FPI-2 Corrective C4 (FPI2-R-8): `browserInputsDir` (the DEFAULT
+// "reports/ai/browser-inputs" convention - there is no caller override for
+// this path, unlike cypress-adapter.js's reportsDir/screenshotsDir) now
+// goes through the exact same resolveRepositoryLocalPath() gate
+// cypress-adapter.js's own DEFAULT reportsDir/screenshotsDir conventions
+// use (Corrective C2/FPI2-R-6) - a top-level directory-symlink escape (R8
+// Vector A) is refused here, BEFORE any per-browser subdirectory is ever
+// joined or read, mirroring that established convention rather than
+// inventing a new one (see the module's "one filesystem authority model"
+// requirement). This is defense-in-depth alongside readJsonIfSafe()'s own
+// per-file canonical check (which alone already defeats both R8 vectors,
+// since fs.realpathSync resolves the whole chain) - consistent with this
+// file's own layered precedent elsewhere in this codebase. A directory that
+// is simply missing (the ordinary "no browser artifacts downloaded yet"
+// case) is unaffected - resolveRepositoryLocalPath() only rejects a REAL,
+// resolvable target that escapes the root.
+function main({ repositoryRoot } = {}) {
+  const root = assertValidRepositoryRoot(repositoryRoot, "aggregate-browser-context.main()");
+  const contextFile = path.join(root.realRoot, "reports", "ai", "context.json");
+  const historyFile = path.join(root.realRoot, "reports", "ai", "history.json");
+
+  let browserInputs = [];
+  try {
+    const browserInputsDir = resolveRepositoryLocalPath(
+      "reports/ai/browser-inputs",
+      root,
+      "aggregate-browser-context.main(): browserInputsDir"
+    );
+    browserInputs = readBrowserInputs(browserInputsDir, DEFAULT_BROWSER_PRIORITY, root);
+  } catch (err) {
+    log(`Refusing to read browser inputs: ${err.message}`);
+  }
+
   const { shouldRun, primary, otherFailedBrowsers, correlation, frameworkCorrelation, identityMismatch } = aggregateBrowserInputs(browserInputs);
 
   if (!shouldRun) {
@@ -463,10 +539,14 @@ function main() {
   // deliberately separate fields - never merged into one structure.
   const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation, frameworkCorrelation };
 
-  fs.mkdirSync(path.dirname(CONTEXT_FILE), { recursive: true });
-  fs.writeFileSync(CONTEXT_FILE, JSON.stringify(contextWithCorrelation, null, 2));
+  // Roadmap FPI-2 Corrective C4 (FPI2-R-9): each write validated as close
+  // as reasonably possible to the actual write - see
+  // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js).
+  const safeContextFile = resolveSafeRepositoryWritePath(contextFile, root, "aggregate-browser-context.main(): context.json");
+  fs.writeFileSync(safeContextFile, JSON.stringify(contextWithCorrelation, null, 2));
   if (primary.history) {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(primary.history, null, 2));
+    const safeHistoryFile = resolveSafeRepositoryWritePath(historyFile, root, "aggregate-browser-context.main(): history.json");
+    fs.writeFileSync(safeHistoryFile, JSON.stringify(primary.history, null, 2));
   }
 
   const otherNote = otherFailedBrowsers.length
@@ -475,6 +555,12 @@ function main() {
   log(`Selected '${primary.browser}' as the primary failing browser for AI triage.${otherNote}`);
 }
 
+// Roadmap FPI-2: generic direct invocation of this file supplies no
+// repositoryRoot, so main() always rejects with REPOSITORY_ROOT_REQUIRED
+// - a hard configuration failure, exits non-zero via the uncaught
+// rejection. A target-owned bootstrap (see
+// scripts/targets/targomo/aggregate-browser-context.js) supplies a real
+// repository root and therefore never hits this branch in production.
 if (require.main === module) {
   main();
 }
@@ -488,6 +574,7 @@ module.exports = {
   aggregateBrowserInputs,
   buildBrowserCorrelation,
   buildFrameworkCorrelation,
+  main,
   DEFAULT_BROWSER_PRIORITY,
   FRAMEWORK_PRIORITY,
 };

@@ -30,6 +30,8 @@
 const fs = require("fs");
 const path = require("path");
 const { assertValidProjectProfile } = require("./project-profile");
+const { assertValidRepositoryRoot } = require("./repository-root");
+const { resolveSafeRepositoryWritePath } = require("./context-utils");
 const cypressAdapter = require("./adapters/cypress-adapter");
 // Roadmap #21H: the exact same trusted selection mechanism collect-context.js's
 // own CLI bootstrap already uses (Roadmap #21E) - QA_FRAMEWORK absent still
@@ -40,15 +42,19 @@ const cypressAdapter = require("./adapters/cypress-adapter");
 // everywhere else.
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 
-const ROOT = path.resolve(__dirname, "..", "..");
-const OUTPUT_FILE = path.join(ROOT, "reports", "ai", "history.json");
-
 // Roadmap TI-1: this generic collector owns no concrete project identity
 // of its own - main() requires an explicitly injected ProjectProfile (see
 // scripts/ai/project-profile.js for the generic contract) and fails
 // closed if one isn't supplied. See
 // scripts/targets/targomo/collect-history.js for the target-owned
 // bootstrap that supplies the real production profile.
+//
+// Roadmap FPI-2: this generic collector likewise owns no repository root
+// of its own - main() requires an explicitly injected, validated
+// `repositoryRoot` (see scripts/ai/repository-root.js) and fails closed
+// if one isn't supplied; history.json is always written underneath that
+// target repository, never underneath this generic core's own
+// `__dirname`.
 
 // This script is specific to this repo's single workflow file, matching
 // how other scripts/ai/*.js already hardcode repo-specific details (spec
@@ -83,9 +89,17 @@ function log(message) {
   process.stdout.write(`[ai:history] ${message}\n`);
 }
 
-function writeUnavailable(reason) {
-  fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify({ available: false, reason }, null, 2));
+// Roadmap FPI-2 Corrective C4 (FPI2-R-9): `root` is required so the actual
+// write can be routed through resolveSafeRepositoryWritePath() - see that
+// function's own documentation (context-utils.js) for the containment
+// algorithm. A thrown WRITE_PATH_* error here is a hard, fail-closed
+// security condition (the output location itself is unsafe) and is
+// deliberately NOT downgraded to another writeUnavailable() marker - it
+// propagates to main()'s own try/catch, which is exactly what already
+// happens for any other unexpected error at this point.
+function writeUnavailable(reason, outputFile, root) {
+  const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-history.writeUnavailable(): history.json");
+  fs.writeFileSync(safeOutputFile, JSON.stringify({ available: false, reason }, null, 2));
   log(`history unavailable: ${reason}`);
 }
 
@@ -188,126 +202,147 @@ async function aggregateHistory({ runs, browser, jobName, getJobsForRun }) {
 // immediately, and the require.main===module block at the bottom of this
 // file distinguishes that rejection from every other (best-effort)
 // failure mode.
-async function main({ profile } = {}) {
+//
+// Roadmap FPI-2: `repositoryRoot` is validated immediately after
+// `profile` - also a hard configuration failure, also before any
+// best-effort degradation check or output write. Every failure mode
+// AFTER this point (including a genuinely unexpected bug, not just the
+// anticipated token/repo/browser/API-error cases) is caught by the
+// try/finally below and downgraded to the existing best-effort
+// writeUnavailable() marker - unlike profile/root validation, an
+// unexpected error here does not indicate the caller supplied bad
+// configuration, so it keeps the pre-existing "never fail the CI step
+// itself" contract.
+async function main({ profile, repositoryRoot } = {}) {
   assertValidProjectProfile(profile, "collect-history.main()");
+  const root = assertValidRepositoryRoot(repositoryRoot, "collect-history.main()");
+  const outputFile = path.join(root.realRoot, "reports", "ai", "history.json");
 
-  const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPOSITORY;
-  const browser = process.env.TEST_BROWSER;
-  const apiBase = process.env.GITHUB_API_URL || "https://api.github.com";
-  const branch = process.env.HISTORY_BRANCH || DEFAULT_BRANCH;
-  const runsWanted = clampRunsWanted(process.env.HISTORY_RUNS);
-  const currentRunId = process.env.GITHUB_RUN_ID ? Number(process.env.GITHUB_RUN_ID) : null;
-  // Roadmap #21H: the exact same QA_FRAMEWORK -> adapter resolution
-  // collect-context.js's own CLI bootstrap uses (Roadmap #21E) - absent
-  // (every existing Cypress invocation) resolves to cypressAdapter, so
-  // framework identity below is unchanged for Cypress. An invalid
-  // QA_FRAMEWORK value throws RuntimeFrameworkError, which the existing
-  // `main().catch(...)` wrapper at the bottom of this file already
-  // converts to a safe writeUnavailable() marker - no new error handling
-  // needed here.
-  const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
-  // Roadmap #21H: the exact GitHub Actions job name to match, when the
-  // caller can't rely on the historical `Cypress - <browser>` template
-  // (Playwright's real job name, "Playwright Chromium", is a fixed
-  // string, not a per-browser template). Every existing Cypress call site
-  // never sets this, so the template remains the exact, unchanged
-  // default.
-  const jobName = process.env.HISTORY_JOB_NAME || `Cypress - ${browser}`;
-
-  if (!token) return writeUnavailable("GITHUB_TOKEN not set");
-  if (!repo) return writeUnavailable("GITHUB_REPOSITORY not set");
-  if (!browser) return writeUnavailable("TEST_BROWSER not set");
-
-  let runsResponse;
   try {
-    runsResponse = await fetchJson(
-      apiBase,
-      token,
-      `/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${
-        runsWanted + 1
-      }`
+    const token = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPOSITORY;
+    const browser = process.env.TEST_BROWSER;
+    const apiBase = process.env.GITHUB_API_URL || "https://api.github.com";
+    const branch = process.env.HISTORY_BRANCH || DEFAULT_BRANCH;
+    const runsWanted = clampRunsWanted(process.env.HISTORY_RUNS);
+    const currentRunId = process.env.GITHUB_RUN_ID ? Number(process.env.GITHUB_RUN_ID) : null;
+    // Roadmap #21H: the exact same QA_FRAMEWORK -> adapter resolution
+    // collect-context.js's own CLI bootstrap uses (Roadmap #21E) - absent
+    // (every existing Cypress invocation) resolves to cypressAdapter, so
+    // framework identity below is unchanged for Cypress. An invalid
+    // QA_FRAMEWORK value throws RuntimeFrameworkError, which this
+    // function's own try/catch below already converts to a safe
+    // writeUnavailable() marker - no new error handling needed here.
+    const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
+    // Roadmap #21H: the exact GitHub Actions job name to match, when the
+    // caller can't rely on the historical `Cypress - <browser>` template
+    // (Playwright's real job name, "Playwright Chromium", is a fixed
+    // string, not a per-browser template). Every existing Cypress call site
+    // never sets this, so the template remains the exact, unchanged
+    // default.
+    const jobName = process.env.HISTORY_JOB_NAME || `Cypress - ${browser}`;
+
+    if (!token) return writeUnavailable("GITHUB_TOKEN not set", outputFile, root);
+    if (!repo) return writeUnavailable("GITHUB_REPOSITORY not set", outputFile, root);
+    if (!browser) return writeUnavailable("TEST_BROWSER not set", outputFile, root);
+
+    let runsResponse;
+    try {
+      runsResponse = await fetchJson(
+        apiBase,
+        token,
+        `/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${
+          runsWanted + 1
+        }`
+      );
+    } catch (err) {
+      return writeUnavailable(`could not list workflow runs: ${err.message}`, outputFile, root);
+    }
+
+    const runs = (runsResponse.workflow_runs || []).filter((r) => r.id !== currentRunId).slice(0, runsWanted);
+
+    if (runs.length === 0) {
+      return writeUnavailable(`no prior completed runs found on branch '${branch}' yet`, outputFile, root);
+    }
+
+    const { passes, failures, retryPasses, inspected } = await aggregateHistory({
+      runs,
+      browser,
+      jobName,
+      getJobsForRun: async (run) => {
+        const jobsResponse = await fetchJson(apiBase, token, `/repos/${repo}/actions/runs/${run.id}/jobs`);
+        return jobsResponse.jobs || [];
+      },
+    });
+
+    if (inspected === 0) {
+      return writeUnavailable(`no prior '${jobName}' job history found in the last ${runs.length} run(s) on '${branch}'`, outputFile, root);
+    }
+
+    const history = {
+      available: true,
+      // Stable project identity (Roadmap #19.3C) - the project this
+      // aggregate was actually collected for, so a consumer analyzing a
+      // different (or unknown) current project can refuse to trust it
+      // rather than silently treating it as universally applicable. See
+      // scripts/ai/project-profile.js for the generic contract this value
+      // must satisfy.
+      projectId: profile.id,
+      // Roadmap #19.9B: explicit framework provenance, read from the
+      // selected adapter's own stable identity constant - the exact same
+      // one collect-context.js's own metadata.framework already derives
+      // from (Roadmap #21E's runtime-framework-selector.js), never an
+      // independently duplicated literal. A record written from this point
+      // on is no longer legacy-ambiguous: analyze-failure.js's
+      // isHistoryFrameworkEligible() reads this exact field to ensure a
+      // Playwright analysis can never mistake a Cypress record for its own
+      // history, and a Cypress analysis matches it exactly rather than
+      // falling back to legacy ABSENT-framework compatibility. Roadmap
+      // #21H: previously always cypressAdapter.id (this producer was
+      // Cypress-only) - now the selected adapter's own id, so a
+      // QA_FRAMEWORK=playwright invocation correctly writes "playwright".
+      framework: adapter.id,
+      browser,
+      branch,
+      runsConsidered: inspected,
+      passes,
+      failures,
+      retryPasses,
+      generatedAt: new Date().toISOString(),
+    };
+
+    // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
+    // reasonably possible to the actual write - see
+    // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js).
+    const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-history.main(): history.json");
+    fs.writeFileSync(safeOutputFile, JSON.stringify(history, null, 2));
+    log(
+      `wrote ${path.relative(root.realRoot, outputFile)} (${passes} pass, ${failures} fail, ${retryPasses} retry-pass of ${inspected} run(s) considered)`
     );
   } catch (err) {
-    return writeUnavailable(`could not list workflow runs: ${err.message}`);
+    return writeUnavailable(`unexpected error: ${err.message}`, outputFile, root);
   }
-
-  const runs = (runsResponse.workflow_runs || []).filter((r) => r.id !== currentRunId).slice(0, runsWanted);
-
-  if (runs.length === 0) {
-    return writeUnavailable(`no prior completed runs found on branch '${branch}' yet`);
-  }
-
-  const { passes, failures, retryPasses, inspected } = await aggregateHistory({
-    runs,
-    browser,
-    jobName,
-    getJobsForRun: async (run) => {
-      const jobsResponse = await fetchJson(apiBase, token, `/repos/${repo}/actions/runs/${run.id}/jobs`);
-      return jobsResponse.jobs || [];
-    },
-  });
-
-  if (inspected === 0) {
-    return writeUnavailable(`no prior '${jobName}' job history found in the last ${runs.length} run(s) on '${branch}'`);
-  }
-
-  const history = {
-    available: true,
-    // Stable project identity (Roadmap #19.3C) - the project this
-    // aggregate was actually collected for, so a consumer analyzing a
-    // different (or unknown) current project can refuse to trust it
-    // rather than silently treating it as universally applicable. See
-    // scripts/ai/project-profile.js for the generic contract this value
-    // must satisfy.
-    projectId: profile.id,
-    // Roadmap #19.9B: explicit framework provenance, read from the
-    // selected adapter's own stable identity constant - the exact same
-    // one collect-context.js's own metadata.framework already derives
-    // from (Roadmap #21E's runtime-framework-selector.js), never an
-    // independently duplicated literal. A record written from this point
-    // on is no longer legacy-ambiguous: analyze-failure.js's
-    // isHistoryFrameworkEligible() reads this exact field to ensure a
-    // Playwright analysis can never mistake a Cypress record for its own
-    // history, and a Cypress analysis matches it exactly rather than
-    // falling back to legacy ABSENT-framework compatibility. Roadmap
-    // #21H: previously always cypressAdapter.id (this producer was
-    // Cypress-only) - now the selected adapter's own id, so a
-    // QA_FRAMEWORK=playwright invocation correctly writes "playwright".
-    framework: adapter.id,
-    browser,
-    branch,
-    runsConsidered: inspected,
-    passes,
-    failures,
-    retryPasses,
-    generatedAt: new Date().toISOString(),
-  };
-
-  fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(history, null, 2));
-  log(
-    `wrote ${path.relative(ROOT, OUTPUT_FILE)} (${passes} pass, ${failures} fail, ${retryPasses} retry-pass of ${inspected} run(s) considered)`
-  );
 }
 
 // Roadmap TI-1: generic direct invocation of this file supplies no
 // profile, so main() always rejects with PROJECT_PROFILE_REQUIRED here -
 // that specific, deterministic failure is a configuration error and must
 // exit non-zero rather than being silently downgraded into a normal
-// `history unavailable` marker (see main()'s own comment above). Every
-// OTHER rejection (network/API errors, etc.) keeps the pre-existing
-// best-effort writeUnavailable() behavior unchanged. A target-owned
-// bootstrap (see scripts/targets/targomo/collect-history.js) supplies a
-// real profile and therefore never hits the first branch in production.
+// `history unavailable` marker (see main()'s own comment above). Roadmap
+// FPI-2: direct invocation likewise supplies no repositoryRoot, so main()
+// rejects with REPOSITORY_ROOT_REQUIRED for the same reason - also a hard
+// configuration failure, also exits non-zero. Every OTHER failure mode
+// (network/API errors, etc.) is now handled entirely INSIDE main() itself
+// (see its own try/catch above), because computing the best-effort
+// writeUnavailable() marker's own output path requires the already-
+// validated repository root - a target-owned bootstrap (see
+// scripts/targets/targomo/collect-history.js) supplies a real profile and
+// repository root and therefore never hits either REQUIRED branch in
+// production.
 if (require.main === module) {
   main().catch((err) => {
-    if (err && typeof err.message === "string" && err.message.startsWith("PROJECT_PROFILE_")) {
-      process.stderr.write(`[ai:history] ${err.message}\n`);
-      process.exitCode = 1;
-      return;
-    }
-    writeUnavailable(`unexpected error: ${err.message}`);
+    process.stderr.write(`[ai:history] ${err.message}\n`);
+    process.exitCode = 1;
   });
 }
 

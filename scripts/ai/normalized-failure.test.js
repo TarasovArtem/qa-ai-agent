@@ -2,8 +2,16 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { validateNormalizedFailure } = require("./normalized-failure");
 const { extractFailedTests } = require("./adapters/cypress-adapter");
+
+const ROOT = path.resolve(__dirname, "..", "..");
+// Roadmap FPI-2: extractFailedTests() no longer derives its own target
+// repository root from this module's __dirname - see
+// scripts/ai/repository-root.js.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 
 function validMinimalFailure(overrides = {}) {
   return {
@@ -49,7 +57,7 @@ test("validateNormalizedFailure: the ACTUAL current extractFailedTests() output 
     },
   ];
 
-  const failedTests = extractFailedTests(reports);
+  const failedTests = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failedTests.length, 1, "expected exactly one real Cypress-shaped failed test");
 
   const result = validateNormalizedFailure(failedTests[0]);

@@ -1,0 +1,228 @@
+"use strict";
+
+/**
+ * Roadmap FPI-2: unit coverage for the shared trusted-target-repository-
+ * root primitive (scripts/ai/repository-root.js) itself - the shape/
+ * filesystem validation contract every generic-core root-dependent
+ * consumer (collect-context.js, collect-history.js, analyze-failure.js,
+ * aggregate-browser-context.js, the adapters) relies on. Cross-cutting
+ * consumer-level proofs (two-root same-process isolation, cwd-
+ * independence at the main() level, external-temp-target-outside-checkout,
+ * symlink-escape through the real pipeline) live in
+ * scripts/ai/repository-root-portability.test.js instead - this file is
+ * scoped to the primitive's own validate/assert contract.
+ */
+
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { validateRepositoryRoot, assertValidRepositoryRoot } = require("./repository-root");
+
+const REAL_ROOT = path.resolve(__dirname, "..", "..");
+
+function mkTempDir(prefix) {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+// --- validateRepositoryRoot: happy path -------------------------------------
+
+test("validateRepositoryRoot: a real, absolute, existing directory is valid, producing both lexicalRoot and realRoot", () => {
+  const result = validateRepositoryRoot(REAL_ROOT);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.lexicalRoot, path.resolve(REAL_ROOT));
+  assert.equal(result.realRoot, fs.realpathSync(REAL_ROOT));
+});
+
+test("validateRepositoryRoot: a trailing separator still resolves to the same lexicalRoot/realRoot", () => {
+  const withTrailingSep = REAL_ROOT + path.sep;
+  const result = validateRepositoryRoot(withTrailingSep);
+  assert.equal(result.valid, true);
+  assert.equal(result.lexicalRoot, path.resolve(REAL_ROOT));
+  assert.equal(result.realRoot, fs.realpathSync(REAL_ROOT));
+});
+
+// --- validateRepositoryRoot: shape rejections --------------------------------
+
+test("validateRepositoryRoot: non-string values are rejected", () => {
+  for (const bad of [undefined, null, 123, {}, [], true]) {
+    const result = validateRepositoryRoot(bad);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors[0].includes("non-empty string"));
+  }
+});
+
+test("validateRepositoryRoot: an empty string is rejected", () => {
+  const result = validateRepositoryRoot("");
+  assert.equal(result.valid, false);
+  assert.ok(result.errors[0].includes("non-empty string"));
+});
+
+test("validateRepositoryRoot: a control character anywhere in the string is rejected", () => {
+  const result = validateRepositoryRoot(REAL_ROOT + "\x00");
+  assert.equal(result.valid, false);
+  assert.ok(result.errors[0].includes("control characters"));
+});
+
+test("validateRepositoryRoot: a relative path is rejected, even one that would resolve to a real existing directory via process.cwd()", () => {
+  const result = validateRepositoryRoot("scripts/ai");
+  assert.equal(result.valid, false);
+  assert.ok(result.errors[0].includes("absolute"));
+});
+
+test("validateRepositoryRoot: a non-existent absolute path is rejected", () => {
+  const result = validateRepositoryRoot(path.join(REAL_ROOT, "this-directory-does-not-exist-fpi2"));
+  assert.equal(result.valid, false);
+  assert.ok(result.errors[0].includes("does not resolve"));
+});
+
+test("validateRepositoryRoot: a path that resolves to a real FILE (not a directory) is rejected", () => {
+  const packageJsonPath = path.join(REAL_ROOT, "package.json");
+  assert.ok(fs.existsSync(packageJsonPath), "test precondition: package.json must exist at the repo root");
+  const result = validateRepositoryRoot(packageJsonPath);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors[0].includes("directory, not a file"));
+});
+
+// --- symlinked-root proof ------------------------------------------------
+//
+// The repositoryRoot argument ITSELF may be a symlink pointing at a real
+// target repository directory (e.g. a CI checkout accessed through a
+// stable symlinked path). lexicalRoot must be the resolved-but-not-
+// dereferenced form of the SUPPLIED path (path.resolve only), while
+// realRoot must be the fully dereferenced (fs.realpathSync) form of the
+// symlink's own TARGET - the two must differ exactly when the supplied
+// path is itself a symlink, proving the lexical/canonical distinction is
+// preserved even at the root boundary itself, not only for candidates
+// underneath it.
+
+test("validateRepositoryRoot: a symlinked repositoryRoot resolves lexicalRoot to the symlink's own path and realRoot to its dereferenced target", (t) => {
+  const realTargetDir = mkTempDir("fpi2-root-real-target-");
+  const parentDir = mkTempDir("fpi2-root-symlink-parent-");
+  const symlinkRootPath = path.join(parentDir, "symlinked-root");
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(realTargetDir, symlinkRootPath, "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  t.after(() => {
+    fs.rmSync(parentDir, { recursive: true, force: true });
+    fs.rmSync(realTargetDir, { recursive: true, force: true });
+  });
+  if (!symlinkSupported) return; // environment cannot create filesystem symlinks - nothing to prove here
+
+  const result = validateRepositoryRoot(symlinkRootPath);
+  assert.equal(result.valid, true);
+  assert.equal(result.lexicalRoot, path.resolve(symlinkRootPath), "lexicalRoot must be the symlink's own (non-dereferenced) resolved path");
+  assert.equal(result.realRoot, fs.realpathSync(realTargetDir), "realRoot must be the fully dereferenced real target directory");
+  assert.notEqual(result.lexicalRoot, result.realRoot, "a symlinked root must produce two genuinely different lexical/real values");
+});
+
+test("validateRepositoryRoot: a dangling (broken) symlink repositoryRoot fails safely - rejected, never throws", (t) => {
+  const parentDir = mkTempDir("fpi2-root-dangling-parent-");
+  const brokenLinkPath = path.join(parentDir, "broken-root");
+  const nonExistentTarget = path.join(os.tmpdir(), `fpi2-does-not-exist-${Date.now()}`);
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(nonExistentTarget, brokenLinkPath, "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  t.after(() => fs.rmSync(parentDir, { recursive: true, force: true }));
+  if (!symlinkSupported) return;
+
+  assert.doesNotThrow(() => validateRepositoryRoot(brokenLinkPath));
+  const result = validateRepositoryRoot(brokenLinkPath);
+  assert.equal(result.valid, false);
+});
+
+// --- cwd-independence --------------------------------------------------------
+//
+// Every check inside validateRepositoryRoot operates on the supplied
+// absolute string plus fs.realpathSync/fs.statSync on that same absolute
+// path - process.cwd() is never consulted. Proven by changing the
+// process's real working directory to somewhere else entirely for the
+// duration of this one test and confirming the result is unaffected,
+// then unconditionally restoring the original cwd even if an assertion
+// throws.
+
+test("validateRepositoryRoot: result is identical regardless of the process's current working directory (cwd-independence)", (t) => {
+  const originalCwd = process.cwd();
+  const elsewhere = mkTempDir("fpi2-root-cwd-elsewhere-");
+  t.after(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  });
+
+  const before = validateRepositoryRoot(REAL_ROOT);
+  process.chdir(elsewhere);
+  const during = validateRepositoryRoot(REAL_ROOT);
+  process.chdir(originalCwd);
+  const after = validateRepositoryRoot(REAL_ROOT);
+
+  assert.deepEqual(during, before);
+  assert.deepEqual(after, before);
+});
+
+// --- assertValidRepositoryRoot ------------------------------------------
+
+test("assertValidRepositoryRoot: undefined/null throw REPOSITORY_ROOT_REQUIRED, naming the caller label", () => {
+  assert.throws(() => assertValidRepositoryRoot(undefined, "unit-test-caller"), /REPOSITORY_ROOT_REQUIRED: unit-test-caller/);
+  assert.throws(() => assertValidRepositoryRoot(null, "unit-test-caller"), /REPOSITORY_ROOT_REQUIRED: unit-test-caller/);
+});
+
+test("assertValidRepositoryRoot: an invalid root throws REPOSITORY_ROOT_INVALID, including the specific validation error and the caller label", () => {
+  assert.throws(
+    () => assertValidRepositoryRoot("relative/path", "unit-test-caller"),
+    /REPOSITORY_ROOT_INVALID: unit-test-caller.*absolute/
+  );
+});
+
+test("assertValidRepositoryRoot: never leaks the raw invalid input value itself into the thrown message (bounded, deterministic wording only)", () => {
+  const secretLookingInput = "relative/SECRET_MARKER_SHOULD_NEVER_APPEAR";
+  try {
+    assertValidRepositoryRoot(secretLookingInput, "unit-test-caller");
+    assert.fail("expected assertValidRepositoryRoot to throw");
+  } catch (err) {
+    assert.equal(err.message.includes("SECRET_MARKER_SHOULD_NEVER_APPEAR"), false);
+  }
+});
+
+test("assertValidRepositoryRoot: on success, returns EXACTLY {lexicalRoot, realRoot} - never leaking the internal {valid, errors} wrapper", () => {
+  const result = assertValidRepositoryRoot(REAL_ROOT, "unit-test-caller");
+  assert.deepEqual(Object.keys(result).sort(), ["lexicalRoot", "realRoot"]);
+  assert.equal(result.lexicalRoot, path.resolve(REAL_ROOT));
+  assert.equal(result.realRoot, fs.realpathSync(REAL_ROOT));
+});
+
+// --- no module-global mutable state / two-sequential-calls proof -----------
+//
+// This module holds zero module-scope mutable root state - every call is
+// a pure function of its own arguments. Proven directly here (the
+// broader same-process, same-loaded-modules, two-different-TARGET-repos
+// proof through the actual consumers - collect-context.js et al - lives
+// in scripts/ai/repository-root-portability.test.js).
+
+test("assertValidRepositoryRoot: two sequential calls against two different real directories in the same process never contaminate each other", (t) => {
+  const dirA = mkTempDir("fpi2-root-seq-a-");
+  const dirB = mkTempDir("fpi2-root-seq-b-");
+  t.after(() => {
+    fs.rmSync(dirA, { recursive: true, force: true });
+    fs.rmSync(dirB, { recursive: true, force: true });
+  });
+
+  const resultA1 = assertValidRepositoryRoot(dirA, "caller-a");
+  const resultB = assertValidRepositoryRoot(dirB, "caller-b");
+  const resultA2 = assertValidRepositoryRoot(dirA, "caller-a-again");
+
+  assert.equal(resultA1.realRoot, fs.realpathSync(dirA));
+  assert.equal(resultB.realRoot, fs.realpathSync(dirB));
+  assert.equal(resultA2.realRoot, fs.realpathSync(dirA));
+  assert.notEqual(resultA1.realRoot, resultB.realRoot);
+  assert.deepEqual(resultA2, resultA1, "calling with dirA again after an intervening call for dirB must reproduce the identical result - no leaked state from dirB");
+});

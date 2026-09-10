@@ -16,6 +16,7 @@ const {
   DEFAULT_BROWSER_PRIORITY,
 } = require("./aggregate-browser-context");
 const { buildFailureReport, validateAnalysisItem } = require("./analyze-failure");
+const { assertValidRepositoryRoot } = require("./repository-root");
 
 // Roadmap TI-1: bfr() requires an explicit projectProfile
 // now (this generic core module owns no concrete project instance of its
@@ -348,24 +349,32 @@ test("aggregateBrowserInputs: primaryBrowser is deterministic across repeated ca
 
 // --- readBrowserInputs (I/O layer, isolated from the repo's own reports/) --
 
+// Roadmap FPI-2 Corrective C4 (FPI2-R-8): readBrowserInputs() now requires
+// a validated `root` (see its own documentation in
+// aggregate-browser-context.js) to canonically contain every file it
+// reads - every test below treats `dir` itself as the trusted repository
+// root (the same relationship production has between root.realRoot and
+// "reports/ai/browser-inputs", just collapsed to one directory here since
+// these tests exercise readBrowserInputs() directly as the I/O boundary).
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aggregate-browser-context-test-"));
+  const root = assertValidRepositoryRoot(dir, "aggregate-browser-context.test.js");
   try {
-    return fn(dir);
+    return fn(dir, root);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
 test("readBrowserInputs: reads a valid browser-result.json plus context/history", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const chromeDir = path.join(dir, "chrome");
     fs.mkdirSync(chromeDir, { recursive: true });
     fs.writeFileSync(path.join(chromeDir, "browser-result.json"), JSON.stringify({ browser: "chrome", outcome: "failure" }));
     fs.writeFileSync(path.join(chromeDir, "context.json"), JSON.stringify(fakeContext("chrome")));
     fs.writeFileSync(path.join(chromeDir, "history.json"), JSON.stringify({ available: true, passes: 5, failures: 1 }));
 
-    const inputs = readBrowserInputs(dir, ["chrome"]);
+    const inputs = readBrowserInputs(dir, ["chrome"], root);
     assert.equal(inputs.length, 1);
     assert.equal(inputs[0].browser, "chrome");
     assert.equal(inputs[0].outcome, "failure");
@@ -375,36 +384,36 @@ test("readBrowserInputs: reads a valid browser-result.json plus context/history"
 });
 
 test("readBrowserInputs: gracefully skips a browser whose artifact was never downloaded (missing directory)", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const chromeDir = path.join(dir, "chrome");
     fs.mkdirSync(chromeDir, { recursive: true });
     fs.writeFileSync(path.join(chromeDir, "browser-result.json"), JSON.stringify({ browser: "chrome", outcome: "success" }));
     // "edge" directory intentionally does not exist at all.
 
-    const inputs = readBrowserInputs(dir, ["chrome", "edge"]);
+    const inputs = readBrowserInputs(dir, ["chrome", "edge"], root);
     assert.equal(inputs.length, 1);
     assert.equal(inputs[0].browser, "chrome");
   });
 });
 
 test("readBrowserInputs: gracefully skips a browser whose browser-result.json is unparseable", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const edgeDir = path.join(dir, "edge");
     fs.mkdirSync(edgeDir, { recursive: true });
     fs.writeFileSync(path.join(edgeDir, "browser-result.json"), "{ not json");
 
-    const inputs = readBrowserInputs(dir, ["edge"]);
+    const inputs = readBrowserInputs(dir, ["edge"], root);
     assert.deepEqual(inputs, []);
   });
 });
 
 test("readBrowserInputs: a browser input with no context.json (e.g. it actually passed) has context: null", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const edgeDir = path.join(dir, "edge");
     fs.mkdirSync(edgeDir, { recursive: true });
     fs.writeFileSync(path.join(edgeDir, "browser-result.json"), JSON.stringify({ browser: "edge", outcome: "success" }));
 
-    const inputs = readBrowserInputs(dir, ["edge"]);
+    const inputs = readBrowserInputs(dir, ["edge"], root);
     assert.equal(inputs.length, 1);
     assert.equal(inputs[0].context, null);
     assert.equal(inputs[0].history, null);
@@ -423,15 +432,17 @@ test("readBrowserInputs: a browser input with no context.json (e.g. it actually 
 // argument, not just the manually-passed one, now actually discovers a
 // firefox artifact directory.
 test("readBrowserInputs: called with NO explicit browser list (the real production default path) still discovers a firefox directory", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const firefoxDir = path.join(dir, "firefox");
     fs.mkdirSync(firefoxDir, { recursive: true });
     fs.writeFileSync(path.join(firefoxDir, "browser-result.json"), JSON.stringify({ browser: "firefox", outcome: "failure" }));
     fs.writeFileSync(path.join(firefoxDir, "context.json"), JSON.stringify(fakeContext("firefox")));
 
-    // No second argument - this is the exact call shape main() actually
-    // uses, relying entirely on DEFAULT_BROWSER_PRIORITY.
-    const inputs = readBrowserInputs(dir);
+    // `undefined` for the second argument - this still exercises the exact
+    // call shape main() actually uses (relying entirely on
+    // DEFAULT_BROWSER_PRIORITY's own default-parameter value); `root` is
+    // now a required third argument (Roadmap FPI-2 Corrective C4).
+    const inputs = readBrowserInputs(dir, undefined, root);
     const firefoxInput = inputs.find((i) => i.browser === "firefox");
     assert.ok(firefoxInput, "readBrowserInputs() with no explicit browser list must discover firefox via DEFAULT_BROWSER_PRIORITY");
     assert.equal(firefoxInput.outcome, "failure");
@@ -440,14 +451,14 @@ test("readBrowserInputs: called with NO explicit browser list (the real producti
 });
 
 test("readBrowserInputs: called with NO explicit browser list discovers all of chrome, edge, and firefox together", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     for (const browser of ["chrome", "edge", "firefox"]) {
       const browserDir = path.join(dir, browser);
       fs.mkdirSync(browserDir, { recursive: true });
       fs.writeFileSync(path.join(browserDir, "browser-result.json"), JSON.stringify({ browser, outcome: "success" }));
     }
 
-    const inputs = readBrowserInputs(dir);
+    const inputs = readBrowserInputs(dir, undefined, root);
     assert.deepEqual(inputs.map((i) => i.browser).sort(), ["chrome", "edge", "firefox"]);
   });
 });
@@ -872,7 +883,7 @@ test("PLAYWRIGHT_SKIPPED: an unrecognized/non-success/non-failure outcome (e.g. 
 // so this is the layer that actually matters for the "never appears in
 // correlation" guarantee.
 test("PLAYWRIGHT_CANCELLED: a 'cancelled' outcome is filtered out by readBrowserInputs() itself, never reaching aggregation/correlation", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const chromeDir = path.join(dir, "chrome");
     fs.mkdirSync(chromeDir, { recursive: true });
     fs.writeFileSync(path.join(chromeDir, "browser-result.json"), JSON.stringify({ browser: "chrome", framework: "cypress", outcome: "failure" }));
@@ -882,7 +893,7 @@ test("PLAYWRIGHT_CANCELLED: a 'cancelled' outcome is filtered out by readBrowser
     fs.mkdirSync(pwDir, { recursive: true });
     fs.writeFileSync(path.join(pwDir, "browser-result.json"), JSON.stringify({ browser: "playwright-chromium", framework: "playwright", outcome: "cancelled" }));
 
-    const inputs = readBrowserInputs(dir);
+    const inputs = readBrowserInputs(dir, undefined, root);
     assert.equal(inputs.length, 1, "the cancelled playwright-chromium entry must never even reach the browserInputs array");
     assert.equal(inputs[0].browser, "chrome");
 
@@ -904,13 +915,13 @@ test("aggregateBrowserInputs: all four (chrome, edge, firefox, playwright-chromi
 });
 
 test("readBrowserInputs: called with NO explicit browser list discovers a playwright-chromium directory via the real production DEFAULT_BROWSER_PRIORITY, with its trusted framework field intact", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const pwDir = path.join(dir, "playwright-chromium");
     fs.mkdirSync(pwDir, { recursive: true });
     fs.writeFileSync(path.join(pwDir, "browser-result.json"), JSON.stringify({ browser: "playwright-chromium", framework: "playwright", outcome: "failure" }));
     fs.writeFileSync(path.join(pwDir, "context.json"), JSON.stringify(fakeContext("playwright-chromium")));
 
-    const inputs = readBrowserInputs(dir);
+    const inputs = readBrowserInputs(dir, undefined, root);
     const pwInput = inputs.find((i) => i.browser === "playwright-chromium");
     assert.ok(pwInput, "readBrowserInputs() with no explicit browser list must discover playwright-chromium via DEFAULT_BROWSER_PRIORITY");
     assert.equal(pwInput.outcome, "failure");
@@ -920,12 +931,12 @@ test("readBrowserInputs: called with NO explicit browser list discovers a playwr
 });
 
 test("readBrowserInputs: a browser-result.json predating #21G-C1 (no framework field at all) defaults to framework 'cypress' for backward compatibility", () => {
-  withTempDir((dir) => {
+  withTempDir((dir, root) => {
     const chromeDir = path.join(dir, "chrome");
     fs.mkdirSync(chromeDir, { recursive: true });
     fs.writeFileSync(path.join(chromeDir, "browser-result.json"), JSON.stringify({ browser: "chrome", outcome: "failure" }));
 
-    const inputs = readBrowserInputs(dir, ["chrome"]);
+    const inputs = readBrowserInputs(dir, ["chrome"], root);
     assert.equal(inputs[0].framework, "cypress");
   });
 });

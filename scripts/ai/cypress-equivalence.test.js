@@ -82,9 +82,26 @@ const cypressAdapter = require("./adapters/cypress-adapter");
 
 const HISTORICAL_ORACLE_COMMIT = "1aff8f69484b7df5a293e7f1761f580fa2d3c9b0";
 const ROOT = path.resolve(__dirname, "..", "..");
+// Roadmap FPI-2: cypressAdapter.collect() no longer derives its own target
+// repository root from this module's __dirname - every call below now
+// supplies an explicit `root: {lexicalRoot, realRoot}` boundary (see
+// scripts/ai/repository-root.js), matching production's own
+// collect-context.js wiring. This has no bearing on the historical-oracle
+// equivalence itself: every scenario here uses an isolated reportsDir with
+// no screenshot attachments, so `root` is never actually consulted by
+// extractFailedTests()/summarizeTestResults() beyond being a valid object.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): reportsDir is a location hint
+// INSIDE the trusted repository, never an independent filesystem
+// authority - collect() now validates every reportsDir override resolves
+// inside `root` before it is ever enumerated, so this isolated fixture
+// directory is created under reports/ai/ (already gitignored, already
+// this repository's own established scratch-workspace convention) rather
+// than an unrelated OS-temp location. Each call site remains responsible
+// for its own `t.after()` cleanup, unchanged.
 function tmpReportsDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "cypress-equivalence-reports-"));
+  return fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-equivalence-reports-"));
 }
 
 function writeReport(dir, filename, reportObject) {
@@ -128,7 +145,7 @@ test("S1 mixed result: current adapter matches the historical oracle for pass+fa
       stats: { tests: 3, passes: 1, failures: 1, pending: 1, duration: 42 },
       results: [
         {
-          file: "/cypress/e2e/tests/s1_mixed.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s1_mixed.cy.js"),
           suites: [
             {
               title: "S1 Suite",
@@ -151,7 +168,7 @@ test("S1 mixed result: current adapter matches the historical oracle for pass+fa
     fs.mkdirSync(specDir, { recursive: true });
     fs.writeFileSync(path.join(specDir, "S1 Suite -- fails here (failed).png"), "");
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
     // Historical golden (oracle: HISTORICAL_ORACLE_COMMIT).
     assert.deepStrictEqual(result, {
@@ -190,7 +207,7 @@ test("S2 nested suites: current adapter matches the historical oracle for depth-
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 5 },
       results: [
         {
-          file: "/cypress/e2e/tests/s2_nested.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s2_nested.cy.js"),
           suites: [
             {
               title: "Outer",
@@ -208,7 +225,7 @@ test("S2 nested suites: current adapter matches the historical oracle for depth-
       ],
     });
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
     assert.deepStrictEqual(result, {
       testResults: {
@@ -247,7 +264,7 @@ test("S3 fail/pending fallback: current adapter matches the historical oracle fo
       stats: { tests: 2, passes: 0, failures: 1, pending: 1, duration: 3 },
       results: [
         {
-          file: "/cypress/e2e/tests/s3_fallback.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s3_fallback.cy.js"),
           suites: [
             {
               title: "S3 Suite",
@@ -262,7 +279,7 @@ test("S3 fail/pending fallback: current adapter matches the historical oracle fo
       ],
     });
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
     assert.deepStrictEqual(result, {
       testResults: {
@@ -302,7 +319,7 @@ test("S4 error/stack matrix: current adapter matches the historical oracle for e
       stats: { tests: 4, passes: 0, failures: 4, pending: 0, duration: 4 },
       results: [
         {
-          file: "/cypress/e2e/tests/s4_errors.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s4_errors.cy.js"),
           suites: [
             {
               title: "S4 Suite",
@@ -319,7 +336,7 @@ test("S4 error/stack matrix: current adapter matches the historical oracle for e
       ],
     });
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
     const truncatedD = `${longStack.slice(0, 4000)}\n/* ...truncated... */`;
 
     assert.deepStrictEqual(result, {
@@ -395,7 +412,7 @@ test("S5 screenshot matrix: current adapter matches the historical oracle across
         fs.mkdirSync(specDir, { recursive: true });
         for (const [name] of Object.entries(c.screenshots)) fs.writeFileSync(path.join(specDir, name), "");
       }
-      const result = cypressAdapter.resolveScreenshotPath(specFile, suiteTitles, c.title);
+      const result = cypressAdapter.resolveScreenshotPath(specFile, suiteTitles, c.title, path.join(ROOT, "cypress", "screenshots"), TEST_ROOT);
       assert.equal(result, c.expected, c.label);
     } finally {
       fs.rmSync(specDir, { recursive: true, force: true });
@@ -409,7 +426,7 @@ test("S5 screenshot matrix: current adapter matches the historical oracle across
 
 test("S6 missing report directory: current adapter matches the historical oracle's exact warning and empty result", () => {
   const reportsDir = path.join(tmpReportsDir(), "does-not-exist");
-  const result = cypressAdapter.collect({ reportsDir });
+  const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
   assert.deepStrictEqual(result, {
     testResults: { found: false },
@@ -425,7 +442,7 @@ test("S6 missing report directory: current adapter matches the historical oracle
 test("S7 empty report directory: current adapter matches the historical oracle's exact (distinct-from-S6) warning", () => {
   const reportsDir = tmpReportsDir();
   try {
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
     assert.deepStrictEqual(result, {
       testResults: { found: false },
@@ -468,11 +485,11 @@ test("S8 malformed JSON + valid report: current adapter matches the historical o
   try {
     writeReport(reportsDir, "valid.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
-      results: [{ file: "/cypress/e2e/tests/s8_valid.cy.js", suites: [{ title: "S8", suites: [], tests: [{ title: "fails", state: "failed", err: { message: "m8" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s8_valid.cy.js"), suites: [{ title: "S8", suites: [], tests: [{ title: "fails", state: "failed", err: { message: "m8" } }] }] }],
     });
     fs.writeFileSync(path.join(reportsDir, "broken.json"), "{ not valid json");
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
     assert.deepStrictEqual(
       { testResults: result.testResults, failedTests: result.failedTests },
@@ -515,14 +532,14 @@ test("S9 report.json preference: current adapter matches the historical oracle -
   try {
     writeReport(reportsDir, "report.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 9 },
-      results: [{ file: "/cypress/e2e/tests/s9_preferred.cy.js", suites: [{ title: "S9", suites: [], tests: [{ title: "preferred failure", state: "failed", err: { message: "preferred" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s9_preferred.cy.js"), suites: [{ title: "S9", suites: [], tests: [{ title: "preferred failure", state: "failed", err: { message: "preferred" } }] }] }],
     });
     writeReport(reportsDir, "other.json", {
       stats: { tests: 99, passes: 99, failures: 99, pending: 99, duration: 9999 },
-      results: [{ file: "/cypress/e2e/tests/s9_other.cy.js", suites: [{ title: "S9other", suites: [], tests: [{ title: "should never appear", state: "failed", err: { message: "should not appear" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s9_other.cy.js"), suites: [{ title: "S9other", suites: [], tests: [{ title: "should never appear", state: "failed", err: { message: "should not appear" } }] }] }],
     });
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
 
     assert.deepStrictEqual(result, {
       testResults: {
@@ -570,14 +587,14 @@ test("S10 multiple report files: current adapter matches the historical oracle's
   try {
     writeReport(reportsDir, "a.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 10 },
-      results: [{ file: "/cypress/e2e/tests/s10_a.cy.js", suites: [{ title: "S10A", suites: [], tests: [{ title: "a fails", state: "failed", err: { message: "mA" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s10_a.cy.js"), suites: [{ title: "S10A", suites: [], tests: [{ title: "a fails", state: "failed", err: { message: "mA" } }] }] }],
     });
     writeReport(reportsDir, "b.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 20 },
-      results: [{ file: "/cypress/e2e/tests/s10_b.cy.js", suites: [{ title: "S10B", suites: [], tests: [{ title: "b fails", state: "failed", err: { message: "mB" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s10_b.cy.js"), suites: [{ title: "S10B", suites: [], tests: [{ title: "b fails", state: "failed", err: { message: "mB" } }] }] }],
     });
 
-    const result = cypressAdapter.collect({ reportsDir });
+    const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
     const projected = projectMultiReportResult(result);
 
     // Golden (order-independent projection - see function comment above).
