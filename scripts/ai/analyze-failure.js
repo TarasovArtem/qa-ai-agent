@@ -39,8 +39,9 @@ const { validateProvider, validateProviderResponse } = require("./providers/prov
 const { applyAgentPolicy } = require("./agent-policy");
 const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
-const { resolveSafeRepositoryWritePath } = require("./context-utils");
-const { loadKnowledgeUnits } = require("./knowledge/loader");
+const { assertValidProjectKnowledgeConfig } = require("./project-knowledge-config");
+const { resolveSafeRepositoryWritePath, resolveRepositoryLocalPath } = require("./context-utils");
+const { loadKnowledgeUnits, loadProjectKnowledgeUnits, composeKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
 const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
 
@@ -253,8 +254,73 @@ function readHistory(currentMetadata, root) {
 // pure, synchronous, in-memory function - see scripts/ai/knowledge/. Named
 // and exported (like readHistory() below) so tests can inject a fixed
 // result instead of touching the real scripts/ai/knowledge/units/ corpus.
-function computeRelevantKnowledge(context) {
-  return selectKnowledge(context, loadKnowledgeUnits());
+//
+// Roadmap FPI-3bA: `projectKnowledgeConfig` is an OPTIONAL, additive
+// second source, wired the same way FPI-3A/B wire frameworkRuntimeConfig -
+// absence is not an error (byte-identical to pre-FPI-3bA: core corpus
+// only), while a SUPPLIED config is validated and, on any problem, fails
+// closed rather than silently collapsing into "no config" behavior. This
+// mirrors cypress-adapter.js's own resolveFrameworkRuntimeConfigLayout()
+// exactly: shape validation, then identity-consistency validation, then -
+// only for a config that also supplies the optional directory field -
+// directory-level containment via context-utils.js's own
+// resolveRepositoryLocalPath(), before any project unit is ever read.
+//
+// `root` (ProjectProfile.id's filesystem counterpart) is required only
+// when actually needed to resolve a configured directory - a config with
+// only `projectId` (no `projectKnowledgeUnitsDir`) never touches `root` at
+// all, matching ProjectKnowledgeConfig's own "the directory field is
+// genuinely optional" contract.
+function computeRelevantKnowledge(context, { root, projectProfile, projectKnowledgeConfig } = {}) {
+  const coreUnits = loadKnowledgeUnits();
+
+  if (projectKnowledgeConfig === undefined) {
+    return selectKnowledge(context, coreUnits);
+  }
+
+  // Structurally invalid config - fails closed via the existing FPI-1
+  // validator; never silently treated as absence.
+  const config = assertValidProjectKnowledgeConfig(
+    projectKnowledgeConfig,
+    "analyze-failure.computeRelevantKnowledge(): projectKnowledgeConfig"
+  );
+
+  // Identity mismatch - fails closed. A config for the wrong project is a
+  // configuration error, never silently downgraded to "no config" or
+  // silently substituted for the mismatched project's own knowledge.
+  if (!projectProfile || typeof projectProfile.id !== "string" || projectProfile.id.length === 0) {
+    throw new Error(
+      "PROJECT_KNOWLEDGE_CONFIG_PROJECT_PROFILE_REQUIRED: analyze-failure.computeRelevantKnowledge() received a projectKnowledgeConfig but no valid projectProfile to validate it against."
+    );
+  }
+  if (config.projectId !== projectProfile.id) {
+    throw new Error(
+      "PROJECT_KNOWLEDGE_CONFIG_PROJECT_MISMATCH: analyze-failure.computeRelevantKnowledge() received a ProjectKnowledgeConfig for a different project than the current invocation."
+    );
+  }
+
+  // The optional directory field genuinely absent (or explicitly
+  // `undefined`) - a valid config with only `projectId` - contributes no
+  // project units, matching the exact same core-only behavior as no
+  // config at all.
+  if (config.projectKnowledgeUnitsDir === undefined) {
+    return selectKnowledge(context, coreUnits);
+  }
+
+  if (!root || typeof root.lexicalRoot !== "string" || typeof root.realRoot !== "string") {
+    throw new Error(
+      "PROJECT_KNOWLEDGE_CONFIG_ROOT_REQUIRED: analyze-failure.computeRelevantKnowledge() received a projectKnowledgeConfig with projectKnowledgeUnitsDir but no repositoryRoot to resolve it against."
+    );
+  }
+
+  const unitsDir = resolveRepositoryLocalPath(
+    config.projectKnowledgeUnitsDir,
+    root,
+    "analyze-failure.computeRelevantKnowledge(): projectKnowledgeConfig.projectKnowledgeUnitsDir"
+  );
+  const projectUnits = loadProjectKnowledgeUnits(unitsDir, root);
+  const combinedUnits = composeKnowledgeUnits(coreUnits, projectUnits);
+  return selectKnowledge(context, combinedUnits);
 }
 
 function pickSourceContext(context) {
@@ -568,14 +634,29 @@ async function runProviderAnalysis(
 // and a fixed history value without touching process.env or the real
 // reports/ai/history.json file; production (main(), below) always lets
 // both default to their real implementations.
+//
+// Roadmap FPI-3bA: `relevantKnowledge` is deliberately NOT computed as a
+// default-parameter expression (unlike `history` above, which may safely
+// reference `root` - already bound earlier in this same destructuring
+// pattern). computeRelevantKnowledge() now also needs `projectProfile` and
+// `projectKnowledgeConfig`, both of which are destructured LATER in this
+// parameter list - a default-parameter expression can only see
+// already-bound earlier names, so computing it eagerly here would silently
+// run with `projectProfile`/`projectKnowledgeConfig` unavailable. Computed
+// explicitly inside the function body instead (below), after every
+// parameter is bound. An explicitly supplied `relevantKnowledge` (e.g. from
+// a test) is preserved exactly as before - "supplied" is decided via
+// `!== undefined`, so no additional knowledge loading/composition ever runs
+// in that case.
 async function buildFailureReport(
   context,
   {
     provider = createProvider(),
     root,
     history = readHistory(context.metadata, root),
-    relevantKnowledge = computeRelevantKnowledge(context),
+    relevantKnowledge,
     projectProfile,
+    projectKnowledgeConfig,
   } = {}
 ) {
   const failedTests = context.failedTests || [];
@@ -592,7 +673,10 @@ async function buildFailureReport(
   // way it already reads context.browserCorrelation/knownProjectConstraints.
   // Always an array (selectKnowledge() never returns null), so this is an
   // unconditional assignment, unlike history's `if (history)` guard.
-  context.relevantKnowledge = relevantKnowledge;
+  context.relevantKnowledge =
+    relevantKnowledge !== undefined
+      ? relevantKnowledge
+      : computeRelevantKnowledge(context, { root, projectProfile, projectKnowledgeConfig });
 
   // Roadmap #19.4S: threaded through to runProviderAnalysis's own
   // system-prompt profile selection only - see the comment there. Never
@@ -686,7 +770,16 @@ function fail(message) {
 // own artifact write. context.json/history.json/ai-report.json are all
 // resolved from this single validated `root` boundary, never from this
 // generic core's own `__dirname`.
-async function main({ projectProfile, repositoryRoot } = {}) {
+//
+// Roadmap FPI-3bA: `projectKnowledgeConfig` is OPTIONAL and passed through
+// unvalidated at this point - a target-owned bootstrap that omits it sees
+// byte-identical pre-FPI-3bA behavior (core-corpus-only Knowledge
+// selection). When supplied, it is validated lazily inside
+// computeRelevantKnowledge() (via buildFailureReport() below), the same
+// point that already computes relevantKnowledge - matching the
+// zero-failed-tests early return below, which already never invoked
+// Knowledge selection at all before this change either.
+async function main({ projectProfile, repositoryRoot, projectKnowledgeConfig } = {}) {
   assertValidProjectProfile(projectProfile, "analyze-failure.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "analyze-failure.main()");
   const outputFile = path.join(root.realRoot, "reports", "ai", "ai-report.json");
@@ -727,7 +820,7 @@ async function main({ projectProfile, repositoryRoot } = {}) {
 
   let report;
   try {
-    report = await buildFailureReport(context, { projectProfile, root });
+    report = await buildFailureReport(context, { projectProfile, root, projectKnowledgeConfig });
   } catch (err) {
     fail(err.message);
     return;
