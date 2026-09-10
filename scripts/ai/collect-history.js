@@ -32,6 +32,7 @@ const path = require("path");
 const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
 const { resolveSafeRepositoryWritePath } = require("./context-utils");
+const { assertValidFrameworkRuntimeConfig } = require("./framework-runtime-config");
 const cypressAdapter = require("./adapters/cypress-adapter");
 // Roadmap #21H: the exact same trusted selection mechanism collect-context.js's
 // own CLI bootstrap already uses (Roadmap #21E) - QA_FRAMEWORK absent still
@@ -193,6 +194,67 @@ async function aggregateHistory({ runs, browser, jobName, getJobsForRun }) {
   return { passes, failures, retryPasses, inspected };
 }
 
+// Roadmap FPI-3C (FrameworkRuntimeConfig historyWorkflowFile consumer
+// wiring): resolves an OPTIONAL, orchestration-supplied
+// FrameworkRuntimeConfig into a candidate workflow filename - or returns
+// null when no config was supplied at all (Case A: config ABSENCE, never
+// itself an error). Mirrors cypress-adapter.js's/playwright-adapter.js's
+// own resolveFrameworkRuntimeConfigLayout()/resolveFrameworkRuntimeConfigReportFile()
+// exactly in spirit, but this field is a GitHub Actions workflow
+// filename consumed by a REST API URL path segment, never a local
+// filesystem path - it is therefore validated via the same shared FPI-1
+// validator (assertValidFrameworkRuntimeConfig(), which already enforces
+// isSafeWorkflowFilename()'s closed `[A-Za-z0-9._-]+\.ya?ml` charset - no
+// slash, "?", "#", or other URL-structural character can ever pass) and
+// then flows straight into the existing fetchJson() URL template
+// unchanged - never through resolveRepositoryLocalPath()/
+// resolveSafeLocalAttachmentPath()/resolveSafeRepositoryWritePath(),
+// which exist for local filesystem containment, a different concern this
+// field has nothing to do with.
+//
+// currentFrameworkId is the ACTIVE runtime framework identity this exact
+// invocation already trusts (selectRuntimeAdapter(QA_FRAMEWORK)'s own
+// adapter.id) - a supplied config never gets to DEFINE the active
+// framework by itself, only to be checked for consistency against it
+// (mission FPI3C's own explicit rule). currentProjectId is `profile.id`,
+// the same already-validated ProjectProfile main() requires as a hard
+// precondition before this function is ever reachable.
+function resolveFrameworkRuntimeConfigWorkflowFile(frameworkRuntimeConfig, currentFrameworkId, currentProjectId) {
+  if (frameworkRuntimeConfig === undefined) return null; // Case A: absence - not an error
+
+  // Structurally invalid (including a missing/malformed historyWorkflowFile,
+  // or any other required field) - fails via the existing FPI-1 validator;
+  // never silently treated as absence. The thrown message is already
+  // bounded and deterministic (see framework-runtime-config.js) - the
+  // caller below uses it directly as a writeUnavailable() reason.
+  const config = assertValidFrameworkRuntimeConfig(
+    frameworkRuntimeConfig,
+    "collect-history.main(): frameworkRuntimeConfig"
+  );
+
+  // Identity mismatch - never silently downgraded to "no config": a
+  // config for the wrong framework or the wrong project is a genuine
+  // configuration error, distinguishable in the resulting history.json
+  // marker from every other best-effort "unavailable" reason.
+  if (config.framework !== currentFrameworkId) {
+    throw new Error(
+      `HISTORY_RUNTIME_CONFIG_FRAMEWORK_MISMATCH: FrameworkRuntimeConfig is for a different framework than the active "${currentFrameworkId}" runtime.`
+    );
+  }
+  if (typeof currentProjectId !== "string" || currentProjectId.length === 0) {
+    throw new Error(
+      "HISTORY_RUNTIME_CONFIG_PROJECT_ID_REQUIRED: no currentProjectId is available to validate the supplied FrameworkRuntimeConfig against."
+    );
+  }
+  if (config.projectId !== currentProjectId) {
+    throw new Error(
+      "HISTORY_RUNTIME_CONFIG_PROJECT_MISMATCH: FrameworkRuntimeConfig is for a different project than the current invocation."
+    );
+  }
+
+  return config.historyWorkflowFile;
+}
+
 // Roadmap TI-1: `profile` is a required, explicitly injected
 // ProjectProfile, validated FIRST - before any of the existing best-effort
 // token/repository/browser degradation checks below, and before any
@@ -213,7 +275,25 @@ async function aggregateHistory({ runs, browser, jobName, getJobsForRun }) {
 // unexpected error here does not indicate the caller supplied bad
 // configuration, so it keeps the pre-existing "never fail the CI step
 // itself" contract.
-async function main({ profile, repositoryRoot } = {}) {
+//
+// Roadmap FPI-3C: an optional `frameworkRuntimeConfig` is the ONE new
+// parameter - collect-history.js has no adapterOptions-style transport
+// of its own (unlike collect-context.js's adapters), so this is added
+// directly to main()'s own signature, the smallest possible seam. Unlike
+// profile/repositoryRoot, a bad/mismatched frameworkRuntimeConfig is
+// DELIBERATELY kept inside this file's own existing best-effort
+// try/catch (see the call site below) rather than promoted to a hard,
+// uncaught failure: this file's own established contract already
+// degrades every other caller-configuration problem (missing
+// GITHUB_TOKEN/GITHUB_REPOSITORY/TEST_BROWSER, an unreachable API, zero
+// prior runs) to a bounded, distinguishable `{available:false, reason}`
+// marker rather than failing the CI step - frameworkRuntimeConfig is the
+// same class of optional, best-effort orchestration input, and a bad
+// value here still guarantees the one invariant that actually matters
+// (no GitHub API call is ever made using the wrong workflow file,
+// default or otherwise) without introducing a second, inconsistent
+// failure philosophy into one file.
+async function main({ profile, repositoryRoot, frameworkRuntimeConfig } = {}) {
   assertValidProjectProfile(profile, "collect-history.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "collect-history.main()");
   const outputFile = path.join(root.realRoot, "reports", "ai", "history.json");
@@ -242,6 +322,24 @@ async function main({ profile, repositoryRoot } = {}) {
     // default.
     const jobName = process.env.HISTORY_JOB_NAME || `Cypress - ${browser}`;
 
+    // Roadmap FPI-3C: precedence is exactly two tiers - there is no
+    // existing explicit low-level workflow-filename override to preserve
+    // (unlike reportsDir/screenshotsDir/reportFile), so none is invented
+    // here solely for symmetry with the adapters:
+    //   valid matching FrameworkRuntimeConfig.historyWorkflowFile
+    //   → historical hardcoded default (WORKFLOW_FILE, "cypress.yml")
+    // A bad/mismatched config never silently proceeds with WORKFLOW_FILE -
+    // see resolveFrameworkRuntimeConfigWorkflowFile()'s own documentation
+    // above for why that failure is routed through this file's existing
+    // writeUnavailable() convention rather than an uncaught throw.
+    let workflowFile = WORKFLOW_FILE;
+    try {
+      const configWorkflowFile = resolveFrameworkRuntimeConfigWorkflowFile(frameworkRuntimeConfig, adapter.id, profile.id);
+      if (configWorkflowFile) workflowFile = configWorkflowFile;
+    } catch (err) {
+      return writeUnavailable(err.message, outputFile, root);
+    }
+
     if (!token) return writeUnavailable("GITHUB_TOKEN not set", outputFile, root);
     if (!repo) return writeUnavailable("GITHUB_REPOSITORY not set", outputFile, root);
     if (!browser) return writeUnavailable("TEST_BROWSER not set", outputFile, root);
@@ -251,7 +349,7 @@ async function main({ profile, repositoryRoot } = {}) {
       runsResponse = await fetchJson(
         apiBase,
         token,
-        `/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${
+        `/repos/${repo}/actions/workflows/${workflowFile}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${
           runsWanted + 1
         }`
       );
@@ -363,4 +461,5 @@ module.exports = {
   // QA_FRAMEWORK value, without needing to mock the GitHub API/filesystem/
   // env just to exercise main() itself.
   selectRuntimeAdapter,
+  resolveFrameworkRuntimeConfigWorkflowFile,
 };
