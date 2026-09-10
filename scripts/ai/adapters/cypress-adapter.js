@@ -52,6 +52,7 @@
 const fs = require("fs");
 const path = require("path");
 const { normalizeSpecPath, resolveSafeLocalAttachmentPath, resolveRepositoryLocalPath, isCanonicalPathInsideRoot } = require("../context-utils");
+const { assertValidFrameworkRuntimeConfig } = require("../framework-runtime-config");
 
 function resolveRealPathSafe(absPath) {
   try {
@@ -276,6 +277,68 @@ function summarizeTestResults(reports, root) {
   return { found: true, totals, specs };
 }
 
+// Roadmap FPI-3A (FrameworkRuntimeConfig Cypress layout wiring): resolves
+// an OPTIONAL, orchestration-supplied FrameworkRuntimeConfig into a
+// {reportsDir, screenshotsDir} candidate pair - or returns null when no
+// config was supplied at all (Case A: config ABSENCE, never itself an
+// error). A SUPPLIED config is a fundamentally different state from
+// absence (see collect()'s own precedence comment below): it is either
+// fully valid and identity-matched, in which case it becomes the
+// candidate source, or it fails closed via a thrown, bounded error -
+// there is no silent fallback to the historical default once a config
+// was actually supplied, because that would hide a real orchestration
+// mistake (wrong project, wrong framework, malformed data) behind
+// behavior indistinguishable from "no config was given."
+//
+// FrameworkRuntimeConfig's own shape validator (framework-runtime-config.js)
+// requires reports.reportsDir AND reports.screenshotsDir to BOTH be valid,
+// own, enumerable, data-descriptor properties for the config to validate
+// at all (see validateReports() there) - the contract is atomic, not two
+// independently optional fields. There is therefore no per-field "config
+// supplied reportsDir but not screenshotsDir" state to handle here: once
+// assertValidFrameworkRuntimeConfig() returns without throwing, both
+// fields are guaranteed present. Per-field PRECEDENCE (explicit override
+// vs. this config vs. the historical default) still exists and is applied
+// independently per field by collect() below - that is a different
+// concern from this function's own all-or-nothing config-validity gate.
+//
+// Only a shape/identity decision - never a filesystem check. The returned
+// candidate strings are exactly as untrusted as an explicit reportsDir/
+// screenshotsDir override already is: they still flow through
+// resolveRepositoryLocalPath() below before ever being used for a read.
+function resolveFrameworkRuntimeConfigLayout(frameworkRuntimeConfig, currentProjectId) {
+  if (frameworkRuntimeConfig === undefined) return null; // Case A: absence - not an error
+
+  // Case C: structurally invalid (including a config missing/malformed
+  // reportsDir or screenshotsDir) - fails closed via the existing FPI-1
+  // validator; never silently treated as absence.
+  const config = assertValidFrameworkRuntimeConfig(
+    frameworkRuntimeConfig,
+    "cypress-adapter.collect(): frameworkRuntimeConfig"
+  );
+
+  // Case E: identity mismatch - fails closed. A config for the wrong
+  // framework or the wrong project is a configuration error, never
+  // silently downgraded to "no config."
+  if (config.framework !== id) {
+    throw new Error(
+      `CYPRESS_RUNTIME_CONFIG_FRAMEWORK_MISMATCH: cypress-adapter.collect() received a FrameworkRuntimeConfig for a different framework than "${id}".`
+    );
+  }
+  if (typeof currentProjectId !== "string" || currentProjectId.length === 0) {
+    throw new Error(
+      "CYPRESS_RUNTIME_CONFIG_PROJECT_ID_REQUIRED: cypress-adapter.collect() received a frameworkRuntimeConfig but no currentProjectId to validate it against."
+    );
+  }
+  if (config.projectId !== currentProjectId) {
+    throw new Error(
+      "CYPRESS_RUNTIME_CONFIG_PROJECT_MISMATCH: cypress-adapter.collect() received a FrameworkRuntimeConfig for a different project than the current invocation."
+    );
+  }
+
+  return { reportsDir: config.reports.reportsDir, screenshotsDir: config.reports.screenshotsDir };
+}
+
 // Roadmap #19.6B: the adapter's own synchronous, thin sequencing
 // entrypoint - loads reports, then derives testResults/failedTests from
 // them, merging in the discovery warnings. Conceptually mirrors
@@ -314,14 +377,33 @@ function summarizeTestResults(reports, root) {
 // unaffected (resolveRepositoryLocalPath() only re-verifies a REAL
 // target when realpathSync can resolve one at all), preserving the
 // existing "no reports found" bounded-warning behavior.
-function collect({ root, reportsDir, screenshotsDir } = {}) {
+//
+// Roadmap FPI-3A: an optional `frameworkRuntimeConfig` (plus the
+// `currentProjectId` collect-context.js's main() always threads alongside
+// `root`) adds ONE new precedence tier, per field, BETWEEN an explicit
+// override and the historical hardcoded default:
+//
+//   explicit reportsDir/screenshotsDir override (unchanged, highest)
+//   → frameworkRuntimeConfig.reports.<field>, if a config was supplied
+//   → historical hardcoded default ("reports/cypress"/"cypress/screenshots")
+//
+// A caller that supplies no frameworkRuntimeConfig at all sees byte-
+// identical pre-FPI-3A behavior - resolveFrameworkRuntimeConfigLayout()
+// returns null immediately and the `||` chain falls through to exactly
+// the same two arguments this function already accepted. The config
+// candidate strings are never treated as filesystem authority themselves -
+// they flow through the SAME resolveRepositoryLocalPath() canonical
+// containment gate as every override already does, unchanged below.
+function collect({ root, reportsDir, screenshotsDir, frameworkRuntimeConfig, currentProjectId } = {}) {
+  const configLayout = resolveFrameworkRuntimeConfigLayout(frameworkRuntimeConfig, currentProjectId);
+
   const resolvedReportsDir = resolveRepositoryLocalPath(
-    reportsDir || "reports/cypress",
+    reportsDir || (configLayout && configLayout.reportsDir) || "reports/cypress",
     root,
     "cypress-adapter.collect(): reportsDir"
   );
   const resolvedScreenshotsDir = resolveRepositoryLocalPath(
-    screenshotsDir || "cypress/screenshots",
+    screenshotsDir || (configLayout && configLayout.screenshotsDir) || "cypress/screenshots",
     root,
     "cypress-adapter.collect(): screenshotsDir"
   );
@@ -348,4 +430,5 @@ module.exports = {
   extractFailedTests,
   summarizeTestResults,
   truncateText,
+  resolveFrameworkRuntimeConfigLayout,
 };
