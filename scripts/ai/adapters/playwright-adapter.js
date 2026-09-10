@@ -58,6 +58,7 @@
 const fs = require("fs");
 const path = require("path");
 const { resolveSafeSpecPath, resolveSafeLocalAttachmentPath, resolveRepositoryLocalPath, isCanonicalPathInsideRoot } = require("../context-utils");
+const { assertValidFrameworkRuntimeConfig } = require("../framework-runtime-config");
 
 // Roadmap #19.8A/#19.8B: this adapter's own stable, canonical,
 // machine-readable identity - never inferred, always this constant.
@@ -354,6 +355,61 @@ function extractFailedTests(entries, warnings, root) {
   return failedTests;
 }
 
+// Roadmap FPI-3B (FrameworkRuntimeConfig Playwright layout wiring):
+// resolves an OPTIONAL, orchestration-supplied FrameworkRuntimeConfig
+// into a candidate `reportFile` string - or returns null when no config
+// was supplied at all (Case A: config ABSENCE, never itself an error).
+// Mirrors cypress-adapter.js's own resolveFrameworkRuntimeConfigLayout()
+// exactly, narrowed to Playwright's single `reports.reportFile` field
+// (framework-runtime-config.js's PLAYWRIGHT_REPORTS_ALLOWED_KEYS has only
+// this one field - there is no Cypress-style multi-field atomicity
+// concern here, but the WHOLE config object - schemaVersion, projectId,
+// framework, frameworkConfigPath, testSourceRoot, reports,
+// historyWorkflowFile - is still validated atomically by the shared FPI-1
+// validator; a config missing any required field is rejected as a whole).
+// A SUPPLIED config is a fundamentally different state from absence: it
+// is either fully valid and identity-matched, in which case it becomes
+// the candidate source, or it fails closed via a thrown, bounded error -
+// there is no silent fallback to the historical default once a config
+// was actually supplied.
+//
+// Only a shape/identity decision - never a filesystem check. The
+// returned candidate string is exactly as untrusted as an explicit
+// reportFile override already is: it still flows through
+// resolveRepositoryLocalPath() below before ever being used for a read.
+function resolveFrameworkRuntimeConfigReportFile(frameworkRuntimeConfig, currentProjectId) {
+  if (frameworkRuntimeConfig === undefined) return null; // Case A: absence - not an error
+
+  // Case C: structurally invalid (including a config missing/malformed
+  // reports.reportFile) - fails closed via the existing FPI-1 validator;
+  // never silently treated as absence.
+  const config = assertValidFrameworkRuntimeConfig(
+    frameworkRuntimeConfig,
+    "playwright-adapter.collect(): frameworkRuntimeConfig"
+  );
+
+  // Case E: identity mismatch - fails closed. A config for the wrong
+  // framework or the wrong project is a configuration error, never
+  // silently downgraded to "no config."
+  if (config.framework !== id) {
+    throw new Error(
+      `PLAYWRIGHT_RUNTIME_CONFIG_FRAMEWORK_MISMATCH: playwright-adapter.collect() received a FrameworkRuntimeConfig for a different framework than "${id}".`
+    );
+  }
+  if (typeof currentProjectId !== "string" || currentProjectId.length === 0) {
+    throw new Error(
+      "PLAYWRIGHT_RUNTIME_CONFIG_PROJECT_ID_REQUIRED: playwright-adapter.collect() received a frameworkRuntimeConfig but no currentProjectId to validate it against."
+    );
+  }
+  if (config.projectId !== currentProjectId) {
+    throw new Error(
+      "PLAYWRIGHT_RUNTIME_CONFIG_PROJECT_MISMATCH: playwright-adapter.collect() received a FrameworkRuntimeConfig for a different project than the current invocation."
+    );
+  }
+
+  return config.reports.reportFile;
+}
+
 // Roadmap #19.8B: thin synchronous sequencing entrypoint, mirroring
 // cypress-adapter.js's own collect(). Framework-specific INPUT
 // (reportFile, a single JSON report path) is intentionally different
@@ -373,9 +429,31 @@ function extractFailedTests(entries, warnings, root) {
 // never a second, independent filesystem authority. An override outside
 // the repository (or whose real target escapes it) throws a bounded
 // ADAPTER_PATH_OUTSIDE_REPOSITORY error rather than being silently read.
-function collect({ root, reportFile } = {}) {
-  const resolvedReportFile = reportFile
-    ? resolveRepositoryLocalPath(reportFile, root, "playwright-adapter.collect(): reportFile")
+//
+// Roadmap FPI-3B: an optional `frameworkRuntimeConfig` (plus the
+// `currentProjectId` collect-context.js's main() already threads into
+// EVERY adapter alongside `root`, unconditionally, since Roadmap FPI-3A -
+// no collect-context.js change was needed for this) adds ONE new
+// precedence tier, BETWEEN an explicit override and the historical
+// hardcoded default:
+//
+//   explicit reportFile override (unchanged, highest)
+//   → frameworkRuntimeConfig.reports.reportFile, if a config was supplied
+//   → historical hardcoded default ("reports/playwright/report.json")
+//
+// A caller that supplies no frameworkRuntimeConfig at all sees byte-
+// identical pre-FPI-3B behavior - resolveFrameworkRuntimeConfigReportFile()
+// returns null immediately and the ternary/fallback below resolves
+// exactly as it already did. The config candidate string is never
+// treated as filesystem authority itself - it flows through the SAME
+// resolveRepositoryLocalPath() canonical containment gate an explicit
+// override already uses, unchanged below.
+function collect({ root, reportFile, frameworkRuntimeConfig, currentProjectId } = {}) {
+  const configReportFile = resolveFrameworkRuntimeConfigReportFile(frameworkRuntimeConfig, currentProjectId);
+  const effectiveReportFile = reportFile || configReportFile;
+
+  const resolvedReportFile = effectiveReportFile
+    ? resolveRepositoryLocalPath(effectiveReportFile, root, "playwright-adapter.collect(): reportFile")
     : path.join(root.realRoot, "reports", "playwright", "report.json");
   const { report, warnings } = loadReport(resolvedReportFile, root);
 
@@ -406,4 +484,5 @@ module.exports = {
   selectPrimaryResult,
   summarizeTestResults,
   extractFailedTests,
+  resolveFrameworkRuntimeConfigReportFile,
 };
