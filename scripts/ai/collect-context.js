@@ -450,6 +450,18 @@ function buildRelevantFiles(failedTests, warnings, frameworkId, root) {
 // raw caller string) so the adapter's own default report/screenshot
 // locations resolve underneath the SAME target repository, never this
 // generic core's own checkout.
+//
+// Roadmap FPI-3A: `adapter.collect()` also now receives `currentProjectId`
+// (the already-validated `profile.id`, never a second, independently
+// typed identity) alongside `root` - this is the SAME kind of generic,
+// adapter-agnostic, trusted value `root` already is, not framework-
+// specific option data, so it does not violate this function's own
+// "adapterOptions is never inspected here" contract above. An adapter
+// that accepts an optional `frameworkRuntimeConfig` (see
+// scripts/ai/adapters/cypress-adapter.js) uses `currentProjectId` to
+// fail closed on a `FrameworkRuntimeConfig` whose `projectId` does not
+// match the current invocation, rather than trusting a caller-supplied
+// duplicate string that could silently drift out of sync with `profile`.
 function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoot } = {}) {
   if (typeof adapter.id !== "string" || adapter.id.length === 0 || typeof adapter.collect !== "function") {
     throw new Error("main(): adapter must have a non-empty string id and a collect() function");
@@ -460,7 +472,7 @@ function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoo
   const outputFile = path.join(root.realRoot, "reports", "ai", "context.json");
 
   const metadata = getMetadata(adapter.id, profile.id, root.realRoot);
-  const adapterResult = adapter.collect({ ...adapterOptions, root });
+  const adapterResult = adapter.collect({ ...adapterOptions, root, currentProjectId: profile.id });
   const { testResults, failedTests } = adapterResult;
   // Copied, not mutated in place - Roadmap #19.6B: the adapter's returned
   // result is treated as an immutable contract, even though the resulting

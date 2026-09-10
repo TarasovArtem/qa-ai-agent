@@ -985,6 +985,62 @@ test("Unknown framework (synthetic adapter): relevantFiles stays empty and no ab
   assert.ok(!written.warnings.some((w) => w.includes(ROOT)));
 });
 
+// Roadmap FPI-3A: main() now threads `currentProjectId: profile.id` into
+// every adapter.collect() call, alongside `root` - proves the seam an
+// adapter's own optional frameworkRuntimeConfig identity check (see
+// scripts/ai/adapters/cypress-adapter.js's resolveFrameworkRuntimeConfigLayout())
+// relies on, without collect-context.js itself inspecting or interpreting
+// frameworkRuntimeConfig (still adapter-private, still passed only via
+// adapterOptions, unchanged).
+test("FPI-3A: main() threads currentProjectId (profile.id) into adapter.collect(), never a second independently-typed value", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "collect-context-fpi3a-currentprojectid-"));
+  let capturedArgs = null;
+  const spyAdapter = {
+    id: "spy",
+    collect: (args) => {
+      capturedArgs = args;
+      return { testResults: { found: false }, failedTests: [], warnings: [] };
+    },
+  };
+
+  cleanOwnedReportPaths();
+  try {
+    withControlledEnv(() => main({ adapter: spyAdapter, profile: SYNTHETIC_TEST_PROFILE, repositoryRoot: ROOT }));
+  } finally {
+    cleanOwnedReportPaths();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  assert.equal(capturedArgs.currentProjectId, SYNTHETIC_TEST_PROFILE.id);
+});
+
+test("FPI-3A: caller-supplied adapterOptions can never override the trusted currentProjectId (added last, matching root's own existing protection)", () => {
+  let capturedArgs = null;
+  const spyAdapter = {
+    id: "spy",
+    collect: (args) => {
+      capturedArgs = args;
+      return { testResults: { found: false }, failedTests: [], warnings: [] };
+    },
+  };
+
+  cleanOwnedReportPaths();
+  try {
+    withControlledEnv(() =>
+      main({
+        adapter: spyAdapter,
+        adapterOptions: { currentProjectId: "ATTACKER_SUPPLIED_PROJECT_ID" },
+        profile: SYNTHETIC_TEST_PROFILE,
+        repositoryRoot: ROOT,
+      })
+    );
+  } finally {
+    cleanOwnedReportPaths();
+  }
+
+  assert.equal(capturedArgs.currentProjectId, SYNTHETIC_TEST_PROFILE.id);
+});
+
 // =========================================================================
 // Cypress before/after equivalence (Roadmap #21C Phase 27).
 //
