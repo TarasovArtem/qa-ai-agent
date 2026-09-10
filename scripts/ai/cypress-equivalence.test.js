@@ -92,8 +92,16 @@ const ROOT = path.resolve(__dirname, "..", "..");
 // extractFailedTests()/summarizeTestResults() beyond being a valid object.
 const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): reportsDir is a location hint
+// INSIDE the trusted repository, never an independent filesystem
+// authority - collect() now validates every reportsDir override resolves
+// inside `root` before it is ever enumerated, so this isolated fixture
+// directory is created under reports/ai/ (already gitignored, already
+// this repository's own established scratch-workspace convention) rather
+// than an unrelated OS-temp location. Each call site remains responsible
+// for its own `t.after()` cleanup, unchanged.
 function tmpReportsDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "cypress-equivalence-reports-"));
+  return fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-equivalence-reports-"));
 }
 
 function writeReport(dir, filename, reportObject) {
@@ -137,7 +145,7 @@ test("S1 mixed result: current adapter matches the historical oracle for pass+fa
       stats: { tests: 3, passes: 1, failures: 1, pending: 1, duration: 42 },
       results: [
         {
-          file: "/cypress/e2e/tests/s1_mixed.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s1_mixed.cy.js"),
           suites: [
             {
               title: "S1 Suite",
@@ -199,7 +207,7 @@ test("S2 nested suites: current adapter matches the historical oracle for depth-
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 5 },
       results: [
         {
-          file: "/cypress/e2e/tests/s2_nested.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s2_nested.cy.js"),
           suites: [
             {
               title: "Outer",
@@ -256,7 +264,7 @@ test("S3 fail/pending fallback: current adapter matches the historical oracle fo
       stats: { tests: 2, passes: 0, failures: 1, pending: 1, duration: 3 },
       results: [
         {
-          file: "/cypress/e2e/tests/s3_fallback.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s3_fallback.cy.js"),
           suites: [
             {
               title: "S3 Suite",
@@ -311,7 +319,7 @@ test("S4 error/stack matrix: current adapter matches the historical oracle for e
       stats: { tests: 4, passes: 0, failures: 4, pending: 0, duration: 4 },
       results: [
         {
-          file: "/cypress/e2e/tests/s4_errors.cy.js",
+          file: path.join(ROOT, "cypress", "e2e", "tests", "s4_errors.cy.js"),
           suites: [
             {
               title: "S4 Suite",
@@ -477,7 +485,7 @@ test("S8 malformed JSON + valid report: current adapter matches the historical o
   try {
     writeReport(reportsDir, "valid.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
-      results: [{ file: "/cypress/e2e/tests/s8_valid.cy.js", suites: [{ title: "S8", suites: [], tests: [{ title: "fails", state: "failed", err: { message: "m8" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s8_valid.cy.js"), suites: [{ title: "S8", suites: [], tests: [{ title: "fails", state: "failed", err: { message: "m8" } }] }] }],
     });
     fs.writeFileSync(path.join(reportsDir, "broken.json"), "{ not valid json");
 
@@ -524,11 +532,11 @@ test("S9 report.json preference: current adapter matches the historical oracle -
   try {
     writeReport(reportsDir, "report.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 9 },
-      results: [{ file: "/cypress/e2e/tests/s9_preferred.cy.js", suites: [{ title: "S9", suites: [], tests: [{ title: "preferred failure", state: "failed", err: { message: "preferred" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s9_preferred.cy.js"), suites: [{ title: "S9", suites: [], tests: [{ title: "preferred failure", state: "failed", err: { message: "preferred" } }] }] }],
     });
     writeReport(reportsDir, "other.json", {
       stats: { tests: 99, passes: 99, failures: 99, pending: 99, duration: 9999 },
-      results: [{ file: "/cypress/e2e/tests/s9_other.cy.js", suites: [{ title: "S9other", suites: [], tests: [{ title: "should never appear", state: "failed", err: { message: "should not appear" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s9_other.cy.js"), suites: [{ title: "S9other", suites: [], tests: [{ title: "should never appear", state: "failed", err: { message: "should not appear" } }] }] }],
     });
 
     const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });
@@ -579,11 +587,11 @@ test("S10 multiple report files: current adapter matches the historical oracle's
   try {
     writeReport(reportsDir, "a.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 10 },
-      results: [{ file: "/cypress/e2e/tests/s10_a.cy.js", suites: [{ title: "S10A", suites: [], tests: [{ title: "a fails", state: "failed", err: { message: "mA" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s10_a.cy.js"), suites: [{ title: "S10A", suites: [], tests: [{ title: "a fails", state: "failed", err: { message: "mA" } }] }] }],
     });
     writeReport(reportsDir, "b.json", {
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 20 },
-      results: [{ file: "/cypress/e2e/tests/s10_b.cy.js", suites: [{ title: "S10B", suites: [], tests: [{ title: "b fails", state: "failed", err: { message: "mB" } }] }] }],
+      results: [{ file: path.join(ROOT, "cypress", "e2e", "tests", "s10_b.cy.js"), suites: [{ title: "S10B", suites: [], tests: [{ title: "b fails", state: "failed", err: { message: "mB" } }] }] }],
     });
 
     const result = cypressAdapter.collect({ root: TEST_ROOT, reportsDir });

@@ -21,6 +21,24 @@
  * isCanonicalPathInsideRoot() are root-INDEPENDENT (they already took
  * their comparison root as an explicit parameter, or take none at all)
  * and are unchanged.
+ *
+ * Roadmap FPI-2 Corrective C1 (FPI2-R-1/R-2/R-3, independent adversarial
+ * review of PR #123): a symlinked `repositoryRoot` has TWO legitimate
+ * namespaces for the SAME trusted repository - the caller-visible
+ * `lexicalRoot` and its symlink-resolved `realRoot` (see
+ * scripts/ai/repository-root.js). Every containment decision in this
+ * file now checks BOTH namespaces via relativeToRepositoryNamespace(),
+ * never a bare `candidate.startsWith(root)` string-prefix check (which
+ * both mislabels a same-prefix sibling as repository-local, R-1, and
+ * false-rejects a legitimate canonical-absolute path under a symlinked
+ * root, R-3) and never only one of the two namespaces. This module also
+ * now exports resolveRepositoryLocalPath(), the shared primitive
+ * scripts/ai/adapters/*.js use to validate a caller-supplied directory/
+ * file override (Cypress's reportsDir/screenshotsDir, Playwright's
+ * reportFile) resolves inside this SAME trusted repository before it is
+ * ever used for a filesystem read - an override is a location hint
+ * inside the already-trusted repositoryRoot, never a second, independent
+ * filesystem authority (R-2).
  */
 
 "use strict";
@@ -28,15 +46,95 @@
 const fs = require("fs");
 const path = require("path");
 
+function resolveRealPathSafe(absPath) {
+  try {
+    return fs.realpathSync(absPath);
+  } catch {
+    return null;
+  }
+}
+
+// Roadmap FPI-2 Corrective C1 (FPI2-R-1/R-3): segment-aware containment
+// against BOTH legitimate namespaces of the same validated repository -
+// never a bare string-prefix check (a same-prefix sibling such as
+// "<lexicalRoot>-evil" must never be accepted merely because its string
+// form starts with lexicalRoot's own text), and never only one namespace
+// (a symlinked repositoryRoot's canonical form must be accepted exactly
+// like its lexical form, and vice versa). Returns the repo-relative form
+// (forward-slash, never absolute) when `absCandidate` is contained by at
+// least one namespace; null otherwise (including when absCandidate IS
+// exactly one of the namespace roots itself - unchanged from this
+// function's pre-C1 contract, since a spec/attachment path is never
+// legitimately the repository root itself).
+function relativeToRepositoryNamespace(absCandidate, root) {
+  if (isCanonicalPathInsideRoot({ root: root.lexicalRoot, candidate: absCandidate })) {
+    return path.relative(root.lexicalRoot, absCandidate).split(path.sep).join("/") || null;
+  }
+  if (isCanonicalPathInsideRoot({ root: root.realRoot, candidate: absCandidate })) {
+    return path.relative(root.realRoot, absCandidate).split(path.sep).join("/") || null;
+  }
+  return null;
+}
+
+// Roadmap FPI-2 Corrective C1 (FPI2-R-1): a relative rawFile is passed
+// through unchanged (this function's original, pre-FPI-2 contract - a
+// reporter-relative spec/attachment path is never itself a containment
+// decision). An absolute rawFile is now ALWAYS resolved through
+// relativeToRepositoryNamespace() - it becomes repository-relative only
+// when it is genuinely, segment-wise contained by the repository (either
+// namespace); an absolute path that is not - a same-prefix sibling, an
+// unrelated absolute path, or a genuine escape - normalizes to null,
+// never to a misleadingly relative-looking string and never to the raw
+// absolute string itself.
 function normalizeSpecPath(rawFile, root) {
   if (!rawFile) return null;
-  const lexicalRoot = root.lexicalRoot.replace(/\\/g, "/");
-  let p = rawFile.replace(/\\/g, "/");
-  if (p.startsWith(lexicalRoot)) {
-    p = p.slice(lexicalRoot.length);
+
+  if (!path.isAbsolute(rawFile)) {
+    const p = rawFile.replace(/\\/g, "/");
+    return p.replace(/^\/+/, "") || null;
   }
-  p = p.replace(/^\/+/, "");
-  return p || null;
+
+  return relativeToRepositoryNamespace(path.resolve(rawFile), root);
+}
+
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): validates a caller-supplied
+// directory/file OVERRIDE (Cypress's reportsDir/screenshotsDir,
+// Playwright's reportFile) resolves inside the SAME trusted repository as
+// `root` - either namespace, exactly like relativeToRepositoryNamespace()
+// above - before the caller ever uses it for a filesystem read. An
+// override is a location HINT inside the already-trusted repositoryRoot,
+// never a second, independent filesystem authority: a relative override
+// is always resolved against root.lexicalRoot (never process.cwd()), and
+// an absolute override - wherever it points - must still resolve inside
+// the repository or this throws. Canonical re-verification (mirroring
+// resolveSafeSpecPath()'s own pattern) closes a symlink escape: an
+// override that is lexically inside the repository but whose real target
+// is not (e.g. a symlinked reportsDir pointing outside) is also rejected.
+// Bounded, deterministic, path-free failures only - the raw caller-
+// supplied override string is never reflected into the thrown message.
+function resolveRepositoryLocalPath(rawOverride, root, callerLabel) {
+  if (typeof rawOverride !== "string" || rawOverride.length === 0) {
+    throw new Error(`ADAPTER_PATH_INVALID: ${callerLabel} received a non-string/empty path override.`);
+  }
+  if (!root || typeof root.lexicalRoot !== "string" || typeof root.realRoot !== "string") {
+    throw new Error(`ADAPTER_PATH_INVALID: ${callerLabel} received a path override without a valid repository root to resolve it against.`);
+  }
+
+  const lexical = path.isAbsolute(rawOverride) ? path.resolve(rawOverride) : path.resolve(root.lexicalRoot, rawOverride);
+
+  const insideEitherNamespace =
+    isCanonicalPathInsideRoot({ root: root.lexicalRoot, candidate: lexical }) ||
+    isCanonicalPathInsideRoot({ root: root.realRoot, candidate: lexical });
+  if (!insideEitherNamespace) {
+    throw new Error(`ADAPTER_PATH_OUTSIDE_REPOSITORY: ${callerLabel} received a path override outside the trusted repository root.`);
+  }
+
+  const real = resolveRealPathSafe(lexical);
+  if (real && !isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
+    throw new Error(`ADAPTER_PATH_OUTSIDE_REPOSITORY: ${callerLabel} received a path override whose real location escapes the trusted repository root.`);
+  }
+
+  return lexical;
 }
 
 // Roadmap #21D (R2/R3): a small, dependency-free, framework-neutral
@@ -105,14 +203,6 @@ function classifyPathString(raw) {
     }
   }
   return PATH_KIND.SAFE_RELATIVE;
-}
-
-function resolveRealPathSafe(absPath) {
-  try {
-    return fs.realpathSync(absPath);
-  } catch {
-    return null;
-  }
 }
 
 // Roadmap #21I-A (D21D-3): segment-aware root containment for two already
@@ -199,8 +289,19 @@ function resolveSafeSpecPath(rawSpecPath, root) {
     // Lexical containment first (Roadmap #21C's own "lexical must still
     // gate eligibility" convention) - a path lexically outside the
     // repository is rejected immediately, no filesystem access needed.
+    //
+    // Roadmap FPI-2 Corrective C1 (FPI2-R-3): a symlinked repositoryRoot
+    // has TWO legitimate namespaces for the SAME trusted repository -
+    // root.lexicalRoot (the caller-visible, possibly-a-symlink path) and
+    // root.realRoot (its symlink-resolved canonical form). A reporter-
+    // supplied absolute path expressed via EITHER namespace must be
+    // accepted consistently here - checking only root.lexicalRoot
+    // previously false-rejected a legitimate canonical-absolute path
+    // whenever repositoryRoot itself was a symlink.
     const lexical = path.resolve(rawSpecPath);
-    if (!isCanonicalPathInsideRoot({ root: root.lexicalRoot, candidate: lexical })) {
+    const lexicallyInLexicalNamespace = isCanonicalPathInsideRoot({ root: root.lexicalRoot, candidate: lexical });
+    const lexicallyInRealNamespace = isCanonicalPathInsideRoot({ root: root.realRoot, candidate: lexical });
+    if (!lexicallyInLexicalNamespace && !lexicallyInRealNamespace) {
       return { value: null, rejected: true };
     }
 
@@ -211,7 +312,8 @@ function resolveSafeSpecPath(rawSpecPath, root) {
     // bar), so unlike attachments, existence is never required: a
     // lexically-contained path that simply doesn't exist on disk (no
     // symlink could possibly have been involved) still normalizes via its
-    // proven-safe lexical location.
+    // proven-safe lexical location - relative to whichever namespace it
+    // actually matched.
     const real = resolveRealPathSafe(lexical);
     if (real) {
       if (isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
@@ -221,7 +323,8 @@ function resolveSafeSpecPath(rawSpecPath, root) {
       return { value: null, rejected: true }; // symlink escape
     }
 
-    const rel = path.relative(root.lexicalRoot, lexical).split(path.sep).join("/");
+    const relBase = lexicallyInLexicalNamespace ? root.lexicalRoot : root.realRoot;
+    const rel = path.relative(relBase, lexical).split(path.sep).join("/");
     return { value: rel || null, rejected: false };
   }
 
@@ -291,4 +394,5 @@ module.exports = {
   isCanonicalPathInsideRoot,
   resolveSafeSpecPath,
   resolveSafeLocalAttachmentPath,
+  resolveRepositoryLocalPath,
 };

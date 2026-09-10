@@ -632,7 +632,11 @@ function pwResult({ status, duration, error }) {
 }
 
 test("O3-O7: an injected playwrightAdapter traverses the generic collector fully offline - metadata.framework, testResults, failedTests, warnings, ProjectProfile, browser/CI metadata", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "collect-context-playwright-orchestration-"));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): reportFile is a location hint
+  // INSIDE the trusted repository, never an independent filesystem
+  // authority - main() now validates this override resolves inside
+  // `repositoryRoot` before it is ever read.
+  const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "collect-context-playwright-orchestration-"));
   const reportFile = path.join(tmpDir, "report.json");
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 

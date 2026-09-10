@@ -17,6 +17,10 @@ const cypressAdapter = require("./adapters/cypress-adapter");
 const playwrightAdapter = require("./adapters/playwright-adapter");
 
 const ROOT = path.resolve(__dirname, "..", "..");
+// Roadmap FPI-2 Corrective C1: playwrightAdapter.collect()/cypressAdapter.collect()
+// always require an explicit `root` (production always supplies one via
+// collect-context.js's main()) - see scripts/ai/repository-root.js.
+const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 
 test("DEFAULT_FRAMEWORK is exactly 'cypress'", () => {
   assert.equal(DEFAULT_FRAMEWORK, "cypress");
@@ -179,8 +183,13 @@ test("SEL_13 explicit Playwright selection with no production report preserves e
   const adapter = selectRuntimeAdapter("playwright");
   assert.equal(adapter, playwrightAdapter);
 
-  const missingReportFile = path.join(os.tmpdir(), "runtime-selector-sel13-does-not-exist", "report.json");
-  const result = adapter.collect({ reportFile: missingReportFile });
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): reportFile is a location hint
+  // INSIDE the trusted repository, never an independent filesystem
+  // authority - collect() now requires `root` unconditionally (even for
+  // a nonexistent override) to validate it. This nonexistent fixture
+  // path is therefore constructed under TEST_ROOT itself.
+  const missingReportFile = path.join(ROOT, "reports", "ai", "runtime-selector-sel13-does-not-exist", "report.json");
+  const result = adapter.collect({ root: TEST_ROOT, reportFile: missingReportFile });
 
   assert.deepEqual(result.testResults, { found: false });
   assert.deepEqual(result.failedTests, []);

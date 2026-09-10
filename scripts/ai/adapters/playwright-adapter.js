@@ -43,19 +43,38 @@
  * report.json") underneath it - never underneath this generic core's
  * own `__dirname`. `reportFile` remains available as an explicit test/
  * caller override for the SAME target repository.
+ *
+ * Roadmap FPI-2 Corrective C1 (FPI2-R-2, independent adversarial review
+ * of PR #123): an explicit `reportFile` override is now validated via
+ * context-utils.js's resolveRepositoryLocalPath() before it is ever read
+ * - a location hint inside the already-trusted `root`, never a second,
+ * independent filesystem authority (this also closes the narrower
+ * report-file-symlink-escape case: a nominally in-root reportFile whose
+ * real target escapes the repository is rejected the same way).
  */
 
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
-const { resolveSafeSpecPath, resolveSafeLocalAttachmentPath } = require("../context-utils");
+const { resolveSafeSpecPath, resolveSafeLocalAttachmentPath, resolveRepositoryLocalPath, isCanonicalPathInsideRoot } = require("../context-utils");
 
 // Roadmap #19.8A/#19.8B: this adapter's own stable, canonical,
 // machine-readable identity - never inferred, always this constant.
 const id = "playwright";
 
-function loadReport(reportFile) {
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2, section 23): `root` is optional
+// here (existing direct unit tests of this function exercise its report-
+// loading/parsing behavior without needing a repository boundary at
+// all), but `collect()` below always supplies it. An explicit `reportFile`
+// override is already validated as repository-local by
+// resolveRepositoryLocalPath() before this function is ever called from
+// there - but the DEFAULT report location is not an override, so this
+// re-verifies the real (symlink-resolved) target of whichever path was
+// ultimately used stays inside the repository, closing the gap where the
+// report file itself (default or override) is a symlink to somewhere
+// else. Never reads file content before this check.
+function loadReport(reportFile, root) {
   const warnings = [];
 
   if (!fs.existsSync(reportFile)) {
@@ -68,6 +87,19 @@ function loadReport(reportFile) {
       `No Playwright JSON report found at reports/playwright/report.json. Run a Playwright test script before ai:collect.`
     );
     return { report: null, warnings };
+  }
+
+  if (root) {
+    let real;
+    try {
+      real = fs.realpathSync(reportFile);
+    } catch {
+      real = null;
+    }
+    if (real && !isCanonicalPathInsideRoot({ root: root.realRoot, candidate: real })) {
+      warnings.push(`Skipped the Playwright report file: it escapes the repository boundary.`);
+      return { report: null, warnings };
+    }
   }
 
   let parsed;
@@ -334,9 +366,18 @@ function extractFailedTests(entries, warnings, root) {
 // report.json" convention as before, now resolved underneath
 // `root.realRoot` rather than this file's own former module-level ROOT
 // constant.
+//
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): an explicit `reportFile`
+// override is validated via resolveRepositoryLocalPath() before it is
+// ever read - it is a location hint inside the already-trusted `root`,
+// never a second, independent filesystem authority. An override outside
+// the repository (or whose real target escapes it) throws a bounded
+// ADAPTER_PATH_OUTSIDE_REPOSITORY error rather than being silently read.
 function collect({ root, reportFile } = {}) {
-  const resolvedReportFile = reportFile || path.join(root.realRoot, "reports", "playwright", "report.json");
-  const { report, warnings } = loadReport(resolvedReportFile);
+  const resolvedReportFile = reportFile
+    ? resolveRepositoryLocalPath(reportFile, root, "playwright-adapter.collect(): reportFile")
+    : path.join(root.realRoot, "reports", "playwright", "report.json");
+  const { report, warnings } = loadReport(resolvedReportFile, root);
 
   if (!report) {
     return { testResults: { found: false }, failedTests: [], warnings };

@@ -12,6 +12,7 @@ const {
   isCanonicalPathInsideRoot,
   resolveSafeSpecPath,
   resolveSafeLocalAttachmentPath,
+  resolveRepositoryLocalPath,
 } = require("./context-utils");
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -33,9 +34,35 @@ test("normalizeSpecPath: strips the repo root and leading slashes, normalizes ba
     normalizeSpecPath(path.join(ROOT, "cypress", "e2e", "tests", "x.cy.js"), TEST_ROOT),
     "cypress/e2e/tests/x.cy.js"
   );
-  assert.equal(normalizeSpecPath("\\cypress\\e2e\\tests\\x.cy.js", TEST_ROOT), "cypress/e2e/tests/x.cy.js");
+  // A genuinely relative path with backslash separators (never a leading
+  // separator - that is host-absolute on Windows, see the dedicated
+  // FPI2-R-1 same-prefix-sibling/out-of-root tests below for that case).
+  assert.equal(normalizeSpecPath("cypress\\e2e\\tests\\x.cy.js", TEST_ROOT), "cypress/e2e/tests/x.cy.js");
   assert.equal(normalizeSpecPath(null, TEST_ROOT), null);
   assert.equal(normalizeSpecPath("", TEST_ROOT), null);
+});
+
+// --- normalizeSpecPath: FPI-2 Corrective C1 (FPI2-R-1) regression tests ---
+//
+// normalizeSpecPath() must never treat a same-prefix sibling, or any
+// other absolute path not genuinely (segment-wise) contained by the
+// repository, as though it were repository-relative - see
+// scripts/ai/context-utils.js's own relativeToRepositoryNamespace().
+
+test("normalizeSpecPath (FPI2-R-1): a same-prefix sibling absolute path is rejected, never mislabeled as repository-relative", () => {
+  const root = { lexicalRoot: path.join(os.tmpdir(), "fpi2-c1-project"), realRoot: path.join(os.tmpdir(), "fpi2-c1-project") };
+  assert.equal(normalizeSpecPath(path.join(os.tmpdir(), "fpi2-c1-project-evil", "spec.cy.js"), root), null);
+  assert.equal(normalizeSpecPath(path.join(os.tmpdir(), "fpi2-c1-project2", "spec.cy.js"), root), null);
+});
+
+test("normalizeSpecPath (FPI2-R-1): an absolute path entirely unrelated to the repository is rejected", () => {
+  const root = { lexicalRoot: path.join(os.tmpdir(), "fpi2-c1-project"), realRoot: path.join(os.tmpdir(), "fpi2-c1-project") };
+  assert.equal(normalizeSpecPath(path.join(os.tmpdir(), "fpi2-c1-somewhere-else", "spec.cy.js"), root), null);
+});
+
+test("normalizeSpecPath (FPI2-R-1): a genuine child of the repository still normalizes correctly", () => {
+  const root = { lexicalRoot: path.join(os.tmpdir(), "fpi2-c1-project"), realRoot: path.join(os.tmpdir(), "fpi2-c1-project") };
+  assert.equal(normalizeSpecPath(path.join(os.tmpdir(), "fpi2-c1-project", "cypress", "e2e", "x.cy.js"), root), "cypress/e2e/x.cy.js");
 });
 
 // --- classifyPathString (Roadmap #21D, R2/R3) -------------------------------
@@ -466,4 +493,143 @@ test("D21D-1 relative attachment.path resolution is independent of the caller's 
 
   assert.deepEqual(fromForeignCwd, fromRepoRootCwd, "resolution must be byte-identical regardless of the caller's cwd");
   assert.notEqual(process.cwd(), foreignCwd, "sanity: the child's cwd was genuinely different from this process's own cwd");
+});
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C1 (independent adversarial review of PR #123,
+// findings FPI2-R-2/FPI2-R-3) - symlinked-root dual-namespace consistency
+// and the shared resolveRepositoryLocalPath() override-containment
+// primitive.
+// =========================================================================
+
+function makeSymlinkedRootFixture(t) {
+  const realTarget = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-real-"));
+  const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-parent-"));
+  const linkPath = path.join(parentDir, "link-to-real");
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(realTarget, linkPath, "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  t.after(() => {
+    fs.rmSync(parentDir, { recursive: true, force: true });
+    fs.rmSync(realTarget, { recursive: true, force: true });
+  });
+  if (!symlinkSupported) return null;
+  return { root: { lexicalRoot: linkPath, realRoot: fs.realpathSync(realTarget) }, realTarget, linkPath };
+}
+
+test("FPI2-R-3: resolveSafeSpecPath accepts a lexical-absolute and a canonical-absolute form of the same file identically under a symlinked repositoryRoot", (t) => {
+  const fixture = makeSymlinkedRootFixture(t);
+  if (!fixture) return; // environment cannot create filesystem symlinks - nothing to prove here
+  const { root, linkPath, realTarget } = fixture;
+
+  const lexicalAbs = path.join(linkPath, "cypress", "e2e", "foo.cy.js");
+  const canonicalAbs = path.join(realTarget, "cypress", "e2e", "foo.cy.js");
+
+  const viaLexical = resolveSafeSpecPath(lexicalAbs, root);
+  const viaCanonical = resolveSafeSpecPath(canonicalAbs, root);
+
+  assert.deepEqual(viaLexical, { value: "cypress/e2e/foo.cy.js", rejected: false });
+  assert.deepEqual(viaCanonical, { value: "cypress/e2e/foo.cy.js", rejected: false });
+  assert.deepEqual(viaLexical, viaCanonical, "both legitimate namespaces of the same symlinked root must normalize identically");
+});
+
+test("FPI2-R-3: normalizeSpecPath accepts a lexical-absolute and a canonical-absolute form of the same file identically under a symlinked repositoryRoot", (t) => {
+  const fixture = makeSymlinkedRootFixture(t);
+  if (!fixture) return;
+  const { root, linkPath, realTarget } = fixture;
+
+  const lexicalAbs = path.join(linkPath, "cypress", "e2e", "foo.cy.js");
+  const canonicalAbs = path.join(realTarget, "cypress", "e2e", "foo.cy.js");
+
+  assert.equal(normalizeSpecPath(lexicalAbs, root), "cypress/e2e/foo.cy.js");
+  assert.equal(normalizeSpecPath(canonicalAbs, root), "cypress/e2e/foo.cy.js");
+});
+
+test("FPI2-R-3: resolveSafeSpecPath still rejects a genuine escape (outside BOTH namespaces) under a symlinked repositoryRoot", (t) => {
+  const fixture = makeSymlinkedRootFixture(t);
+  if (!fixture) return;
+  const { root } = fixture;
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+
+  const result = resolveSafeSpecPath(path.join(outsideDir, "evil.cy.js"), root);
+  assert.deepEqual(result, { value: null, rejected: true });
+});
+
+// --- resolveRepositoryLocalPath (FPI2-R-2) ---------------------------------
+
+test("resolveRepositoryLocalPath: a relative override resolves against root.lexicalRoot, never process.cwd()", (t) => {
+  const originalCwd = process.cwd();
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-cwd-elsewhere-"));
+  t.after(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  });
+  process.chdir(elsewhere);
+  try {
+    const resolved = resolveRepositoryLocalPath("custom-reports", TEST_ROOT, "test-caller");
+    assert.equal(resolved, path.resolve(ROOT, "custom-reports"));
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
+
+test("resolveRepositoryLocalPath: an absolute in-root override is accepted unchanged", () => {
+  const resolved = resolveRepositoryLocalPath(path.join(ROOT, "reports", "cypress"), TEST_ROOT, "test-caller");
+  assert.equal(resolved, path.join(ROOT, "reports", "cypress"));
+});
+
+test("resolveRepositoryLocalPath: an absolute out-of-root override throws ADAPTER_PATH_OUTSIDE_REPOSITORY, never returns", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-r2-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  assert.throws(
+    () => resolveRepositoryLocalPath(outsideDir, TEST_ROOT, "test-caller"),
+    /ADAPTER_PATH_OUTSIDE_REPOSITORY: test-caller/
+  );
+});
+
+test("resolveRepositoryLocalPath: a same-prefix sibling override is rejected, never accepted merely because it shares a string prefix", (t) => {
+  const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-r2-sibling-parent-"));
+  t.after(() => fs.rmSync(parentDir, { recursive: true, force: true }));
+  const fakeRoot = { lexicalRoot: path.join(parentDir, "project"), realRoot: path.join(parentDir, "project") };
+  fs.mkdirSync(fakeRoot.lexicalRoot, { recursive: true });
+  const siblingDir = path.join(parentDir, "project-evil", "reports");
+  assert.throws(() => resolveRepositoryLocalPath(siblingDir, fakeRoot, "test-caller"), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("resolveRepositoryLocalPath: an in-root override that is itself a symlink escaping the repository is rejected via canonical re-verification", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "context-utils-c1-r2-symlink-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+
+  const insideParent = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "context-utils-c1-r2-symlink-inside-"));
+  t.after(() => fs.rmSync(insideParent, { recursive: true, force: true }));
+  const symlinkDir = path.join(insideParent, "linked-reports");
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(outsideDir, symlinkDir, "dir");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  assert.throws(() => resolveRepositoryLocalPath(symlinkDir, TEST_ROOT, "test-caller"), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("resolveRepositoryLocalPath: never leaks the raw override path into the thrown error message", () => {
+  const secretLookingOutside = path.join(os.tmpdir(), "SECRET_MARKER_SHOULD_NEVER_APPEAR");
+  try {
+    resolveRepositoryLocalPath(secretLookingOutside, TEST_ROOT, "test-caller");
+    assert.fail("expected resolveRepositoryLocalPath to throw");
+  } catch (err) {
+    assert.equal(err.message.includes("SECRET_MARKER_SHOULD_NEVER_APPEAR"), false);
+  }
+});
+
+test("resolveRepositoryLocalPath: non-string/empty override throws ADAPTER_PATH_INVALID", () => {
+  assert.throws(() => resolveRepositoryLocalPath("", TEST_ROOT, "test-caller"), /ADAPTER_PATH_INVALID/);
+  assert.throws(() => resolveRepositoryLocalPath(undefined, TEST_ROOT, "test-caller"), /ADAPTER_PATH_INVALID/);
 });

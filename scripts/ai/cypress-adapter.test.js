@@ -28,6 +28,14 @@ const ROOT = path.resolve(__dirname, "..", "..");
 // the fixture target repository throughout this file.
 const TEST_ROOT = Object.freeze({ lexicalRoot: ROOT, realRoot: fs.realpathSync(ROOT) });
 const CYPRESS_SCREENSHOTS_DIR = path.join(ROOT, "cypress", "screenshots");
+// Roadmap FPI-2 Corrective C1 (FPI2-R-1): mochawesome's own `file` field
+// is always a genuine absolute path from the real local test run - this
+// fixture's placeholder value must therefore genuinely resolve inside
+// TEST_ROOT too (a bare "/cypress/e2e/tests/x.cy.js"-style literal is
+// treated as a real, but unrelated/out-of-root, absolute path since
+// normalizeSpecPath() now requires actual segment-wise containment, never
+// a leading-slash-only heuristic).
+const FIXTURE_SPEC_FILE = path.join(ROOT, "cypress", "e2e", "tests", "x.cy.js");
 
 // --- id ----------------------------------------------------------------
 
@@ -42,7 +50,7 @@ test("extractFailedTests: walks nested suites and collects only failed tests", (
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [
             {
               title: "Outer",
@@ -86,7 +94,7 @@ test("extractFailedTests: truncates a very long stack trace but never the error 
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [
             {
               title: "Suite",
@@ -112,7 +120,7 @@ test("extractFailedTests: recognizes the test.fail===true && !test.pending fallb
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [{ title: "Suite", suites: [], tests: [{ title: "fails via fail flag", fail: true, pending: false, err: { message: "m" } }] }],
         },
       ],
@@ -128,7 +136,7 @@ test("extractFailedTests: a pending test is never classified as failed, even if 
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [
             {
               title: "Suite",
@@ -152,7 +160,7 @@ test("extractFailedTests: prefers err.estack, falls back to err.stack when estac
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [{ title: "Suite", suites: [], tests: [{ title: "fails", state: "failed", err: { message: "m", stack: "plain stack only" } }] }],
         },
       ],
@@ -167,7 +175,7 @@ test("extractFailedTests: duration is null when absent or non-numeric", () => {
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [{ title: "Suite", suites: [], tests: [{ title: "fails", state: "failed", err: { message: "m" } }] }],
         },
       ],
@@ -179,8 +187,8 @@ test("extractFailedTests: duration is null when absent or non-numeric", () => {
 
 test("extractFailedTests: aggregates failures across multiple report objects", () => {
   const reports = [
-    { results: [{ file: "/a.cy.js", suites: [{ title: "S", suites: [], tests: [{ title: "t1", state: "failed", err: { message: "m1" } }] }] }] },
-    { results: [{ file: "/b.cy.js", suites: [{ title: "S", suites: [], tests: [{ title: "t2", state: "failed", err: { message: "m2" } }] }] }] },
+    { results: [{ file: path.join(ROOT, "a.cy.js"), suites: [{ title: "S", suites: [], tests: [{ title: "t1", state: "failed", err: { message: "m1" } }] }] }] },
+    { results: [{ file: path.join(ROOT, "b.cy.js"), suites: [{ title: "S", suites: [], tests: [{ title: "t2", state: "failed", err: { message: "m2" } }] }] }] },
   ];
   const failed = extractFailedTests(reports, undefined, TEST_ROOT);
   assert.equal(failed.length, 2);
@@ -192,7 +200,7 @@ test("extractFailedTests: every emitted failure satisfies validateNormalizedFail
     {
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [
             {
               title: "Suite",
@@ -355,7 +363,12 @@ test("loadReports: prefers a single merged report.json over per-spec files when 
 // --- collect() (Roadmap #19.6B new thin sequencing entrypoint) ---------
 
 test("collect: with no reports directory returns found:false testResults, empty failedTests, and the discovery warning", (t) => {
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-collect-"));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): reportsDir is a location hint
+  // INSIDE the trusted repository, never an independent filesystem
+  // authority - this isolated fixture path is therefore created (and
+  // then deleted, to prove the "missing directory" path) underneath
+  // TEST_ROOT itself, not an unrelated OS-temp directory.
+  const tmpRoot = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-adapter-collect-"));
   fs.rmSync(tmpRoot, { recursive: true, force: true }); // directory itself must not exist
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
@@ -366,8 +379,13 @@ test("collect: with no reports directory returns found:false testResults, empty 
 });
 
 test("collect: with a real report, returns testResults/failedTests/warnings derived from it", (t) => {
-  const tmpReportsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-collect-reports-"));
-  const tmpScreenshotsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-collect-screens-"));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): both overrides must resolve
+  // inside TEST_ROOT - isolated fixture directories under
+  // reports/ai/ preserve this test's original isolation intent
+  // (never touching the real reports/cypress directory) without using an
+  // unrelated OS-temp location.
+  const tmpReportsDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-adapter-collect-reports-"));
+  const tmpScreenshotsDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-adapter-collect-screens-"));
   t.after(() => {
     fs.rmSync(tmpReportsDir, { recursive: true, force: true });
     fs.rmSync(tmpScreenshotsDir, { recursive: true, force: true });
@@ -379,7 +397,7 @@ test("collect: with a real report, returns testResults/failedTests/warnings deri
       stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 10 },
       results: [
         {
-          file: "/cypress/e2e/tests/x.cy.js",
+          file: FIXTURE_SPEC_FILE,
           suites: [{ title: "Suite", suites: [], tests: [{ title: "fails", state: "failed", duration: 10, err: { message: "m", estack: "s" } }] }],
         },
       ],
@@ -418,4 +436,93 @@ test("truncateText: passes through non-string input unchanged (e.g. null)", () =
 
 test("walkSuite: yields nothing for a null/undefined suite", () => {
   assert.deepEqual([...walkSuite(null, [])], []);
+});
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C1 (independent adversarial review of PR #123,
+// findings FPI2-R-1/FPI2-R-2) - adapter-level override containment and
+// symlink-escape closure.
+// =========================================================================
+
+test("FPI2-R-2: collect() rejects an out-of-root reportsDir override with a bounded ADAPTER_PATH_OUTSIDE_REPOSITORY error, never enumerating it", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c1-outside-reports-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(outsideDir, "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: "/outside/OUTSIDE_ROOT_MARKER.cy.js", suites: [{ title: "S", suites: [], tests: [{ title: "OUTSIDE_ROOT_EVIDENCE_MARKER", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  assert.throws(() => collect({ root: TEST_ROOT, reportsDir: outsideDir }), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("FPI2-R-2: collect() rejects an out-of-root screenshotsDir override the same way", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c1-outside-shots-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  assert.throws(() => collect({ root: TEST_ROOT, screenshotsDir: outsideDir }), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("FPI2-R-2/#24: loadReports rejects an individually-discovered report file that is a symlink escaping the repository, even when reportsDir itself is safe", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c1-symreport-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const secretReport = path.join(outsideDir, "secret-report.json");
+  fs.writeFileSync(secretReport, JSON.stringify({ stats: {}, results: [{ file: "x", suites: [{ title: "S", suites: [], tests: [{ title: "SYMLINK_ESCAPE_MARKER", state: "failed" }] }] }] }));
+
+  const insideReportsDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-adapter-c1-symreport-inside-"));
+  t.after(() => fs.rmSync(insideReportsDir, { recursive: true, force: true }));
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(secretReport, path.join(insideReportsDir, "report.json"), "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const { reports, warnings } = loadReports(insideReportsDir, TEST_ROOT);
+  assert.deepEqual(reports, []);
+  assert.ok(warnings.some((w) => w.includes("escapes the repository boundary")));
+});
+
+test("FPI2-R-2/#25: resolveScreenshotPath rejects a discovered screenshot that is a symlink escaping the repository, never surfacing a raw absolute path", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cypress-adapter-c1-symshot-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const secretShot = path.join(outsideDir, "secret.png");
+  fs.writeFileSync(secretShot, "OUTSIDE_SCREENSHOT_BYTES");
+
+  const insideShotsDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "cypress-adapter-c1-symshot-inside-"));
+  t.after(() => fs.rmSync(insideShotsDir, { recursive: true, force: true }));
+  const specDir = path.join(insideShotsDir, "spec.cy.js");
+  fs.mkdirSync(specDir);
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(secretShot, path.join(specDir, "Suite -- test (failed).png"), "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const result = resolveScreenshotPath("spec.cy.js", ["Suite"], "test", insideShotsDir, TEST_ROOT);
+  assert.equal(result, null);
+});
+
+test("FPI2-R-2: a relative reportsDir override still works correctly (safe overrides inside the repository are not broken by the new containment check)", (t) => {
+  const relativeDirName = "cypress-adapter-c1-relative-reports";
+  const absoluteDir = path.join(ROOT, relativeDirName);
+  fs.mkdirSync(absoluteDir, { recursive: true });
+  t.after(() => fs.rmSync(absoluteDir, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(absoluteDir, "report.json"),
+    JSON.stringify({
+      stats: { tests: 1, passes: 0, failures: 1, pending: 0, duration: 1 },
+      results: [{ file: FIXTURE_SPEC_FILE, suites: [{ title: "S", suites: [], tests: [{ title: "IN_ROOT_RELATIVE_OVERRIDE", state: "failed", err: { message: "m" } }] }] }],
+    })
+  );
+
+  const result = collect({ root: TEST_ROOT, reportsDir: relativeDirName });
+  assert.equal(result.failedTests.length, 1);
+  assert.equal(result.failedTests[0].title, "IN_ROOT_RELATIVE_OVERRIDE");
 });

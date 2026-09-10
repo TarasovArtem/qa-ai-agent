@@ -77,25 +77,37 @@ function result({ status, duration = 0, error, errors, attachments = [], retry =
   return r;
 }
 
-function writeReportFixture(t, reportObj) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-report-"));
-  const reportFile = path.join(tmpDir, "report.json");
-  fs.writeFileSync(reportFile, JSON.stringify(reportObj));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
-  return reportFile;
-}
-
 // Roadmap #21D: a race-safe, canonically-in-repository temp workspace for
 // attachment-locality tests - reports/ai/ already exists and is gitignored
 // (see .gitignore), so this reuses that existing convention rather than
-// introducing a new one. Only the report JSON itself may live outside the
-// repository (writeReportFixture() above) - report *content* is never
-// subject to the attachment-locality boundary, only attachment/screenshot
-// *paths named inside* that content are. Always cleaned up via t.after().
+// introducing a new one. Always cleaned up via t.after().
+//
+// Roadmap FPI-2 Corrective C1 (FPI2-R-2): the report JSON file itself
+// (writeReportFixture() below) previously lived under an unrelated
+// os.tmpdir() location, passed to collect() as an explicit `reportFile`
+// override - collect() now validates every override resolves inside the
+// trusted `root` before it is ever read (an override is a location hint
+// inside the repository, never a second, independent filesystem
+// authority), so this repository-local temp workspace is now this file's
+// ONE fixture-materialization convention for both the report JSON and any
+// attachment/screenshot files a test needs to genuinely exist - never
+// os.tmpdir() for anything collect()/loadReport() will actually read.
+// Only a deliberately OUT-OF-ROOT fixture (the specific point of the
+// S21D_1/S21D_2/"out-of-root screenshot" tests further below) still uses
+// os.tmpdir(), and only for the attachment/screenshot path named INSIDE
+// an otherwise repository-local report - never for the report file
+// itself.
 function mkdtempInRepo(t, prefix) {
   const tmpDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", prefix));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   return tmpDir;
+}
+
+function writeReportFixture(t, reportObj) {
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-report-");
+  const reportFile = path.join(tmpDir, "report.json");
+  fs.writeFileSync(reportFile, JSON.stringify(reportObj));
+  return reportFile;
 }
 
 // --- id --------------------------------------------------------------------
@@ -535,10 +547,9 @@ test("P9b screenshot path that does not exist on disk: null + warning, path itse
 // --- P10: malformed JSON --------------------------------------------------------
 
 test("P10 malformed JSON: found:false, empty failedTests, one deterministic warning, never throws", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-report-"));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-report-");
   const reportFile = path.join(tmpDir, "report.json");
   fs.writeFileSync(reportFile, "{ not valid json");
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
   const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults, { found: false });
@@ -558,9 +569,8 @@ test("P11 empty report (valid JSON, suites:[]): found:true with all-zero totals,
 });
 
 test("missing report file: found:false with a deterministic 'no report' warning", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-missing-"));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-missing-");
   const reportFile = path.join(tmpDir, "report.json");
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
   const out = collect({ root: TEST_ROOT, reportFile });
   assert.deepEqual(out.testResults, { found: false });
@@ -994,8 +1004,7 @@ test("collect(): with no reportFile is equivalent to collect({root: TEST_ROOT, r
 });
 
 test("collect(): a genuinely missing report at an isolated OS-temp path (never the production default) returns found:false, empty failedTests, and the expected warning", (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-collect-missing-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-collect-missing-");
   const missingReportFile = path.join(tmpDir, "does-not-exist.json");
 
   const out = collect({ root: TEST_ROOT, reportFile: missingReportFile });
@@ -1049,10 +1058,10 @@ test("collect(): with no reportFile still resolves correctly while a real report
   assert.equal(out.testResults.totals.passed, 1);
 
   // The isolated missing-report test above is unaffected by this real
-  // file's presence, since it always targets its own dedicated OS-temp
-  // path, never the injected root's default location - proven again here
-  // for good measure.
-  const missingResult = collect({ root: TEST_ROOT, reportFile: path.join(os.tmpdir(), "d21t1-unrelated-missing-report.json") });
+  // file's presence, since it always targets its own dedicated,
+  // repository-local nonexistent path, never the injected root's default
+  // location - proven again here for good measure.
+  const missingResult = collect({ root: TEST_ROOT, reportFile: mkdtempInRepo(t, "playwright-adapter-d21t1-unrelated-") + "/does-not-exist.json" });
   assert.deepEqual(missingResult.testResults, { found: false });
 });
 
@@ -1092,8 +1101,12 @@ const REAL_SCREENSHOT_MARKER = "__FIXTURE_SCREENSHOT_PATH__";
 // synthetic fixtures.
 function loadRealReportWithScreenshotFilesIn(t, screenshotDir) {
   const raw = JSON.parse(fs.readFileSync(REAL_REPORT_FIXTURE, "utf8"));
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-real-report-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): the report.json file itself
+  // is always passed to collect() as an explicit reportFile override, so
+  // it must always live inside root - unlike screenshotDir (the
+  // parameter above), which deliberately varies inside/outside per this
+  // helper's two callers.
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-real-report-");
 
   // Every screenshot attachment in the sanitized fixture carries the same
   // placeholder marker instead of the real (machine-specific, temp-directory)
@@ -1433,4 +1446,109 @@ test("S21D_6 out-of-root spec.file: redacted end-to-end (both testResults.specs 
   assert.deepEqual(out.testResults.specs, []);
   assert.ok(out.warnings.some((w) => w.includes("was outside the repository/workspace boundary and was redacted")));
   assert.ok(!out.warnings.some((w) => w.includes(outsideSpecFile) || w.includes("OUTSIDE_PRIVATE_PATH_MARKER_21D")));
+});
+
+// =========================================================================
+// Roadmap FPI-2 Corrective C1 (independent adversarial review of PR #123,
+// finding FPI2-R-2) - reportFile override containment.
+// =========================================================================
+
+test("FPI2-R-2: collect() rejects an out-of-root reportFile override with a bounded ADAPTER_PATH_OUTSIDE_REPOSITORY error, never parsing it", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-c1-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const outsideReportFile = path.join(outsideDir, "report.json");
+  fs.writeFileSync(
+    outsideReportFile,
+    JSON.stringify(
+      report({
+        suites: [
+          fileSuite({
+            title: "outside.spec.ts",
+            file: "outside.spec.ts",
+            specs: [
+              spec({
+                title: "OUTSIDE_ROOT_EVIDENCE_MARKER",
+                file: "outside.spec.ts",
+                tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1, error: { message: "leak", stack: "s" } })] })],
+              }),
+            ],
+          }),
+        ],
+      })
+    )
+  );
+
+  assert.throws(() => collect({ root: TEST_ROOT, reportFile: outsideReportFile }), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("FPI2-R-2/#23: a nominally in-root reportFile that is itself a symlink to an outside file is rejected, never read", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-c1-symreport-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const secretReport = path.join(outsideDir, "secret.json");
+  fs.writeFileSync(
+    secretReport,
+    JSON.stringify(report({ suites: [fileSuite({ title: "s", file: "s", specs: [spec({ title: "SYMLINK_ESCAPE_MARKER", file: "s", tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1 })] })] })] })] }))
+  );
+
+  const insideDir = mkdtempInRepo(t, "playwright-adapter-c1-symreport-inside-");
+  const symlinkReportFile = path.join(insideDir, "report.json");
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(secretReport, symlinkReportFile, "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  // An EXPLICIT reportFile override goes through resolveRepositoryLocalPath()
+  // first, which itself re-verifies the real (symlink-resolved) target and
+  // throws before loadReport() is ever reached - a stronger, earlier
+  // rejection than loadReport()'s own internal per-file check (which
+  // guards the DEFAULT, non-override path - see the sibling default-path
+  // symlink-escape proof covered by loadReport()'s own root-aware check).
+  assert.throws(() => collect({ root: TEST_ROOT, reportFile: symlinkReportFile }), /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
+});
+
+test("FPI2-R-2: a relative reportFile override still works correctly (safe overrides inside the repository are not broken by the new containment check)", (t) => {
+  const tmpDir = mkdtempInRepo(t, "playwright-adapter-c1-relative-");
+  const relativeReportFile = path.relative(ROOT, path.join(tmpDir, "report.json")).split(path.sep).join("/");
+  fs.writeFileSync(
+    path.join(ROOT, relativeReportFile),
+    JSON.stringify(report({ suites: [fileSuite({ title: "s", file: "s", specs: [spec({ title: "IN_ROOT_RELATIVE_OVERRIDE", file: "s", tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1 })] })] })] })] }))
+  );
+
+  const out = collect({ root: TEST_ROOT, reportFile: relativeReportFile });
+  assert.equal(out.failedTests.length, 1);
+  assert.equal(out.failedTests[0].title, "IN_ROOT_RELATIVE_OVERRIDE");
+});
+
+test("FPI2-R-2/#23: the DEFAULT report location (no override) is also rejected when it is itself a symlink escaping the repository", (t) => {
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "playwright-adapter-c1-default-symreport-outside-"));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  const secretReport = path.join(outsideDir, "secret.json");
+  fs.writeFileSync(
+    secretReport,
+    JSON.stringify(report({ suites: [fileSuite({ title: "s", file: "s", specs: [spec({ title: "DEFAULT_SYMLINK_ESCAPE_MARKER", file: "s", tests: [logicalTest({ status: "unexpected", results: [result({ status: "failed", duration: 1 })] })] })] })] }))
+  );
+
+  const hadExisting = fs.existsSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  const backupPath = `${DEFAULT_REPORT_FILE_FOR_TEST_ROOT}.c1-default-symlink-backup`;
+  if (hadExisting) fs.renameSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, backupPath);
+  t.after(() => {
+    fs.rmSync(DEFAULT_REPORT_FILE_FOR_TEST_ROOT, { force: true });
+    if (hadExisting) fs.renameSync(backupPath, DEFAULT_REPORT_FILE_FOR_TEST_ROOT);
+  });
+  fs.mkdirSync(path.dirname(DEFAULT_REPORT_FILE_FOR_TEST_ROOT), { recursive: true });
+
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(secretReport, DEFAULT_REPORT_FILE_FOR_TEST_ROOT, "file");
+  } catch {
+    symlinkSupported = false;
+  }
+  if (!symlinkSupported) return;
+
+  const out = collect({ root: TEST_ROOT });
+  assert.deepEqual(out.testResults, { found: false });
+  assert.ok(out.warnings.some((w) => w.includes("escapes the repository boundary")));
 });

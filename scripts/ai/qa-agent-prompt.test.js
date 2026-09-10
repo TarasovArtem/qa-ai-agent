@@ -1207,7 +1207,14 @@ test("PROMPT_1/WARN_1: a marker embedded in an out-of-root Playwright spec path 
   const outsideScreenshot = path.join(outsideDir, "shot.png");
   fs.writeFileSync(outsideScreenshot, "");
 
-  const tmpReportDir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-agent-prompt-21d-report-"));
+  // Roadmap FPI-2 Corrective C1 (FPI2-R-2): the report.json file itself
+  // is passed to collect() as an explicit reportFile override, which must
+  // resolve inside the trusted root - unlike outsideSpecFile/
+  // outsideScreenshot above, which deliberately remain genuinely outside
+  // the repository (that is the entire point of this test: proving
+  // out-of-root evidence NAMED INSIDE an otherwise repository-local
+  // report gets redacted).
+  const tmpReportDir = fs.mkdtempSync(path.join(ROOT, "reports", "ai", "qa-agent-prompt-21d-report-"));
   t.after(() => fs.rmSync(tmpReportDir, { recursive: true, force: true }));
   const reportFile = path.join(tmpReportDir, "report.json");
   fs.writeFileSync(
