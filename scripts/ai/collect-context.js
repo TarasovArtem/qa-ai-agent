@@ -535,9 +535,27 @@ function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoo
 // Roadmap FPI-2: `repositoryRoot` passes straight through to main() the
 // same way `profile` already does - this seam performs no root
 // validation/derivation of its own.
-function runCli({ profile, repositoryRoot } = {}) {
+//
+// Roadmap ID-1 (Package Boundary / Public Programmatic API): `adapterOptions`
+// is the one new, optional parameter - passed straight through to main()
+// exactly like `profile`/`repositoryRoot` already are, with NO validation
+// or interpretation of its own here (main()'s own existing
+// `adapter.collect({ ...adapterOptions, root, currentProjectId })` contract
+// is completely unchanged - see main()'s own docstring above). This closes
+// the one gap that previously forced a target wanting to supply an
+// optional `frameworkRuntimeConfig` (or any other adapter-specific option)
+// through this CLI seam to bypass runCli() and call main() directly with
+// an explicitly selected adapter instead (see
+// scripts/targets/project-b/collect-context.js, unchanged by this
+// roadmap stage, which continues to use that still-fully-supported direct
+// pattern). A caller that omits `adapterOptions` (every existing caller)
+// sees byte-identical pre-ID-1 behavior: `adapterOptions` is `undefined`,
+// spread into nothing extra by main()'s own existing `{ ...undefined,
+// root, currentProjectId }`, exactly as it already was implicitly before
+// this parameter existed at all.
+function runCli({ profile, repositoryRoot, adapterOptions } = {}) {
   const adapter = selectRuntimeAdapter(process.env.QA_FRAMEWORK);
-  return main({ adapter, profile, repositoryRoot });
+  return main({ adapter, adapterOptions, profile, repositoryRoot });
 }
 
 if (require.main === module) {

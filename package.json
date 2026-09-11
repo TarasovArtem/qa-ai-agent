@@ -5,6 +5,17 @@
   "engines": {
     "node": "22.x"
   },
+  "main": "scripts/ai/index.js",
+  "exports": {
+    ".": "./scripts/ai/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "scripts/ai",
+    "!scripts/ai/**/*.test.js",
+    "!scripts/ai/__fixtures__",
+    "!scripts/ai/evaluation"
+  ],
   "scripts": {
     "cypress:open": "cypress open",
     "test:e2e": "cypress run",
