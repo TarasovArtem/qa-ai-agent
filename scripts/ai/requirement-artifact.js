@@ -46,20 +46,30 @@
  * (requirement quality/testability analysis), never conflated with
  * structural validity here.
  *
- * HARDENING TIER (deliberate, evidence-based, not uniform): the outer
- * artifact object and its `source` sub-object receive the full
- * FPI-1-corrective hardening already established by
- * scripts/ai/framework-runtime-config.js and
- * scripts/ai/project-knowledge-config.js (own-enumerable-DATA-property
- * certification via getOwnEnumerableDataProperty() - never an inherited,
- * non-enumerable, or accessor-backed value; an accessor's getter is never
- * invoked during validation) - both are identity-bearing objects a
- * consumer may read repeatedly. Array-element objects (each
- * `acceptanceCriteria[]`/`relationships[]` entry) instead follow the
- * lighter, already-established scripts/ai/knowledge/schema.js precedent
- * (plain isPlainObject() + direct field checks) - the same tiering that
- * module already applies to its own nested `appliesTo` object, since
- * these are read-once structural leaves, not identity-bearing config.
+ * HARDENING TIER (RTI-1 corrective; originally two-tier, now uniform):
+ * every structural object in this contract - the outer artifact, its
+ * `source` sub-object, and each `acceptanceCriteria[]`/`relationships[]`
+ * entry - receives the identical full FPI-1-corrective hardening already
+ * established by scripts/ai/framework-runtime-config.js and
+ * scripts/ai/project-knowledge-config.js: isPlainDataObject() (rejects
+ * custom prototypes/class instances, not just non-objects) and
+ * getOwnEnumerableDataProperty() for every field read (never an
+ * inherited, non-enumerable, or accessor-backed value; an accessor's
+ * getter is never invoked during validation - Object.getOwnPropertyDescriptor()
+ * cannot trigger one). The original design deliberately applied a
+ * lighter, scripts/ai/knowledge/schema.js-precedented tier
+ * (isPlainObject() + direct field access) to array-element entries only,
+ * reasoning they were "read-once structural leaves." Independent
+ * architecture review empirically disproved that reasoning: a throwing
+ * accessor on a relationships[] entry escaped
+ * validateRequirementArtifact() as an uncaught exception (breaking this
+ * module's own "never throws" contract), and inherited/non-enumerable/
+ * class-instance entries were all silently accepted where the outer
+ * object correctly rejects the identical shapes. The corrective closed
+ * that gap by reusing the exact same primitives everywhere, rather than
+ * introducing a second, separately-maintained hardening implementation -
+ * see requirement-artifact.test.js's own "RTI1-R-*" test block for the
+ * permanent regression coverage.
  *
  * IMMUTABILITY CONVENTION: this module never mutates its input and always
  * returns the exact same object reference on success (see
@@ -163,10 +173,6 @@ function isPlainDataObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
-}
-
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value) {
@@ -290,6 +296,21 @@ function validateSource(source, errors, path) {
   }
 }
 
+// Roadmap RTI-1 corrective (RTI1-R-1/R-5/R-6, independent-review finding):
+// entry objects now receive the exact same hardening tier as the outer
+// artifact and `source` - isPlainDataObject() (rejects custom prototypes/
+// class instances, matching the outer object's own rejection exactly) and
+// getOwnEnumerableDataProperty() for every field read (an inherited,
+// non-enumerable, or accessor-backed value is never trusted, and an
+// accessor's getter is NEVER invoked - Object.getOwnPropertyDescriptor()
+// cannot trigger one). The original lighter isPlainObject()/direct-
+// property-access tier was empirically proven insufficient by independent
+// review: a throwing accessor on a relationships[] entry escaped
+// validateRequirementArtifact() as an uncaught exception, breaking this
+// module's own "never throws" contract, and inherited/non-enumerable/
+// class-instance entries were all silently accepted. See
+// requirement-artifact.test.js's own "RTI1-R-*" test block for the
+// permanent regression coverage this closes.
 function validateAcceptanceCriteria(list, errors, path) {
   if (!Array.isArray(list) || list.length === 0 || list.length > MAX_ARRAY_LENGTH) {
     errors.push(`${path}.acceptanceCriteria: must be a non-empty array (max ${MAX_ARRAY_LENGTH} entries) when supplied`);
@@ -297,19 +318,24 @@ function validateAcceptanceCriteria(list, errors, path) {
   }
   list.forEach((entry, index) => {
     const entryPath = `${path}.acceptanceCriteria[${index}]`;
-    if (!isPlainObject(entry)) {
-      errors.push(`${entryPath}: must be an object`);
+    if (!isPlainDataObject(entry)) {
+      errors.push(`${entryPath}: must be a plain object`);
       return;
     }
-    const unknown = Object.keys(entry).filter((k) => !ACCEPTANCE_CRITERION_ALLOWED_KEYS.includes(k));
-    if (unknown.length > 0) {
-      errors.push(`${entryPath}: unknown key(s) ${unknown.slice(0, MAX_REPORTED_UNKNOWN_KEYS).map(safeKeyDisplay).join(", ")} not permitted`);
+    pushUnknownKeyErrors(entry, ACCEPTANCE_CRITERION_ALLOWED_KEYS, errors, (key) => `${entryPath}.${key}: unknown key is not permitted`);
+
+    const textField = getOwnEnumerableDataProperty(entry, "text");
+    if (!textField.valid || !isSafeBoundedString(textField.value, MAX_CONTENT_LENGTH)) {
+      errors.push(`${entryPath}.text: must be a non-empty, bounded own enumerable data string property`);
     }
-    if (!isSafeBoundedString(entry.text, MAX_CONTENT_LENGTH)) {
-      errors.push(`${entryPath}.text: must be a non-empty, bounded string`);
-    }
-    if (entry.id !== undefined && !isSafeBoundedString(entry.id, MAX_STRING_LENGTH)) {
-      errors.push(`${entryPath}.id: must be a non-empty, bounded string when supplied`);
+
+    const idField = getOwnEnumerableDataProperty(entry, "id");
+    if (idField.present) {
+      if (!idField.valid) {
+        errors.push(`${entryPath}.id: must be an own enumerable data property when supplied`);
+      } else if (idField.value !== undefined && !isSafeBoundedString(idField.value, MAX_STRING_LENGTH)) {
+        errors.push(`${entryPath}.id: must be a non-empty, bounded string when supplied`);
+      }
     }
   });
 }
@@ -321,23 +347,24 @@ function validateRelationships(list, errors, path) {
   }
   list.forEach((entry, index) => {
     const entryPath = `${path}.relationships[${index}]`;
-    if (!isPlainObject(entry)) {
-      errors.push(`${entryPath}: must be an object`);
+    if (!isPlainDataObject(entry)) {
+      errors.push(`${entryPath}: must be a plain object`);
       return;
     }
-    const unknown = Object.keys(entry).filter((k) => !RELATIONSHIP_ALLOWED_KEYS.includes(k));
-    if (unknown.length > 0) {
-      errors.push(`${entryPath}: unknown key(s) ${unknown.slice(0, MAX_REPORTED_UNKNOWN_KEYS).map(safeKeyDisplay).join(", ")} not permitted`);
-    }
-    if (!RELATIONSHIP_TYPES.includes(entry.type)) {
+    pushUnknownKeyErrors(entry, RELATIONSHIP_ALLOWED_KEYS, errors, (key) => `${entryPath}.${key}: unknown key is not permitted`);
+
+    const typeField = getOwnEnumerableDataProperty(entry, "type");
+    if (!typeField.valid || !RELATIONSHIP_TYPES.includes(typeField.value)) {
       errors.push(`${entryPath}.type: must be one of ${RELATIONSHIP_TYPES.join(", ")}`);
     }
+
     // targetId is validated only for shape (safe, non-empty, bounded string)
     // - never resolved/existence-checked here; see this module's own
     // docstring on why relationship-target resolution is a deferred,
     // future collection-level (RTI-2+) concern.
-    if (!isSafeBoundedString(entry.targetId, MAX_STRING_LENGTH)) {
-      errors.push(`${entryPath}.targetId: must be a non-empty, bounded string`);
+    const targetIdField = getOwnEnumerableDataProperty(entry, "targetId");
+    if (!targetIdField.valid || !isSafeBoundedString(targetIdField.value, MAX_STRING_LENGTH)) {
+      errors.push(`${entryPath}.targetId: must be a non-empty, bounded own enumerable data string property`);
     }
   });
 }

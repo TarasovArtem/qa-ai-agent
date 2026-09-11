@@ -212,6 +212,175 @@ test("validateRequirementArtifact: relationships targetId is validated only for 
   assert.equal(valid, true);
 });
 
+// --- RTI1-R-*: nested acceptanceCriteria[]/relationships[] hardening -------
+//
+// Permanent regression coverage for the independent-review finding that
+// the original lighter (isPlainObject() + direct field access) nested
+// validation permitted getter execution, an uncaught exception escaping
+// validateRequirementArtifact() entirely, and silent acceptance of
+// inherited/non-enumerable/class-instance entries - exactly mirroring the
+// FPI1-R-1/R-5/R-6 test classes already established for the outer
+// artifact/source above, now applied to the nested entry objects too.
+
+// --- RTI1-R-1: prototype / class-instance hardening (nested) ---------------
+
+test("RTI1-R-1: an acceptanceCriteria entry that is a class instance (custom prototype) is REJECTED", () => {
+  class HostileCriterion {
+    constructor() {
+      this.text = "looks legitimate";
+    }
+  }
+  const { valid, errors } = validateRequirementArtifact(minimalArtifact({ acceptanceCriteria: [new HostileCriterion()] }));
+  assert.equal(valid, false);
+  assert.ok(errors.some((e) => e.includes("acceptanceCriteria[0]")));
+});
+
+test("RTI1-R-1: a relationships entry that is a class instance (custom prototype) is REJECTED", () => {
+  class HostileRelationship {
+    constructor() {
+      this.type = "related";
+      this.targetId = "REQ-2";
+    }
+  }
+  const { valid, errors } = validateRequirementArtifact(minimalArtifact({ relationships: [new HostileRelationship()] }));
+  assert.equal(valid, false);
+  assert.ok(errors.some((e) => e.includes("relationships[0]")));
+});
+
+test("RTI1-R-1: an acceptanceCriteria/relationships entry whose prototype is itself another object is REJECTED, inherited fields never consulted", () => {
+  const inheritedCriterion = Object.create({ text: "inherited, not own" });
+  const inheritedRelationship = Object.create({ type: "related", targetId: "REQ-2" });
+  assert.equal(validateRequirementArtifact(minimalArtifact({ acceptanceCriteria: [inheritedCriterion] })).valid, false);
+  assert.equal(validateRequirementArtifact(minimalArtifact({ relationships: [inheritedRelationship] })).valid, false);
+});
+
+test("RTI1-R-1: Object.create(null) acceptanceCriteria/relationships entries with all required own fields are ACCEPTED (null-prototype plain data)", () => {
+  const criterion = Object.assign(Object.create(null), { text: "ok" });
+  const relationship = Object.assign(Object.create(null), { type: "related", targetId: "REQ-2" });
+  assert.equal(Object.getPrototypeOf(criterion), null);
+  assert.equal(Object.getPrototypeOf(relationship), null);
+  assert.equal(validateRequirementArtifact(minimalArtifact({ acceptanceCriteria: [criterion] })).valid, true);
+  assert.equal(validateRequirementArtifact(minimalArtifact({ relationships: [relationship] })).valid, true);
+});
+
+// --- RTI1-R-5: non-enumerable own fields (nested) ---------------------------
+
+test("RTI1-R-5: a non-enumerable own acceptanceCriteria[].text is REJECTED as present-but-invalid, never silently treated as absent", () => {
+  const criterion = {};
+  Object.defineProperty(criterion, "text", { value: "hidden", enumerable: false, writable: true, configurable: true });
+  const { valid, errors } = validateRequirementArtifact(minimalArtifact({ acceptanceCriteria: [criterion] }));
+  assert.equal(valid, false);
+  assert.ok(errors.some((e) => e.includes("acceptanceCriteria[0].text")));
+});
+
+test("RTI1-R-5: a non-enumerable own relationships[].targetId is REJECTED as present-but-invalid, never silently treated as absent", () => {
+  const relationship = { type: "related" };
+  Object.defineProperty(relationship, "targetId", { value: "REQ-2", enumerable: false, writable: true, configurable: true });
+  const { valid, errors } = validateRequirementArtifact(minimalArtifact({ relationships: [relationship] }));
+  assert.equal(valid, false);
+  assert.ok(errors.some((e) => e.includes("relationships[0].targetId")));
+});
+
+test("RTI1-R-5: a non-enumerable unknown key on a nested entry can never smuggle a hidden value into a required field slot", () => {
+  const criterion = { text: "real, legitimate text" };
+  Object.defineProperty(criterion, "hiddenPayload", { value: "invisible to Object.keys", enumerable: false, configurable: true });
+  const { valid } = validateRequirementArtifact(minimalArtifact({ acceptanceCriteria: [criterion] }));
+  // The visible, own-enumerable "text" is genuinely valid, so this must
+  // pass - the point of this test is only that the hidden key is provably
+  // never read/trusted as data (see the getter tests below for the
+  // stronger, execution-based proof).
+  assert.equal(valid, true);
+});
+
+// --- RTI1-R-6: accessor-backed nested fields never execute ------------------
+
+test("RTI1-R-6: a stable accessor-backed acceptanceCriteria[].text is REJECTED and its getter is NEVER invoked", () => {
+  let calls = 0;
+  const criterion = {};
+  Object.defineProperty(criterion, "text", {
+    get() {
+      calls += 1;
+      return "hostile getter value";
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const { valid } = validateRequirementArtifact(minimalArtifact({ acceptanceCriteria: [criterion] }));
+  assert.equal(valid, false);
+  assert.equal(calls, 0, "the acceptanceCriteria[].text getter must never be invoked during validation");
+});
+
+test("RTI1-R-6: a throwing accessor-backed acceptanceCriteria[].text never escapes validateRequirementArtifact()", () => {
+  const criterion = {};
+  Object.defineProperty(criterion, "text", {
+    get() {
+      throw new Error("HOSTILE");
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const artifact = minimalArtifact({ acceptanceCriteria: [criterion] });
+  assert.doesNotThrow(() => validateRequirementArtifact(artifact));
+  assert.equal(validateRequirementArtifact(artifact).valid, false);
+});
+
+test("RTI1-R-6: a stable accessor-backed relationships[].targetId is REJECTED and its getter is NEVER invoked", () => {
+  let calls = 0;
+  const relationship = { type: "related" };
+  Object.defineProperty(relationship, "targetId", {
+    get() {
+      calls += 1;
+      return "REQ-2";
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const { valid } = validateRequirementArtifact(minimalArtifact({ relationships: [relationship] }));
+  assert.equal(valid, false);
+  assert.equal(calls, 0, "the relationships[].targetId getter must never be invoked during validation");
+});
+
+test("RTI1-R-6: a throwing accessor-backed relationships[].targetId never escapes validateRequirementArtifact() (was: uncaught exception)", () => {
+  const relationship = { type: "related" };
+  Object.defineProperty(relationship, "targetId", {
+    get() {
+      throw new Error("HOSTILE");
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const artifact = minimalArtifact({ relationships: [relationship] });
+  assert.doesNotThrow(() => validateRequirementArtifact(artifact));
+  assert.equal(validateRequirementArtifact(artifact).valid, false);
+});
+
+test("RTI1-R-6: a throwing accessor-backed relationships[].type never escapes validateRequirementArtifact()", () => {
+  const relationship = { targetId: "REQ-2" };
+  Object.defineProperty(relationship, "type", {
+    get() {
+      throw new Error("HOSTILE");
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const artifact = minimalArtifact({ relationships: [relationship] });
+  assert.doesNotThrow(() => validateRequirementArtifact(artifact));
+  assert.equal(validateRequirementArtifact(artifact).valid, false);
+});
+
+test("RTI1-R-6: assertValidRequirementArtifact() with a throwing nested accessor produces the stable REQUIREMENT_ARTIFACT_INVALID error, never the raw getter exception", () => {
+  const criterion = {};
+  Object.defineProperty(criterion, "text", {
+    get() {
+      throw new Error("HOSTILE");
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const artifact = minimalArtifact({ acceptanceCriteria: [criterion] });
+  assert.throws(() => assertValidRequirementArtifact(artifact, "test caller"), /REQUIREMENT_ARTIFACT_INVALID/);
+});
+
 // --- labels / priority / contentHash ---------------------------------------
 
 test("validateRequirementArtifact: rejects duplicate labels", () => {
