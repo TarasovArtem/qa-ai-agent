@@ -62,6 +62,10 @@ test("ID-1 package content: the four FPI-1/FPI-2 validator modules are included"
   assert.ok(f.includes("scripts/ai/repository-root.js"));
 });
 
+test("RTI-1 package content: the RequirementArtifact contract module is included", () => {
+  assert.ok(files().includes("scripts/ai/requirement-artifact.js"));
+});
+
 test("ID-1 package content: adapters, providers, and context-utils (internal dependencies of the entrypoints) are included", () => {
   const f = files();
   assert.ok(f.includes("scripts/ai/adapters/cypress-adapter.js"));
