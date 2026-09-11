@@ -66,12 +66,15 @@ The result is an architecture where **the AI proposes and the deterministic/huma
 | AI Test Automation (#23) | **Implemented** | Generated-code human review, safe filesystem application, controlled execution, bounded regeneration - all independently reviewed |
 | Multi-provider AI abstraction | **Implemented, one provider CI-wired** | Groq is the real CI provider; Gemini's API compatibility is proven by one controlled call but Gemini is **not** CI-wired (no repository secret) |
 | Multi-framework portability | **Implemented, production** | Both Cypress and Playwright adapters run in real production CI today |
-| Multi-project portability | **Proven offline only** | Isolation boundary validated against a synthetic second project; no second real production project exists yet |
+| Multi-project portability | **Proven - synthetic and real** | Isolation boundary validated against a synthetic second project (Project B, Roadmap FPI-4A) and independently re-proven against a real, independently-existing external repository with a live SUT (`TarasovArtem/TargomoPlaywright`); this repository's own production CI still runs against exactly one real project - the second project exists only as an independently-reviewed, unmerged experiment |
+| Package boundary & public programmatic API | **Implemented, production** | `scripts/ai/index.js` exposes exactly 8 symbols (`collectContext`, `collectHistory`, `analyzeFailure`, `aggregateBrowserContext`, and four `assertValid*` validators) via `package.json`'s `main`/`exports`/`files`; adapters and internal helpers are not part of the public surface - see Roadmap ID-1 below |
+| External-repository installation | **Proven** | A real `npm pack` -> `npm install <tarball>` into a physically separate, mkdtemp-isolated external repository exercised all four generic pipeline stages through the public API only, with zero `scripts/ai` production diff - see Roadmap ID-2 below |
+| Real existing-repository onboarding | **Proven, independently reviewed** | A real, independently-existing, previously-unrelated GitHub repository consumed the installed package via its public API only, with target-owned config/knowledge and its own real Playwright report/workflow - see [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below |
+| Full project independence (fresh-clone acquisition, versioned distribution, upgrade without target rewrite) | **Not yet proven** | Two specific blockers remain, independently audited: (1) no acquisition mechanism has been proven to survive a fresh clone or clean CI - the only one exercised is a machine-local `file:` tarball path, empirically proven to fail with an empty npm cache; (2) no version-upgrade transition has ever been exercised (only one version has ever existed). See [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below |
 | Controlled execution on Windows | **Not supported** | `shell:false` + Windows `.cmd`-shim resolution collide (`EINVAL`); tracked as `FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD` in `SECURITY.md`, tests explicitly skip (never silently pass) on Windows |
 | Automatic GitHub issue creation | **Not implemented** | `shouldCreateBug` is a human-actionable field only |
 | Cross-provider automatic fallback | **Not implemented (by design)** | A misconfigured/failing provider fails honestly rather than silently substituting another |
 | Reviewer/human-decision identity authentication | **Not implemented** | Review records prove content integrity, never actor authenticity - see `SECURITY.md`'s open `FUTURE_*` guards |
-| Full project independence (installable in any repo) | **Future roadmap work** | Current architecture has explicit project/framework identity boundaries, but has not been packaged/proven for installation outside this repository |
 
 ## Architecture
 
@@ -153,13 +156,13 @@ Current required branch-protection checks: `Cypress - chrome`, `Cypress - edge`,
 
 ## Portability & Current Boundaries
 
-Two portability axes are tracked separately and must not be conflated:
+Three portability axes are tracked separately and must not be conflated:
 
 - **Framework portability - resolved in production.** Both Cypress and Playwright adapters run in real GitHub Actions CI today, normalizing into an identical generic evidence shape, with framework-scoped History/Knowledge isolation enforced by construction.
-- **Project portability - proven offline only.** The `ProjectProfile`/History/Knowledge isolation boundary is validated end to end against a synthetic second project, but this repository runs against exactly one real production project. Do not read this project as "already portable to any codebase out of the box."
-- **Full project independence** (packaging/installing this pipeline outside its current demonstration repository) is future roadmap work, not implemented today.
+- **Project portability - proven, both synthetically and against a real external project.** The `ProjectProfile`/History/Knowledge isolation boundary was first validated end to end against a synthetic second project (Project B, Roadmap FPI-4A), then independently re-proven against a real, independently-existing external repository with a live SUT (`TarasovArtem/TargomoPlaywright`). This repository's own production CI still runs against exactly one real project; the second project exists only as an independently-reviewed, unmerged experiment branch - do not read this as "already portable to any codebase out of the box" or as "merged into a second production consumer."
+- **Package/installation independence - proven for installation, not yet for the stricter terminal claim.** Roadmap ID-1/ID-2 proved the package can be built (`npm pack`) and installed (`npm install <tarball>`) into a physically separate external repository via its public API only, with zero production diff. **Full Project Independence** - a fresh clone acquiring a *versioned* distribution and later *upgrading* it without any target rewrite - is **not yet proven**: see [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below for the exact two remaining blockers and closure plan.
 
-Full detail: [Current Multi-Framework Status](#current-multi-framework-status) and [Known Architectural Boundaries](#known-architectural-boundaries) below.
+Full detail: [Current Multi-Framework Status](#current-multi-framework-status), [Known Architectural Boundaries](#known-architectural-boundaries), and [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below.
 
 ## Repository Structure
 
@@ -634,6 +637,68 @@ Roadmap #21 took Roadmap #19's offline-proven adapter/portability architecture i
 
 Every stage above was independently reviewed before merging, following the same pattern used throughout this project's history: implement → validate → independent review → standard merge → natural post-merge CI verification.
 
+## Roadmap FPI-2 – Terminal Audit — Full Project Independence
+
+**Status: FPI-2/FPI-3/FPI-4/ID-1/ID-2 all COMPLETE_ON_MAIN and independently reviewed. External-repository installation and real existing-repository onboarding are both independently-reviewed PROVEN. The terminal claim, Full Project Independence, is audited and explicitly NOT YET PROVEN - two specific, named blockers remain (below), neither of which has been closed or attempted as of this writing.**
+
+This roadmap arc asks a single question the earlier framework/project-portability work (Roadmap #19, above) never actually tested: can this pipeline run **outside this repository at all** - as an installed dependency of a genuinely separate, external project - not just be architecturally isolated from a second project's identity while still living inside the same checkout.
+
+### FPI-2 — Trusted repository-root injection (PR #123)
+
+Every generic module that reads or writes target-repository artifacts (evidence, reports, History, AI output) now anchors those operations to an explicitly supplied `repositoryRoot` (`scripts/ai/repository-root.js`) rather than deriving the target repository from this generic core's own `__dirname` or `process.cwd()`. Includes Corrective C4 (closing a browser-input read-authority gap and a generic-core write-authority gap found during independent review). This is the foundational trust boundary every later stage below builds on.
+
+### FPI-3 — Real FrameworkRuntimeConfig consumer wiring (PRs #124–#127)
+
+`FrameworkRuntimeConfig` existed as a pure contract since Roadmap #19 but had no real consumer until this stage: #124 wired it into `cypress-adapter.js`, #125 into `playwright-adapter.js`, #126 into `collect-history.js`'s `historyWorkflowFile` handling, and #127 (FPI-3bA) into the Knowledge loader via `ProjectKnowledgeConfig`. After this stage, a target's real report layout, config path, and CI workflow filename are all genuinely data-driven, not hardcoded assumptions.
+
+### FPI-4A — Second-Project (Project B) Onboarding Proof (PR #128)
+
+The first empirical proof that the architecture generalizes to a materially different second project: a synthetic, offline, deterministic "Project B" target was onboarded using only `ProjectProfile`/`FrameworkRuntimeConfig`/`ProjectKnowledgeConfig`/`repositoryRoot` as data, with zero generic-core changes. This proved multi-project **architecture**, not yet installation outside this repository - Project B still lived inside this same checkout.
+
+### ID-1 — Package Boundary / Public Programmatic API (PR #129)
+
+Introduced `scripts/ai/index.js`, a minimal public barrel exposing exactly 8 symbols: `collectContext` (`{main, runCli}`), `collectHistory`, `analyzeFailure`, `aggregateBrowserContext` (each `{main}`), and the four `assertValid*` validators. `package.json` gained `main`/`exports`/`files` to enforce this as the *only* reachable surface - adapters (`cypressAdapter`/`playwrightAdapter`) and the runtime framework selector are deliberately not exported; a consumer selects Playwright via `QA_FRAMEWORK` plus `runCli()`'s `adapterOptions`, never a direct adapter import.
+
+### ID-2 — External-Repository Installation Proof (PR #130)
+
+**EXTERNAL-REPOSITORY INSTALLATION: PROVEN.** A real `npm pack` from this repository's own `main`, followed by a real `npm install <tarball>` into a physically separate, `mkdtemp`-isolated external repository (never a symlink, `npm link`, workspace, or source-relative `require`) - exercising all four generic pipeline stages through the public API only, with `require.resolve("qa-ai-agent")` resolving only inside the external repository's own `node_modules`, zero `scripts/ai` production diff, and a verified-immutable package tree (full recursive hash manifest, 0 changed files) before/after the run. This is a **deterministic** proof (synthetic fixtures, no live external system) and remains the authoritative baseline the next stage supplements rather than replaces.
+
+### Real Existing Repository Onboarding — TarasovArtem/TargomoPlaywright
+
+**REAL EXISTING REPOSITORY ONBOARDING: PROVEN, independently reviewed.** ID-2's deterministic proof was supplemented (never replaced) by onboarding a real, independently-existing, previously-unrelated GitHub repository with a live SUT: `TarasovArtem/TargomoPlaywright` (a real Playwright E2E suite against `https://poi.targomo.com`). On an unmerged `experiment/qa-ai-agent-integration` branch (commit `853124e`, both repositories' `main` branches left untouched), the installed package was consumed via its public API only, with a small, genuinely target-owned integration (`qa-ai-agent-integration/`: `ProjectProfile`/`FrameworkRuntimeConfig`/`ProjectKnowledgeConfig`, four bootstrap scripts, ~226 LOC) against the real Playwright report (after an additive, target-owned JSON-reporter config change alongside the pre-existing HTML one) and the real `.github/workflows/playwright.yml` history. All four pipeline stages, package immutability, source-checkout independence, and focused negative-authority controls were independently re-verified by a separate adversarial review that re-derived every claim from a fresh clone and a freshly-built tarball rather than trusting the implementation's own account - see that review's own findings below.
+
+**What this did not change:** `scripts/ai` production diff remained zero throughout; no target-specific reference to TargomoPlaywright exists anywhere in this repository's own source.
+
+**What the independent review additionally found**, beyond confirming the above:
+
+- The experiment's own committed `file:../pack-out/qa-ai-agent-1.0.0.tgz` dependency does **not** survive a fresh clone or clean CI (proven empirically with an empty npm cache - a real `ENOENT`, not a hypothetical) - this is the direct evidence behind the acquisition blocker below.
+- A MEDIUM-severity, non-blocking evidence-completeness gap in `collect-context.js`'s Playwright `RELEVANT_FILES_POLICIES` (below).
+- The experiment branch's own committed evidence snapshots (`reports/ai/*.json`) are internally inconsistent leftovers from different, unrelated runs - an experiment-hygiene finding, not an architecture defect; every underlying claim was independently re-derived fresh and holds.
+
+### Full Project Independence — Terminal Audit
+
+Terminal definition audited: *a fresh external repository can consume a versioned qa-ai-agent distribution, provide only target-owned `ProjectProfile`/`FrameworkRuntimeConfig`/`ProjectKnowledgeConfig`/`repositoryRoot` and environment inputs, execute the generic pipeline locally and/or in ordinary CI, and upgrade the agent without copying or modifying generic source.*
+
+```text
+FULL PROJECT INDEPENDENCE:
+NOT YET PROVEN
+```
+
+Every clause of that definition is independently proven **except two**, both explicitly named and neither closed or attempted anywhere in this repository as of this writing:
+
+1. **Reproducible/versioned acquisition.** The only acquisition mechanism ever exercised (a machine-local `file:` tarball path) does not survive a fresh clone or a clean CI runner - proven, not assumed. Closing this does **not** require npm registry publication; the recommended narrowest mechanism is a git-tag/GitHub dependency (`"qa-ai-agent": "github:TarasovArtem/qa-ai-agent#v1.0.0"`), which is fresh-clone- and CI-reproducible with no registry commitment.
+2. **Upgrade transition.** Only one package version (`1.0.0`) has ever existed; no A→B version transition (install A, run a target, install B, rerun the same target, confirm zero target-file changes and a clean package-tree replacement) has ever been exercised.
+
+Everything else the terminal definition requires is proven: a fresh external repository consuming the package (TargomoPlaywright), all four target-owned authority objects, local execution of the full generic pipeline, no generic-source copying, package immutability, and generic target independence. In-CI execution inside a target's own workflow and a production merge of the experiment branch were both audited and found **not required** by the terminal definition's own disjunctive wording (`locally and/or in ordinary CI`) - local execution alone already satisfies that clause.
+
+**Closure plan (audited, not yet implemented):** two narrow, pre-`ID-3` proof missions - tentatively `ACQ-1` (reproducible versioned acquisition, via a git tag) and `UPG-1` (version-upgrade transition, preferably against a deterministic synthetic target rather than TargomoPlaywright's live SUT) - recommended to be combined into one mission given they share the same underlying mechanism. Neither takes on `ID-3`'s broader release/registry/CLI scope.
+
+**Playwright relevant-files gap (MEDIUM, open, non-blocking).** `collect-context.js`'s `RELEVANT_FILES_POLICIES.playwright` hardcodes an internal-dogfood-shaped assumption (`testDir: "./playwright"`, `playwright.config.js`) and never reads `FrameworkRuntimeConfig.testSourceRoot`/`frameworkConfigPath` at all - independently confirmed by direct source inspection and reproduced twice with real external-target failures. A real target's failed-test title, error, stack trace, and screenshot all survive intact regardless; only secondary corroborating evidence (the config file, the failed spec's own source) is silently omitted. This does not block Full Project Independence and is not scheduled ahead of the documentation phase you are reading - named future corrective: **Playwright Relevant-Files Config Wiring** (wire `frameworkConfigPath` into config collection and `testSourceRoot` into failed-spec resolution; preserve the exact historical fallback when no config is supplied; no autodiscovery; no target-specific branching).
+
+**`ID-3` classification (unchanged):** `RELEASE / VERSION OPERATIONALIZATION ONLY`, not started. The narrow `ACQ-1`/`UPG-1` proof above is a prerequisite to Full Project Independence but is deliberately not itself `ID-3` - it takes on none of `ID-3`'s actual scope (CLI, reusable CI workflows, registry publish automation, semver/changelog policy).
+
+**Mandatory ordering, unchanged by this document:** Terminal Audit → Documentation/Roadmap Sync (this update) → Documentation Consistency Review → Documentation Merge → only then `ACQ-1`/`UPG-1` → Full Project Independence re-audit → remaining quality correctives (e.g. the relevant-files gap above) → `ID-3`.
+
 ## Project structure
 
     ./cypress/e2e/tests/select_group_POI.cy.js
@@ -1060,6 +1125,14 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 - **`ROADMAP_21_TECHNICAL_WORK`: COMPLETE** - every #21A-#21J-A stage is implemented, independently reviewed, and merged to `main`, including one real, independently-reviewed, controlled Playwright failure proof.
 - **`ROADMAP_21_DOCUMENTATION`: COMPLETE_ON_MAIN** - the #21J-B documentation update was independently reviewed (#21J-B-R) and merged.
 - **`ROADMAP_21_FORMAL_CLOSURE`: COMPLETE_ON_MAIN** - Roadmap #21 is formally closed: #21J-B's independent review passed, its PR was standard-merged, and natural post-merge CI was verified on the exact merge commit.
+- **`ROADMAP_FPI2_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - trusted `repositoryRoot` injection and containment, including Corrective C4, independently reviewed and merged (PR #123).
+- **`ROADMAP_FPI3_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - real `FrameworkRuntimeConfig`/`ProjectKnowledgeConfig` consumer wiring across the Cypress adapter, Playwright adapter, `collect-history.js`, and the Knowledge loader, independently reviewed and merged (PRs #124-#127).
+- **`ROADMAP_FPI4_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - Second-Project (Project B) Onboarding Proof, independently reviewed and merged (PR #128) - architectural multi-project portability proven offline.
+- **`ROADMAP_ID1_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - Package Boundary / Public Programmatic API, independently reviewed and merged (PR #129).
+- **`ROADMAP_ID2_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - External-Repository Installation Proof, independently reviewed and merged (PR #130) - `EXTERNAL-REPOSITORY INSTALLATION: PROVEN`.
+- **`ROADMAP_REAL_REPO_VALIDATION`: COMPLETE, INDEPENDENTLY REVIEWED** - real onboarding of `TarasovArtem/TargomoPlaywright` on an unmerged experiment branch (commit `853124e`), independently, adversarially re-verified from a fresh clone - `REAL EXISTING REPOSITORY ONBOARDING: PROVEN`.
+- **`ROADMAP_FULL_PROJECT_INDEPENDENCE_TERMINAL_AUDIT`: COMPLETE - NOT YET PROVEN** - two named blockers remain open: reproducible/versioned acquisition, and version-upgrade transition. See [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) above for the full audit and closure plan.
+- **`ROADMAP_POST_ID2_DOCUMENTATION_SYNC`: IMPLEMENTED, AWAITING INDEPENDENT REVIEW** - this documentation update itself; not yet merged, not self-approved.
 
 ## AI Test Design & Test Automation (#22/#23)
 
