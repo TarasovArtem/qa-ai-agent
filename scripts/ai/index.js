@@ -32,6 +32,14 @@
  *   stage) - never redefined or wrapped here, just re-exported by
  *   reference.
  *
+ *   assertValidRequirementArtifact - the RTI-1 fail-closed validator for
+ *   the normalized, source-independent RequirementArtifact contract (see
+ *   scripts/ai/requirement-artifact.js's own docstring). Added by Roadmap
+ *   RTI-1; no RTI-2+ ingestion adapter or Test Design capability is
+ *   exported here yet - this is the target's construction/validation seam
+ *   for a future consumer, exactly mirroring the existing four validators'
+ *   own role.
+ *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
  * audit for the evidence this is based on):
@@ -72,6 +80,7 @@ const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidFrameworkRuntimeConfig } = require("./framework-runtime-config");
 const { assertValidProjectKnowledgeConfig } = require("./project-knowledge-config");
 const { assertValidRepositoryRoot } = require("./repository-root");
+const { assertValidRequirementArtifact } = require("./requirement-artifact");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -82,4 +91,5 @@ module.exports = {
   assertValidFrameworkRuntimeConfig,
   assertValidProjectKnowledgeConfig,
   assertValidRepositoryRoot,
+  assertValidRequirementArtifact,
 };

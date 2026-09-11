@@ -388,6 +388,7 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "assertValidProjectKnowledgeConfig",
     "assertValidProjectProfile",
     "assertValidRepositoryRoot",
+    "assertValidRequirementArtifact",
     "collectContext",
     "collectHistory",
   ]);
