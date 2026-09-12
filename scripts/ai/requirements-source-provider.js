@@ -147,6 +147,25 @@
  * given the "provider is trusted code" framing already governs
  * `read()` itself.
  *
+ * ERROR CAUSE IS AN UNSANITIZED, POTENTIALLY SENSITIVE DIAGNOSTIC CHANNEL -
+ * DISTINCT FROM THE BOUNDED OUTER MESSAGE: `REQUIREMENTS_SOURCE_READ_FAILED`
+ * deliberately keeps its own outward `.message` bounded and never
+ * interpolates the provider's original thrown value into it - but the
+ * original thrown value (an `Error`, a plain object, a string, or anything
+ * else a provider's `read()` might throw/reject with) is preserved
+ * VERBATIM, UNSANITIZED, in `.cause`, for diagnostic fidelity. `.cause` may
+ * therefore contain credentials, access tokens, authorization headers,
+ * signed URLs, query-string secrets, cookies, provider configuration
+ * detail, PII, or raw native transport payload content - whatever the
+ * provider's own failure happened to carry. Routine high-level logging
+ * should read only the bounded fields (`error.code`, `error.message`);
+ * callers must NOT blindly log or serialize the complete error object
+ * (e.g. `console.error(error)`, which prints the full `.cause` chain by
+ * default in Node) in a security-sensitive environment without first
+ * redacting or omitting `.cause`. This is a caller-side logging discipline
+ * this module cannot enforce - `.cause` existing at all is the point (it is
+ * the one place full diagnostic detail survives), not a defect to fix.
+ *
  * NO NETWORK / FILESYSTEM / PROJECT COUPLING IN THIS MODULE: this generic
  * runner performs zero network I/O itself (network access, if any, occurs
  * entirely inside the caller-supplied provider's own `read()`
