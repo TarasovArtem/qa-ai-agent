@@ -640,6 +640,13 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
           title: "Search performance",
           content: "The search results should load quickly.",
         },
+        {
+          id: "REQ-UNRELATED-SIGNAL",
+          type: "non-functional-requirement",
+          title: "Response performance",
+          content: "The API should respond quickly.",
+          acceptanceCriteria: [{ text: "Return HTTP 200 on success." }],
+        },
       ],
     });
 
@@ -649,10 +656,10 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
     assert.equal(result.fatalError, undefined, JSON.stringify(result));
     assert.equal(result.steps.loadRequirementsFromFile.ok, true, JSON.stringify(result.errors));
     assert.equal(result.steps.analyzeRequirementsQuality.ok, true, JSON.stringify(result.errors));
-    assert.equal(result.requirementArtifacts.length, 2);
-    assert.equal(result.qualityResults.length, 2);
+    assert.equal(result.requirementArtifacts.length, 3);
+    assert.equal(result.qualityResults.length, 3);
 
-    const [ready, ambiguous] = result.qualityResults;
+    const [ready, ambiguous, unrelatedSignal] = result.qualityResults;
     assert.equal(ready.artifactId, "REQ-READY");
     assert.equal(ready.status, "READY");
     assert.deepEqual(ready.issues, []);
@@ -661,6 +668,15 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
     assert.equal(ambiguous.status, "AMBIGUOUS");
     assert.deepEqual(ambiguous.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
     assert.equal(/\d/.test(JSON.stringify(ambiguous)), false, "must never invent a numeric threshold");
+
+    // RTI-3 corrective proof, exercised through the genuinely installed
+    // package (not just the internal unit test suite): an unrelated HTTP
+    // status code in an acceptance criterion must never suppress a vague
+    // performance claim about a different dimension - this must NOT be
+    // READY.
+    assert.equal(unrelatedSignal.artifactId, "REQ-UNRELATED-SIGNAL");
+    assert.equal(unrelatedSignal.status, "AMBIGUOUS");
+    assert.deepEqual(unrelatedSignal.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
   }

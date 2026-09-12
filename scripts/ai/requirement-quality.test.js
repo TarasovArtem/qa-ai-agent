@@ -61,9 +61,16 @@ test("RTI-3 worked example: precise percentile+duration performance requirement 
 });
 
 test("RTI-3 worked example: vague security claim is flagged without inventing a security control", () => {
+  // "secure" lives in the never-suppressed subjective category (RTI-3
+  // corrective - no generic number makes "secure" objectively verifiable
+  // the way a duration number makes "fast" verifiable). With no
+  // acceptanceCriteria at all, this correctly follows the same UNTESTABLE
+  // path as any other isolated subjective claim (e.g. "delightful") - not
+  // a special case, just the existing, approved status-derivation rule
+  // applied uniformly.
   const r = analyzeRequirementQuality(art({ content: "The application must be secure." }));
-  assert.equal(r.status, "AMBIGUOUS");
-  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+  assert.equal(r.status, "UNTESTABLE");
+  assert.deepEqual(issueCodes(r), ["UNVERIFIABLE_SUBJECTIVE_CLAIM"]);
   for (const invented of ["AES", "OAuth", "MFA", "OWASP"]) {
     assert.equal(JSON.stringify(r).includes(invented), false);
   }
@@ -355,4 +362,138 @@ test("RTI-3 error model: error messages are bounded and do not dump entire artif
   } catch (err) {
     assert.equal(err.message.length < 2000, true);
   }
+});
+
+// --- RTI-3 corrective: dimension-scoped measurable-signal suppression ------
+//
+// Independent review found the original suppression check artifact-wide AND
+// topic-blind: ANY numeric-looking signal anywhere (a retry count, an HTTP
+// status code) silently suppressed an unrelated vague PERFORMANCE claim,
+// producing READY for a materially underspecified requirement. These tests
+// are the reviewer's own exact reproductions, now permanent regressions.
+
+test("RTI-3 corrective (defect repro #1): an unrelated retry count does NOT suppress a vague performance claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The page should load quickly.", acceptanceCriteria: [{ text: "Users may retry login up to 5 times." }] })
+  );
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 corrective (defect repro #2): an unrelated HTTP status code does NOT suppress a vague performance claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The API should respond quickly.", acceptanceCriteria: [{ text: "Return HTTP 200 on success." }] })
+  );
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 corrective: a bare, generic percentage ('95% of requests succeed') does NOT suppress a vague performance claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The page should load quickly.", acceptanceCriteria: [{ text: "95% of requests succeed." }] })
+  );
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 corrective: a bare, unrelated count ('maximum 10 retries') does NOT suppress a vague performance claim", () => {
+  const r = analyzeRequirementQuality(art({ content: "The page should load quickly.", acceptanceCriteria: [{ text: "Maximum 10 retries." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 corrective (positive control): a RELATED duration threshold still resolves a vague performance claim, cross-field", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "Search should be fast.", acceptanceCriteria: [{ text: "95% of searches complete within 2 seconds." }] })
+  );
+  assert.equal(r.status, "READY");
+  assert.deepEqual(r.issues, []);
+});
+
+test("RTI-3 corrective (positive control): a duration threshold in the SAME target resolves a vague performance claim", () => {
+  const r = analyzeRequirementQuality(art({ content: "Search should be fast and complete within 2 seconds." }));
+  assert.equal(r.status, "READY");
+  assert.deepEqual(r.issues, []);
+});
+
+test("RTI-3 corrective (positive control): 'responsive' is resolved by a related latency threshold", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The endpoint should be responsive.", acceptanceCriteria: [{ text: "Response time must be under 500 ms." }] })
+  );
+  assert.equal(r.status, "READY");
+});
+
+test("RTI-3 corrective (cross-dimension): an availability percentage does NOT resolve an unrelated performance claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The endpoint should respond quickly.", acceptanceCriteria: [{ text: "Service availability is 99.9%." }] })
+  );
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 corrective (cross-dimension): a duration threshold does NOT resolve an unrelated availability claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The service should be highly available.", acceptanceCriteria: [{ text: "Requests complete within 2 seconds." }] })
+  );
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 corrective (positive control): an uptime percentage resolves an availability claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The service should be highly available.", acceptanceCriteria: [{ text: "99.9% uptime measured monthly." }] })
+  );
+  assert.equal(r.status, "READY");
+});
+
+test("RTI-3 corrective (positive control): a failure-rate threshold resolves a reliability claim", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The payment service must be reliable.", acceptanceCriteria: [{ text: "Less than 1 failure per 10,000 transactions." }] })
+  );
+  assert.equal(r.status, "READY");
+});
+
+test("RTI-3 corrective: 'secure' is never suppressed by a generic unrelated number, related dimension or not", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The application must be secure.", acceptanceCriteria: [{ text: "Supports up to 256 concurrent sessions." }] })
+  );
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["UNVERIFIABLE_SUBJECTIVE_CLAIM"]);
+  for (const invented of ["AES", "OAuth", "MFA", "OWASP", "TLS"]) {
+    assert.equal(JSON.stringify(r).includes(invented), false);
+  }
+});
+
+test("RTI-3 corrective: duration unit matrix (representative singular/plural/abbreviated forms all recognized)", () => {
+  for (const unit of ["ms", "millisecond", "milliseconds", "s", "sec", "secs", "second", "seconds", "min", "mins", "minute", "minutes", "hour", "hrs", "hours"]) {
+    const r = analyzeRequirementQuality(art({ content: "Search should be fast.", acceptanceCriteria: [{ text: `Completes within 2 ${unit}.` }] }));
+    assert.equal(r.status, "READY", `unit "${unit}" should be recognized as a duration signal`);
+  }
+});
+
+test("RTI-3 corrective: comparison-bound duration phrasing is recognized", () => {
+  for (const phrase of ["< 2 seconds", "<= 500 ms", "no more than 1 second", "within 3 seconds", "at most 2 seconds"]) {
+    const r = analyzeRequirementQuality(art({ content: "Search should be fast.", acceptanceCriteria: [{ text: `Completes ${phrase}.` }] }));
+    assert.equal(r.status, "READY", `phrase "${phrase}" should be recognized as a duration signal`);
+  }
+});
+
+test("RTI-3 corrective: the fixed AMBIGUOUS result still never invents a threshold", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The page should load quickly.", acceptanceCriteria: [{ text: "Users may retry login up to 5 times." }] })
+  );
+  assert.equal(/(2 seconds|500\s?ms|1 second|95%|99%)/i.test(JSON.stringify(r)), false);
+});
+
+test("RTI-3 corrective: status derivation precedence remains unchanged (UNTESTABLE > MISSING_INFORMATION > AMBIGUOUS)", () => {
+  const r = analyzeRequirementQuality(art({ content: "The timeout must be TBD. Response should be fast and appropriate." }));
+  assert.equal(r.status, "MISSING_INFORMATION");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION", "PLACEHOLDER_TEXT", "VAGUE_QUALIFIER"]);
+});
+
+test("RTI-3 corrective: public API surface unchanged at 12 symbols (checked via the barrel)", () => {
+  const api = require("./index");
+  assert.equal(typeof api.analyzeRequirementQuality, "function");
+  assert.equal(typeof api.analyzeRequirementsQuality, "function");
+  assert.equal(Object.keys(api).length, 12);
 });

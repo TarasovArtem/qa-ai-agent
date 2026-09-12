@@ -111,34 +111,72 @@
  *
  *   PLACEHOLDER_TEXT (error)             - TBD/TODO/TBC/??? marker present.
  *   MISSING_MEASURABLE_CRITERION (error) - a QUANTIFIABLE quality term
- *     (fast/quick/slow/responsive/scalable/available/reliable/secure/
- *     performant/efficient) appears with NO measurable signal (a number,
- *     percentage, duration unit, comparison operator, or HTTP/status-code
- *     pattern) anywhere in the artifact (content or any acceptanceCriteria
- *     text) - artifact-wide, not per-field: an acceptance criterion with a
- *     precise threshold resolves vague wording elsewhere in the SAME
- *     artifact (see ACCEPTANCE-CRITERIA INTERACTION below). A deliberately
- *     coarse-grained, documented simplification favoring fewer false
- *     positives over precise per-claim attribution.
+ *     appears with no measurable signal FOR THE SAME DIMENSION anywhere in
+ *     the artifact. DIMENSION-SCOPED, not generically artifact-wide (RTI-3
+ *     corrective - see MEASURABILITY MODEL below for why and how): a
+ *     performance term (fast/quick/quickly/slow/slowly/responsive/
+ *     performant/efficient) is only resolved by a duration/latency signal;
+ *     an availability term (available/reliable/scalable) is only resolved
+ *     by an uptime/availability-percentage or failure-rate signal. An
+ *     UNRELATED number elsewhere (a retry count, an HTTP status code, a
+ *     bare percentage with no uptime/availability context) never resolves
+ *     either - see ACCEPTANCE-CRITERIA INTERACTION below.
  *   UNVERIFIABLE_SUBJECTIVE_CLAIM (error) - an inherently SUBJECTIVE/
  *     emotional term (intuitive/user-friendly/delightful/pleasant/elegant/
- *     satisfying/appealing/easy to use) appears. Unlike
- *     MISSING_MEASURABLE_CRITERION, this is never suppressed merely because
- *     a measurable signal exists elsewhere in the artifact - no numeric
- *     threshold makes "delightful" objectively verifiable.
+ *     satisfying/appealing/easy to use) appears - "secure" is deliberately
+ *     included here too, not in the quantifiable-performance category: no
+ *     generic number makes "secure" objectively verifiable the way a
+ *     duration number makes "fast" verifiable (a security claim would need
+ *     an explicit control/standard reference, which this module does not
+ *     attempt to recognize). Unlike MISSING_MEASURABLE_CRITERION, this is
+ *     never suppressed merely because a measurable signal exists elsewhere
+ *     in the artifact, related dimension or not.
  *   VAGUE_QUALIFIER (warning) - a weaker, context-dependent qualifier
  *     (appropriate/reasonable/sufficient/as needed/as appropriate) appears.
  *     Lower confidence than MISSING_MEASURABLE_CRITERION (these words are
  *     frequently fine in context), so "warning" rather than "error" - it is
  *     reported but never blocks READY or changes status.
  *
+ * MEASURABILITY MODEL (dimension-scoped, RTI-3 corrective): the original
+ * design used ONE generic "does any measurable-looking signal exist
+ * anywhere in the artifact" check to resolve every quantifiable-vague term.
+ * Independent review found this topic-blind: an unrelated acceptance
+ * criterion containing ANY number ("retry up to 5 times", "Return HTTP
+ * 200") silently suppressed an unrelated vague PERFORMANCE claim ("should
+ * load quickly"), producing READY for a materially underspecified
+ * requirement. The corrective replaces the single generic signal check
+ * with two narrow, dimension-scoped signal patterns - DURATION_SIGNAL_PATTERN
+ * (seconds/ms/minutes/hours, optionally with a comparison/bound phrase) for
+ * PERFORMANCE_TERM_PATTERN, and AVAILABILITY_SIGNAL_PATTERN (a percentage
+ * tied to "uptime"/"availability" wording, or a "N failures/errors per M"
+ * ratio) for AVAILABILITY_TERM_PATTERN - each vague term category is only
+ * ever resolved by its own category's signal, never by an unrelated one. A
+ * bare percentage with no uptime/availability context ("95% of requests
+ * succeed") deliberately does NOT resolve either category - it says nothing
+ * about response time, and by itself is too generic to safely count as an
+ * availability commitment either. This remains deterministic, regex-only,
+ * bounded, and AI-free - it correlates *category*, never true semantic
+ * meaning; a genuinely on-topic but oddly-worded signal could still be
+ * conservatively unresolved, which is the intended, safer failure direction
+ * (see FALSE-NEGATIVE POLICY below).
+ *
  * ACCEPTANCE-CRITERIA INTERACTION: a precise, measurable acceptanceCriteria
  * entry resolves an otherwise-vague `content` claim about the SAME quality
  * dimension - "Search should be fast." + "95% of searches complete within
  * 2 seconds." produces NO MISSING_MEASURABLE_CRITERION finding at all (the
- * measurable-signal check is artifact-wide, see above).
- * UNVERIFIABLE_SUBJECTIVE_CLAIM is the one exception: it is never resolved
- * by a mere number and is always reported regardless of other evidence.
+ * duration signal is artifact-wide within the performance dimension, see
+ * above). An unrelated signal from a DIFFERENT dimension never resolves it
+ * - "Search should be fast." + "Users may retry login up to 5 times." (no
+ * duration signal anywhere) still reports MISSING_MEASURABLE_CRITERION.
+ * UNVERIFIABLE_SUBJECTIVE_CLAIM is never resolved by any number, related
+ * dimension or not, and is always reported regardless of other evidence.
+ *
+ * FALSE-NEGATIVE POLICY: when it is not clearly established that a
+ * measurable signal resolves a given vague claim, this module does NOT
+ * suppress the finding. A false positive (a genuinely fine requirement
+ * flagged for human review) is preferred over a false negative (an
+ * underspecified requirement silently marked READY) - a quality GATE that
+ * a future RTI-4 will trust must fail closed on uncertainty, not fail open.
  *
  * TYPE-AWARE SCOPE (deliberately minimal for the first RTI-3 phase): only
  * `content` and `acceptanceCriteria[].text` are analyzed - `title`,
@@ -175,12 +213,37 @@ const MAX_REPORTED_ERRORS = 20;
 // no nested unbounded repetition, no catastrophic-backtracking shape (see
 // this module's own docstring on regex safety).
 const PLACEHOLDER_PATTERN = /\b(TBD|TODO|TBC)\b|\?\?\?/i;
+
+// Generic "is there ANY numeric/measurable-looking signal anywhere" check -
+// used ONLY for the UNTESTABLE-vs-AMBIGUOUS boundary (deriveStatus() below:
+// does a subjective claim with no acceptanceCriteria have literally nothing
+// else quantitative in the artifact?). Never used to decide whether a
+// MISSING_MEASURABLE_CRITERION finding is suppressed - that decision is
+// dimension-scoped (see DURATION_SIGNAL_PATTERN/AVAILABILITY_SIGNAL_PATTERN
+// below and this module's own MEASURABILITY MODEL docstring section) to
+// close the topic-blind false-negative an independent review found in this
+// generic pattern's original, broader use.
 const MEASURABLE_SIGNAL_PATTERN =
   /\d+(\.\d+)?\s*(%|percent|ms|milliseconds?|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|requests?|attempts?|times?)\b|HTTP\s*\d{3}\b|status\s*code\s*\d{3}\b|[<>]=?\s*\d|between\s+\d+\s+and\s+\d+/i;
-const MEASURABLE_VAGUE_TERM_PATTERN =
-  /\b(fast|quick|quickly|slow|slowly|responsive|scalable|available|reliable|secure|performant|efficient)\b/i;
+
+// Dimension-scoped signal patterns (RTI-3 corrective) - each resolves ONLY
+// its own vague-term category, never a different one. Deliberately narrow:
+// a bare percentage/count/HTTP-status is never treated as evidence for a
+// dimension it says nothing about (see MEASURABILITY MODEL docstring).
+const DURATION_SIGNAL_PATTERN =
+  /(?:[<>]=?|no\s+more\s+than|at\s+most|within|no\s+later\s+than)?\s*\d+(\.\d+)?\s*(ms|milliseconds?|seconds?|secs?|minutes?|mins?|hours?|hrs?|s)\b/i;
+const AVAILABILITY_SIGNAL_PATTERN =
+  /\d+(\.\d+)?\s*%\s*(uptime|availab\w*)|\b(uptime|availab\w*)\b[^.]{0,20}?\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*(failures?|errors?)\s*per\s*\d+/i;
+
+const PERFORMANCE_TERM_PATTERN = /\b(fast|quick|quickly|slow|slowly|responsive|performant|efficient)\b/i;
+const AVAILABILITY_TERM_PATTERN = /\b(available|reliable|scalable)\b/i;
+
+// "secure" is deliberately NOT in a measurable-quantifiable category (see
+// MISSING_MEASURABLE_CRITERION / UNVERIFIABLE_SUBJECTIVE_CLAIM docstring
+// section above for why) - no generic number resolves it, so it lives here,
+// alongside the other never-suppressed subjective/emotional terms.
 const SUBJECTIVE_TERM_PATTERN =
-  /\b(intuitive|user-friendly|user\s+friendly|delightful|delight|pleasant|elegant|satisfying|appealing|easy\s+to\s+use|easy-to-use)\b/i;
+  /\b(intuitive|user-friendly|user\s+friendly|delightful|delight|pleasant|elegant|satisfying|appealing|easy\s+to\s+use|easy-to-use|secure)\b/i;
 const WEAK_QUALIFIER_PATTERN = /\b(appropriate|reasonable|sufficient)\b|as\s+needed|as\s+appropriate/i;
 
 function boundedDetail(errors) {
@@ -219,6 +282,14 @@ function hasMeasurableSignalAnywhere(targets) {
   return targets.some((t) => typeof t.text === "string" && MEASURABLE_SIGNAL_PATTERN.test(t.text));
 }
 
+function hasDurationSignalAnywhere(targets) {
+  return targets.some((t) => typeof t.text === "string" && DURATION_SIGNAL_PATTERN.test(t.text));
+}
+
+function hasAvailabilitySignalAnywhere(targets) {
+  return targets.some((t) => typeof t.text === "string" && AVAILABILITY_SIGNAL_PATTERN.test(t.text));
+}
+
 function issueKey(issue) {
   return `${issue.code}|${issue.field}|${issue.criterionId || ""}|${issue.criterionIndex === undefined ? "" : issue.criterionIndex}`;
 }
@@ -233,7 +304,10 @@ function pushIssue(issues, seen, issue) {
 // Rule order (deterministic, documented): for each target in
 // buildAnalysisTargets() order (content first, then acceptanceCriteria in
 // array order), placeholder findings before quality-wording findings.
-function analyzeTarget(target, measurableAnywhere, issues, seen) {
+// `signals` carries the two dimension-scoped, artifact-wide suppression
+// flags (see MEASURABILITY MODEL docstring) - never a single generic flag,
+// which is exactly the topic-blind shape an independent review found unsafe.
+function analyzeTarget(target, signals, issues, seen) {
   const { field, text, criterionId, criterionIndex } = target;
   if (typeof text !== "string") return;
   // Only include criterionId/criterionIndex when actually meaningful - an
@@ -253,11 +327,20 @@ function analyzeTarget(target, measurableAnywhere, issues, seen) {
     });
   }
 
-  if (!measurableAnywhere && MEASURABLE_VAGUE_TERM_PATTERN.test(text)) {
+  if (!signals.hasDurationSignal && PERFORMANCE_TERM_PATTERN.test(text)) {
     pushIssue(issues, seen, {
       code: "MISSING_MEASURABLE_CRITERION",
       severity: "error",
-      message: "Uses a quality term (e.g. fast/reliable/secure) with no measurable threshold anywhere in the requirement.",
+      message: "Uses a performance/quality term (e.g. fast/responsive) with no duration/latency threshold anywhere in the requirement.",
+      ...ref,
+    });
+  }
+
+  if (!signals.hasAvailabilitySignal && AVAILABILITY_TERM_PATTERN.test(text)) {
+    pushIssue(issues, seen, {
+      code: "MISSING_MEASURABLE_CRITERION",
+      severity: "error",
+      message: "Uses an availability/reliability term with no uptime, availability-percentage, or failure-rate threshold anywhere in the requirement.",
       ...ref,
     });
   }
@@ -312,11 +395,14 @@ function deriveStatus(artifact, targets, issues) {
 
 function runAnalysis(artifact) {
   const targets = buildAnalysisTargets(artifact);
-  const measurableAnywhere = hasMeasurableSignalAnywhere(targets);
+  const signals = {
+    hasDurationSignal: hasDurationSignalAnywhere(targets),
+    hasAvailabilitySignal: hasAvailabilitySignalAnywhere(targets),
+  };
   const issues = [];
   const seen = new Set();
   for (const target of targets) {
-    analyzeTarget(target, measurableAnywhere, issues, seen);
+    analyzeTarget(target, signals, issues, seen);
   }
   const status = deriveStatus(artifact, targets, issues);
   return Object.freeze({ artifactId: artifact.id, status, issues });
