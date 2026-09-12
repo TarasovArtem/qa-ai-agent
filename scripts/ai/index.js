@@ -53,6 +53,14 @@
  *   Roadmap RTI-3; no AI-assisted analysis and no test generation is
  *   exported here yet.
  *
+ *   generateTestDesign / generateTestDesigns - the RTI-4 deterministic
+ *   Test Design Generator: converts an RTI-3 READY RequirementArtifact into
+ *   generic TestDesignArtifact[] (see scripts/ai/test-design.js's own
+ *   docstring for the full contract, the RTI-3 READY gate, and the
+ *   no-invention invariant). Added by Roadmap RTI-4; no AI-assisted
+ *   generation, no executable test/automation output, and no test-
+ *   management-destination coupling is exported here yet.
+ *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
  * audit for the evidence this is based on):
@@ -96,6 +104,7 @@ const { assertValidRepositoryRoot } = require("./repository-root");
 const { assertValidRequirementArtifact } = require("./requirement-artifact");
 const { loadRequirementsFromFile } = require("./requirements-file");
 const { analyzeRequirementQuality, analyzeRequirementsQuality } = require("./requirement-quality");
+const { generateTestDesign, generateTestDesigns } = require("./test-design");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -110,4 +119,6 @@ module.exports = {
   loadRequirementsFromFile,
   analyzeRequirementQuality,
   analyzeRequirementsQuality,
+  generateTestDesign,
+  generateTestDesigns,
 };

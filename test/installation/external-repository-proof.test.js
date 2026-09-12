@@ -192,6 +192,20 @@ async function main() {
         result.qualityResults = api.analyzeRequirementsQuality(result.requirementArtifacts);
       });
     }
+  } else if (plan.mode === "testDesignComposition") {
+    await tryStep("loadRequirementsFromFile", () => {
+      result.requirementArtifacts = api.loadRequirementsFromFile({ repositoryRoot: plan.repositoryRoot, filePath: plan.requirementsFilePath });
+    });
+    if (result.requirementArtifacts) {
+      await tryStep("analyzeRequirementsQuality", () => {
+        result.qualityResults = api.analyzeRequirementsQuality(result.requirementArtifacts);
+      });
+    }
+    if (result.requirementArtifacts) {
+      await tryStep("generateTestDesigns", () => {
+        result.testDesigns = api.generateTestDesigns(result.requirementArtifacts);
+      });
+    }
   }
 
   fs.writeFileSync(plan.resultPath, JSON.stringify(result, null, 2));
@@ -406,6 +420,8 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "assertValidRequirementArtifact",
     "collectContext",
     "collectHistory",
+    "generateTestDesign",
+    "generateTestDesigns",
     "loadRequirementsFromFile",
   ]);
   assert.deepEqual(result.collectContextKeys, ["main", "runCli"]);
@@ -692,6 +708,71 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
     assert.equal(scalableUnresolved.artifactId, "REQ-SCALABLE-UNRESOLVED");
     assert.equal(scalableUnresolved.status, "AMBIGUOUS");
     assert.deepEqual(scalableUnresolved.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+// --- 8. Roadmap RTI-4: RTI-2 + RTI-3 + RTI-4 composition through the installed package ---
+
+test("RTI-4: loadRequirementsFromFile + analyzeRequirementsQuality + generateTestDesigns compose end to end through the installed package (external READY case)", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti4-target-compose-"));
+  try {
+    writeJson(targetRoot, "requirements/requirements.json", {
+      schemaVersion: 1,
+      requirements: [
+        {
+          id: "REQ-EXT-1",
+          type: "requirement",
+          title: "API response",
+          content: "When a valid request is submitted, the API returns HTTP 200.",
+        },
+      ],
+    });
+
+    const plan = { mode: "testDesignComposition", repositoryRoot: targetRoot, requirementsFilePath: "requirements/requirements.json" };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.fatalError, undefined, JSON.stringify(result));
+    assert.equal(result.steps.loadRequirementsFromFile.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.steps.analyzeRequirementsQuality.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.steps.generateTestDesigns.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.qualityResults[0].status, "READY");
+    assert.equal(result.testDesigns.length, 1);
+    assert.equal(result.testDesigns[0].requirementId, "REQ-EXT-1");
+    assert.equal(result.testDesigns[0].id, "REQ-EXT-1::test::1");
+    assert.match(result.testDesigns[0].objective, /When a valid request is submitted, the API returns HTTP 200\./);
+    const otherThreeDigitNumbers = (JSON.stringify(result.testDesigns).match(/\d{3}/g) || []).filter((n) => n !== "200");
+    assert.deepEqual(otherThreeDigitNumbers, [], "must never invent an additional HTTP status beyond the one explicitly in source");
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("RTI-4: an external non-READY requirement refuses test design generation through the installed package (fail closed, no partial result)", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti4-target-nonready-"));
+  try {
+    writeJson(targetRoot, "requirements/requirements.json", {
+      schemaVersion: 1,
+      requirements: [
+        {
+          id: "REQ-EXT-VAGUE",
+          type: "non-functional-requirement",
+          title: "Response performance",
+          content: "The API should respond quickly.",
+        },
+      ],
+    });
+
+    const plan = { mode: "testDesignComposition", repositoryRoot: targetRoot, requirementsFilePath: "requirements/requirements.json" };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.steps.loadRequirementsFromFile.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.steps.analyzeRequirementsQuality.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.qualityResults[0].status, "AMBIGUOUS");
+    assert.equal(result.steps.generateTestDesigns.ok, false);
+    assert.match(result.errors.generateTestDesigns, /TEST_DESIGN_REQUIREMENT_NOT_READY/);
+    assert.equal(result.testDesigns, undefined, "no partial test design output may be produced");
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
   }
