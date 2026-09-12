@@ -35,10 +35,16 @@
  *   assertValidRequirementArtifact - the RTI-1 fail-closed validator for
  *   the normalized, source-independent RequirementArtifact contract (see
  *   scripts/ai/requirement-artifact.js's own docstring). Added by Roadmap
- *   RTI-1; no RTI-2+ ingestion adapter or Test Design capability is
- *   exported here yet - this is the target's construction/validation seam
- *   for a future consumer, exactly mirroring the existing four validators'
- *   own role.
+ *   RTI-1; this is the target's construction/validation seam for a future
+ *   consumer, exactly mirroring the existing four validators' own role.
+ *
+ *   loadRequirementsFromFile - the RTI-2 file-source adapter: reads a
+ *   target-owned, explicitly-authorized JSON requirements file and returns
+ *   validated RequirementArtifact[] (see scripts/ai/requirements-file.js's
+ *   own docstring for the full file schema and filesystem-authority
+ *   contract). Added by Roadmap RTI-2; no other source adapter (Markdown,
+ *   YAML, PDF, DOCX, or any external issue-tracker integration) is exported
+ *   here yet.
  *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
@@ -81,6 +87,7 @@ const { assertValidFrameworkRuntimeConfig } = require("./framework-runtime-confi
 const { assertValidProjectKnowledgeConfig } = require("./project-knowledge-config");
 const { assertValidRepositoryRoot } = require("./repository-root");
 const { assertValidRequirementArtifact } = require("./requirement-artifact");
+const { loadRequirementsFromFile } = require("./requirements-file");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -92,4 +99,5 @@ module.exports = {
   assertValidProjectKnowledgeConfig,
   assertValidRepositoryRoot,
   assertValidRequirementArtifact,
+  loadRequirementsFromFile,
 };

@@ -179,6 +179,10 @@ async function main() {
     await tryStep("collectContext", () =>
       api.collectContext.runCli({ profile: plan.profile, repositoryRoot: plan.repositoryRoot, adapterOptions: { frameworkRuntimeConfig: plan.frameworkRuntimeConfig } })
     );
+  } else if (plan.mode === "requirements") {
+    await tryStep("loadRequirementsFromFile", () => {
+      result.requirementArtifacts = api.loadRequirementsFromFile({ repositoryRoot: plan.repositoryRoot, filePath: plan.requirementsFilePath });
+    });
   }
 
   fs.writeFileSync(plan.resultPath, JSON.stringify(result, null, 2));
@@ -391,6 +395,7 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "assertValidRequirementArtifact",
     "collectContext",
     "collectHistory",
+    "loadRequirementsFromFile",
   ]);
   assert.deepEqual(result.collectContextKeys, ["main", "runCli"]);
   assert.equal(result.deepImportBlocked, true, "a deep import into an unsupported internal path must be blocked by the exports field");
@@ -543,6 +548,60 @@ test("ID-2 SECURITY: a project-knowledge directory symlinked outside the externa
     assert.match(result.__stderr, /ADAPTER_PATH_OUTSIDE_REPOSITORY/);
     assert.equal(result.__stderr.includes("EXTERNAL_INSTALL_OUTSIDE_SECRET"), false);
     assert.equal(fs.existsSync(path.join(targetRoot, "reports", "ai", "ai-report.json")), false);
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// --- 6. Roadmap RTI-2: loadRequirementsFromFile works from the installed package ---
+
+test("RTI-2: loadRequirementsFromFile ingests a genuine external requirements file through the installed package", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti2-target-requirements-"));
+  try {
+    writeJson(targetRoot, "requirements/requirements.json", {
+      schemaVersion: 1,
+      requirements: [
+        {
+          id: "EXTERNAL-REQ-1",
+          type: "user-story",
+          title: "External install proof requirement",
+          content: "RTI2_EXTERNAL_INSTALL_SENTINEL",
+          acceptanceCriteria: [{ id: "AC-1", text: "The installed package normalizes this requirement." }],
+        },
+      ],
+    });
+
+    const plan = { mode: "requirements", repositoryRoot: targetRoot, requirementsFilePath: "requirements/requirements.json" };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.fatalError, undefined, JSON.stringify(result));
+    assert.equal(result.steps.loadRequirementsFromFile.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.requirementArtifacts.length, 1);
+    const [artifact] = result.requirementArtifacts;
+    assert.equal(artifact.id, "EXTERNAL-REQ-1");
+    assert.equal(artifact.content, "RTI2_EXTERNAL_INSTALL_SENTINEL");
+    assert.deepEqual(artifact.source, { type: "file", sourceId: "EXTERNAL-REQ-1", location: "requirements/requirements.json" });
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("RTI-2 SECURITY: loadRequirementsFromFile rejects an outside-root requirements path from the installed package, sentinel never leaks", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti2-target-outside-"));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "rti2-outside-secret-"));
+  try {
+    writeJson(outsideDir, "secret.json", {
+      schemaVersion: 1,
+      requirements: [{ id: "OUTSIDE-1", type: "requirement", title: "t", content: "RTI2_OUTSIDE_SECRET_MUST_NOT_LEAK" }],
+    });
+
+    const plan = { mode: "requirements", repositoryRoot: targetRoot, requirementsFilePath: path.join(outsideDir, "secret.json") };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.steps.loadRequirementsFromFile.ok, false);
+    assert.match(result.errors.loadRequirementsFromFile, /REQUIREMENTS_FILE_OUTSIDE_ROOT/);
+    assert.equal(result.errors.loadRequirementsFromFile.includes("RTI2_OUTSIDE_SECRET_MUST_NOT_LEAK"), false);
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
     fs.rmSync(outsideDir, { recursive: true, force: true });

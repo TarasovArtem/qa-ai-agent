@@ -99,6 +99,7 @@ const FPI2_TARGET_RUNTIME_FILES = [
   "collect-history.js",
   "analyze-failure.js",
   "aggregate-browser-context.js",
+  "requirements-file.js",
   path.join("adapters", "cypress-adapter.js"),
   path.join("adapters", "playwright-adapter.js"),
 ];
