@@ -124,13 +124,25 @@
  * shape, or an invalid artifact all fail with a stable, bounded, path-free
  * error - never a partial parse, a guessed default, or AI-assisted repair.
  *
- * IMMUTABLE, NON-MUTATING, DETERMINISTIC: raw parsed objects are never
- * mutated in place - every normalized artifact is a freshly constructed,
- * frozen object built by copying only explicitly allowed fields (see
- * RAW_REQUIREMENT_ALLOWED_KEYS below), preserving file order throughout. No
- * requirement or acceptance-criterion id is ever generated - a missing id
- * fails validation rather than being synthesized. Reading the identical
- * file twice, from any process.cwd(), yields deep-equal output.
+ * NON-MUTATING, SHALLOW-FROZEN, DETERMINISTIC (independent review, RTI-2
+ * corrective - the original wording here overclaimed full/deep immutability):
+ *   - the raw parsed file data is never mutated by normalization - every
+ *     normalized artifact is a FRESHLY CONSTRUCTED object, built by copying
+ *     only explicitly allowed fields (see RAW_REQUIREMENT_ALLOWED_KEYS
+ *     below), never the original parsed object;
+ *   - the returned top-level artifact object is frozen (Object.freeze()),
+ *     and so is artifact.source;
+ *   - nested values - acceptanceCriteria[]/relationships[]/labels/metadata,
+ *     and any entries or objects within them - are NOT deep-frozen and
+ *     remain mutable after return. Deep immutability is not currently part
+ *     of this module's contract; no security or correctness invariant here
+ *     depends on it, and RTI-1's own contract already treats freezing as a
+ *     caller convention, not something it enforces (see
+ *     requirement-artifact.js's own "IMMUTABILITY CONVENTION" docstring).
+ * File order is preserved throughout. No requirement or acceptance-
+ * criterion id is ever generated - a missing id fails validation rather
+ * than being synthesized. Reading the identical file twice, from any
+ * process.cwd(), yields deep-equal output.
  *
  * SYNC, DEPENDENCY-FREE: matching every other filesystem-touching module in
  * this directory (scripts/ai/knowledge/loader.js, scripts/ai/collect-
@@ -433,7 +445,9 @@ function parseAndNormalizeRequirements(rawText, location) {
  * authority, provenance, and collection-level-rule contract.
  *
  * @param {{repositoryRoot: string, filePath: string}} options
- * @returns {object[]} validated, frozen RequirementArtifact[] in file order
+ * @returns {object[]} validated RequirementArtifact[] in file order - each
+ *   top-level artifact and its `source` are shallow-frozen; nested
+ *   collections/metadata are not deep-frozen (see module docstring)
  */
 function loadRequirementsFromFile({ repositoryRoot, filePath } = {}) {
   const { raw, location } = readRequirementsFileBytes(repositoryRoot, filePath);
