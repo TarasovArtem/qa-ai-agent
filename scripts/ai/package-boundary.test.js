@@ -70,6 +70,10 @@ test("RTI-2 package content: the file requirements ingestion module is included"
   assert.ok(files().includes("scripts/ai/requirements-file.js"));
 });
 
+test("RTI-3 package content: the requirement quality analysis module is included", () => {
+  assert.ok(files().includes("scripts/ai/requirement-quality.js"));
+});
+
 test("ID-1 package content: adapters, providers, and context-utils (internal dependencies of the entrypoints) are included", () => {
   const f = files();
   assert.ok(f.includes("scripts/ai/adapters/cypress-adapter.js"));

@@ -183,6 +183,15 @@ async function main() {
     await tryStep("loadRequirementsFromFile", () => {
       result.requirementArtifacts = api.loadRequirementsFromFile({ repositoryRoot: plan.repositoryRoot, filePath: plan.requirementsFilePath });
     });
+  } else if (plan.mode === "requirementsQualityComposition") {
+    await tryStep("loadRequirementsFromFile", () => {
+      result.requirementArtifacts = api.loadRequirementsFromFile({ repositoryRoot: plan.repositoryRoot, filePath: plan.requirementsFilePath });
+    });
+    if (result.requirementArtifacts) {
+      await tryStep("analyzeRequirementsQuality", () => {
+        result.qualityResults = api.analyzeRequirementsQuality(result.requirementArtifacts);
+      });
+    }
   }
 
   fs.writeFileSync(plan.resultPath, JSON.stringify(result, null, 2));
@@ -388,6 +397,8 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
   assert.deepEqual(result.apiKeys, [
     "aggregateBrowserContext",
     "analyzeFailure",
+    "analyzeRequirementQuality",
+    "analyzeRequirementsQuality",
     "assertValidFrameworkRuntimeConfig",
     "assertValidProjectKnowledgeConfig",
     "assertValidProjectProfile",
@@ -605,5 +616,83 @@ test("RTI-2 SECURITY: loadRequirementsFromFile rejects an outside-root requireme
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
     fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// --- 7. Roadmap RTI-3: RTI-1 + RTI-2 + RTI-3 composition through the installed package ---
+
+test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end to end through the installed package", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti3-target-compose-"));
+  try {
+    writeJson(targetRoot, "requirements/requirements.json", {
+      schemaVersion: 1,
+      requirements: [
+        {
+          id: "REQ-READY",
+          type: "user-story",
+          title: "Login returns HTTP 200",
+          content: "The API must return HTTP 200 when valid credentials are supplied.",
+          acceptanceCriteria: [{ text: "Given valid credentials, the API returns HTTP 200." }],
+        },
+        {
+          id: "REQ-AMBIGUOUS",
+          type: "non-functional-requirement",
+          title: "Search performance",
+          content: "The search results should load quickly.",
+        },
+        {
+          id: "REQ-UNRELATED-SIGNAL",
+          type: "non-functional-requirement",
+          title: "Response performance",
+          content: "The API should respond quickly.",
+          acceptanceCriteria: [{ text: "Return HTTP 200 on success." }],
+        },
+        {
+          id: "REQ-SCALABLE-UNRESOLVED",
+          type: "non-functional-requirement",
+          title: "Scalability",
+          content: "The system should be scalable.",
+          acceptanceCriteria: [{ text: "99.9% uptime." }],
+        },
+      ],
+    });
+
+    const plan = { mode: "requirementsQualityComposition", repositoryRoot: targetRoot, requirementsFilePath: "requirements/requirements.json" };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.fatalError, undefined, JSON.stringify(result));
+    assert.equal(result.steps.loadRequirementsFromFile.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.steps.analyzeRequirementsQuality.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.requirementArtifacts.length, 4);
+    assert.equal(result.qualityResults.length, 4);
+
+    const [ready, ambiguous, unrelatedSignal, scalableUnresolved] = result.qualityResults;
+    assert.equal(ready.artifactId, "REQ-READY");
+    assert.equal(ready.status, "READY");
+    assert.deepEqual(ready.issues, []);
+
+    assert.equal(ambiguous.artifactId, "REQ-AMBIGUOUS");
+    assert.equal(ambiguous.status, "AMBIGUOUS");
+    assert.deepEqual(ambiguous.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
+    assert.equal(/\d/.test(JSON.stringify(ambiguous)), false, "must never invent a numeric threshold");
+
+    // RTI-3 corrective proof, exercised through the genuinely installed
+    // package (not just the internal unit test suite): an unrelated HTTP
+    // status code in an acceptance criterion must never suppress a vague
+    // performance claim about a different dimension - this must NOT be
+    // READY.
+    assert.equal(unrelatedSignal.artifactId, "REQ-UNRELATED-SIGNAL");
+    assert.equal(unrelatedSignal.status, "AMBIGUOUS");
+    assert.deepEqual(unrelatedSignal.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
+
+    // RTI-3 second corrective proof, exercised through the genuinely
+    // installed package: an uptime percentage must never resolve a
+    // scalability claim - uptime says nothing about capacity/throughput
+    // under increasing load. This must NOT be READY.
+    assert.equal(scalableUnresolved.artifactId, "REQ-SCALABLE-UNRESOLVED");
+    assert.equal(scalableUnresolved.status, "AMBIGUOUS");
+    assert.deepEqual(scalableUnresolved.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
   }
 });

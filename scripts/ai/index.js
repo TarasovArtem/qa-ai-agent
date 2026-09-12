@@ -46,6 +46,13 @@
  *   YAML, PDF, DOCX, or any external issue-tracker integration) is exported
  *   here yet.
  *
+ *   analyzeRequirementQuality / analyzeRequirementsQuality - the RTI-3
+ *   deterministic requirement quality/testability analyzer (see
+ *   scripts/ai/requirement-quality.js's own docstring for the full status
+ *   model, issue vocabulary, and no-hallucination invariant). Added by
+ *   Roadmap RTI-3; no AI-assisted analysis and no test generation is
+ *   exported here yet.
+ *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
  * audit for the evidence this is based on):
@@ -88,6 +95,7 @@ const { assertValidProjectKnowledgeConfig } = require("./project-knowledge-confi
 const { assertValidRepositoryRoot } = require("./repository-root");
 const { assertValidRequirementArtifact } = require("./requirement-artifact");
 const { loadRequirementsFromFile } = require("./requirements-file");
+const { analyzeRequirementQuality, analyzeRequirementsQuality } = require("./requirement-quality");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -100,4 +108,6 @@ module.exports = {
   assertValidRepositoryRoot,
   assertValidRequirementArtifact,
   loadRequirementsFromFile,
+  analyzeRequirementQuality,
+  analyzeRequirementsQuality,
 };
