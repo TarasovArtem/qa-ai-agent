@@ -206,6 +206,31 @@ async function main() {
         result.testDesigns = api.generateTestDesigns(result.requirementArtifacts);
       });
     }
+  } else if (plan.mode === "traceabilityCoverageComposition") {
+    await tryStep("loadRequirementsFromFile", () => {
+      result.requirementArtifacts = api.loadRequirementsFromFile({ repositoryRoot: plan.repositoryRoot, filePath: plan.requirementsFilePath });
+    });
+    if (result.requirementArtifacts) {
+      await tryStep("analyzeRequirementsQuality", () => {
+        result.qualityResults = api.analyzeRequirementsQuality(result.requirementArtifacts);
+      });
+    }
+    if (result.requirementArtifacts) {
+      await tryStep("generateTestDesigns", () => {
+        result.testDesigns = api.generateTestDesigns(result.requirementArtifacts);
+      });
+    }
+    if (result.requirementArtifacts && result.testDesigns) {
+      const suppliedTestDesigns = plan.coverageTestDesignIndexes
+        ? plan.coverageTestDesignIndexes.map((i) => result.testDesigns[i])
+        : result.testDesigns;
+      await tryStep("buildRequirementTraceability", () => {
+        result.traceabilityLinks = api.buildRequirementTraceability(result.requirementArtifacts, suppliedTestDesigns);
+      });
+      await tryStep("analyzeRequirementsCoverage", () => {
+        result.coverageResults = api.analyzeRequirementsCoverage(result.requirementArtifacts, suppliedTestDesigns);
+      });
+    }
   }
 
   fs.writeFileSync(plan.resultPath, JSON.stringify(result, null, 2));
@@ -412,12 +437,14 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "aggregateBrowserContext",
     "analyzeFailure",
     "analyzeRequirementQuality",
+    "analyzeRequirementsCoverage",
     "analyzeRequirementsQuality",
     "assertValidFrameworkRuntimeConfig",
     "assertValidProjectKnowledgeConfig",
     "assertValidProjectProfile",
     "assertValidRepositoryRoot",
     "assertValidRequirementArtifact",
+    "buildRequirementTraceability",
     "collectContext",
     "collectHistory",
     "generateTestDesign",
@@ -773,6 +800,95 @@ test("RTI-4: an external non-READY requirement refuses test design generation th
     assert.equal(result.steps.generateTestDesigns.ok, false);
     assert.match(result.errors.generateTestDesigns, /TEST_DESIGN_REQUIREMENT_NOT_READY/);
     assert.equal(result.testDesigns, undefined, "no partial test design output may be produced");
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+// --- 9. Roadmap RTI-5: RTI-2 + RTI-3 + RTI-4 + RTI-5 composition through the installed package ---
+
+test("RTI-5: loadRequirementsFromFile + analyzeRequirementsQuality + generateTestDesigns + buildRequirementTraceability/analyzeRequirementsCoverage compose end to end through the installed package (external full-coverage case)", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti5-target-full-"));
+  try {
+    writeJson(targetRoot, "requirements/requirements.json", {
+      schemaVersion: 1,
+      requirements: [
+        {
+          id: "REQ-EXT-COV",
+          type: "requirement",
+          title: "Login",
+          content: "The system enforces access control.",
+          acceptanceCriteria: [
+            { id: "AC-1", text: "When valid credentials are supplied, the API returns HTTP 200." },
+            { id: "AC-2", text: "When invalid credentials are supplied, the API returns HTTP 401." },
+          ],
+        },
+      ],
+    });
+
+    const plan = { mode: "traceabilityCoverageComposition", repositoryRoot: targetRoot, requirementsFilePath: "requirements/requirements.json" };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.fatalError, undefined, JSON.stringify(result));
+    assert.equal(result.steps.generateTestDesigns.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.steps.buildRequirementTraceability.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.steps.analyzeRequirementsCoverage.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.testDesigns.length, 2);
+    assert.equal(result.traceabilityLinks.length, 2);
+
+    const [coverage] = result.coverageResults;
+    assert.equal(coverage.requirementId, "REQ-EXT-COV");
+    assert.equal(coverage.status, "FULLY_COVERED");
+    assert.equal(coverage.totalCriteria, 2);
+    assert.equal(coverage.coveredCriteria, 2);
+    assert.equal(coverage.uncoveredCriteria, 0);
+    assert.deepEqual(coverage.unmappedTestDesignIds, []);
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("RTI-5: passing only a subset of the installed package's own generated test designs into analyzeRequirementsCoverage produces PARTIALLY_COVERED (coverage analyzes exactly what was supplied)", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rti5-target-partial-"));
+  try {
+    writeJson(targetRoot, "requirements/requirements.json", {
+      schemaVersion: 1,
+      requirements: [
+        {
+          id: "REQ-EXT-PARTIAL",
+          type: "requirement",
+          title: "Login",
+          content: "The system enforces access control.",
+          acceptanceCriteria: [
+            { id: "AC-1", text: "When valid credentials are supplied, the API returns HTTP 200." },
+            { id: "AC-2", text: "When invalid credentials are supplied, the API returns HTTP 401." },
+          ],
+        },
+      ],
+    });
+
+    // Deliberately supply only the FIRST generated design to coverage
+    // analysis - proves RTI-5 analyzes exactly the testDesigns[] it was
+    // given, never assuming RTI-4 always generated a complete set.
+    const plan = {
+      mode: "traceabilityCoverageComposition",
+      repositoryRoot: targetRoot,
+      requirementsFilePath: "requirements/requirements.json",
+      coverageTestDesignIndexes: [0],
+    };
+    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+    assert.equal(result.fatalError, undefined, JSON.stringify(result));
+    assert.equal(result.steps.analyzeRequirementsCoverage.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.testDesigns.length, 2, "RTI-4 still generated both designs");
+    assert.equal(result.traceabilityLinks.length, 1, "but only one was supplied to RTI-5");
+
+    const [coverage] = result.coverageResults;
+    assert.equal(coverage.status, "PARTIALLY_COVERED");
+    assert.equal(coverage.coveredCriteria, 1);
+    assert.equal(coverage.uncoveredCriteria, 1);
+    assert.equal(coverage.criteria.find((c) => c.criterionId === "AC-1").covered, true);
+    assert.equal(coverage.criteria.find((c) => c.criterionId === "AC-2").covered, false);
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
   }
