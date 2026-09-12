@@ -17,7 +17,7 @@ const assert = require("node:assert/strict");
 
 const api = require("./index");
 
-test("ID-1/RTI-1/RTI-2/RTI-3 public API: exposes exactly the four namespaced pipeline entrypoints, the five fail-closed validators, the RTI-2 file ingestion adapter, and the RTI-3 quality analyzers", () => {
+test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4 public API: exposes exactly the four namespaced pipeline entrypoints, the five fail-closed validators, the RTI-2 file ingestion adapter, the RTI-3 quality analyzers, and the RTI-4 test design generators", () => {
   assert.deepEqual(Object.keys(api).sort(), [
     "aggregateBrowserContext",
     "analyzeFailure",
@@ -30,6 +30,8 @@ test("ID-1/RTI-1/RTI-2/RTI-3 public API: exposes exactly the four namespaced pip
     "assertValidRequirementArtifact",
     "collectContext",
     "collectHistory",
+    "generateTestDesign",
+    "generateTestDesigns",
     "loadRequirementsFromFile",
   ]);
 });
@@ -75,6 +77,11 @@ test("RTI-3 public API: analyzeRequirementQuality and analyzeRequirementsQuality
   assert.equal(typeof api.analyzeRequirementsQuality, "function");
 });
 
+test("RTI-4 public API: generateTestDesign and generateTestDesigns are present and callable", () => {
+  assert.equal(typeof api.generateTestDesign, "function");
+  assert.equal(typeof api.generateTestDesigns, "function");
+});
+
 test("ID-1 public API: exported main() functions are the exact same function references as the internal modules' own exports (no wrapping)", () => {
   assert.equal(api.collectContext.main, require("./collect-context").main);
   assert.equal(api.collectContext.runCli, require("./collect-context").runCli);
@@ -89,6 +96,8 @@ test("ID-1 public API: exported main() functions are the exact same function ref
   assert.equal(api.loadRequirementsFromFile, require("./requirements-file").loadRequirementsFromFile);
   assert.equal(api.analyzeRequirementQuality, require("./requirement-quality").analyzeRequirementQuality);
   assert.equal(api.analyzeRequirementsQuality, require("./requirement-quality").analyzeRequirementsQuality);
+  assert.equal(api.generateTestDesign, require("./test-design").generateTestDesign);
+  assert.equal(api.generateTestDesigns, require("./test-design").generateTestDesigns);
 });
 
 // --- Deliberate exclusions (see index.js's own docstring for rationale) ----
@@ -126,6 +135,11 @@ test("ID-1 public API: internal implementation helpers are NOT part of the publi
     "buildAnalysisTargets",
     "deriveStatus",
     "analyzeTarget",
+    "buildTestDesigns",
+    "buildFromCriterion",
+    "buildFromContent",
+    "buildSourceRef",
+    "assertNoDuplicateCriterionIds",
   ];
   for (const name of forbidden) {
     assert.equal(name in api, false, `"${name}" must not be part of the public surface`);
@@ -151,7 +165,7 @@ test("ID-1 public API: the barrel module introduces no new filesystem write auth
   assert.equal(/writeFileSync|mkdirSync|appendFileSync|resolveSafeRepositoryWritePath/.test(source), false);
 });
 
-test("RTI-1/RTI-2/RTI-3 public API: no external requirement-source system is coupled into the public surface or its own source text", () => {
+test("RTI-1/RTI-2/RTI-3/RTI-4 public API: no external requirement-source system is coupled into the public surface or its own source text", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const forbiddenSystems = ["jira", "xray", "testrail", "azure devops", "azure-devops", "zephyr", "polarion"];
@@ -163,11 +177,23 @@ test("RTI-1/RTI-2/RTI-3 public API: no external requirement-source system is cou
   const contractSource = fs.readFileSync(path.join(__dirname, "requirement-artifact.js"), "utf8").toLowerCase();
   const fileAdapterSource = fs.readFileSync(path.join(__dirname, "requirements-file.js"), "utf8").toLowerCase();
   const qualitySource = fs.readFileSync(path.join(__dirname, "requirement-quality.js"), "utf8").toLowerCase();
+  const testDesignSource = fs.readFileSync(path.join(__dirname, "test-design.js"), "utf8").toLowerCase();
   for (const system of forbiddenSystems) {
     assert.equal(indexSource.includes(system), false, `"${system}" must not appear in index.js`);
     assert.equal(contractSource.includes(system), false, `"${system}" must not appear in requirement-artifact.js`);
     assert.equal(fileAdapterSource.includes(system), false, `"${system}" must not appear in requirements-file.js`);
     assert.equal(qualitySource.includes(system), false, `"${system}" must not appear in requirement-quality.js`);
+    assert.equal(testDesignSource.includes(system), false, `"${system}" must not appear in test-design.js`);
+  }
+});
+
+test("RTI-4 public API: no test-management-destination system is coupled into the public surface or its own source text", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const forbiddenDestinations = ["testrail", "xray", "zephyr", "azure devops", "azure-devops"];
+  const testDesignSource = fs.readFileSync(path.join(__dirname, "test-design.js"), "utf8").toLowerCase();
+  for (const dest of forbiddenDestinations) {
+    assert.equal(testDesignSource.includes(dest), false, `"${dest}" must not appear in test-design.js`);
   }
 });
 
@@ -181,5 +207,18 @@ test("RTI-3 public API: quality analysis behavior does not depend on artifact.so
   };
   const viaFile = analyzeRequirementQuality({ ...base, source: { type: "file", location: "x.json" } });
   const viaFutureSystem = analyzeRequirementQuality({ ...base, source: { type: "future-system", location: "x" } });
+  assert.deepEqual(JSON.parse(JSON.stringify(viaFile)), JSON.parse(JSON.stringify(viaFutureSystem)));
+});
+
+test("RTI-4 public API: test design generation does not depend on artifact.source.type (source independence)", () => {
+  const { generateTestDesign } = require("./test-design");
+  const base = {
+    id: "REQ-SRC-EQUIV-TD",
+    type: "requirement",
+    title: "T",
+    content: "Return HTTP 200.",
+  };
+  const viaFile = generateTestDesign({ ...base, source: { type: "file", location: "x.json" } });
+  const viaFutureSystem = generateTestDesign({ ...base, source: { type: "future-system", location: "x" } });
   assert.deepEqual(JSON.parse(JSON.stringify(viaFile)), JSON.parse(JSON.stringify(viaFutureSystem)));
 });

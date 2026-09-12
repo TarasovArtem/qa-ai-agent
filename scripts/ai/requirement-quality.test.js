@@ -502,11 +502,10 @@ test("RTI-3 corrective: status derivation precedence remains unchanged (UNTESTAB
   assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION", "PLACEHOLDER_TEXT", "VAGUE_QUALIFIER"]);
 });
 
-test("RTI-3 corrective: public API surface unchanged at 12 symbols (checked via the barrel)", () => {
+test("RTI-3 corrective: analyzeRequirementQuality/analyzeRequirementsQuality remain present on the barrel (exact total surface size is index.test.js's own authority, not asserted redundantly here)", () => {
   const api = require("./index");
   assert.equal(typeof api.analyzeRequirementQuality, "function");
   assert.equal(typeof api.analyzeRequirementsQuality, "function");
-  assert.equal(Object.keys(api).length, 12);
 });
 
 // --- RTI-3 second corrective: scalability isolation + duration regex hardening ---

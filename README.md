@@ -723,9 +723,9 @@ These are all legitimate, separate product-maturity and release-operationalizati
 
 ## Roadmap RTI — Requirements & Test-Design Integration
 
-**Status: RTI-1 and RTI-2 complete on `main`. RTI-3 (Requirement Quality/Testability Analysis) implemented, second corrective applied, awaiting independent corrective re-review (not merged). ID-3 planning remains complete but its implementation is explicitly deferred in priority behind this arc - see below.**
+**Status: RTI-1, RTI-2, and RTI-3 complete on `main`. RTI-4 (Test Design Generation) implemented, awaiting independent review (not merged). ID-3 planning remains complete but its implementation is explicitly deferred in priority behind this arc - see below.**
 
-A product arc, scheduled ahead of `ID-3` implementation (no conflict: `ID-3` had not begun any implementation when this decision was made). Full arc: `RTI-1` Requirement Artifact Contract → `RTI-2` File Requirements Ingestion → `RTI-3` Requirement Quality/Testability Analysis → `RTI-4` Test Design Generation → `RTI-5` Requirement↔Test Traceability/Coverage → `RTI-6` External Requirement Source Provider Contract → `RTI-7` Jira/Xray/Azure DevOps/TestRail adapters → `RTI-8` Test Case Publishing/Destinations. `RTI-1`, `RTI-2`, and `RTI-3` are implemented; `RTI-4` and later are not started.
+A product arc, scheduled ahead of `ID-3` implementation (no conflict: `ID-3` had not begun any implementation when this decision was made). Full arc: `RTI-1` Requirement Artifact Contract → `RTI-2` File Requirements Ingestion → `RTI-3` Requirement Quality/Testability Analysis → `RTI-4` Test Design Generation → `RTI-5` Requirement↔Test Traceability/Coverage → `RTI-6` External Requirement Source Provider Contract → `RTI-7` Jira/Xray/Azure DevOps/TestRail adapters → `RTI-8` Test Case Publishing/Destinations. `RTI-1` through `RTI-4` are implemented; `RTI-5` and later are not started. Once the full arc (`RTI-1`-`RTI-8`) reaches `COMPLETE_ON_MAIN`, an RTI Integrated Architecture/Security/Quality Audit and a Full Project Strict Audit are both mandatory before any next major phase - not yet due.
 
 ### RTI-1 — Requirement Artifact Contract
 
@@ -788,6 +788,34 @@ const result = analyzeRequirementQuality({
 **Scope**: single-artifact analysis only - cross-artifact contradiction/duplicate-intent detection would require a semantic graph this module does not have and is explicitly out of scope. Only `content` and `acceptanceCriteria[].text` are analyzed (not `title`, `priority`, `labels`, `metadata`, `contentHash`, or `relationships`). `assertValidRequirementArtifact()` runs before any property of the input is read, so a hostile/malformed artifact is rejected by RTI-1 before any quality rule ever executes. `artifact.source.type` never influences the result - quality analysis is source-independent by construction. The result is shallow-frozen (the top-level object only; `issues` and its entries are not deep-frozen) - stated exactly that way from the start, applying the lesson of RTI-2's own documentation corrective rather than repeating it.
 
 No AI, no test generation, no requirement rewriting, and no cross-artifact/traceability capability is implemented here.
+
+### RTI-4 — Test Design Generation
+
+Introduces `generateTestDesign(artifact)` and `generateTestDesigns(artifacts)` (`scripts/ai/test-design.js`), the first deterministic layer that converts an RTI-3 `READY` `RequirementArtifact` into generic `TestDesignArtifact[]` - the thirteenth and fourteenth public exports.
+
+```javascript
+const { generateTestDesign } = require("qa-ai-agent");
+
+const designs = generateTestDesign({
+  id: "REQ-42", type: "requirement", title: "Login",
+  content: "When valid credentials are supplied, the API returns HTTP 200.",
+  source: { type: "file", location: "requirements.json" },
+});
+// designs: [{
+//   id: "REQ-42::test::1", requirementId: "REQ-42", title: "Login",
+//   objective: "Verify that: When valid credentials are supplied, the API returns HTTP 200.",
+//   expectedResults: ["When valid credentials are supplied, the API returns HTTP 200."],
+//   source: { requirementId: "REQ-42" }
+// }]
+```
+
+**The central invariant**: RTI-4 may transform requirement semantics that are explicitly present in the source - it never invents a missing timeout, HTTP status, actor, negative/boundary case, or procedural UI/API step. `generateTestDesign` returns an *array*, since one requirement legitimately produces multiple test designs when acceptance criteria are present.
+
+**RTI-3 is the sole quality authority - a hard gate, not a suggestion**: every call runs `assertValidRequirementArtifact()` (RTI-1) then `analyzeRequirementQuality()` (RTI-3) and requires `status === "READY"`; `PARTIALLY_TESTABLE`/`AMBIGUOUS`/`MISSING_INFORMATION`/`UNTESTABLE` all refuse generation with `TEST_DESIGN_REQUIREMENT_NOT_READY`, never a partial or repaired result. RTI-4 never duplicates any RTI-3 rule vocabulary (no local copy of vague-term/placeholder/measurability logic).
+
+**Generation model**: one `TestDesignArtifact` per `acceptanceCriteria[]` entry (in array order) when criteria exist; exactly one, derived directly from `content`, when they do not. Deterministic id: `` `${requirementId}::test::${ordinal}` `` (1-based position - never `Math.random()`/a UUID/`Date.now()`). Every design carries `requirementId` and, when generated from a criterion, either its `criterionId` (when the source criterion had one) or a positional `criterionIndex` fallback - never a fabricated id - so a future RTI-5 can compute criterion coverage without parsing generated text. Two acceptance criteria sharing the same id within one artifact fail generation closed (`TEST_DESIGN_GENERATION_FAILED`) rather than emit ambiguous provenance.
+
+**Deliberately excluded from this MVP contract** (not present-but-empty - genuinely absent, since `RequirementArtifact` has no legitimate source data for them): `steps`/`preconditions` (no structured procedural field exists in RTI-1 to extract them from - inventing steps would violate the central invariant), `testType`, translated `priority`/`labels`, and any automatically-generated negative-path, boundary-value, or equivalence-partition test. `artifact.source.type` is never read - generation is identical regardless of requirement origin. No framework coupling (no Playwright/Cypress/automation code) and no test-management-destination coupling (no TestRail/Xray/Zephyr/Azure DevOps field names) - both remain out of scope for future RTI-8. No `assertValidTestDesignArtifact` validator is exported in this MVP - unlike `RequirementArtifact`, a `TestDesignArtifact` is only ever produced in-process by this module itself, and no external untrusted-input consumer exists yet (RTI-5/RTI-8 are not implemented) to justify one; deferred until a real caller proves the actual shape needed, matching RTI-1's own precedent for its deferred collection validator.
 
 ## Project structure
 
@@ -1229,7 +1257,8 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 - **`ROADMAP_FPI_FINAL_STATUS_DOCUMENTATION`: COMPLETE_ON_MAIN** - independently reviewed (approved) and merged, PR #133.
 - **`ROADMAP_RTI1_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - the `RequirementArtifact` contract and validator, independently reviewed (one corrective cycle: nested `acceptanceCriteria[]`/`relationships[]` entries originally used a lighter validation tier than the outer artifact/`source`, empirically permitting hostile-getter execution and an uncaught exception escaping `validateRequirementArtifact()`; a narrow corrective reused the exact same hardening primitives for nested entries with no contract/schema change, and every reviewer-discovered attack now has permanent regression coverage) and merged to `main` (PR #134, merge commit `a08ab8f0714244631d5cb35281ad197a761455c8`).
 - **`ROADMAP_RTI2_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - `loadRequirementsFromFile`, the first `RequirementArtifact[]` file-source adapter, independently reviewed (one documentation-only corrective: the module's own docstring originally claimed unqualified "IMMUTABLE"/"frozen object" semantics, but only the top-level artifact and its `source` are actually frozen; the docstring was corrected to describe the actual shallow-freeze behavior, no runtime code/schema/public API changed) and merged to `main` (PR #135, merge commit `e6d56bc7ea5b4fcb027e8ab56b5c87a54276ec1d`).
-- **`ROADMAP_RTI3_TECHNICAL_WORK`: IMPLEMENTED, SECOND CORRECTIVE APPLIED, AWAITING INDEPENDENT CORRECTIVE RE-REVIEW** - `analyzeRequirementQuality`/`analyzeRequirementsQuality`, the first deterministic requirement quality/testability analyzer; not yet merged, not self-approved. First independent review approved input safety, source-artifact immutability, the no-hallucination boundary, status derivation, source independence, the public API, and the package boundary, and refused merge for one MEDIUM rule-correctness defect (topic-blind measurable-signal suppression), closed by a first corrective (dimension-scoped signal patterns; `"secure"` moved to the never-suppressed subjective category). A subsequent focused adversarial red-team review then found two further MEDIUM false-negative gaps surviving that corrective: (a) `"scalable"` had been grouped with availability/reliability and was incorrectly resolved by uptime/failure-rate evidence, which says nothing about capacity/throughput under increasing load; (b) the first corrective's own newly-added bare `"s"` duration unit matched ordinary technical identifiers ending in `"<digit>s"` (version tags, cloud instance types, build tags - e.g. `"g2s.large"`), trivially and unsafely resolving an unrelated performance claim. A second, equally narrow corrective made `"scalable"` its own never-auto-resolved category and removed the bare `"s"` unit (keeping only explicit unit words); every reviewer-discovered false negative across both correctives now has permanent regression coverage, including through the genuinely installed package. No change to RTI-1, RTI-2, the public API, or the package boundary throughout either corrective. `ID-3` implementation remains explicitly deferred in priority behind the `RTI` arc (no `ID-3` implementation had begun when this scheduling decision was made).
+- **`ROADMAP_RTI3_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - `analyzeRequirementQuality`/`analyzeRequirementsQuality`, the first deterministic requirement quality/testability analyzer, independently reviewed (two corrective cycles: a first closing an artifact-wide, topic-blind measurable-signal suppression defect via dimension-scoped signal patterns; a second, following a focused adversarial red-team review, closing a scalability/availability mis-correlation and a bare-`"s"` duration-unit false positive) and merged to `main` (PR #136, merge commit `830dd06a4bcf915fd4c854079689a2d09db2686b`).
+- **`ROADMAP_RTI4_TECHNICAL_WORK`: IMPLEMENTED, AWAITING INDEPENDENT REVIEW** - `generateTestDesign`/`generateTestDesigns`, the first deterministic Test Design Generator, gated hard on RTI-3's `READY` status; not yet merged, not self-approved. `ID-3` implementation remains explicitly deferred in priority behind the `RTI` arc (no `ID-3` implementation had begun when this scheduling decision was made).
 
 ## AI Test Design & Test Automation (#22/#23)
 
