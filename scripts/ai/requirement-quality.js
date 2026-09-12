@@ -115,12 +115,15 @@
  *     the artifact. DIMENSION-SCOPED, not generically artifact-wide (RTI-3
  *     corrective - see MEASURABILITY MODEL below for why and how): a
  *     performance term (fast/quick/quickly/slow/slowly/responsive/
- *     performant/efficient) is only resolved by a duration/latency signal;
- *     an availability term (available/reliable/scalable) is only resolved
- *     by an uptime/availability-percentage or failure-rate signal. An
- *     UNRELATED number elsewhere (a retry count, an HTTP status code, a
- *     bare percentage with no uptime/availability context) never resolves
- *     either - see ACCEPTANCE-CRITERIA INTERACTION below.
+ *     performant/efficient) is only resolved by an explicit duration/
+ *     latency signal; an availability term (available/reliable) is only
+ *     resolved by an uptime/availability-percentage or failure-rate signal.
+ *     "scalable" is its OWN never-resolved category (RTI-3 second
+ *     corrective) - see UNRESOLVED_QUANTIFIABLE_TERM_PATTERN's own comment.
+ *     An UNRELATED number elsewhere (a retry count, an HTTP status code, a
+ *     bare percentage with no uptime/availability context, a version/
+ *     instance/build-tag identifier that merely contains digits) never
+ *     resolves any of these - see ACCEPTANCE-CRITERIA INTERACTION below.
  *   UNVERIFIABLE_SUBJECTIVE_CLAIM (error) - an inherently SUBJECTIVE/
  *     emotional term (intuitive/user-friendly/delightful/pleasant/elegant/
  *     satisfying/appealing/easy to use) appears - "secure" is deliberately
@@ -137,28 +140,51 @@
  *     frequently fine in context), so "warning" rather than "error" - it is
  *     reported but never blocks READY or changes status.
  *
- * MEASURABILITY MODEL (dimension-scoped, RTI-3 corrective): the original
+ * MEASURABILITY MODEL (dimension-scoped, RTI-3 corrective; hardened further
+ * by a second corrective after focused adversarial review): the original
  * design used ONE generic "does any measurable-looking signal exist
  * anywhere in the artifact" check to resolve every quantifiable-vague term.
  * Independent review found this topic-blind: an unrelated acceptance
  * criterion containing ANY number ("retry up to 5 times", "Return HTTP
  * 200") silently suppressed an unrelated vague PERFORMANCE claim ("should
  * load quickly"), producing READY for a materially underspecified
- * requirement. The corrective replaces the single generic signal check
- * with two narrow, dimension-scoped signal patterns - DURATION_SIGNAL_PATTERN
- * (seconds/ms/minutes/hours, optionally with a comparison/bound phrase) for
- * PERFORMANCE_TERM_PATTERN, and AVAILABILITY_SIGNAL_PATTERN (a percentage
- * tied to "uptime"/"availability" wording, or a "N failures/errors per M"
- * ratio) for AVAILABILITY_TERM_PATTERN - each vague term category is only
- * ever resolved by its own category's signal, never by an unrelated one. A
- * bare percentage with no uptime/availability context ("95% of requests
- * succeed") deliberately does NOT resolve either category - it says nothing
- * about response time, and by itself is too generic to safely count as an
- * availability commitment either. This remains deterministic, regex-only,
- * bounded, and AI-free - it correlates *category*, never true semantic
- * meaning; a genuinely on-topic but oddly-worded signal could still be
- * conservatively unresolved, which is the intended, safer failure direction
- * (see FALSE-NEGATIVE POLICY below).
+ * requirement. The first corrective replaced the single generic signal
+ * check with two narrow, dimension-scoped signal patterns -
+ * DURATION_SIGNAL_PATTERN (seconds/ms/minutes/hours, optionally with a
+ * comparison/bound phrase) for PERFORMANCE_TERM_PATTERN, and
+ * AVAILABILITY_SIGNAL_PATTERN (a percentage tied to "uptime"/"availability"
+ * wording, or a "N failures/errors per M" ratio) for
+ * AVAILABILITY_TERM_PATTERN - each vague term category is only ever
+ * resolved by its own category's signal, never by an unrelated one. A bare
+ * percentage with no uptime/availability context ("95% of requests
+ * succeed") deliberately does NOT resolve either category.
+ *
+ * A focused adversarial red-team review found two further gaps in that
+ * first corrective, both closed by a second corrective:
+ *
+ *   (a) "scalable" had been grouped into the SAME availability/reliability
+ *       category, so an uptime or failure-rate signal incorrectly resolved
+ *       it - uptime says nothing about capacity/throughput under increasing
+ *       load. "scalable" is now its own category
+ *       (UNRESOLVED_QUANTIFIABLE_TERM_PATTERN), never resolved by any
+ *       current signal - matching FALSE-NEGATIVE POLICY below - until a
+ *       real, deliberately-designed capacity/load evidence rule exists.
+ *   (b) DURATION_SIGNAL_PATTERN had accepted a bare "s" as a duration unit
+ *       (added to broaden recognized duration shorthand), which matched the
+ *       "s" inside ordinary technical identifiers ending in "<digit>s" -
+ *       version tags ("v2s"), cloud instance types ("g2s.large"), build
+ *       tags ("2s-release") - trivially and unsafely resolving an unrelated
+ *       performance claim. The bare "s" alternative is removed; only
+ *       explicit unit words (ms/seconds/secs/minutes/mins/hours/hrs, and
+ *       their singular forms) are recognized. "2s" as compact shorthand is
+ *       consequently NOT recognized as a duration - an intentional,
+ *       documented conservative limitation.
+ *
+ * This remains deterministic, regex-only, bounded, and AI-free throughout -
+ * it correlates *category*, never true semantic meaning; a genuinely
+ * on-topic but oddly-worded signal could still be conservatively
+ * unresolved, which is the intended, safer failure direction (see
+ * FALSE-NEGATIVE POLICY below).
  *
  * ACCEPTANCE-CRITERIA INTERACTION: a precise, measurable acceptanceCriteria
  * entry resolves an otherwise-vague `content` claim about the SAME quality
@@ -230,13 +256,35 @@ const MEASURABLE_SIGNAL_PATTERN =
 // its own vague-term category, never a different one. Deliberately narrow:
 // a bare percentage/count/HTTP-status is never treated as evidence for a
 // dimension it says nothing about (see MEASURABILITY MODEL docstring).
+// No bare "s" unit (RTI-3 second corrective, red-team finding B): a lone
+// "s" alternative matched the "s" inside ordinary technical identifiers
+// that happen to end in "<digit>s" - version tags ("v2s"), cloud instance
+// types ("g2s.large", "t2s.medium"), build/release tags ("2s-release"),
+// model numbers ("X2s") - trivially and unsafely resolving an unrelated
+// performance claim. Only explicit, unambiguous unit words are recognized;
+// a bare "2s" is deliberately NOT treated as a duration. This is an
+// intentional, documented conservative limitation - false positive
+// (under-recognition) is safer than the false READY the bare unit caused.
 const DURATION_SIGNAL_PATTERN =
-  /(?:[<>]=?|no\s+more\s+than|at\s+most|within|no\s+later\s+than)?\s*\d+(\.\d+)?\s*(ms|milliseconds?|seconds?|secs?|minutes?|mins?|hours?|hrs?|s)\b/i;
+  /(?:[<>]=?|no\s+more\s+than|at\s+most|within|no\s+later\s+than)?\s*\d+(\.\d+)?\s*(ms|milliseconds?|seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i;
 const AVAILABILITY_SIGNAL_PATTERN =
   /\d+(\.\d+)?\s*%\s*(uptime|availab\w*)|\b(uptime|availab\w*)\b[^.]{0,20}?\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*(failures?|errors?)\s*per\s*\d+/i;
 
 const PERFORMANCE_TERM_PATTERN = /\b(fast|quick|quickly|slow|slowly|responsive|performant|efficient)\b/i;
-const AVAILABILITY_TERM_PATTERN = /\b(available|reliable|scalable)\b/i;
+const AVAILABILITY_TERM_PATTERN = /\b(available|reliable)\b/i;
+
+// "scalable" is deliberately its OWN, never-auto-suppressed category (RTI-3
+// second corrective, red-team finding A) - it was originally grouped with
+// available/reliable and incorrectly resolved by uptime/failure-rate
+// evidence, which says nothing about capacity or throughput under
+// increasing load (a system can be 99.9% available while completely
+// failing to scale). No capacity/load-specific signal pattern is
+// implemented in this rule set, so - matching this module's own
+// FALSE-NEGATIVE POLICY - "scalable" is always flagged when present and
+// never resolved by any current signal, exactly like the SUBJECTIVE
+// category, until a real, deliberately-designed capacity/load evidence
+// rule exists (a future, separate extension - not implemented here).
+const UNRESOLVED_QUANTIFIABLE_TERM_PATTERN = /\b(scalable)\b/i;
 
 // "secure" is deliberately NOT in a measurable-quantifiable category (see
 // MISSING_MEASURABLE_CRITERION / UNVERIFIABLE_SUBJECTIVE_CLAIM docstring
@@ -341,6 +389,18 @@ function analyzeTarget(target, signals, issues, seen) {
       code: "MISSING_MEASURABLE_CRITERION",
       severity: "error",
       message: "Uses an availability/reliability term with no uptime, availability-percentage, or failure-rate threshold anywhere in the requirement.",
+      ...ref,
+    });
+  }
+
+  // Never suppressed by any signal - see UNRESOLVED_QUANTIFIABLE_TERM_PATTERN's
+  // own comment for why "scalable" cannot share availability/reliability's
+  // resolution evidence.
+  if (UNRESOLVED_QUANTIFIABLE_TERM_PATTERN.test(text)) {
+    pushIssue(issues, seen, {
+      code: "MISSING_MEASURABLE_CRITERION",
+      severity: "error",
+      message: "Uses a capacity/scalability term with no supported capacity or load-based criterion in this rule set.",
       ...ref,
     });
   }

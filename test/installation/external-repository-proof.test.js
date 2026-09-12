@@ -647,6 +647,13 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
           content: "The API should respond quickly.",
           acceptanceCriteria: [{ text: "Return HTTP 200 on success." }],
         },
+        {
+          id: "REQ-SCALABLE-UNRESOLVED",
+          type: "non-functional-requirement",
+          title: "Scalability",
+          content: "The system should be scalable.",
+          acceptanceCriteria: [{ text: "99.9% uptime." }],
+        },
       ],
     });
 
@@ -656,10 +663,10 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
     assert.equal(result.fatalError, undefined, JSON.stringify(result));
     assert.equal(result.steps.loadRequirementsFromFile.ok, true, JSON.stringify(result.errors));
     assert.equal(result.steps.analyzeRequirementsQuality.ok, true, JSON.stringify(result.errors));
-    assert.equal(result.requirementArtifacts.length, 3);
-    assert.equal(result.qualityResults.length, 3);
+    assert.equal(result.requirementArtifacts.length, 4);
+    assert.equal(result.qualityResults.length, 4);
 
-    const [ready, ambiguous, unrelatedSignal] = result.qualityResults;
+    const [ready, ambiguous, unrelatedSignal, scalableUnresolved] = result.qualityResults;
     assert.equal(ready.artifactId, "REQ-READY");
     assert.equal(ready.status, "READY");
     assert.deepEqual(ready.issues, []);
@@ -677,6 +684,14 @@ test("RTI-3: loadRequirementsFromFile + analyzeRequirementsQuality compose end t
     assert.equal(unrelatedSignal.artifactId, "REQ-UNRELATED-SIGNAL");
     assert.equal(unrelatedSignal.status, "AMBIGUOUS");
     assert.deepEqual(unrelatedSignal.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
+
+    // RTI-3 second corrective proof, exercised through the genuinely
+    // installed package: an uptime percentage must never resolve a
+    // scalability claim - uptime says nothing about capacity/throughput
+    // under increasing load. This must NOT be READY.
+    assert.equal(scalableUnresolved.artifactId, "REQ-SCALABLE-UNRESOLVED");
+    assert.equal(scalableUnresolved.status, "AMBIGUOUS");
+    assert.deepEqual(scalableUnresolved.issues.map((i) => i.code), ["MISSING_MEASURABLE_CRITERION"]);
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
   }

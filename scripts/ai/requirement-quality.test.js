@@ -465,10 +465,21 @@ test("RTI-3 corrective: 'secure' is never suppressed by a generic unrelated numb
 });
 
 test("RTI-3 corrective: duration unit matrix (representative singular/plural/abbreviated forms all recognized)", () => {
-  for (const unit of ["ms", "millisecond", "milliseconds", "s", "sec", "secs", "second", "seconds", "min", "mins", "minute", "minutes", "hour", "hrs", "hours"]) {
+  // No bare "s" - see RTI-3 second corrective (red-team finding B): a bare
+  // "s" unit matched the "s" inside ordinary technical identifiers ending
+  // in "<digit>s" (version tags, cloud instance types, build tags),
+  // trivially and unsafely resolving an unrelated performance claim. Only
+  // explicit unit words are recognized.
+  for (const unit of ["ms", "millisecond", "milliseconds", "sec", "secs", "second", "seconds", "min", "mins", "minute", "minutes", "hour", "hrs", "hours"]) {
     const r = analyzeRequirementQuality(art({ content: "Search should be fast.", acceptanceCriteria: [{ text: `Completes within 2 ${unit}.` }] }));
     assert.equal(r.status, "READY", `unit "${unit}" should be recognized as a duration signal`);
   }
+});
+
+test("RTI-3 second corrective: a bare 's' is NOT recognized as a duration unit (accepted conservative limitation)", () => {
+  const r = analyzeRequirementQuality(art({ content: "Search should be fast.", acceptanceCriteria: [{ text: "Completes within 2 s." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
 });
 
 test("RTI-3 corrective: comparison-bound duration phrasing is recognized", () => {
@@ -496,4 +507,145 @@ test("RTI-3 corrective: public API surface unchanged at 12 symbols (checked via 
   assert.equal(typeof api.analyzeRequirementQuality, "function");
   assert.equal(typeof api.analyzeRequirementsQuality, "function");
   assert.equal(Object.keys(api).length, 12);
+});
+
+// --- RTI-3 second corrective: scalability isolation + duration regex hardening ---
+//
+// A focused adversarial red-team review found two further false-negative
+// classes surviving the first corrective. These are the reviewer's own
+// exact reproductions, now permanent regressions.
+
+// Defect A: "scalable" had shared availability/reliability's resolution
+// evidence (uptime %, failure ratio), which says nothing about capacity or
+// throughput under increasing load.
+
+test("RTI-3 second corrective (defect A): an uptime percentage does NOT resolve a scalability claim", () => {
+  const r = analyzeRequirementQuality(art({ content: "The system should be scalable.", acceptanceCriteria: [{ text: "99.9% uptime." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 second corrective (defect A): a failure-rate ratio does NOT resolve a scalability claim", () => {
+  const r = analyzeRequirementQuality(art({ content: "The system should be scalable.", acceptanceCriteria: [{ text: "1 failure per 10,000 requests." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 second corrective (defect A): a duration threshold does NOT resolve a scalability claim", () => {
+  const r = analyzeRequirementQuality(art({ content: "The system should be scalable.", acceptanceCriteria: [{ text: "Requests complete within 2 seconds." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 second corrective (defect A): a capacity/concurrency count does NOT resolve a scalability claim (no capacity rule implemented)", () => {
+  const r = analyzeRequirementQuality(art({ content: "The system should be scalable.", acceptanceCriteria: [{ text: "Supports 10,000 concurrent users." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 second corrective (defect A): scalable is never suppressed regardless of unrelated evidence type", () => {
+  for (const ac of ["HTTP 200.", "Retry up to 5 times.", "95% success rate."]) {
+    const r = analyzeRequirementQuality(art({ content: "The system should be scalable.", acceptanceCriteria: [{ text: ac }] }));
+    assert.equal(r.status, "AMBIGUOUS", `"${ac}" must not resolve scalability`);
+  }
+});
+
+// Defect B: a bare "s" duration unit matched ordinary technical identifiers
+// ending in "<digit>s".
+
+test("RTI-3 second corrective (defect B): technical identifiers ending in '<digit>s' do NOT resolve a performance claim", () => {
+  const identifiers = [
+    "Use API version 2s.",
+    "Instance type is g2s.large.",
+    "Deployed on t2s.medium nodes.",
+    "Config flag is v2s.",
+    "Build tag 2s-release.",
+    "Uses the r2s storage tier.",
+    "Model number is X2s.",
+    "The endpoint is named api-2s.",
+  ];
+  for (const identifier of identifiers) {
+    const r = analyzeRequirementQuality(art({ content: "The API should respond quickly.", acceptanceCriteria: [{ text: identifier }] }));
+    assert.equal(r.status, "AMBIGUOUS", `"${identifier}" must not resolve a performance claim`);
+    assert.ok(r.issues.some((i) => i.code === "MISSING_MEASURABLE_CRITERION"));
+  }
+});
+
+test("RTI-3 second corrective: explicit duration units still resolve performance claims (no regression)", () => {
+  for (const evidence of ["500 ms", "2 sec", "2 seconds", "1 minute", "1 hour"]) {
+    const r = analyzeRequirementQuality(art({ content: "The API should respond quickly.", acceptanceCriteria: [{ text: `Completes within ${evidence}.` }] }));
+    assert.equal(r.status, "READY", `"${evidence}" should still resolve`);
+  }
+});
+
+// Original defects (prior corrective) must remain closed.
+
+test("RTI-3 second corrective: original defect reproductions remain closed", () => {
+  const cases = [
+    { content: "The page should load quickly.", ac: "Users may retry login up to 5 times." },
+    { content: "The API should respond quickly.", ac: "Return HTTP 200 on success." },
+    { content: "The API should respond quickly.", ac: "99.9% uptime." },
+    { content: "The API should respond quickly.", ac: "95% success rate." },
+  ];
+  for (const { content, ac } of cases) {
+    const r = analyzeRequirementQuality(art({ content, acceptanceCriteria: [{ text: ac }] }));
+    assert.equal(r.status, "AMBIGUOUS", `"${content}" + "${ac}" must remain AMBIGUOUS`);
+    assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+  }
+});
+
+// Availability/reliability overlap - accepted, unchanged - and their own
+// rejection of unrelated latency evidence.
+
+test("RTI-3 second corrective: availability/reliability overlap (uptime resolves both) remains preserved", () => {
+  const available = analyzeRequirementQuality(art({ content: "The service should be highly available.", acceptanceCriteria: [{ text: "99.9% uptime." }] }));
+  assert.equal(available.status, "READY");
+  const reliable = analyzeRequirementQuality(art({ content: "The service should be reliable.", acceptanceCriteria: [{ text: "1 failure per 10,000 requests." }] }));
+  assert.equal(reliable.status, "READY");
+});
+
+test("RTI-3 second corrective: availability still rejects unrelated latency evidence", () => {
+  const r = analyzeRequirementQuality(art({ content: "The service should be highly available.", acceptanceCriteria: [{ text: "Responses complete within 2 seconds." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+});
+
+test("RTI-3 second corrective: reliability still rejects unrelated latency evidence", () => {
+  const r = analyzeRequirementQuality(art({ content: "The service should be reliable.", acceptanceCriteria: [{ text: "Responses complete within 500 ms." }] }));
+  assert.equal(r.status, "AMBIGUOUS");
+});
+
+// Multi-dimension isolation - permanent coverage per reviewer request.
+
+test("RTI-3 second corrective: multi-dimension artifact - only performance resolved remains NOT READY", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The service should respond quickly and be highly available.", acceptanceCriteria: [{ text: "95% complete within 2 seconds." }] })
+  );
+  assert.notEqual(r.status, "READY");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 second corrective: multi-dimension artifact - only availability resolved remains NOT READY", () => {
+  const r = analyzeRequirementQuality(
+    art({ content: "The service should respond quickly and be highly available.", acceptanceCriteria: [{ text: "Monthly uptime >= 99.9%." }] })
+  );
+  assert.notEqual(r.status, "READY");
+  assert.deepEqual(issueCodes(r), ["MISSING_MEASURABLE_CRITERION"]);
+});
+
+test("RTI-3 second corrective: multi-dimension artifact - both dimensions resolved reaches READY", () => {
+  const r = analyzeRequirementQuality(
+    art({
+      content: "The service should respond quickly and be highly available.",
+      acceptanceCriteria: [{ text: "95% complete within 2 seconds." }, { text: "Monthly uptime >= 99.9%." }],
+    })
+  );
+  assert.equal(r.status, "READY");
+  assert.deepEqual(r.issues, []);
+});
+
+test("RTI-3 second corrective: no-hallucination on the fixed scalability and identifier cases", () => {
+  const scalable = analyzeRequirementQuality(art({ content: "The system should be scalable.", acceptanceCriteria: [{ text: "99.9% uptime." }] }));
+  assert.equal(/(\d{1,2}(,\d{3})*\s*(concurrent )?users|requests\/(minute|second)|instances)/i.test(JSON.stringify(scalable)), false);
+  const identifier = analyzeRequirementQuality(art({ content: "The API should respond quickly.", acceptanceCriteria: [{ text: "Instance type is g2s.large." }] }));
+  assert.equal(/(500\s?ms|2 seconds|1 second)/i.test(JSON.stringify(identifier)), false);
 });
