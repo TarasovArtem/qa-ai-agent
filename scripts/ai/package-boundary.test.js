@@ -82,6 +82,10 @@ test("RTI-5 package content: the requirement traceability/coverage module is inc
   assert.ok(files().includes("scripts/ai/requirement-traceability.js"));
 });
 
+test("RTI-6 package content: the requirements source provider module is included", () => {
+  assert.ok(files().includes("scripts/ai/requirements-source-provider.js"));
+});
+
 test("ID-1 package content: adapters, providers, and context-utils (internal dependencies of the entrypoints) are included", () => {
   const f = files();
   assert.ok(f.includes("scripts/ai/adapters/cypress-adapter.js"));

@@ -231,6 +231,39 @@ async function main() {
         result.coverageResults = api.analyzeRequirementsCoverage(result.requirementArtifacts, suppliedTestDesigns);
       });
     }
+  } else if (plan.mode === "providerComposition") {
+    // Consumer-authored fake provider - no vendor SDK, no deep import,
+    // defined entirely inline using only the installed package's own
+    // public API (Roadmap RTI-6).
+    const provider = {
+      id: "external-consumer-provider",
+      async read() {
+        return plan.providerArtifacts;
+      },
+    };
+    await tryStep("loadRequirementsFromProvider", async () => {
+      result.requirementArtifacts = await api.loadRequirementsFromProvider(provider);
+    });
+    if (result.requirementArtifacts && result.requirementArtifacts.length > 0) {
+      await tryStep("analyzeRequirementsQuality", () => {
+        result.qualityResults = api.analyzeRequirementsQuality(result.requirementArtifacts);
+      });
+      await tryStep("generateTestDesigns", () => {
+        result.testDesigns = api.generateTestDesigns(result.requirementArtifacts);
+      });
+      await tryStep("buildRequirementTraceability", () => {
+        result.traceabilityLinks = api.buildRequirementTraceability(result.requirementArtifacts, result.testDesigns);
+      });
+      await tryStep("analyzeRequirementsCoverage", () => {
+        result.coverageResults = api.analyzeRequirementsCoverage(result.requirementArtifacts, result.testDesigns);
+      });
+    }
+    try {
+      require("qa-ai-agent/scripts/ai/requirements-source-provider");
+      result.rti6DeepImportBlocked = false;
+    } catch (err) {
+      result.rti6DeepImportBlocked = err.code === "ERR_PACKAGE_PATH_NOT_EXPORTED";
+    }
   }
 
   fs.writeFileSync(plan.resultPath, JSON.stringify(result, null, 2));
@@ -450,6 +483,7 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "generateTestDesign",
     "generateTestDesigns",
     "loadRequirementsFromFile",
+    "loadRequirementsFromProvider",
   ]);
   assert.deepEqual(result.collectContextKeys, ["main", "runCli"]);
   assert.equal(result.deepImportBlocked, true, "a deep import into an unsupported internal path must be blocked by the exports field");
@@ -892,4 +926,57 @@ test("RTI-5: passing only a subset of the installed package's own generated test
   } finally {
     fs.rmSync(targetRoot, { recursive: true, force: true });
   }
+});
+
+// --- 10. Roadmap RTI-6: consumer-authored fake provider composes end to end through the installed package ---
+
+test("RTI-6: a consumer-authored fake provider (no vendor SDK, no deep import) composes loadRequirementsFromProvider -> analyzeRequirementsQuality -> generateTestDesigns -> buildRequirementTraceability -> analyzeRequirementsCoverage through the installed package", () => {
+  const plan = {
+    mode: "providerComposition",
+    providerArtifacts: [
+      {
+        id: "EXT-PROVIDER-REQ",
+        type: "requirement",
+        title: "Access control",
+        content: "The system enforces access control.",
+        acceptanceCriteria: [
+          { id: "AC-1", text: "Valid credentials return HTTP 200." },
+          { id: "AC-2", text: "Invalid credentials return HTTP 401." },
+        ],
+        source: { type: "external-consumer-system", sourceId: "NATIVE-9182", location: "external://consumer-provider/9182" },
+      },
+    ],
+  };
+  const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+  assert.equal(result.fatalError, undefined, JSON.stringify(result));
+  assert.equal(result.steps.loadRequirementsFromProvider.ok, true, JSON.stringify(result.errors));
+  assert.equal(result.requirementArtifacts.length, 1);
+  assert.deepEqual(result.requirementArtifacts[0].source, {
+    type: "external-consumer-system",
+    sourceId: "NATIVE-9182",
+    location: "external://consumer-provider/9182",
+  });
+
+  assert.equal(result.steps.analyzeRequirementsQuality.ok, true, JSON.stringify(result.errors));
+  assert.equal(result.steps.generateTestDesigns.ok, true, JSON.stringify(result.errors));
+  assert.equal(result.steps.buildRequirementTraceability.ok, true, JSON.stringify(result.errors));
+  assert.equal(result.steps.analyzeRequirementsCoverage.ok, true, JSON.stringify(result.errors));
+
+  assert.equal(result.testDesigns.length, 2);
+  assert.equal(result.traceabilityLinks.length, 2);
+  const [coverage] = result.coverageResults;
+  assert.equal(coverage.status, "FULLY_COVERED");
+  assert.equal(coverage.coveredCriteria, 2);
+
+  assert.equal(result.rti6DeepImportBlocked, true, "a deep import into requirements-source-provider.js must be blocked by the exports field");
+});
+
+test("RTI-6: a fake provider returning an empty result is valid through the installed package (zero external requirements is not an error)", () => {
+  const plan = { mode: "providerComposition", providerArtifacts: [] };
+  const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+
+  assert.equal(result.fatalError, undefined, JSON.stringify(result));
+  assert.equal(result.steps.loadRequirementsFromProvider.ok, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.requirementArtifacts, []);
 });
