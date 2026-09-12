@@ -17,7 +17,7 @@ const assert = require("node:assert/strict");
 
 const api = require("./index");
 
-test("ID-1/RTI-1 public API: exposes exactly the four namespaced pipeline entrypoints plus the five fail-closed validators", () => {
+test("ID-1/RTI-1/RTI-2 public API: exposes exactly the four namespaced pipeline entrypoints, the five fail-closed validators, and the RTI-2 file ingestion adapter", () => {
   assert.deepEqual(Object.keys(api).sort(), [
     "aggregateBrowserContext",
     "analyzeFailure",
@@ -28,6 +28,7 @@ test("ID-1/RTI-1 public API: exposes exactly the four namespaced pipeline entryp
     "assertValidRequirementArtifact",
     "collectContext",
     "collectHistory",
+    "loadRequirementsFromFile",
   ]);
 });
 
@@ -63,6 +64,10 @@ test("RTI-1 public API: assertValidRequirementArtifact is present and callable",
   assert.equal(typeof api.assertValidRequirementArtifact, "function");
 });
 
+test("RTI-2 public API: loadRequirementsFromFile is present and callable", () => {
+  assert.equal(typeof api.loadRequirementsFromFile, "function");
+});
+
 test("ID-1 public API: exported main() functions are the exact same function references as the internal modules' own exports (no wrapping)", () => {
   assert.equal(api.collectContext.main, require("./collect-context").main);
   assert.equal(api.collectContext.runCli, require("./collect-context").runCli);
@@ -74,6 +79,7 @@ test("ID-1 public API: exported main() functions are the exact same function ref
   assert.equal(api.assertValidProjectKnowledgeConfig, require("./project-knowledge-config").assertValidProjectKnowledgeConfig);
   assert.equal(api.assertValidRepositoryRoot, require("./repository-root").assertValidRepositoryRoot);
   assert.equal(api.assertValidRequirementArtifact, require("./requirement-artifact").assertValidRequirementArtifact);
+  assert.equal(api.loadRequirementsFromFile, require("./requirements-file").loadRequirementsFromFile);
 });
 
 // --- Deliberate exclusions (see index.js's own docstring for rationale) ----
@@ -103,6 +109,10 @@ test("ID-1 public API: internal implementation helpers are NOT part of the publi
     "validateProjectKnowledgeConfig",
     "validateRepositoryRoot",
     "validateRequirementArtifact",
+    "parseAndNormalizeRequirements",
+    "readRequirementsFileBytes",
+    "resolveRequirementsFilePath",
+    "normalizeRawRequirement",
   ];
   for (const name of forbidden) {
     assert.equal(name in api, false, `"${name}" must not be part of the public surface`);
@@ -128,7 +138,7 @@ test("ID-1 public API: the barrel module introduces no new filesystem write auth
   assert.equal(/writeFileSync|mkdirSync|appendFileSync|resolveSafeRepositoryWritePath/.test(source), false);
 });
 
-test("RTI-1 public API: no external requirement-source system is coupled into the public surface or its own source text", () => {
+test("RTI-1/RTI-2 public API: no external requirement-source system is coupled into the public surface or its own source text", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const forbiddenSystems = ["jira", "xray", "testrail", "azure devops", "azure-devops", "zephyr", "polarion"];
@@ -138,8 +148,10 @@ test("RTI-1 public API: no external requirement-source system is coupled into th
   }
   const indexSource = fs.readFileSync(path.join(__dirname, "index.js"), "utf8").toLowerCase();
   const contractSource = fs.readFileSync(path.join(__dirname, "requirement-artifact.js"), "utf8").toLowerCase();
+  const fileAdapterSource = fs.readFileSync(path.join(__dirname, "requirements-file.js"), "utf8").toLowerCase();
   for (const system of forbiddenSystems) {
     assert.equal(indexSource.includes(system), false, `"${system}" must not appear in index.js`);
     assert.equal(contractSource.includes(system), false, `"${system}" must not appear in requirement-artifact.js`);
+    assert.equal(fileAdapterSource.includes(system), false, `"${system}" must not appear in requirements-file.js`);
   }
 });
