@@ -69,6 +69,16 @@
  *   coverage is derived purely from structured provenance already present
  *   on RTI-1 RequirementArtifact[]/RTI-4 TestDesignArtifact[].
  *
+ *   loadRequirementsFromProvider - the RTI-6 generic external requirements
+ *   source executor: normalizes an explicitly caller-supplied
+ *   RequirementsSourceProvider's output into validated
+ *   RequirementArtifact[] (see scripts/ai/requirements-source-provider.js's
+ *   own docstring for the full provider contract, trust model, and
+ *   identity/collision model). Added by Roadmap RTI-6; no concrete adapter
+ *   for any specific external issue tracker, requirements tool, or
+ *   test-management system, no provider registry, and no vendor-name
+ *   branching is exported or implemented here yet - that is Roadmap RTI-7.
+ *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
  * audit for the evidence this is based on):
@@ -114,6 +124,7 @@ const { loadRequirementsFromFile } = require("./requirements-file");
 const { analyzeRequirementQuality, analyzeRequirementsQuality } = require("./requirement-quality");
 const { generateTestDesign, generateTestDesigns } = require("./test-design");
 const { buildRequirementTraceability, analyzeRequirementsCoverage } = require("./requirement-traceability");
+const { loadRequirementsFromProvider } = require("./requirements-source-provider");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -132,4 +143,5 @@ module.exports = {
   generateTestDesigns,
   buildRequirementTraceability,
   analyzeRequirementsCoverage,
+  loadRequirementsFromProvider,
 };

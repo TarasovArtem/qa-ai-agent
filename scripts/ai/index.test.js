@@ -17,7 +17,7 @@ const assert = require("node:assert/strict");
 
 const api = require("./index");
 
-test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5 public API: exposes exactly the four namespaced pipeline entrypoints, the five fail-closed validators, the RTI-2 file ingestion adapter, the RTI-3 quality analyzers, the RTI-4 test design generators, and the RTI-5 traceability/coverage functions", () => {
+test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5/RTI-6 public API: exposes exactly the four namespaced pipeline entrypoints, the five fail-closed validators, the RTI-2 file ingestion adapter, the RTI-3 quality analyzers, the RTI-4 test design generators, the RTI-5 traceability/coverage functions, and the RTI-6 provider executor", () => {
   assert.deepEqual(Object.keys(api).sort(), [
     "aggregateBrowserContext",
     "analyzeFailure",
@@ -35,6 +35,7 @@ test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5 public API: exposes exactly the four na
     "generateTestDesign",
     "generateTestDesigns",
     "loadRequirementsFromFile",
+    "loadRequirementsFromProvider",
   ]);
 });
 
@@ -89,6 +90,10 @@ test("RTI-5 public API: buildRequirementTraceability and analyzeRequirementsCove
   assert.equal(typeof api.analyzeRequirementsCoverage, "function");
 });
 
+test("RTI-6 public API: loadRequirementsFromProvider is present and callable", () => {
+  assert.equal(typeof api.loadRequirementsFromProvider, "function");
+});
+
 test("ID-1 public API: exported main() functions are the exact same function references as the internal modules' own exports (no wrapping)", () => {
   assert.equal(api.collectContext.main, require("./collect-context").main);
   assert.equal(api.collectContext.runCli, require("./collect-context").runCli);
@@ -107,6 +112,7 @@ test("ID-1 public API: exported main() functions are the exact same function ref
   assert.equal(api.generateTestDesigns, require("./test-design").generateTestDesigns);
   assert.equal(api.buildRequirementTraceability, require("./requirement-traceability").buildRequirementTraceability);
   assert.equal(api.analyzeRequirementsCoverage, require("./requirement-traceability").analyzeRequirementsCoverage);
+  assert.equal(api.loadRequirementsFromProvider, require("./requirements-source-provider").loadRequirementsFromProvider);
 });
 
 // --- Deliberate exclusions (see index.js's own docstring for rationale) ----
@@ -154,6 +160,12 @@ test("ID-1 public API: internal implementation helpers are NOT part of the publi
     "assertTestDesignsInput",
     "assertNoDuplicateRequirementOrCriterionIds",
     "readTestDesignReference",
+    "assertValidProviderShape",
+    "assertValidRequirementsSourceProvider",
+    "validateRequirementsSourceProvider",
+    "assertNoDuplicateIds",
+    "createRequirementsSourceProvider",
+    "providers",
   ];
   for (const name of forbidden) {
     assert.equal(name in api, false, `"${name}" must not be part of the public surface`);
@@ -179,7 +191,7 @@ test("ID-1 public API: the barrel module introduces no new filesystem write auth
   assert.equal(/writeFileSync|mkdirSync|appendFileSync|resolveSafeRepositoryWritePath/.test(source), false);
 });
 
-test("RTI-1/RTI-2/RTI-3/RTI-4/RTI-5 public API: no external requirement-source system is coupled into the public surface or its own source text", () => {
+test("RTI-1/RTI-2/RTI-3/RTI-4/RTI-5/RTI-6 public API: no external requirement-source system is coupled into the public surface or its own source text", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const forbiddenSystems = ["jira", "xray", "testrail", "azure devops", "azure-devops", "zephyr", "polarion"];
@@ -193,6 +205,7 @@ test("RTI-1/RTI-2/RTI-3/RTI-4/RTI-5 public API: no external requirement-source s
   const qualitySource = fs.readFileSync(path.join(__dirname, "requirement-quality.js"), "utf8").toLowerCase();
   const testDesignSource = fs.readFileSync(path.join(__dirname, "test-design.js"), "utf8").toLowerCase();
   const traceabilitySource = fs.readFileSync(path.join(__dirname, "requirement-traceability.js"), "utf8").toLowerCase();
+  const providerSource = fs.readFileSync(path.join(__dirname, "requirements-source-provider.js"), "utf8").toLowerCase();
   for (const system of forbiddenSystems) {
     assert.equal(indexSource.includes(system), false, `"${system}" must not appear in index.js`);
     assert.equal(contractSource.includes(system), false, `"${system}" must not appear in requirement-artifact.js`);
@@ -200,7 +213,33 @@ test("RTI-1/RTI-2/RTI-3/RTI-4/RTI-5 public API: no external requirement-source s
     assert.equal(qualitySource.includes(system), false, `"${system}" must not appear in requirement-quality.js`);
     assert.equal(testDesignSource.includes(system), false, `"${system}" must not appear in test-design.js`);
     assert.equal(traceabilitySource.includes(system), false, `"${system}" must not appear in requirement-traceability.js`);
+    assert.equal(providerSource.includes(system), false, `"${system}" must not appear in requirements-source-provider.js`);
   }
+});
+
+test("RTI-6 public API: no provider registry/factory/switch-on-vendor-identity pattern exists in production source", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const providerSource = fs.readFileSync(path.join(__dirname, "requirements-source-provider.js"), "utf8");
+  assert.equal(/switch\s*\(\s*provider/i.test(providerSource), false);
+  assert.equal(/switch\s*\(\s*.*source\.type/i.test(providerSource), false);
+  assert.equal(/providers\s*=\s*\{/.test(providerSource), false);
+  assert.equal("createRequirementsSourceProvider" in api, false);
+});
+
+test("RTI-6 public API: loadRequirementsFromProvider behavior is independent of provider.id vs artifact.source.type combination (no forced equality)", async () => {
+  const { loadRequirementsFromProvider } = require("./requirements-source-provider");
+  const base = { type: "requirement", title: "t", content: "c" };
+  const matched = await loadRequirementsFromProvider({
+    id: "matched-id",
+    read: async () => [{ ...base, id: "REQ-M", source: { type: "matched-id", location: "x" } }],
+  });
+  const mismatched = await loadRequirementsFromProvider({
+    id: "provider-instance-a",
+    read: async () => [{ ...base, id: "REQ-U", source: { type: "totally-different-family", location: "x" } }],
+  });
+  assert.equal(matched[0].source.type, "matched-id");
+  assert.equal(mismatched[0].source.type, "totally-different-family");
 });
 
 test("RTI-4 public API: no test-management-destination system is coupled into the public surface or its own source text", () => {
