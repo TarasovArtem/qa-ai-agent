@@ -61,6 +61,14 @@
  *   generation, no executable test/automation output, and no test-
  *   management-destination coupling is exported here yet.
  *
+ *   buildRequirementTraceability / analyzeRequirementsCoverage - the RTI-5
+ *   structural requirement<->test-design traceability/coverage layer (see
+ *   scripts/ai/requirement-traceability.js's own docstring for the full
+ *   identity/snapshot/trust-boundary contract). Added by Roadmap RTI-5; no
+ *   requirement quality re-analysis and no test generation happens here -
+ *   coverage is derived purely from structured provenance already present
+ *   on RTI-1 RequirementArtifact[]/RTI-4 TestDesignArtifact[].
+ *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
  * audit for the evidence this is based on):
@@ -105,6 +113,7 @@ const { assertValidRequirementArtifact } = require("./requirement-artifact");
 const { loadRequirementsFromFile } = require("./requirements-file");
 const { analyzeRequirementQuality, analyzeRequirementsQuality } = require("./requirement-quality");
 const { generateTestDesign, generateTestDesigns } = require("./test-design");
+const { buildRequirementTraceability, analyzeRequirementsCoverage } = require("./requirement-traceability");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -121,4 +130,6 @@ module.exports = {
   analyzeRequirementsQuality,
   generateTestDesign,
   generateTestDesigns,
+  buildRequirementTraceability,
+  analyzeRequirementsCoverage,
 };
