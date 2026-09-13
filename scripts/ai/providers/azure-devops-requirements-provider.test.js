@@ -183,6 +183,11 @@ test("RTI-7F config: auth union validation", () => {
   assert.doesNotThrow(() => new AzureDevOpsRequirementsProvider(makeConfig({ auth: { type: "bearer", token: "x" } })));
 });
 
+test("RTI-7F-C1 (cheap-now): a CR/LF-bearing auth token is rejected at construction, not deferred to a wasted network round trip", () => {
+  assert.throws(() => new AzureDevOpsRequirementsProvider(makeConfig({ auth: { type: "bearer", token: "abc\r\nX-Injected: evil" } })), /AZURE_DEVOPS_PROVIDER_CONFIG_INVALID/);
+  assert.throws(() => new AzureDevOpsRequirementsProvider(makeConfig({ auth: { type: "pat", token: "abc\ndef" } })), /AZURE_DEVOPS_PROVIDER_CONFIG_INVALID/);
+});
+
 test("RTI-7F config: maxItems validation and vendor-cap ceiling", () => {
   for (const bad of [0, -1, 1.5, NaN, Infinity, "100", 20001]) {
     assert.throws(() => new AzureDevOpsRequirementsProvider(makeConfig({ maxItems: bad })), /AZURE_DEVOPS_PROVIDER_CONFIG_INVALID/, `expected rejection for maxItems=${bad}`);
@@ -724,28 +729,78 @@ test("RTI-7F rate-limit: a 200+Retry-After on the FINAL request causes no pointl
   assert.ok(elapsed < 1000, `expected read() to complete quickly with no trailing sleep, took ${elapsed}ms`);
 });
 
-test("RTI-7F rate-limit: an absurd Retry-After value is capped, not honored verbatim", async () => {
+test("RTI-7F-C1 (closes rate-limit MEDIUM): 429 + Retry-After: 8 is honored in full - a real regression proof that a value well above the OLD, defective 5s cap is no longer truncated", async () => {
   let requestCount = 0;
+  const start = Date.now();
   await withServer(
     (req, res) => {
       requestCount += 1;
       if (requestCount === 1) {
-        res.writeHead(429, { "Retry-After": "999999999" });
+        res.writeHead(429, { "Retry-After": "8" });
         return res.end();
       }
       respondJson(res, 200, wiqlResult([]));
     },
     async () => {
       const provider = new AzureDevOpsRequirementsProvider(makeConfig());
-      const start = Date.now();
-      await provider.read();
-      const elapsed = Date.now() - start;
-      // MAX_RATE_LIMIT_WAIT_MS caps this well under the raw absurd value
-      // (999999999 seconds); generous upper bound keeps this deterministic
-      // on a loaded CI runner without re-encoding the exact constant here.
-      assert.ok(elapsed < 8000, `expected the capped wait to be honored, not the raw absurd value, took ${elapsed}ms`);
+      const result = await provider.read();
+      assert.deepEqual(result, []);
     }
   );
+  const elapsed = Date.now() - start;
+  assert.equal(requestCount, 2);
+  // Under the OLD MAX_RATE_LIMIT_WAIT_MS=5000, this scenario would have
+  // retried at ~5s, still throttled in a real Azure sustained-throttling
+  // scenario. The corrected cap (35000ms, above Azure's documented ~30s
+  // normal ceiling) must let a 8s hint be honored in full, not truncated.
+  assert.ok(elapsed >= 7500, `expected the full ~8s Retry-After to be honored (was capped to 5s pre-corrective), took only ${elapsed}ms`);
+});
+
+test("RTI-7F-C1 (closes rate-limit MEDIUM): a pathological Retry-After value is still capped, at the corrected ~35s ceiling, not honored verbatim - verified via mock timers, no real wait", async (t) => {
+  // The only mock-timer test in this file (kept isolated - combining
+  // multiple mock-timer tests in one run was empirically found to risk
+  // cross-test interference during RTI-7F-C1's own test development).
+  // Advances a REAL setTimeout-based delay inside the real production
+  // retry loop without any real wall-clock wait; setImmediate (never
+  // mocked) is used to let the real local-HTTP-server I/O settle between
+  // steps. No production code, no executable test seam in public config.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let requestCount = 0;
+
+  function waitForRealIO(n = 10) {
+    let p = Promise.resolve();
+    for (let i = 0; i < n; i++) p = p.then(() => new Promise((r) => setImmediate(r)));
+    return p;
+  }
+
+  try {
+    await withServer(
+      (req, res) => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          res.writeHead(429, { "Retry-After": "999999999" });
+          return res.end();
+        }
+        respondJson(res, 200, wiqlResult([]));
+      },
+      async () => {
+        const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+        const readPromise = provider.read();
+        await waitForRealIO();
+        assert.equal(requestCount, 1, "expected the first (429) request to have landed");
+        await t.mock.timers.tick(34000);
+        await waitForRealIO(5);
+        assert.equal(requestCount, 1, "must not retry before the capped ~35s elapses, even for an absurd raw value");
+        await t.mock.timers.tick(2000);
+        await waitForRealIO();
+        const result = await readPromise;
+        assert.deepEqual(result, []);
+        assert.equal(requestCount, 2);
+      }
+    );
+  } finally {
+    t.mock.timers.reset();
+  }
 });
 
 // --- HTML normalization (real HTTP round trip) ---------------------------
@@ -997,6 +1052,182 @@ test("RTI-7F type mapping: caller typeMap overrides/extends the built-in map", a
       assert.equal(artifact.type, "requirement");
     }
   );
+});
+
+// --- CORRECTIVE C1: prototype-safe vendor-keyed map lookups ----------------
+
+test("RTI-7F-C1 (closes prototype-map MEDIUM): WorkItemType='__proto__' normalizes to 'other', never leaks Object.prototype", async () => {
+  for (const hostileType of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    await withServer(
+      (req, res) => {
+        if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+        respondJson(res, 200, batchResult([workItem(1, { "System.WorkItemType": hostileType })]));
+      },
+      async () => {
+        const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+        const [artifact] = await provider.read();
+        assert.equal(artifact.type, "other", `expected 'other' for WorkItemType=${JSON.stringify(hostileType)}`);
+        assert.notEqual(artifact.type, Object.prototype);
+        assert.equal(typeof artifact.type, "string");
+      }
+    );
+  }
+});
+
+test("RTI-7F-C1 (closes prototype-map MEDIUM): relation.rel='__proto__'/'constructor' is omitted, never leaks Object.prototype as a relationship type", async () => {
+  for (const hostileRel of ["__proto__", "constructor", "toString"]) {
+    await withServer(
+      (req, res) => {
+        if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+        respondJson(res, 200, batchResult([workItem(1, {}, [{ rel: hostileRel, url: "https://dev.azure.com/contoso/_apis/wit/workItems/2" }])]));
+      },
+      async () => {
+        const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+        const [artifact] = await provider.read();
+        assert.equal("relationships" in artifact, false, `expected relation.rel=${JSON.stringify(hostileRel)} to be omitted`);
+      }
+    );
+  }
+});
+
+test("RTI-7F-C1 (closes prototype-map MEDIUM, real end-to-end via RTI-6): a hostile WorkItemType no longer produces an invalid artifact.type - loadRequirementsFromProvider succeeds where it previously rejected with REQUIREMENTS_SOURCE_OUTPUT_INVALID", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.WorkItemType": "__proto__", "System.Description": "<p>Some description text.</p>" })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      const requirements = await loadRequirementsFromProvider(provider);
+      assert.equal(requirements.length, 1);
+      assert.equal(requirements[0].type, "other");
+    }
+  );
+});
+
+// --- CORRECTIVE C1: HTML quoted-attribute tag-boundary safety --------------
+
+test("RTI-7F-C1 (closes HTML quoted-attribute MEDIUM): a literal '>' inside a double-quoted attribute value does not terminate the tag early", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.Description": '<a title="1 > 0">hello</a>' })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "hello");
+    }
+  );
+});
+
+test("RTI-7F-C1 (closes HTML quoted-attribute MEDIUM): a literal '>' inside a single-quoted attribute value does not terminate the tag early", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.Description": "<a title='1 > 0'>hello</a>" })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "hello");
+    }
+  );
+});
+
+test("RTI-7F-C1: a literal '<' inside a quoted attribute value (double or single) does not create false nested-tag state", async () => {
+  for (const html of ['<a title="a < b">hello</a>', "<a title='a < b'>hello</a>"]) {
+    await withServer(
+      (req, res) => {
+        if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+        respondJson(res, 200, batchResult([workItem(1, { "System.Description": html })]));
+      },
+      async () => {
+        const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+        const [artifact] = await provider.read();
+        assert.equal(artifact.content, "hello", `expected 'hello' for ${JSON.stringify(html)}`);
+      }
+    );
+  }
+});
+
+test("RTI-7F-C1: multiple mixed-quote attributes on one tag all parse correctly", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.Description": `<a href="x" title="1 > 0" data-v='a < b'>hello</a>` })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "hello");
+    }
+  );
+});
+
+test("RTI-7F-C1: an entity-escaped '>' inside a quoted attribute (already safe pre-corrective) still parses correctly", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.Description": '<a title="1 &gt; 0">hello</a>' })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "hello");
+    }
+  );
+});
+
+test("RTI-7F-C1: an unterminated quoted attribute value fails deterministically closed", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.Description": '<a title="1 > 0>hello' })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /truncated\/malformed tag/);
+    }
+  );
+});
+
+test("RTI-7F-C1: a comment containing an unmatched quote character (ordinary prose) is still handled correctly, unaffected by quote-aware tag scanning", async () => {
+  await withServer(
+    (req, res) => {
+      if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+      respondJson(res, 200, batchResult([workItem(1, { "System.Description": "before<!-- it's a comment -->after" })]));
+    },
+    async () => {
+      const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "beforeafter");
+    }
+  );
+});
+
+test("RTI-7F-C1: normal HTML fixture matrix (no regression from the quote-aware tag scanner)", async () => {
+  const cases = [
+    ["<p>Hello world.</p>", "Hello world."],
+    ["<p>First.</p><p>Second.</p>", "First.\n\nSecond."],
+    ["line1<br>line2", "line1\nline2"],
+    ["<ul><li>Item 1</li><li>Item 2</li></ul>", "Item 1\nItem 2"],
+    ["<script>alert(1)</script><p>Safe</p>", "Safe"],
+    ["<div><div><div>deep</div></div></div>", "deep"],
+  ];
+  for (const [html, expected] of cases) {
+    await withServer(
+      (req, res) => {
+        if (req.url.includes("/wiql")) return respondJson(res, 200, wiqlResult([1]));
+        respondJson(res, 200, batchResult([workItem(1, { "System.Description": html })]));
+      },
+      async () => {
+        const provider = new AzureDevOpsRequirementsProvider(makeConfig());
+        const [artifact] = await provider.read();
+        assert.equal(artifact.content, expected, `expected ${JSON.stringify(expected)} for ${JSON.stringify(html)}`);
+      }
+    );
+  }
 });
 
 // --- Priority / tags -----------------------------------------------------

@@ -9,6 +9,25 @@
  * Work Item Tracking REST API (v7.1) via WIQL + batched work-item fetch, and
  * normalizes them into validated RTI-1 RequirementArtifact[].
  *
+ * CORRECTIVE C1 NOTE: independent review found three narrow, adapter-local
+ * defects, all closed here with no change to RTI-6/RTI-3/4/5/Jira/the
+ * package boundary: (1) the rate-limit wait ceiling was capped at 5s, well
+ * within Azure's own documented ~30s normal throttling range, risking
+ * exhausting the retry budget against ordinary service behavior - raised to
+ * 35s (see MAX_RATE_LIMIT_WAIT_MS); (2) `ARTIFACT_TYPE_MAP`/
+ * `RELATIONSHIP_TYPE_MAP` lookups keyed by untrusted vendor strings could
+ * leak `Object.prototype` when the vendor value was literally `"__proto__"`
+ * (a plain `MAP[key]` bracket access resolves the inherited `__proto__`
+ * accessor rather than returning `undefined`) instead of falling through to
+ * the documented "other"/omit behavior - both lookups now use an explicit
+ * own-property guard, matching the pattern this file already used correctly
+ * in `decodeEntitiesOnce`; (3) the HTML tag-boundary scanner searched for
+ * the first literal `>` after `<` without regard for quoted attribute
+ * values, so realistic content like `<a title="1 > 0">hello</a>` produced
+ * garbled output - the scanner is now quote-aware for ordinary element
+ * tags (comments/declarations retain their own independent, correct
+ * termination scan, unaffected).
+ *
  * SCOPE: Azure DevOps SERVICES ONLY (https://dev.azure.com/<org>/<project>).
  * Azure DevOps Server/TFS (arbitrary on-prem collection URLs) is explicitly
  * out of scope for this adapter - a deliberate RTI-7E design decision, not
@@ -275,6 +294,14 @@
  */
 
 const MAX_STRING_LENGTH = 200;
+// CORRECTIVE C1 (cheap-now): auth tokens (PAT/Bearer) are bounded and
+// control-character-free at construction, same discipline as every other
+// config string - a token containing CR/LF was previously accepted here
+// and only failed later, deep in Node's own Headers validation, wasting
+// the retry budget on what is actually a permanent client-side
+// configuration error. 4096 comfortably exceeds any real PAT or JWT-shaped
+// Entra access token.
+const MAX_TOKEN_LENGTH = 4096;
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_MAX_ITEMS = 1000;
 // The vendor's own documented hard WIQL result cap (see module docstring
@@ -287,17 +314,20 @@ const API_VERSION = "7.1";
 const MAX_RETRY_ATTEMPTS = 3; // TOTAL attempts (1 initial + 2 retries)
 const RETRY_BASE_DELAY_MS = 100;
 const MAX_RETRY_DELAY_MS = 2000;
-// Azure's own documented rate-limit delays run "a few milliseconds ... up
-// to 30 seconds" under normal throttling; this bound exists to reject an
-// absurd/hostile Retry-After value (hours, Infinity, NaN, negative), not to
-// defeat real throttling. Deliberately set below the documented normal
-// ceiling (30s): this adapter performs bounded, one-shot snapshot
-// ingestion (not a long-lived service that can afford extended backoff),
-// so a very large legitimate delay is capped more aggressively here than a
-// long-running integration might choose - a documented, adapter-specific
-// trade-off (see RTI-7F implementation report "cheap-now/expensive-later"),
-// not a claim about Azure's own contract.
-const MAX_RATE_LIMIT_WAIT_MS = 5000;
+// CORRECTIVE C1: Azure's own documented rate-limit delays run "a few
+// milliseconds ... up to 30 seconds" under normal throttling (see
+// https://learn.microsoft.com/en-us/azure/devops/integrate/concepts/rate-limits).
+// This bound must sit AT OR ABOVE that documented normal ceiling, so a
+// legitimate Retry-After value Azure actually sends in normal operation
+// (e.g. 20s, 30s) is honored IN FULL - capping below the documented normal
+// range would risk exhausting the retry budget against ordinary,
+// documented service behavior, not merely against hostile/pathological
+// values. 35 seconds gives a small margin above the documented 30s
+// ceiling while still rejecting genuinely absurd values (hours, Infinity,
+// NaN, negative). The original implementation used 5000ms here, which
+// independent review correctly identified as capping well within Azure's
+// own normal operating range - closed by this corrective.
+const MAX_RATE_LIMIT_WAIT_MS = 35000;
 const FIELD_MAP_ALLOWED_KEYS = Object.freeze(["acceptanceCriteria"]);
 const CONFIG_ALLOWED_KEYS = Object.freeze([
   "id",
@@ -477,8 +507,8 @@ function validateAuth(auth) {
   if (auth.type !== "pat" && auth.type !== "bearer") {
     throw new Error('AZURE_DEVOPS_PROVIDER_CONFIG_INVALID: "auth.type" must be "pat" or "bearer".');
   }
-  if (typeof auth.token !== "string" || auth.token.length === 0) {
-    throw new Error('AZURE_DEVOPS_PROVIDER_CONFIG_INVALID: "auth.token" must be a non-empty string.');
+  if (!isSafeBoundedString(auth.token, MAX_TOKEN_LENGTH)) {
+    throw new Error('AZURE_DEVOPS_PROVIDER_CONFIG_INVALID: "auth.token" must be a non-empty, bounded, control-character-free string.');
   }
   const unknown = Object.keys(auth).filter((key) => key !== "type" && key !== "token");
   if (unknown.length > 0) {
@@ -829,6 +859,29 @@ function parseTagName(tagContent) {
   return match ? match[1].toLowerCase() : null;
 }
 
+// CORRECTIVE C1: quote-aware scan for an ordinary element tag's true
+// closing ">" - a literal ">" (or "<") inside a double- or single-quoted
+// attribute value (e.g. `<a title="1 > 0">`) must not terminate the tag
+// early. Deliberately NOT used for comments (see the dedicated `<!--`
+// scan below, which must tolerate an unmatched quote character inside
+// ordinary comment prose, e.g. "it's a comment") or other `<!...>`
+// declarations. Returns -1 (truncated/malformed tag, including an
+// unterminated quoted attribute) if no unquoted ">" is found.
+function findTagEnd(html, start) {
+  let quote = null;
+  for (let j = start; j < html.length; j++) {
+    const c = html[j];
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === ">") {
+      return j;
+    }
+  }
+  return -1;
+}
+
 function htmlToPlainText(html, fieldLabel) {
   if (html === null || html === undefined) return "";
   if (typeof html !== "string") {
@@ -861,14 +914,11 @@ function htmlToPlainText(html, fieldLabel) {
         continue;
       }
 
-      const closeIdx = html.indexOf(">", i + 1);
-      if (closeIdx === -1) {
-        throw new Error(`Azure DevOps field "${fieldLabel}" contains a truncated/malformed tag (no closing ">" found).`);
-      }
-
-      const raw = html.slice(i + 1, closeIdx);
-
-      if (raw.startsWith("!--")) {
+      // CORRECTIVE C1: comments get their own dedicated, quote-UNAWARE scan
+      // before the general element-tag scan below - comment prose may
+      // legitimately contain an unmatched ' or " (e.g. "it's a comment")
+      // and must never be misinterpreted as an attribute-quote span.
+      if (html.slice(i + 1, i + 4) === "!--") {
         const commentEnd = html.indexOf("-->", i + 4);
         if (commentEnd === -1) {
           throw new Error(`Azure DevOps field "${fieldLabel}" contains an unterminated HTML comment.`);
@@ -876,12 +926,23 @@ function htmlToPlainText(html, fieldLabel) {
         i = commentEnd + 3;
         continue;
       }
-      if (raw.startsWith("!")) {
-        // DOCTYPE or other declaration - skip, no text extracted.
-        i = closeIdx + 1;
+      if (next === "!") {
+        // DOCTYPE or other declaration - skip, no text extracted, no
+        // attribute-style quoting relevant here either.
+        const declEnd = html.indexOf(">", i + 1);
+        if (declEnd === -1) {
+          throw new Error(`Azure DevOps field "${fieldLabel}" contains a truncated/malformed tag (no closing ">" found).`);
+        }
+        i = declEnd + 1;
         continue;
       }
 
+      const closeIdx = findTagEnd(html, i + 1);
+      if (closeIdx === -1) {
+        throw new Error(`Azure DevOps field "${fieldLabel}" contains a truncated/malformed tag (no closing ">" found).`);
+      }
+
+      const raw = html.slice(i + 1, closeIdx);
       const isClosing = raw.startsWith("/");
       const isSelfClosing = raw.endsWith("/");
       const tagName = parseTagName(raw);
@@ -999,7 +1060,10 @@ function mapRelationship(relation, config, index) {
     throw new Error(`Azure DevOps work item relation[${index}] had a missing or invalid "rel".`);
   }
   const relKey = relation.rel.toLowerCase();
-  const relationshipType = RELATIONSHIP_TYPE_MAP[relKey];
+  // CORRECTIVE C1: own-property guard - `relKey` is untrusted vendor data.
+  // See mapArtifactType's own corrective note for the identical
+  // "__proto__" bracket-access leak this same pattern was vulnerable to.
+  const relationshipType = Object.prototype.hasOwnProperty.call(RELATIONSHIP_TYPE_MAP, relKey) ? RELATIONSHIP_TYPE_MAP[relKey] : undefined;
   if (!relationshipType) {
     return null; // well-formed but unmapped relation type - omitted, never guessed
   }
@@ -1017,7 +1081,13 @@ function mapArtifactType(nativeType, typeMap) {
   if (Object.prototype.hasOwnProperty.call(typeMap, nativeType)) {
     return typeMap[nativeType];
   }
-  return ARTIFACT_TYPE_MAP[normalized] || "other";
+  // CORRECTIVE C1: own-property guard - `nativeType`/`normalized` is
+  // untrusted vendor data. A plain `ARTIFACT_TYPE_MAP[normalized]` bracket
+  // access would resolve the inherited `__proto__` accessor (returning
+  // Object.prototype, a truthy object) if a malformed/hostile vendor
+  // response supplied the literal string "__proto__", silently producing
+  // an invalid artifact.type instead of the documented "other" fallback.
+  return Object.prototype.hasOwnProperty.call(ARTIFACT_TYPE_MAP, normalized) ? ARTIFACT_TYPE_MAP[normalized] : "other";
 }
 
 // --- Normalization: native WorkItem -> RequirementArtifact ---------------
