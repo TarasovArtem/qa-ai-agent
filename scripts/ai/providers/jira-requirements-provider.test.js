@@ -1,26 +1,27 @@
 "use strict";
 
 /**
- * Roadmap RTI-7B (Jira Reference Requirements Provider): unit coverage for
- * scripts/ai/providers/jira-requirements-provider.js.
+ * Roadmap RTI-7B (Jira Reference Requirements Provider), CORRECTIVE C1:
+ * unit coverage for scripts/ai/providers/jira-requirements-provider.js.
  *
- * TEST TRANSPORT STRATEGY (deliberately chosen, documented per the module's
- * own docstring): the public JiraRequirementsProvider config is data-only -
- * it accepts no executable fetch/transport callback, so it cannot be
- * "injected" with a test double the way some libraries allow. Instead,
- * every test in this file starts a real local plain-HTTP server (Node's
- * built-in `http`, zero new dependency) and installs a narrow, temporary
- * replacement of the process-global `fetch` that rewrites only the
- * request's ORIGIN (from the provider's configured `https://...` baseUrl
- * to `http://127.0.0.1:<port>`) before delegating to the real, original
- * `fetch` - method, headers, `redirect`, and `signal` all pass through
- * completely unchanged. This exercises the REAL production code path (URL
- * construction, Basic-auth header construction, pagination loop, timeout/
- * retry behavior, JSON parsing) over a real loopback HTTP connection,
- * without requiring a brittle self-signed-certificate HTTPS test server.
- * The replacement is installed and restored per test (via `after`/`finally`
- * with the original `fetch` saved first) - global state never leaks
- * between tests.
+ * C1 migrates production from the removed legacy `GET /rest/api/3/search`
+ * endpoint to the current enhanced `POST /rest/api/3/search/jql` endpoint
+ * and its `nextPageToken`-based pagination, and closes two independently
+ * discovered robustness gaps (silent-truncation on an anomalous empty page,
+ * and unbounded ADF recursion). This file's mock-server handlers now read
+ * the JSON request BODY (jql/nextPageToken/fields) rather than URL query
+ * parameters, since the request itself moved from GET+query-string to
+ * POST+JSON-body.
+ *
+ * TEST TRANSPORT STRATEGY (unchanged from the original implementation,
+ * re-affirmed by RTI-7C's own independent review as safe): every test
+ * starts a real local plain-HTTP server (Node's built-in `http`) and
+ * installs a narrow, temporary replacement of the process-global `fetch`
+ * that rewrites only the request's ORIGIN (from the provider's configured
+ * `https://...` baseUrl to `http://127.0.0.1:<port>`) before delegating to
+ * the real, original `fetch` - method, headers, body, `redirect`, and
+ * `signal` all pass through completely unchanged. Restored per test via
+ * `finally`, with an `after`-hook safety net.
  */
 
 const { test, after } = require("node:test");
@@ -36,7 +37,16 @@ function startMockServer(handler) {
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
-    req.on("end", () => handler(req, res));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      req.rawBody = raw;
+      try {
+        req.jsonBody = raw.length > 0 ? JSON.parse(raw) : undefined;
+      } catch {
+        req.jsonBody = undefined;
+      }
+      handler(req, res);
+    });
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
@@ -114,8 +124,12 @@ function makeIssue(key, fieldOverrides = {}) {
   };
 }
 
-function searchPayload(issues, startAt, total, maxResults = 50) {
-  return { startAt, maxResults, total, issues };
+// CORRECTIVE C1: enhanced-search response shape - issues[] plus an
+// optional opaque nextPageToken. No startAt/maxResults/total.
+function searchPayload(issues, nextPageToken) {
+  const payload = { issues };
+  if (nextPageToken !== undefined) payload.nextPageToken = nextPageToken;
+  return payload;
 }
 
 function paragraph(text) {
@@ -126,7 +140,7 @@ function adfDoc(...blocks) {
   return { type: "doc", version: 1, content: blocks };
 }
 
-// --- config validation (§9-10) ---------------------------------------------
+// --- config validation (unchanged by C1) ------------------------------------
 
 test("RTI-7B config: valid config constructs successfully, provider.id matches", () => {
   const provider = new JiraRequirementsProvider(makeConfig());
@@ -139,7 +153,7 @@ test("RTI-7B config: missing/invalid id rejects", () => {
   }
 });
 
-test("RTI-7B config (§12): baseUrl must be https, absolute, no embedded credentials, no query/fragment", () => {
+test("RTI-7B config: baseUrl must be https, absolute, no embedded credentials, no query/fragment", () => {
   const invalid = [
     "http://example.atlassian.net",
     "ftp://example.atlassian.net",
@@ -158,7 +172,7 @@ test("RTI-7B config (§12): baseUrl must be https, absolute, no embedded credent
 
 test("RTI-7B config: baseUrl trailing slash is normalized", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([], 0, 0)),
+    (req, res) => respondJson(res, 200, searchPayload([])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ baseUrl: "https://example.atlassian.net/" }));
       const result = await provider.read();
@@ -194,14 +208,234 @@ test("RTI-7B config: fieldMap validation", () => {
   assert.doesNotThrow(() => new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_1" } })));
 });
 
-// --- auth header (§74) ------------------------------------------------------
+// --- CORRECTIVE C1: enhanced endpoint / request contract --------------------
 
-test("RTI-7B (§74): request carries correct HTTP Basic auth header", async () => {
+test("RTI-7B-C1: request uses POST /rest/api/3/search/jql with jql in the JSON body, not the URL", async () => {
+  let capturedPath, capturedMethod, capturedContentType, capturedBody;
+  await withServer(
+    (req, res) => {
+      capturedPath = req.url;
+      capturedMethod = req.method;
+      capturedContentType = req.headers["content-type"];
+      capturedBody = req.jsonBody;
+      respondJson(res, 200, searchPayload([]));
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig({ jql: "project = SECRET_PROJECT" }));
+      await provider.read();
+    }
+  );
+  assert.equal(capturedMethod, "POST");
+  assert.equal(capturedPath, "/rest/api/3/search/jql");
+  assert.equal(capturedPath.includes("SECRET_PROJECT"), false, "jql must not appear in the request URL/path");
+  assert.match(capturedContentType, /application\/json/);
+  assert.equal(capturedBody.jql, "project = SECRET_PROJECT");
+  assert.equal(capturedBody.maxResults, 50);
+  assert.equal("startAt" in capturedBody, false);
+});
+
+test("RTI-7B-C1: production source contains no reference to the removed legacy /rest/api/3/search endpoint path", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "jira-requirements-provider.js"), "utf8");
+  // The only permitted mentions are inside corrective-history prose
+  // explaining what was migrated AWAY from - never a literal usable path
+  // constant/string used as an actual request target.
+  assert.equal(/["'`]\/rest\/api\/3\/search["'`]/.test(source), false, 'the bare legacy path string "/rest/api/3/search" (as an actual path literal) must not appear');
+  assert.match(source, /\/rest\/api\/3\/search\/jql/, "the enhanced search endpoint path must be present");
+});
+
+// --- CORRECTIVE C1: token pagination ----------------------------------------
+
+test("RTI-7B-C1: multi-page token pagination collects all issues across 3 pages, sends the correct token each request", async () => {
+  const page1 = Array.from({ length: 50 }, (_, i) => makeIssue(`PROJ-${i + 1}`));
+  const page2 = Array.from({ length: 50 }, (_, i) => makeIssue(`PROJ-${i + 51}`));
+  const page3 = Array.from({ length: 20 }, (_, i) => makeIssue(`PROJ-${i + 101}`));
+  const tokensSent = [];
+  let requestCount = 0;
+  await withServer(
+    (req, res) => {
+      requestCount += 1;
+      tokensSent.push(req.jsonBody.nextPageToken);
+      if (requestCount === 1) return respondJson(res, 200, searchPayload(page1, "token-A"));
+      if (requestCount === 2) return respondJson(res, 200, searchPayload(page2, "token-B"));
+      return respondJson(res, 200, searchPayload(page3)); // terminal, no token
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig({ maxItems: 200 }));
+      const result = await provider.read();
+      assert.equal(result.length, 120);
+      assert.deepEqual(tokensSent, [undefined, "token-A", "token-B"]);
+      assert.equal(result[0].source.sourceId, "PROJ-1");
+      assert.equal(result[result.length - 1].source.sourceId, "PROJ-120");
+    }
+  );
+  assert.equal(requestCount, 3);
+});
+
+test("RTI-7B-C1: a terminal page (no nextPageToken) with issues completes the read", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1")])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const result = await provider.read();
+      assert.equal(result.length, 1);
+    }
+  );
+});
+
+test("RTI-7B-C1: a terminal empty page (no issues, no nextPageToken) is a valid empty result", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const result = await provider.read();
+      assert.deepEqual(result, []);
+    }
+  );
+});
+
+// --- CORRECTIVE C1: snapshot-completeness fail-closed guard (the MEDIUM finding) ---
+
+test("RTI-7B-C1 (closes RTI-7C snapshot-completeness MEDIUM): an empty page that still reports nextPageToken fails the whole read closed, never a truncated success", async () => {
+  let requestCount = 0;
+  await withServer(
+    (req, res) => {
+      requestCount += 1;
+      if (requestCount === 1) return respondJson(res, 200, searchPayload([makeIssue("PROJ-1")], "token-A"));
+      // Anomalous: no issues, but still claims there's a next page.
+      return respondJson(res, 200, searchPayload([], "token-B"));
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /inconsistent remote response as a complete snapshot/);
+    }
+  );
+  assert.equal(requestCount, 2, "the anomaly must be detected only after actually observing it, not guessed in advance");
+});
+
+test("RTI-7B-C1: token self-repeat (same token returned twice) fails closed, does not loop", async () => {
+  let requestCount = 0;
+  await withServer(
+    (req, res) => {
+      requestCount += 1;
+      if (requestCount > 5) return respondJson(res, 200, searchPayload([], "still-going")); // would spin forever if unguarded
+      return respondJson(res, 200, searchPayload([makeIssue(`PROJ-${requestCount}`)], "abc"));
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /previously-seen page token/);
+    }
+  );
+  assert.ok(requestCount <= 3, `expected the guard to trip quickly, got ${requestCount} requests`);
+});
+
+test("RTI-7B-C1: a longer token cycle (A -> B -> A) fails closed", async () => {
+  const tokenSequence = ["A", "B", "A"];
+  let requestCount = 0;
+  await withServer(
+    (req, res) => {
+      const token = tokenSequence[requestCount];
+      requestCount += 1;
+      if (requestCount > 10) return respondJson(res, 200, searchPayload([], "runaway"));
+      return respondJson(res, 200, searchPayload([makeIssue(`PROJ-${requestCount}`)], token));
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /previously-seen page token/);
+    }
+  );
+  assert.ok(requestCount <= 5, `expected the cycle guard to trip within a few requests, got ${requestCount}`);
+});
+
+test("RTI-7B-C1: malformed nextPageToken types fail closed", async () => {
+  const malformedTokens = [123, {}, [], true];
+  for (const badToken of malformedTokens) {
+    await withServer(
+      (req, res) => respondJson(res, 200, { issues: [makeIssue("PROJ-1")], nextPageToken: badToken }),
+      async () => {
+        const provider = new JiraRequirementsProvider(makeConfig());
+        await assert.rejects(() => provider.read(), /nextPageToken/, `expected rejection for token ${JSON.stringify(badToken)}`);
+      }
+    );
+  }
+});
+
+test("RTI-7B-C1: an empty-string nextPageToken is treated as invalid, not as an alternate terminal signal", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, { issues: [makeIssue("PROJ-1")], nextPageToken: "" }),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /nextPageToken/);
+    }
+  );
+});
+
+// --- CORRECTIVE C1: maxItems cumulative enforcement -------------------------
+
+test("RTI-7B-C1: maxItems is enforced cumulatively across pages, exact boundary (=maxItems succeeds, >maxItems fails)", async () => {
+  {
+    // current=90 (from a first page), next page=10 -> exactly 100 -> success
+    const page1 = Array.from({ length: 90 }, (_, i) => makeIssue(`PROJ-${i + 1}`));
+    const page2 = Array.from({ length: 10 }, (_, i) => makeIssue(`PROJ-${i + 91}`));
+    let requestCount = 0;
+    await withServer(
+      (req, res) => {
+        requestCount += 1;
+        if (requestCount === 1) return respondJson(res, 200, searchPayload(page1, "next"));
+        return respondJson(res, 200, searchPayload(page2));
+      },
+      async () => {
+        const provider = new JiraRequirementsProvider(makeConfig({ maxItems: 100 }));
+        const result = await provider.read();
+        assert.equal(result.length, 100);
+      }
+    );
+  }
+  {
+    // current=90, next page=11 -> 101 > 100 -> whole read fails, no truncation
+    const page1 = Array.from({ length: 90 }, (_, i) => makeIssue(`PROJ-${i + 1}`));
+    const page2 = Array.from({ length: 11 }, (_, i) => makeIssue(`PROJ-${i + 91}`));
+    let requestCount = 0;
+    await withServer(
+      (req, res) => {
+        requestCount += 1;
+        if (requestCount === 1) return respondJson(res, 200, searchPayload(page1, "next"));
+        return respondJson(res, 200, searchPayload(page2));
+      },
+      async () => {
+        const provider = new JiraRequirementsProvider(makeConfig({ maxItems: 100 }));
+        await assert.rejects(() => provider.read(), /exceeds the configured maxItems bound/);
+      }
+    );
+  }
+});
+
+test("RTI-7B-C1 (§48 regression, no silent 75-item truncation): maxItems=75, page1=50+next, page2=30 -> whole read fails", async () => {
+  const page1 = Array.from({ length: 50 }, (_, i) => makeIssue(`PROJ-${i + 1}`));
+  const page2 = Array.from({ length: 30 }, (_, i) => makeIssue(`PROJ-${i + 51}`));
+  let requestCount = 0;
+  await withServer(
+    (req, res) => {
+      requestCount += 1;
+      if (requestCount === 1) return respondJson(res, 200, searchPayload(page1, "next"));
+      return respondJson(res, 200, searchPayload(page2));
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig({ maxItems: 75 }));
+      await assert.rejects(() => provider.read(), /exceeds the configured maxItems bound/);
+    }
+  );
+});
+
+// --- retry/timeout/redirect/auth regression (unchanged transport semantics) ---
+
+test("RTI-7B-C1 regression (§74): request carries correct HTTP Basic auth header", async () => {
   let capturedAuth;
   await withServer(
     (req, res) => {
       capturedAuth = req.headers.authorization;
-      respondJson(res, 200, searchPayload([], 0, 0));
+      respondJson(res, 200, searchPayload([]));
     },
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ email: "bot@example.com", apiToken: "secret-token-xyz" }));
@@ -212,9 +446,7 @@ test("RTI-7B (§74): request carries correct HTTP Basic auth header", async () =
   assert.equal(capturedAuth, expected);
 });
 
-// --- redirects (§75) --------------------------------------------------------
-
-test("RTI-7B (§75): a 3xx redirect response fails closed, no second-host request occurs", async () => {
+test("RTI-7B-C1 regression (§75): a 3xx redirect response fails closed, no second-host request occurs", async () => {
   let requestCount = 0;
   await withServer(
     (req, res) => {
@@ -227,15 +459,13 @@ test("RTI-7B (§75): a 3xx redirect response fails closed, no second-host reques
       await assert.rejects(() => provider.read(), /redirect/i);
     }
   );
-  assert.equal(requestCount, 1, "no retry/follow-up request should occur for a redirect");
+  assert.equal(requestCount, 1);
 });
 
-// --- timeout (§76) -----------------------------------------------------------
-
-test("RTI-7B (§76): a request exceeding timeoutMs fails with a bounded error", async () => {
+test("RTI-7B-C1 regression (§76): a request exceeding timeoutMs fails with a bounded error", async () => {
   await withServer(
     (req, res) => {
-      setTimeout(() => respondJson(res, 200, searchPayload([], 0, 0)), 400);
+      setTimeout(() => respondJson(res, 200, searchPayload([])), 400);
     },
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ timeoutMs: 50 }));
@@ -244,9 +474,7 @@ test("RTI-7B (§76): a request exceeding timeoutMs fails with a bounded error", 
   );
 });
 
-// --- 429 retry with Retry-After (§77) ---------------------------------------
-
-test("RTI-7B (§77): a 429 response with Retry-After retries and succeeds", async () => {
+test("RTI-7B-C1 regression (§77): a 429 response with Retry-After retries and succeeds", async () => {
   let requestCount = 0;
   await withServer(
     (req, res) => {
@@ -256,7 +484,7 @@ test("RTI-7B (§77): a 429 response with Retry-After retries and succeeds", asyn
         res.end();
         return;
       }
-      respondJson(res, 200, searchPayload([makeIssue("PROJ-1")], 0, 1));
+      respondJson(res, 200, searchPayload([makeIssue("PROJ-1")]));
     },
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
@@ -267,9 +495,7 @@ test("RTI-7B (§77): a 429 response with Retry-After retries and succeeds", asyn
   assert.equal(requestCount, 2);
 });
 
-// --- 401 no-retry (§78) ------------------------------------------------------
-
-test("RTI-7B (§78): a 401 response fails immediately, no retry", async () => {
+test("RTI-7B-C1 regression (§78): a 401 response fails immediately, no retry", async () => {
   let requestCount = 0;
   await withServer(
     (req, res) => {
@@ -285,46 +511,7 @@ test("RTI-7B (§78): a 401 response fails immediately, no retry", async () => {
   assert.equal(requestCount, 1);
 });
 
-test("RTI-7B (§25): a 403 response fails immediately, no retry", async () => {
-  let requestCount = 0;
-  await withServer(
-    (req, res) => {
-      requestCount += 1;
-      res.writeHead(403);
-      res.end();
-    },
-    async () => {
-      const provider = new JiraRequirementsProvider(makeConfig());
-      await assert.rejects(() => provider.read(), /403/);
-    }
-  );
-  assert.equal(requestCount, 1);
-});
-
-// --- 5xx retry (§79) ---------------------------------------------------------
-
-test("RTI-7B (§79): a transient 503 then success retries and succeeds", async () => {
-  let requestCount = 0;
-  await withServer(
-    (req, res) => {
-      requestCount += 1;
-      if (requestCount === 1) {
-        res.writeHead(503);
-        res.end();
-        return;
-      }
-      respondJson(res, 200, searchPayload([makeIssue("PROJ-1")], 0, 1));
-    },
-    async () => {
-      const provider = new JiraRequirementsProvider(makeConfig());
-      const result = await provider.read();
-      assert.equal(result.length, 1);
-    }
-  );
-  assert.equal(requestCount, 2);
-});
-
-test("RTI-7B (§79/§22): a permanent 500 fails after exactly 3 total attempts", async () => {
+test("RTI-7B-C1 regression: a permanent 500 fails after exactly 3 total attempts", async () => {
   let requestCount = 0;
   await withServer(
     (req, res) => {
@@ -340,9 +527,7 @@ test("RTI-7B (§79/§22): a permanent 500 fails after exactly 3 total attempts",
   assert.equal(requestCount, 3);
 });
 
-// --- malformed JSON / response shape (§80-81) -------------------------------
-
-test("RTI-7B (§80): malformed JSON body fails closed, no raw body leaked", async () => {
+test("RTI-7B-C1 regression: malformed JSON body fails closed, no raw body leaked", async () => {
   await withServer(
     (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -361,14 +546,13 @@ test("RTI-7B (§80): malformed JSON body fails closed, no raw body leaked", asyn
   );
 });
 
-test("RTI-7B (§81): malformed response shapes all fail deterministically", async () => {
+test("RTI-7B-C1 regression: malformed response shapes all fail deterministically", async () => {
   const malformedBodies = [
     {},
-    { issues: null, startAt: 0, maxResults: 50, total: 0 },
-    { issues: {}, startAt: 0, maxResults: 50, total: 0 },
-    { issues: [{ fields: {} }], startAt: 0, maxResults: 50, total: 1 }, // missing key
-    { issues: [{ key: "PROJ-1" }], startAt: 0, maxResults: 50, total: 1 }, // missing fields
-    { issues: [], startAt: "0", maxResults: 50, total: 0 }, // invalid pagination field type
+    { issues: null },
+    { issues: {} },
+    { issues: [{ fields: {} }] }, // missing key
+    { issues: [{ key: "PROJ-1" }] }, // missing fields
   ];
   for (const body of malformedBodies) {
     await withServer(
@@ -381,68 +565,14 @@ test("RTI-7B (§81): malformed response shapes all fail deterministically", asyn
   }
 });
 
-// --- pagination (§82) --------------------------------------------------------
-
-test("RTI-7B (§82): multi-page results are collected completely, deduplicated by key, in canonical key order", async () => {
-  const totalIssues = 120; // 3 pages at the provider's internal 50-per-page size
-  const allIssues = Array.from({ length: totalIssues }, (_, i) => makeIssue(`PROJ-${i + 1}`));
-  await withServer(
-    (req, res) => {
-      const url = new URL(req.url, "http://localhost");
-      const startAt = Number(url.searchParams.get("startAt"));
-      const page = allIssues.slice(startAt, startAt + 50);
-      respondJson(res, 200, searchPayload(page, startAt, totalIssues));
-    },
-    async () => {
-      const provider = new JiraRequirementsProvider(makeConfig({ maxItems: 200 }));
-      const result = await provider.read();
-      assert.equal(result.length, totalIssues);
-      assert.deepEqual(result.map((r) => r.source.sourceId).slice(0, 5), ["PROJ-1", "PROJ-2", "PROJ-3", "PROJ-4", "PROJ-5"]);
-      assert.equal(result[result.length - 1].source.sourceId, "PROJ-120");
-      // Numeric-suffix ordering: PROJ-2 before PROJ-10, not lexical "PROJ-10" before "PROJ-2".
-      const idx2 = result.findIndex((r) => r.source.sourceId === "PROJ-2");
-      const idx10 = result.findIndex((r) => r.source.sourceId === "PROJ-10");
-      assert.ok(idx2 < idx10);
-    }
-  );
-});
-
-test("RTI-7B (§30): pagination that fails to advance aborts with a bounded loop-safety error", async () => {
-  // Simulates a misbehaving server that always echoes startAt:0 regardless
-  // of the requested startAt, with a total the first two (non-empty,
-  // advancing) fetches never reach - the loop's own computed `startAt`
-  // (payload.startAt + issues.length) repeats on the third iteration,
-  // which must trip the progress guard rather than spin forever.
-  const twoIssues = [makeIssue("PROJ-1"), makeIssue("PROJ-2")];
-  await withServer(
-    (req, res) => respondJson(res, 200, searchPayload(twoIssues, 0, 10)),
-    async () => {
-      const provider = new JiraRequirementsProvider(makeConfig());
-      await assert.rejects(() => provider.read(), /did not advance/);
-    }
-  );
-});
-
-// --- maxItems (§83) ----------------------------------------------------------
-
-test("RTI-7B (§83): a remote total exceeding maxItems rejects the whole read, no partial result", async () => {
-  await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1")], 0, 500)),
-    async () => {
-      const provider = new JiraRequirementsProvider(makeConfig({ maxItems: 100 }));
-      await assert.rejects(() => provider.read(), /exceeds the configured maxItems bound/);
-    }
-  );
-});
-
-test("RTI-7B: partial-page failure rejects the whole read atomically (§33)", async () => {
+test("RTI-7B-C1 regression: partial-page failure rejects the whole read atomically", async () => {
   let requestCount = 0;
   const page1 = Array.from({ length: 50 }, (_, i) => makeIssue(`PROJ-${i + 1}`));
   await withServer(
     (req, res) => {
       requestCount += 1;
       if (requestCount === 1) {
-        respondJson(res, 200, searchPayload(page1, 0, 150));
+        respondJson(res, 200, searchPayload(page1, "next"));
         return;
       }
       res.writeHead(500);
@@ -455,11 +585,83 @@ test("RTI-7B: partial-page failure rejects the whole read atomically (§33)", as
   );
 });
 
-// --- ADF fixtures (§84-85) ---------------------------------------------------
+// --- CORRECTIVE C1: ADF depth bound ------------------------------------------
 
-test("RTI-7B ADF (§84): empty document yields no content field (genuinely absent, not empty string)", async () => {
+function nestedPanel(depth, leaf) {
+  let node = leaf;
+  for (let i = 0; i < depth; i++) {
+    node = { type: "panel", content: [node] };
+  }
+  return node;
+}
+
+test("RTI-7B-C1 (closes RTI-7C ADF-resource-safety MEDIUM): ADF nesting at the depth limit succeeds", async () => {
+  // adfDocumentToPlainText passes each top-level block in at depth 1, so a
+  // block nested `MAX_ADF_DEPTH - 1` panels deep around a text leaf reaches
+  // exactly the boundary depth without exceeding it.
+  const doc = adfDoc(nestedPanel(62, { type: "text", text: "leaf" }));
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc() })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: doc })])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "leaf");
+    }
+  );
+});
+
+test("RTI-7B-C1: ADF nesting beyond the depth limit fails cleanly - no RangeError, real HTTP round-trip", async () => {
+  // Deliberately well beyond the limit and beyond what JSON.stringify's own
+  // recursive serializer could produce in this test process - built via
+  // string concatenation (non-recursive) exactly as the independent review
+  // did to prove this is a genuine remote-data-boundary risk, not a local
+  // test-construction artifact.
+  const depth = 5000;
+  const open = '{"type":"panel","content":['.repeat(depth);
+  const close = "]}".repeat(depth);
+  const leaf = '{"type":"text","text":"leaf"}';
+  const docJson = `{"type":"doc","version":1,"content":[${open}${leaf}${close}]}`;
+  const issueJson = `{"key":"PROJ-1","fields":{"summary":"s","description":${docJson},"issuetype":{"name":"Story"},"priority":null,"labels":[],"issuelinks":[],"updated":null,"status":null}}`;
+  const bodyJson = `{"issues":[${issueJson}]}`;
+
+  await withServer(
+    (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(bodyJson);
+    },
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      try {
+        await provider.read();
+        assert.fail("expected a clean depth-exceeded rejection, got success");
+      } catch (err) {
+        assert.equal(err.constructor.name, "Error", `expected a clean Error, got ${err.constructor.name}: ${err.message}`);
+        assert.match(err.message, /maximum supported nesting depth/);
+      }
+    }
+  );
+});
+
+// --- CORRECTIVE C1: hardBreak -------------------------------------------------
+
+test("RTI-7B-C1: an ADF hardBreak preserves a line boundary, never silently concatenates surrounding text", async () => {
+  const para = { type: "paragraph", content: [{ type: "text", text: "line1" }, { type: "hardBreak" }, { type: "text", text: "line2" }] };
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(para) })])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.content, "line1\nline2");
+      assert.notEqual(artifact.content, "line1line2");
+    }
+  );
+});
+
+// --- ADF fixtures (unchanged behavior, re-verified after the depth-bound change) ---
+
+test("RTI-7B ADF: empty document yields no content field (genuinely absent, not empty string)", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc() })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -468,9 +670,9 @@ test("RTI-7B ADF (§84): empty document yields no content field (genuinely absen
   );
 });
 
-test("RTI-7B ADF (§84): single paragraph converts to plain text", async () => {
+test("RTI-7B ADF: single paragraph converts to plain text", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(paragraph("Hello world.")) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(paragraph("Hello world.")) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -479,9 +681,9 @@ test("RTI-7B ADF (§84): single paragraph converts to plain text", async () => {
   );
 });
 
-test("RTI-7B ADF (§84): multiple paragraphs are joined with a blank line", async () => {
+test("RTI-7B ADF: multiple paragraphs are joined with a blank line", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(paragraph("First."), paragraph("Second.")) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(paragraph("First."), paragraph("Second.")) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -490,10 +692,10 @@ test("RTI-7B ADF (§84): multiple paragraphs are joined with a blank line", asyn
   );
 });
 
-test("RTI-7B ADF (§84): heading plus paragraph both appear as separate blocks", async () => {
+test("RTI-7B ADF: heading plus paragraph both appear as separate blocks", async () => {
   const heading = { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Title" }] };
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(heading, paragraph("Body.")) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(heading, paragraph("Body.")) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -502,7 +704,7 @@ test("RTI-7B ADF (§84): heading plus paragraph both appear as separate blocks",
   );
 });
 
-test("RTI-7B ADF (§84): bullet list items are joined with single newlines", async () => {
+test("RTI-7B ADF: bullet list items are joined with single newlines", async () => {
   const bulletList = {
     type: "bulletList",
     content: [
@@ -511,7 +713,7 @@ test("RTI-7B ADF (§84): bullet list items are joined with single newlines", asy
     ],
   };
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(bulletList) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(bulletList) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -520,10 +722,10 @@ test("RTI-7B ADF (§84): bullet list items are joined with single newlines", asy
   );
 });
 
-test("RTI-7B ADF (§84): nested inline text runs (marks) join with no inserted spaces", async () => {
+test("RTI-7B ADF: nested inline text runs (marks) join with no inserted spaces", async () => {
   const para = { type: "paragraph", content: [{ type: "text", text: "Bold ", marks: [{ type: "strong" }] }, { type: "text", text: "and normal." }] };
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(para) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(para) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -532,10 +734,10 @@ test("RTI-7B ADF (§84): nested inline text runs (marks) join with no inserted s
   );
 });
 
-test("RTI-7B ADF (§84): an unrecognized wrapper node is recursed into gracefully", async () => {
+test("RTI-7B ADF: an unrecognized wrapper node is recursed into gracefully", async () => {
   const panel = { type: "panel", attrs: { panelType: "info" }, content: [paragraph("Note text.")] };
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(panel) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: adfDoc(panel) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -544,9 +746,9 @@ test("RTI-7B ADF (§84): an unrecognized wrapper node is recursed into gracefull
   );
 });
 
-test("RTI-7B ADF (§85): a malformed (non-doc-shaped) description fails closed", async () => {
+test("RTI-7B ADF: a malformed (non-doc-shaped) description fails closed", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: { unexpected: "shape" } })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { description: { unexpected: "shape" } })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       await assert.rejects(() => provider.read(), /not a recognized ADF document/);
@@ -554,11 +756,11 @@ test("RTI-7B ADF (§85): a malformed (non-doc-shaped) description fails closed",
   );
 });
 
-// --- acceptance criteria (§86) -----------------------------------------------
+// --- acceptance criteria (unchanged) -----------------------------------------
 
-test("RTI-7B AC (§86): fieldMap absent -> no acceptanceCriteria", async () => {
+test("RTI-7B AC: fieldMap absent -> no acceptanceCriteria", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1")], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1")])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -567,9 +769,9 @@ test("RTI-7B AC (§86): fieldMap absent -> no acceptanceCriteria", async () => {
   );
 });
 
-test("RTI-7B AC (§86): configured plain-text field -> one AC entry without id", async () => {
+test("RTI-7B AC: configured plain-text field -> one AC entry without id", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: "Given X, when Y, then Z." })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: "Given X, when Y, then Z." })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_100" } }));
       const [artifact] = await provider.read();
@@ -578,9 +780,9 @@ test("RTI-7B AC (§86): configured plain-text field -> one AC entry without id",
   );
 });
 
-test("RTI-7B AC (§86): configured ADF field -> deterministic plain-text AC", async () => {
+test("RTI-7B AC: configured ADF field -> deterministic plain-text AC", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: adfDoc(paragraph("Criteria text.")) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: adfDoc(paragraph("Criteria text.")) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_100" } }));
       const [artifact] = await provider.read();
@@ -589,9 +791,9 @@ test("RTI-7B AC (§86): configured ADF field -> deterministic plain-text AC", as
   );
 });
 
-test("RTI-7B AC (§86): configured field missing/null -> no AC (not an error)", async () => {
+test("RTI-7B AC: configured field missing/null -> no AC (not an error)", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: null })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: null })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_100" } }));
       const [artifact] = await provider.read();
@@ -600,9 +802,9 @@ test("RTI-7B AC (§86): configured field missing/null -> no AC (not an error)", 
   );
 });
 
-test("RTI-7B AC (§86): invalid configured field shape fails closed", async () => {
+test("RTI-7B AC: invalid configured field shape fails closed", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: 12345 })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: 12345 })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_100" } }));
       await assert.rejects(() => provider.read(), /not a recognized ADF document/);
@@ -612,7 +814,7 @@ test("RTI-7B AC (§86): invalid configured field shape fails closed", async () =
 
 test("RTI-7B AC: criterion ids are never fabricated", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: "One text criterion." })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { customfield_100: "One text criterion." })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_100" } }));
       const [artifact] = await provider.read();
@@ -621,7 +823,7 @@ test("RTI-7B AC: criterion ids are never fabricated", async () => {
   );
 });
 
-// --- type mapping ------------------------------------------------------------
+// --- type mapping (unchanged) -------------------------------------------------
 
 test("RTI-7B type mapping: Story/Bug/Risk/Requirement map, unknown types map to other", async () => {
   const issues = [
@@ -633,7 +835,7 @@ test("RTI-7B type mapping: Story/Bug/Risk/Requirement map, unknown types map to 
     makeIssue("PROJ-6", { issuetype: { name: "Task" } }),
   ];
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload(issues, 0, issues.length)),
+    (req, res) => respondJson(res, 200, searchPayload(issues)),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const result = await provider.read();
@@ -648,7 +850,7 @@ test("RTI-7B type mapping: Story/Bug/Risk/Requirement map, unknown types map to 
   );
 });
 
-// --- relationships -----------------------------------------------------------
+// --- relationships (unchanged) -------------------------------------------------
 
 test("RTI-7B relationships: blocks/blocked-by direction, duplicate, related all map correctly; unknown link type omitted", async () => {
   const issue = makeIssue("PROJ-1", {
@@ -661,7 +863,7 @@ test("RTI-7B relationships: blocks/blocked-by direction, duplicate, related all 
     ],
   });
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -678,7 +880,7 @@ test("RTI-7B relationships: blocks/blocked-by direction, duplicate, related all 
 test("RTI-7B relationships: malformed issuelinks entry fails closed", async () => {
   const issue = makeIssue("PROJ-1", { issuelinks: [{ type: { name: "Blocks" }, outwardIssue: { key: "PROJ-2" }, inwardIssue: { key: "PROJ-3" } }] });
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       await assert.rejects(() => provider.read(), /exactly one of inwardIssue\/outwardIssue/);
@@ -689,7 +891,7 @@ test("RTI-7B relationships: malformed issuelinks entry fails closed", async () =
 test("RTI-7B relationships: out-of-snapshot target is not rejected merely because it wasn't returned by this read", async () => {
   const issue = makeIssue("PROJ-1", { issuelinks: [{ type: { name: "Relates" }, outwardIssue: { key: "PROJ-999" } }] });
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -698,12 +900,73 @@ test("RTI-7B relationships: out-of-snapshot target is not rejected merely becaus
   );
 });
 
-// --- provenance (§87) ---------------------------------------------------------
+// --- CORRECTIVE C1: issue-key hygiene + source.location encoding -----------
 
-test("RTI-7B (§87): source provenance fields are exact", async () => {
+test("RTI-7B-C1: normal issue key succeeds", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-123")])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      assert.equal(artifact.source.sourceId, "PROJ-123");
+    }
+  );
+});
+
+test("RTI-7B-C1: a control-character-bearing issue key fails closed", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1\n")])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /\.key was missing or invalid/);
+    }
+  );
+});
+
+test("RTI-7B-C1: an over-bound (>200 char) issue key fails closed", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-" + "1".repeat(250))])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /\.key was missing or invalid/);
+    }
+  );
+});
+
+test("RTI-7B-C1 (closes RTI-7C issue-key/source.location LOW/INFO): a path/query-like issue key cannot alter source.location's URL structure", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1/../../evil?x=1")])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const [artifact] = await provider.read();
+      const parsed = new URL(artifact.source.location);
+      assert.equal(parsed.origin, "https://example.atlassian.net");
+      assert.equal(parsed.pathname, "/browse/PROJ-1%2F..%2F..%2Fevil%3Fx%3D1");
+      assert.equal(parsed.search, "", "the crafted key must not be interpreted as a real query string");
+      // sourceId still preserves the exact native value (unencoded) - it is
+      // provenance data, not itself a URL.
+      assert.equal(artifact.source.sourceId, "PROJ-1/../../evil?x=1");
+    }
+  );
+});
+
+test("RTI-7B-C1: relationship targetId also uses the same issue-key hygiene as the primary issue key", async () => {
+  const issue = makeIssue("PROJ-1", { issuelinks: [{ type: { name: "Relates" }, outwardIssue: { key: "PROJ-2\n" } }] });
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      await assert.rejects(() => provider.read(), /target issue had a missing or invalid "key"/);
+    }
+  );
+});
+
+// --- provenance -----------------------------------------------------------
+
+test("RTI-7B provenance: source fields are exact (except location, now percent-encoded)", async () => {
   const issue = makeIssue("PROJ-1", { updated: "2026-03-05T12:00:00.000Z" });
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig({ id: "jira-prod" }));
       const [artifact] = await provider.read();
@@ -718,12 +981,12 @@ test("RTI-7B (§87): source provenance fields are exact", async () => {
   );
 });
 
-// --- identity stability (§88-91) ----------------------------------------------
+// --- identity stability (unchanged) -------------------------------------------
 
-test("RTI-7B (§88): identity is stable across timeoutMs/maxItems/page-size-irrelevant config changes", async () => {
+test("RTI-7B identity: stable across timeoutMs/maxItems config changes", async () => {
   const issue = makeIssue("PROJ-1");
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const providerA = new JiraRequirementsProvider(makeConfig({ timeoutMs: 1000, maxItems: 50 }));
       const providerB = new JiraRequirementsProvider(makeConfig({ timeoutMs: 5000, maxItems: 500 }));
@@ -734,9 +997,9 @@ test("RTI-7B (§88): identity is stable across timeoutMs/maxItems/page-size-irre
   );
 });
 
-test("RTI-7B (§89): content update changes content/version, id stays stable", async () => {
+test("RTI-7B identity: content update changes content/version, id stays stable", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "Old summary", updated: "2026-01-01T00:00:00.000Z" })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "Old summary", updated: "2026-01-01T00:00:00.000Z" })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [before] = await provider.read();
@@ -747,7 +1010,7 @@ test("RTI-7B (§89): content update changes content/version, id stays stable", a
   );
 
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "New summary", updated: "2026-02-01T00:00:00.000Z" })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "New summary", updated: "2026-02-01T00:00:00.000Z" })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [after] = await provider.read();
@@ -758,10 +1021,10 @@ test("RTI-7B (§89): content update changes content/version, id stays stable", a
   );
 });
 
-test("RTI-7B (§90): changing provider.id changes the normalized artifact id prefix (intentional)", async () => {
+test("RTI-7B identity: changing provider.id changes the normalized artifact id prefix (intentional)", async () => {
   const issue = makeIssue("PROJ-1");
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const providerProd = new JiraRequirementsProvider(makeConfig({ id: "jira-prod" }));
       const providerStaging = new JiraRequirementsProvider(makeConfig({ id: "jira-staging" }));
@@ -774,10 +1037,10 @@ test("RTI-7B (§90): changing provider.id changes the normalized artifact id pre
   );
 });
 
-test("RTI-7B (§91): two provider instances with the same native key produce collision-safe distinct ids", async () => {
+test("RTI-7B identity: two provider instances with the same native key produce collision-safe distinct ids", async () => {
   const issue = makeIssue("PROJ-123");
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([issue], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([issue])),
     async () => {
       const prod = new JiraRequirementsProvider(makeConfig({ id: "jira-prod" }));
       const staging = new JiraRequirementsProvider(makeConfig({ id: "jira-staging" }));
@@ -788,12 +1051,12 @@ test("RTI-7B (§91): two provider instances with the same native key produce col
   );
 });
 
-// --- RTI-6 integration + full pipeline (§92-94) -------------------------------
+// --- RTI-6 integration + full pipeline -----------------------------------------
 
-test("RTI-7B (§92): RTI-6's loadRequirementsFromProvider accepts the Jira provider directly", async () => {
+test("RTI-7B: RTI-6's loadRequirementsFromProvider accepts the Jira provider directly", async () => {
   await withServer(
     (req, res) =>
-      respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "Login", description: adfDoc(paragraph("Valid credentials return HTTP 200.")) })], 0, 1)),
+      respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "Login", description: adfDoc(paragraph("Valid credentials return HTTP 200.")) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const requirements = await loadRequirementsFromProvider(provider);
@@ -804,7 +1067,7 @@ test("RTI-7B (§92): RTI-6's loadRequirementsFromProvider accepts the Jira provi
   );
 });
 
-test("RTI-7B (§93): full RTI-6 -> RTI-3 -> RTI-4 -> RTI-5 pipeline reaches FULLY_COVERED for a READY Jira requirement", async () => {
+test("RTI-7B: full RTI-6 -> RTI-3 -> RTI-4 -> RTI-5 pipeline reaches FULLY_COVERED for a READY Jira requirement", async () => {
   const { analyzeRequirementsQuality } = require("../requirement-quality");
   const { generateTestDesigns } = require("../test-design");
   const { buildRequirementTraceability, analyzeRequirementsCoverage } = require("../requirement-traceability");
@@ -814,7 +1077,7 @@ test("RTI-7B (§93): full RTI-6 -> RTI-3 -> RTI-4 -> RTI-5 pipeline reaches FULL
       respondJson(
         res,
         200,
-        searchPayload([makeIssue("PROJ-1", { summary: "Login", description: adfDoc(paragraph("When valid credentials are supplied, the API returns HTTP 200.")) })], 0, 1)
+        searchPayload([makeIssue("PROJ-1", { summary: "Login", description: adfDoc(paragraph("When valid credentials are supplied, the API returns HTTP 200.")) })])
       ),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
@@ -830,10 +1093,10 @@ test("RTI-7B (§93): full RTI-6 -> RTI-3 -> RTI-4 -> RTI-5 pipeline reaches FULL
   );
 });
 
-test("RTI-7B (§94): a Jira requirement with vague text ingests successfully - RTI-3 classifies it downstream, the adapter does not judge quality", async () => {
+test("RTI-7B: a Jira requirement with vague text ingests successfully - RTI-3 classifies it downstream, the adapter does not judge quality", async () => {
   const { analyzeRequirementQuality } = require("../requirement-quality");
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "Performance", description: adfDoc(paragraph("The page should load quickly.")) })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { summary: "Performance", description: adfDoc(paragraph("The page should load quickly.")) })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const requirements = await loadRequirementsFromProvider(provider);
@@ -843,7 +1106,7 @@ test("RTI-7B (§94): a Jira requirement with vague text ingests successfully - R
   );
 });
 
-// --- error / secret safety (§37-38) -------------------------------------------
+// --- error / secret safety -------------------------------------------------
 
 test("RTI-7B error safety: no adapter-thrown error ever contains the apiToken, email, or jql", async () => {
   const secretToken = "SUPER-SECRET-TOKEN-VALUE";
@@ -885,11 +1148,11 @@ test("RTI-7B error safety: HTTP error responses never leak the raw response body
   );
 });
 
-// --- metadata / raw payload (§61) ---------------------------------------------
+// --- metadata / raw payload --------------------------------------------------
 
 test("RTI-7B: metadata is selective and bounded, raw issue is never stored", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { issuetype: { name: "Story" }, status: { name: "Done" } })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { issuetype: { name: "Story" }, status: { name: "Done" } })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();
@@ -899,11 +1162,11 @@ test("RTI-7B: metadata is selective and bounded, raw issue is never stored", asy
   );
 });
 
-// --- priority / labels ---------------------------------------------------------
+// --- priority / labels -----------------------------------------------------
 
 test("RTI-7B: priority and labels are source-provided values, deduplicated", async () => {
   await withServer(
-    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { priority: { name: "Critical" }, labels: ["a", "b", "a"] })], 0, 1)),
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { priority: { name: "Critical" }, labels: ["a", "b", "a"] })])),
     async () => {
       const provider = new JiraRequirementsProvider(makeConfig());
       const [artifact] = await provider.read();

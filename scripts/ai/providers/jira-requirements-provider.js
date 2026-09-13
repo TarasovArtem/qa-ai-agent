@@ -1,11 +1,28 @@
 "use strict";
 
 /**
- * Jira Cloud Requirements Provider (Roadmap RTI-7B) - the first concrete,
- * network-capable implementation of RTI-6's RequirementsSourceProvider
- * contract, and RTI-7's reference adapter. Reads issues from the Jira
- * Cloud REST API v3 issue-search endpoint and normalizes them into
- * validated RTI-1 RequirementArtifact[].
+ * Jira Cloud Requirements Provider (Roadmap RTI-7B, corrective C1) - the
+ * first concrete, network-capable implementation of RTI-6's
+ * RequirementsSourceProvider contract, and RTI-7's reference adapter. Reads
+ * issues from the Jira Cloud REST API v3 ENHANCED JQL search endpoint
+ * (`POST /rest/api/3/search/jql`) and normalizes them into validated RTI-1
+ * RequirementArtifact[].
+ *
+ * CORRECTIVE C1 NOTE: the original implementation used the legacy
+ * `GET /rest/api/3/search` endpoint with `startAt`/`total`-based
+ * pagination. Independent review (RTI-7C) found that endpoint has been
+ * REMOVED by Atlassian (returns an error directing migration, confirmed
+ * independently against current Atlassian documentation) - it is
+ * non-functional against any currently-supported Jira Cloud site. This
+ * corrective migrates entirely to the current enhanced search endpoint and
+ * its `nextPageToken`-based pagination model; no legacy `startAt`/`total`
+ * assumption remains anywhere in this file. The corrective also closes two
+ * adversarially-discovered robustness gaps: a pagination anomaly (an empty
+ * page returned while a next-page token was still present) could
+ * previously be silently treated as "complete," and unbounded ADF
+ * recursion could previously overflow the call stack on a deeply-nested
+ * remote document. Both are now fail-closed by construction (see PAGINATION
+ * and ADF sections below).
  *
  * THIS FILE OWNS EVERYTHING JIRA-SPECIFIC AND NOTHING GENERIC: transport
  * (native `fetch`), authentication, pagination, retry/timeout, native
@@ -88,18 +105,33 @@
  *     401/403/400/404/422 or any malformed-payload failure. Backoff is
  *     deterministic (no jitter) and capped.
  *
- * MAXITEMS IS A MANDATORY SAFETY BOUND, NOT A SOFT SUGGESTION: if the
- * remote result set's own reported `total` exceeds the configured
- * `maxItems`, the WHOLE read fails closed - this module never silently
- * returns a truncated first-`maxItems` slice, which could otherwise let a
- * caller mistake a partial snapshot for a complete one.
+ * MAXITEMS IS A MANDATORY SAFETY BOUND, NOT A SOFT SUGGESTION: the enhanced
+ * search endpoint does not report an authoritative up-front `total` the
+ * way the legacy endpoint did, so this module enforces `maxItems`
+ * CUMULATIVELY - before appending any page's issues to the running
+ * collection, if doing so would exceed `maxItems`, the WHOLE read fails
+ * closed. This module never silently returns a truncated first-`maxItems`
+ * slice, which could otherwise let a caller mistake a partial snapshot for
+ * a complete one.
  *
- * PAGINATION IS SEQUENTIAL AND ATOMIC: pages are fetched one at a time
- * (never in parallel - avoids rate-limit pressure and any result-ordering
- * ambiguity); if any single page fails after exhausting retries, the WHOLE
- * `read()` call rejects - no partial RequirementArtifact[] is ever
- * returned. A pagination-progress guard (startAt must strictly advance)
- * prevents an unexpected/malformed server response from spinning forever.
+ * PAGINATION IS SEQUENTIAL, TOKEN-BASED, AND ATOMIC: pages are fetched one
+ * at a time (never in parallel - avoids rate-limit pressure and any
+ * result-ordering ambiguity), driven entirely by the opaque
+ * `nextPageToken` the enhanced search endpoint itself returns - this
+ * module never parses, decodes, or derives meaning from a token, only
+ * compares it for equality against every token already seen in this same
+ * `read()` call. If any single page fails after exhausting retries, the
+ * WHOLE `read()` call rejects - no partial RequirementArtifact[] is ever
+ * returned. Two independent fail-closed guards prevent an inconsistent or
+ * malformed remote pagination state from ever being silently accepted as
+ * "complete": (1) a page that returns zero issues while STILL reporting a
+ * `nextPageToken` is treated as an anomalous/inconsistent response and
+ * rejects the whole read, rather than being treated as a valid terminal
+ * page (a genuinely terminal page has EITHER a non-empty `nextPageToken`
+ * absent/null, OR - as an edge case - zero issues with no further token);
+ * (2) a token progress guard rejects the whole read the moment any
+ * previously-seen token reappears (a direct repeat, or a longer cycle
+ * spanning more than one page), rather than looping.
  *
  * DETERMINISTIC OUTPUT ORDER - PROVIDER-OWNED, NOT JQL-DEPENDENT: after all
  * pages are collected, this module sorts the normalized artifacts by
@@ -121,8 +153,23 @@
  *   source.type            = "jira"
  *   source.system          = the validated baseUrl's hostname, e.g. "company.atlassian.net"
  *   source.version         = fields.updated, passthrough, uninterpreted, omitted if absent
- *   source.location         = "<baseUrl>/browse/<issue.key>" - provenance only, never
- *                              treated as network/filesystem authority
+ *   source.location         = "<baseUrl>/browse/<issue.key>" (issue.key
+ *                              percent-encoded via encodeURIComponent before
+ *                              concatenation - CORRECTIVE C1: an untrusted
+ *                              remote issue key containing "/", "?", or
+ *                              other URL-structural characters can no
+ *                              longer alter this URL's path/query
+ *                              structure) - provenance only, never treated
+ *                              as network/filesystem authority
+ *
+ * NORMALIZED ID IS OPAQUE - NEVER PARSE IT: "<provider.id>:<issue.key>" is
+ * an opaque identity string, not a structured/parseable format. `provider.id`
+ * itself may legitimately contain a ":" character (RTI-6 only requires it
+ * be a safe bounded string); splitting a normalized id on ":" to recover
+ * either half is NOT a supported operation and no code anywhere in this
+ * codebase does it. Consumers that need the native Jira key should read
+ * `source.sourceId` instead - that field is exact, unencoded, native
+ * provenance, never a derived/composed string.
  *
  * The provider-qualified id form is used even though a bare Jira issue key
  * is already globally unique within ONE Jira site, so that the identity
@@ -155,15 +202,30 @@
  * top-level document block (paragraph, heading, list, ...) is joined with
  * a blank line; inline text runs within one block are concatenated with no
  * inserted separator (ADF text nodes already carry their own literal
- * spacing); a bulletList/orderedList's own listItems are joined with a
- * single newline; unknown container nodes are recursed into unchanged (a
- * harmless future ADF wrapper node does not break this module - no
- * block-type name needs to be specifically recognized for this to work);
- * unknown leaf nodes with no text are ignored; blank blocks are dropped; a
- * document whose top level is not itself ADF-doc-shaped (nor a plain
- * string) is treated as a native-payload validation failure - fails
- * closed rather than silently producing empty content that could
- * misrepresent the source requirement. If the description is absent or
+ * spacing); a `hardBreak` leaf node contributes an explicit newline (so an
+ * explicit in-paragraph line break is preserved as a line boundary, never
+ * silently concatenated into the surrounding text); a bulletList/
+ * orderedList's own listItems are joined with a single newline; unknown
+ * container nodes are recursed into unchanged (a harmless future ADF
+ * wrapper node does not break this module - no block-type name needs to be
+ * specifically recognized for this to work); unknown leaf nodes with no
+ * text are ignored; blank blocks are dropped; a document whose top level is
+ * not itself ADF-doc-shaped (nor a plain string) is treated as a
+ * native-payload validation failure - fails closed rather than silently
+ * producing empty content that could misrepresent the source requirement.
+ *
+ * ADF RECURSION IS DEPTH-BOUNDED - CORRECTIVE C1: the text-extraction walk
+ * tracks its own recursion depth and fails closed (a clean, bounded
+ * `Error`, never a raw `RangeError`) once a document nests beyond
+ * `MAX_ADF_DEPTH` (64) levels. Independent review empirically demonstrated
+ * that a syntactically valid (JSON.parse-able) but deeply-nested remote
+ * description - well beyond anything a human-authored Jira document would
+ * ever produce - previously overflowed the JavaScript call stack, an
+ * ungraceful failure mode inconsistent with every other failure path in
+ * this module. 64 levels comfortably exceeds any realistic
+ * paragraph/list/heading/panel nesting a real Jira editor produces, while
+ * remaining far short of where stack exhaustion becomes a risk. If the
+ * description is absent or
  * extracts to no text at all, `content` is OMITTED from the artifact
  * entirely (genuinely absent, matching this codebase's own established
  * convention - see e.g. RTI-4's own deliberately-excluded-fields
@@ -226,7 +288,12 @@
  * caller's own `apiToken`, the constructed Authorization header, a raw
  * response body, or the configured `jql` (JQL may itself carry sensitive
  * internal project/field detail the caller never intended to have surfaced
- * in a diagnostic channel). Because whatever this module throws becomes
+ * in a diagnostic channel). CORRECTIVE C1: the enhanced search endpoint is
+ * called via POST with `jql` in the JSON request body rather than a URL
+ * query parameter - this also means JQL no longer appears in the request
+ * URL at all, further reducing incidental exposure (proxy logs, server
+ * access logs) beyond what was already guaranteed by JQL's exclusion from
+ * this module's own error messages. Because whatever this module throws becomes
  * RTI-6's `.cause` (an intentionally unsanitized diagnostic channel, per
  * C1), this module must not put secrets into it in the first place - C1's
  * discipline, applied transitively to this adapter's own error
@@ -253,8 +320,14 @@ const PAGE_SIZE = 50;
 const MAX_RETRY_ATTEMPTS = 3; // TOTAL attempts (1 initial + 2 retries) - not "3 retries after initial"
 const RETRY_BASE_DELAY_MS = 100;
 const MAX_RETRY_DELAY_MS = 2000;
-const JIRA_SEARCH_PATH = "/rest/api/3/search";
+// CORRECTIVE C1: the legacy GET /rest/api/3/search endpoint has been
+// removed by Atlassian - this module now uses only the current enhanced
+// JQL search endpoint, called via POST with the query in the request body.
+const JIRA_SEARCH_PATH = "/rest/api/3/search/jql";
 const FIELD_MAP_ALLOWED_KEYS = Object.freeze(["acceptanceCriteria"]);
+// CORRECTIVE C1: bounds ADF text-extraction recursion - see module
+// docstring "ADF RECURSION IS DEPTH-BOUNDED" for the rationale/value.
+const MAX_ADF_DEPTH = 64;
 
 // --- Shared primitives (deliberately duplicated, not imported - matching
 // this repository's own established "small duplicated primitives over
@@ -392,18 +465,27 @@ function buildAuthHeader(email, apiToken) {
   return `Basic ${Buffer.from(`${email}:${apiToken}`, "utf8").toString("base64")}`;
 }
 
-async function jiraFetch(url, config) {
+// CORRECTIVE C1: POST, not GET - the enhanced search endpoint accepts JQL
+// (and the rest of the query) in a JSON request body rather than a URL
+// query string. This is a deliberate choice, not merely "whichever the
+// endpoint allows": it keeps JQL (which may carry sensitive internal
+// project/field detail) out of the request URL entirely, reducing
+// incidental exposure in proxy/server access logs beyond what was already
+// guaranteed by JQL's exclusion from this module's own error messages.
+async function jiraFetch(url, body, config) {
   const headers = {
     Authorization: buildAuthHeader(config.email, config.apiToken),
     Accept: "application/json",
+    "Content-Type": "application/json",
   };
 
   for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
     let response;
     try {
       response = await fetch(url, {
-        method: "GET",
+        method: "POST",
         headers,
+        body,
         redirect: "manual",
         signal: AbortSignal.timeout(config.timeoutMs),
       });
@@ -441,6 +523,10 @@ async function jiraFetch(url, config) {
 
 // --- Native payload validation (Jira's JSON response is untrusted DATA) -
 
+// CORRECTIVE C1: validates the CURRENT enhanced-search response shape -
+// `issues[]` plus an opaque, optional `nextPageToken`. No `startAt`/
+// `maxResults`/`total` requirement remains (the legacy endpoint's fields,
+// not present in the enhanced-search response at all).
 function validateSearchResponseShape(payload) {
   if (!isPlainDataObject(payload)) {
     throw new Error("Jira search response was not a JSON object.");
@@ -448,8 +534,14 @@ function validateSearchResponseShape(payload) {
   if (!Array.isArray(payload.issues)) {
     throw new Error('Jira search response "issues" was not an array.');
   }
-  if (typeof payload.startAt !== "number" || typeof payload.maxResults !== "number" || typeof payload.total !== "number") {
-    throw new Error("Jira search response pagination fields (startAt/maxResults/total) were missing or invalid.");
+  // nextPageToken is opaque vendor data - never parsed/decoded, only
+  // compared for equality (see fetchAllIssues' token-progress guard).
+  // Absent or null means "no further page"; present must be a non-empty
+  // string. An empty string is deliberately treated as INVALID, not as an
+  // alternate "terminal" signal - fail-closed on ambiguity rather than
+  // silently guessing what an empty-string token would mean.
+  if (payload.nextPageToken !== undefined && payload.nextPageToken !== null && !isNonEmptyString(payload.nextPageToken)) {
+    throw new Error('Jira search response "nextPageToken" was present but not a valid non-empty string.');
   }
   payload.issues.forEach((issue, index) => validateIssueShape(issue, index));
 }
@@ -458,7 +550,11 @@ function validateIssueShape(issue, index) {
   if (!isPlainDataObject(issue)) {
     throw new Error(`Jira search response issues[${index}] was not a JSON object.`);
   }
-  if (!isNonEmptyString(issue.key)) {
+  // CORRECTIVE C1: issue.key now uses the same bounded/control-character-free
+  // discipline this module already applies to its own config fields, since
+  // this value flows unmodified into the normalized id, source.sourceId,
+  // and (percent-encoded) source.location.
+  if (!isSafeBoundedString(issue.key, MAX_STRING_LENGTH)) {
     throw new Error(`Jira search response issues[${index}].key was missing or invalid.`);
   }
   if (!isPlainDataObject(issue.fields)) {
@@ -466,15 +562,14 @@ function validateIssueShape(issue, index) {
   }
 }
 
-// --- Pagination -----------------------------------------------------------
+// --- Pagination (CORRECTIVE C1: token-based, enhanced-search endpoint) ---
 
-function buildSearchUrl(baseUrl, jql, startAt, fields) {
-  const url = new URL(`${baseUrl}${JIRA_SEARCH_PATH}`);
-  url.searchParams.set("jql", jql);
-  url.searchParams.set("startAt", String(startAt));
-  url.searchParams.set("maxResults", String(PAGE_SIZE));
-  url.searchParams.set("fields", fields.join(","));
-  return url.toString();
+function buildSearchRequestBody(jql, nextPageToken, fields) {
+  const body = { jql, maxResults: PAGE_SIZE, fields };
+  if (nextPageToken !== undefined) {
+    body.nextPageToken = nextPageToken;
+  }
+  return JSON.stringify(body);
 }
 
 function buildRequestedFields(fieldMap) {
@@ -483,21 +578,21 @@ function buildRequestedFields(fieldMap) {
   return [...new Set(fields)];
 }
 
+// CORRECTIVE C1: replaces the legacy startAt/total pagination loop
+// entirely. Driven by the enhanced-search endpoint's own opaque
+// `nextPageToken`; see module docstring "PAGINATION IS SEQUENTIAL,
+// TOKEN-BASED, AND ATOMIC" for the two fail-closed guards this loop
+// enforces (empty-page-with-token anomaly, and token progress/cycle).
 async function fetchAllIssues(config) {
   const fields = buildRequestedFields(config.fieldMap);
+  const url = `${config.baseUrl}${JIRA_SEARCH_PATH}`;
   const collected = [];
-  let startAt = 0;
-  let previousStartAt = -1;
-  let total = null;
+  const seenTokens = new Set();
+  let nextPageToken; // undefined on the first request
 
   for (;;) {
-    if (startAt === previousStartAt) {
-      throw new Error("Jira pagination did not advance between requests; aborting to avoid an infinite loop.");
-    }
-    previousStartAt = startAt;
-
-    const url = buildSearchUrl(config.baseUrl, config.jql, startAt, fields);
-    const response = await jiraFetch(url, config);
+    const body = buildSearchRequestBody(config.jql, nextPageToken, fields);
+    const response = await jiraFetch(url, body, config);
 
     let payload;
     try {
@@ -507,22 +602,37 @@ async function fetchAllIssues(config) {
     }
     validateSearchResponseShape(payload);
 
-    if (total === null) {
-      total = payload.total;
-      if (total > config.maxItems) {
-        throw new Error(`Jira result set (${total} issue(s)) exceeds the configured maxItems bound (${config.maxItems}).`);
-      }
+    // maxItems is enforced CUMULATIVELY, before appending - the enhanced
+    // endpoint reports no authoritative up-front total to fail-fast
+    // against, so completeness/boundedness both derive from this one
+    // check. Never truncates: exceeding the bound rejects the whole read.
+    if (collected.length + payload.issues.length > config.maxItems) {
+      throw new Error(`Jira result set exceeds the configured maxItems bound (${config.maxItems}).`);
+    }
+    collected.push(...payload.issues);
+
+    const returnedToken = isNonEmptyString(payload.nextPageToken) ? payload.nextPageToken : undefined;
+
+    // Fail-closed guard #1 (the original RTI-7C snapshot-completeness
+    // finding): an empty page that STILL reports a next-page token is an
+    // inconsistent/anomalous remote response, never a valid "we're done."
+    if (payload.issues.length === 0 && returnedToken !== undefined) {
+      throw new Error("Jira pagination returned an empty page while still reporting a next page token; refusing to treat an inconsistent remote response as a complete snapshot.");
     }
 
-    for (const issue of payload.issues) {
-      collected.push(issue);
-      if (collected.length > config.maxItems) {
-        throw new Error(`Jira result set exceeds the configured maxItems bound (${config.maxItems}).`);
-      }
+    if (returnedToken === undefined) {
+      break; // genuinely terminal page
     }
 
-    startAt = payload.startAt + payload.issues.length;
-    if (payload.issues.length === 0 || startAt >= total) break;
+    // Fail-closed guard #2: token progress/cycle guard. Tracks every token
+    // seen in this call (not merely the immediately previous one), so a
+    // cycle spanning more than one page (A -> B -> A) is caught exactly
+    // the same as an immediate repeat (A -> A).
+    if (seenTokens.has(returnedToken)) {
+      throw new Error("Jira pagination returned a previously-seen page token; aborting to avoid an infinite loop.");
+    }
+    seenTokens.add(returnedToken);
+    nextPageToken = returnedToken;
   }
 
   return collected;
@@ -545,11 +655,22 @@ async function fetchAllIssues(config) {
 // future harmless ADF wrapper node does not break this module - it simply
 // contributes its own extracted text unchanged).
 
-function extractAdfNodeText(node) {
+// CORRECTIVE C1: `depth` is threaded through every recursive call and
+// checked on entry - a document nesting beyond MAX_ADF_DEPTH fails closed
+// with a clean, bounded Error instead of overflowing the call stack (see
+// module docstring "ADF RECURSION IS DEPTH-BOUNDED"). `hardBreak` is now a
+// recognized leaf that contributes an explicit "\n", so an in-paragraph
+// line break is preserved as a line boundary rather than silently
+// concatenating the text before and after it.
+function extractAdfNodeText(node, depth) {
+  if (depth > MAX_ADF_DEPTH) {
+    throw new Error(`Jira ADF document exceeds the maximum supported nesting depth (${MAX_ADF_DEPTH}).`);
+  }
   if (!isPlainDataObject(node)) return "";
+  if (node.type === "hardBreak") return "\n";
   if (typeof node.text === "string") return node.text;
   if (!Array.isArray(node.content)) return "";
-  const childTexts = node.content.map(extractAdfNodeText).filter((text) => text.length > 0);
+  const childTexts = node.content.map((child) => extractAdfNodeText(child, depth + 1)).filter((text) => text.length > 0);
   const separator = node.type === "bulletList" || node.type === "orderedList" ? "\n" : "";
   return childTexts.join(separator);
 }
@@ -560,7 +681,7 @@ function adfDocumentToPlainText(doc, fieldLabel) {
   if (!isPlainDataObject(doc) || doc.type !== "doc" || !Array.isArray(doc.content)) {
     throw new Error(`Jira field "${fieldLabel}" was not a recognized ADF document or plain string.`);
   }
-  const blocks = doc.content.map(extractAdfNodeText).map((text) => text.trim()).filter((text) => text.length > 0);
+  const blocks = doc.content.map((block) => extractAdfNodeText(block, 1)).map((text) => text.trim()).filter((text) => text.length > 0);
   return blocks.join("\n\n").trim();
 }
 
@@ -590,7 +711,10 @@ function mapRelationship(link, index) {
     throw new Error(`Jira issue link[${index}] must have exactly one of inwardIssue/outwardIssue.`);
   }
   const targetIssue = hasInward ? link.inwardIssue : link.outwardIssue;
-  if (!isPlainDataObject(targetIssue) || !isNonEmptyString(targetIssue.key)) {
+  // CORRECTIVE C1: same bounded/control-character-free discipline as
+  // validateIssueShape's own issue.key check - this value flows into the
+  // normalized relationship targetId.
+  if (!isPlainDataObject(targetIssue) || !isSafeBoundedString(targetIssue.key, MAX_STRING_LENGTH)) {
     throw new Error(`Jira issue link[${index}] target issue had a missing or invalid "key".`);
   }
 
@@ -619,7 +743,10 @@ function normalizeIssue(config, issue, instanceHost) {
       type: "jira",
       sourceId: issue.key,
       system: instanceHost,
-      location: `${config.baseUrl}/browse/${issue.key}`,
+      // CORRECTIVE C1: percent-encoded - an untrusted remote issue key
+      // containing "/", "?", or other URL-structural characters can no
+      // longer alter this URL's intended path/query structure.
+      location: `${config.baseUrl}/browse/${encodeURIComponent(issue.key)}`,
     },
   };
 
