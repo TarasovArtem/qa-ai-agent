@@ -9,6 +9,7 @@
   "exports": {
     ".": "./scripts/ai/index.js",
     "./providers/jira": "./scripts/ai/providers/jira-requirements-provider.js",
+    "./providers/azure-devops": "./scripts/ai/providers/azure-devops-requirements-provider.js",
     "./package.json": "./package.json"
   },
   "files": [
