@@ -24,6 +24,21 @@
  * remote document. Both are now fail-closed by construction (see PAGINATION
  * and ADF sections below).
  *
+ * CORRECTIVE RTI-7I-A NOTE (Jira/Azure provider parity hardening): the
+ * cross-adapter architecture review (RTI-7G) that followed the Azure
+ * DevOps adapter's own hardening (RTI-7F-C1) found two narrow gaps unique
+ * to this file, both closed here: (1) unknown top-level config keys were
+ * previously accepted silently - this module now rejects them at
+ * construction, matching Azure's own already-hardened behavior; (2)
+ * `mapArtifactType`'s native-issue-type lookup used a plain
+ * `ARTIFACT_TYPE_MAP[normalized]` bracket access with no own-property
+ * guard - the exact pattern RTI-7F-C1 independently discovered could leak
+ * `Object.prototype` when untrusted vendor data was literally the string
+ * `"__proto__"`. This file's `mapRelationship` was independently audited
+ * and found already safe (it compares the native link-type name against
+ * literal string constants via `===`, never indexes a plain object with
+ * it) - no change was needed there.
+ *
  * THIS FILE OWNS EVERYTHING JIRA-SPECIFIC AND NOTHING GENERIC: transport
  * (native `fetch`), authentication, pagination, retry/timeout, native
  * payload validation, and native-schema-to-RequirementArtifact
@@ -325,6 +340,11 @@ const MAX_RETRY_DELAY_MS = 2000;
 // JQL search endpoint, called via POST with the query in the request body.
 const JIRA_SEARCH_PATH = "/rest/api/3/search/jql";
 const FIELD_MAP_ALLOWED_KEYS = Object.freeze(["acceptanceCriteria"]);
+// CORRECTIVE (RTI-7I-A, Jira parity hardening): unknown top-level config
+// keys are now rejected at construction, matching the strengthening Azure
+// (RTI-7B/RTI-7F) already carries - a cross-adapter inconsistency
+// identified by RTI-7G's cross-adapter architecture review.
+const CONFIG_ALLOWED_KEYS = Object.freeze(["id", "baseUrl", "email", "apiToken", "jql", "fieldMap", "maxItems", "timeoutMs"]);
 // CORRECTIVE C1: bounds ADF text-extraction recursion - see module
 // docstring "ADF RECURSION IS DEPTH-BOUNDED" for the rationale/value.
 const MAX_ADF_DEPTH = 64;
@@ -364,6 +384,14 @@ function isPositiveInteger(value) {
 function assertValidJiraProviderConfig(config) {
   if (!isPlainDataObject(config)) {
     throw new Error("JIRA_PROVIDER_CONFIG_INVALID: JiraRequirementsProvider requires a plain config object.");
+  }
+  // CORRECTIVE (RTI-7I-A): Object.keys() enumerates only own enumerable
+  // properties - inherited/prototype properties (e.g. a hostile or
+  // coincidental "constructor"/"toString" own key aside) never cause a
+  // false rejection here.
+  const unknownTopLevel = Object.keys(config).filter((key) => !CONFIG_ALLOWED_KEYS.includes(key));
+  if (unknownTopLevel.length > 0) {
+    throw new Error(`JIRA_PROVIDER_CONFIG_INVALID: unrecognized config key(s): ${unknownTopLevel.join(", ")}.`);
   }
   if (!isSafeBoundedString(config.id, MAX_STRING_LENGTH)) {
     throw new Error('JIRA_PROVIDER_CONFIG_INVALID: "id" must be a non-empty, bounded, control-character-free string.');
@@ -696,7 +724,15 @@ const ARTIFACT_TYPE_MAP = Object.freeze({
 
 function mapArtifactType(issueTypeName) {
   const normalized = typeof issueTypeName === "string" ? issueTypeName.trim().toLowerCase() : "";
-  return ARTIFACT_TYPE_MAP[normalized] || "other";
+  // CORRECTIVE (RTI-7I-A): own-property guard - `issueTypeName`/`normalized`
+  // is untrusted vendor data. A plain `ARTIFACT_TYPE_MAP[normalized]`
+  // bracket access would resolve an inherited accessor (e.g. returning
+  // Object.prototype, a truthy object, not undefined) if a malformed/
+  // hostile Jira response supplied the literal string "__proto__" as the
+  // issue type name, silently producing an invalid artifact.type instead
+  // of the documented "other" fallback - the exact defect class RTI-7F-C1
+  // independently discovered and fixed in the Azure adapter.
+  return Object.prototype.hasOwnProperty.call(ARTIFACT_TYPE_MAP, normalized) ? ARTIFACT_TYPE_MAP[normalized] : "other";
 }
 
 // Jira's default link-type/direction combinations with an unambiguous RTI-1

@@ -208,6 +208,56 @@ test("RTI-7B config: fieldMap validation", () => {
   assert.doesNotThrow(() => new JiraRequirementsProvider(makeConfig({ fieldMap: { acceptanceCriteria: "customfield_1" } })));
 });
 
+test("RTI-7I-A (closes Jira/Azure config-strictness parity gap): unknown top-level config keys are rejected at construction", () => {
+  assert.throws(() => new JiraRequirementsProvider(makeConfig({ typoTimeout: 10000 })), /JIRA_PROVIDER_CONFIG_INVALID: unrecognized config key\(s\): typoTimeout/);
+  assert.throws(() => new JiraRequirementsProvider(makeConfig({ extra1: "a", extra2: "b" })), /JIRA_PROVIDER_CONFIG_INVALID: unrecognized config key\(s\): extra1, extra2/);
+});
+
+test("RTI-7I-A: unknown-key rejection error never leaks the caller's apiToken or jql, and does not falsely reject on inherited (non-own) properties", () => {
+  const secretToken = "SUPER-SECRET-JIRA-TOKEN";
+  const secretJql = "project = PROJ AND reporter = 'internal-secret-user'";
+  try {
+    // eslint-disable-next-line no-new
+    new JiraRequirementsProvider(makeConfig({ apiToken: secretToken, jql: secretJql, bogusKey: "x" }));
+    assert.fail("expected rejection");
+  } catch (err) {
+    assert.match(err.message, /unrecognized config key\(s\): bogusKey/);
+    assert.equal(err.message.includes(secretToken), false);
+    assert.equal(err.message.includes(secretJql), false);
+  }
+
+  // A plain config object (real Object.prototype in its chain, satisfying
+  // the pre-existing isPlainDataObject check) must NOT be falsely rejected
+  // merely because an INHERITED (not own) enumerable property is reachable
+  // through its prototype chain - Object.keys() (own-enumerable-only) is
+  // used, not a for...in-style walk that would also see inherited keys.
+  const sentinelKey = "__rti7ia_inherited_sentinel__";
+  Object.defineProperty(Object.prototype, sentinelKey, { value: "should not matter", enumerable: true, configurable: true });
+  try {
+    const config = makeConfig();
+    assert.ok(sentinelKey in config, "sanity check: the sentinel must be reachable via property access");
+    assert.equal(Object.keys(config).includes(sentinelKey), false, "sanity check: Object.keys() must not report the inherited sentinel as an own key");
+    assert.doesNotThrow(() => new JiraRequirementsProvider(config));
+  } finally {
+    delete Object.prototype[sentinelKey];
+  }
+});
+
+test("RTI-7I-A: documented full valid config (matching the README example shape) still constructs successfully - no backward-compatibility regression", () => {
+  assert.doesNotThrow(() =>
+    new JiraRequirementsProvider({
+      id: "company-jira-prod",
+      baseUrl: "https://company.atlassian.net",
+      email: "bot@company.com",
+      apiToken: "token-value",
+      jql: "project = PROJ AND type = Story ORDER BY key ASC",
+      fieldMap: { acceptanceCriteria: "customfield_12345" },
+      maxItems: 1000,
+      timeoutMs: 10000,
+    })
+  );
+});
+
 // --- CORRECTIVE C1: enhanced endpoint / request contract --------------------
 
 test("RTI-7B-C1: request uses POST /rest/api/3/search/jql with jql in the JSON body, not the URL", async () => {
@@ -850,6 +900,33 @@ test("RTI-7B type mapping: Story/Bug/Risk/Requirement map, unknown types map to 
   );
 });
 
+test("RTI-7I-A (closes Jira/Azure vendor-keyed-lookup parity gap): hostile issue-type names never leak Object.prototype, always fall back to 'other'", async () => {
+  for (const hostileType of ["__proto__", "constructor", "prototype", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf"]) {
+    await withServer(
+      (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { issuetype: { name: hostileType } })])),
+      async () => {
+        const provider = new JiraRequirementsProvider(makeConfig());
+        const [artifact] = await provider.read();
+        assert.equal(artifact.type, "other", `expected 'other' for issuetype.name=${JSON.stringify(hostileType)}`);
+        assert.notEqual(artifact.type, Object.prototype);
+        assert.equal(typeof artifact.type, "string");
+      }
+    );
+  }
+});
+
+test("RTI-7I-A (real end-to-end via RTI-6): a hostile issue-type name normalizes safely, loadRequirementsFromProvider succeeds", async () => {
+  await withServer(
+    (req, res) => respondJson(res, 200, searchPayload([makeIssue("PROJ-1", { issuetype: { name: "__proto__" }, description: adfDoc(paragraph("Some description text.")) })])),
+    async () => {
+      const provider = new JiraRequirementsProvider(makeConfig());
+      const requirements = await loadRequirementsFromProvider(provider);
+      assert.equal(requirements.length, 1);
+      assert.equal(requirements[0].type, "other");
+    }
+  );
+});
+
 // --- relationships (unchanged) -------------------------------------------------
 
 test("RTI-7B relationships: blocks/blocked-by direction, duplicate, related all map correctly; unknown link type omitted", async () => {
@@ -875,6 +952,20 @@ test("RTI-7B relationships: blocks/blocked-by direction, duplicate, related all 
       ]);
     }
   );
+});
+
+test("RTI-7I-A (audit confirms already-safe): hostile link-type names are safely omitted, never mapped via prototype leakage - mapRelationship compares against literal string constants, not a bracket lookup", async () => {
+  for (const hostileType of ["__proto__", "constructor", "toString", "valueOf", "hasOwnProperty"]) {
+    const issue = makeIssue("PROJ-1", { issuelinks: [{ type: { name: hostileType }, outwardIssue: { key: "PROJ-2" } }] });
+    await withServer(
+      (req, res) => respondJson(res, 200, searchPayload([issue])),
+      async () => {
+        const provider = new JiraRequirementsProvider(makeConfig());
+        const [artifact] = await provider.read();
+        assert.equal("relationships" in artifact, false, `expected link type=${JSON.stringify(hostileType)} to be omitted`);
+      }
+    );
+  }
 });
 
 test("RTI-7B relationships: malformed issuelinks entry fails closed", async () => {
