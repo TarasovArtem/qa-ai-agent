@@ -8,6 +8,7 @@
   "main": "scripts/ai/index.js",
   "exports": {
     ".": "./scripts/ai/index.js",
+    "./providers/jira": "./scripts/ai/providers/jira-requirements-provider.js",
     "./package.json": "./package.json"
   },
   "files": [
