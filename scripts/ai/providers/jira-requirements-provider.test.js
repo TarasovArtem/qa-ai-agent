@@ -21,79 +21,19 @@
  * `https://...` baseUrl to `http://127.0.0.1:<port>`) before delegating to
  * the real, original `fetch` - method, headers, body, `redirect`, and
  * `signal` all pass through completely unchanged. Restored per test via
- * `finally`, with an `after`-hook safety net.
+ * `finally`, with an `after`-hook safety net. The server/proxy mechanism
+ * itself (Roadmap RTI-8E1) is shared with the Azure DevOps requirements
+ * provider's own test suite via test/helpers/http-test-server.js - this
+ * file remains entirely responsible for its own Jira-shaped mock payloads
+ * and assertions; the shared module knows nothing about Jira/JQL/ADF.
  */
 
-const { test, after } = require("node:test");
+const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const http = require("node:http");
 
 const { JiraRequirementsProvider } = require("./jira-requirements-provider");
 const { loadRequirementsFromProvider } = require("../requirements-source-provider");
-
-// --- test infrastructure ---------------------------------------------------
-
-function startMockServer(handler) {
-  const server = http.createServer((req, res) => {
-    const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf8");
-      req.rawBody = raw;
-      try {
-        req.jsonBody = raw.length > 0 ? JSON.parse(raw) : undefined;
-      } catch {
-        req.jsonBody = undefined;
-      }
-      handler(req, res);
-    });
-  });
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
-  });
-}
-
-function closeServer(server) {
-  return new Promise((resolve) => server.close(resolve));
-}
-
-let activeRestore = null;
-function proxyFetchTo(port) {
-  const originalFetch = global.fetch;
-  global.fetch = (url, options) => {
-    const parsed = new URL(url);
-    const proxied = `http://127.0.0.1:${port}${parsed.pathname}${parsed.search}`;
-    return originalFetch(proxied, options);
-  };
-  activeRestore = () => {
-    global.fetch = originalFetch;
-    activeRestore = null;
-  };
-  return activeRestore;
-}
-
-after(() => {
-  // Safety net: guarantee global.fetch is never left patched if a test
-  // throws before reaching its own restore call.
-  if (activeRestore) activeRestore();
-});
-
-async function withServer(handler, fn) {
-  const { server, port } = await startMockServer(handler);
-  const restore = proxyFetchTo(port);
-  try {
-    return await fn(port);
-  } finally {
-    restore();
-    await closeServer(server);
-  }
-}
-
-function respondJson(res, status, body, headers = {}) {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json", ...headers });
-  res.end(payload);
-}
+const { withServer, respondJson } = require("../../../test/helpers/http-test-server");
 
 function makeConfig(overrides = {}) {
   return {
