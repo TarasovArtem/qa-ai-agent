@@ -67,7 +67,7 @@ The result is an architecture where **the AI proposes and the deterministic/huma
 | Multi-provider AI abstraction | **Implemented, one provider CI-wired** | Groq is the real CI provider; Gemini's API compatibility is proven by one controlled call but Gemini is **not** CI-wired (no repository secret) |
 | Multi-framework portability | **Implemented, production** | Both Cypress and Playwright adapters run in real production CI today |
 | Multi-project portability | **Proven - synthetic and real** | Isolation boundary validated against a synthetic second project (Project B, Roadmap FPI-4A) and independently re-proven against a real, independently-existing external repository with a live SUT (`TarasovArtem/TargomoPlaywright`); this repository's own production CI still runs against exactly one real project - the second project exists only as an independently-reviewed, unmerged experiment |
-| Package boundary & public programmatic API | **Implemented, production** | `scripts/ai/index.js` exposes exactly 8 symbols (`collectContext`, `collectHistory`, `analyzeFailure`, `aggregateBrowserContext`, and four `assertValid*` validators) via `package.json`'s `main`/`exports`/`files`; adapters and internal helpers are not part of the public surface - see Roadmap ID-1 below |
+| Package boundary & public programmatic API | **Implemented, production** | `scripts/ai/index.js` exposes exactly 19 symbols (grown from the original 8 at Roadmap ID-1 through the Roadmap RTI-1 through RTI-8B additions - `collectContext`, `collectHistory`, `analyzeFailure`, `aggregateBrowserContext`, four `assertValid*` config validators, plus the RTI pipeline's `assertValidRequirementArtifact`, `loadRequirementsFromFile`, `analyzeRequirementQuality`/`analyzeRequirementsQuality`, `generateTestDesign`/`generateTestDesigns`, `buildRequirementTraceability`/`analyzeRequirementsCoverage`, `loadRequirementsFromProvider`, `assertValidTestDesignArtifact`, and `publishTestDesigns`) via `package.json`'s `main`/`exports`/`files`; concrete vendor providers/destinations are reachable only via package subpaths (`qa-ai-agent/providers/jira`, `qa-ai-agent/providers/azure-devops`, `qa-ai-agent/destinations/azure-devops`), never the root barrel; adapters and internal helpers are not part of the public surface - see Roadmap ID-1 below and [PROVIDERS.md](PROVIDERS.md)/[PUBLISHING.md](PUBLISHING.md) for the vendor-adapter contracts |
 | External-repository installation | **Proven** | A real `npm pack` -> `npm install <tarball>` into a physically separate, mkdtemp-isolated external repository exercised all four generic pipeline stages through the public API only, with zero `scripts/ai` production diff - see Roadmap ID-2 below |
 | Real existing-repository onboarding | **Proven, independently reviewed** | A real, independently-existing, previously-unrelated GitHub repository consumed the installed package via its public API only, with target-owned config/knowledge and its own real Playwright report/workflow - see [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below |
 | Reproducible versioned acquisition | **Proven** | A fresh external consumer, with no producer checkout, no warm npm cache, no SSH keys/agent, and no GitHub token of any kind, independently and reproducibly acquired an immutable, version-addressable git-tag reference (`github:TarasovArtem/qa-ai-agent#<tag>`) over anonymous HTTPS (`codeload.github.com`) - see [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below |
@@ -173,18 +173,29 @@ Full detail: [Current Multi-Framework Status](#current-multi-framework-status), 
 
     scripts/ai/
       adapters/                    Cypress + Playwright evidence adapters
-      providers/                   Mock / Groq / Gemini provider implementations
+      providers/                   Mock / Groq / Gemini AI providers (#1-23) AND
+                                    RTI-7 RequirementsSourceProvider adapters
+                                    (Jira, Azure DevOps) - two unrelated "provider"
+                                    concepts sharing this directory, see PROVIDERS.md
+      destinations/                RTI-8 TestDesignDestination adapters (Azure DevOps
+                                    Test Case), see PUBLISHING.md
       evaluation/                  Dataset/Baseline v1-v6, evaluate/regression scripts
       generation/                  #22/23-F0 shared contracts (RequirementModel, TestCaseModel, ...)
       test-design/                 #22 AI Test Design (evidence -> reviewed design)
       test-automation/             #23 AI Test Automation (design -> controlled execution)
-      *.js                         Core triage pipeline (collection, correlation, prompt, policy)
+      *.js                         Core triage pipeline (collection, correlation, prompt, policy);
+                                    also the RTI-1..RTI-6/RTI-8B generic RTI pipeline modules
 
     scripts/diagnostics/           CI diagnostic utilities (Firefox forensics, disposable-output reset)
 
+    test/helpers/                  Test-only shared fixtures (e.g. the RTI-8E1 HTTP mock-server
+                                    fixture) - never shipped, outside package.json's "files" allowlist
+
     docs/                          Frozen shared-contract design docs
     .github/workflows/             GitHub Actions CI definition
-    SECURITY.md                    Full data-governance and authority/trust model
+    SECURITY.md                    Full data-governance and authority/trust model (#1-23 pipelines)
+    PROVIDERS.md                   RTI-7 Requirements Source Provider authoring contract
+    PUBLISHING.md                  RTI-8 Test Design Publishing / Destination authoring contract
     TEST_CASES.md                  Manual Cypress test-case reference
 
 ## Running Locally
@@ -723,9 +734,9 @@ These are all legitimate, separate product-maturity and release-operationalizati
 
 ## Roadmap RTI — Requirements & Test-Design Integration
 
-**Status: RTI-1 through RTI-6 are complete on `main`. `RTI-7` — External Requirements Source Providers — has all implementation and architecture work complete on `main`: both the Jira and Azure DevOps reference adapters are `COMPLETE_ON_MAIN`, and the cross-adapter architecture review (`RTI-7G`) and its one resulting parity-hardening pass (`RTI-7I-A`) are both complete. RTI-7's final step, `RTI-7I-B` (the durable architectural record in [PROVIDERS.md](PROVIDERS.md)), is documentation-complete on this branch and awaiting independent review - `RTI-7` is not yet formally closed on `main`; closure is prepared, pending successful independent review and merge of that documentation. `RTI-8` is not started. ID-3 planning remains complete but its implementation is explicitly deferred in priority behind this arc - see below.**
+**Status: RTI-1 through RTI-7 are complete on `main`, including RTI-7's final documentation/closure step (`RTI-7I-B`, [PROVIDERS.md](PROVIDERS.md)), independently reviewed and merged - `RTI-7` is formally closed. `RTI-8` — Test Case Publishing / Destinations — has all implementation, cross-adapter architecture proof, and the cross-vendor integrated proof complete on `main`: the generic publishing core (`RTI-8B`), the Azure DevOps Test Case destination (`RTI-8F`), and a real Jira-source → Azure-destination cross-vendor proof (`RTI-8J`, `VENDOR INDEPENDENCE: PROVEN`) are all `COMPLETE`/`COMPLETE_ON_MAIN`. RTI-8's final step, `RTI-8K` (the durable architectural record in [PUBLISHING.md](PUBLISHING.md) and this documentation update), is documentation-complete on this branch and awaiting independent review - `RTI-8`, and therefore the full RTI implementation arc, is not yet formally closed on `main`; closure is prepared, pending successful independent review and merge of this documentation. ID-3 planning remains complete but its implementation is explicitly deferred in priority behind this arc - see below.**
 
-A product arc, scheduled ahead of `ID-3` implementation (no conflict: `ID-3` had not begun any implementation when this decision was made). Full arc: `RTI-1` Requirement Artifact Contract → `RTI-2` File Requirements Ingestion → `RTI-3` Requirement Quality/Testability Analysis → `RTI-4` Test Design Generation → `RTI-5` Requirement↔Test Traceability/Coverage → `RTI-6` External Requirement Source Provider Contract → `RTI-7` concrete adapters for specific external issue trackers/requirements tools/test-management systems → `RTI-8` Test Case Publishing/Destinations. `RTI-1` through `RTI-6` are implemented and merged; RTI-7's adapters and architecture review are implemented and merged, with RTI-7's final documentation/closure step (`RTI-7I-B`) complete on a branch and awaiting independent review before RTI-7 itself is formally closed on `main`; `RTI-8` is not started. See [PROVIDERS.md](PROVIDERS.md) for the RTI-7 Provider Authoring Contract - the durable record of what RTI-7 proved and what any future adapter (or reviewer of one) must guarantee. Once the full arc (`RTI-1`-`RTI-8`) reaches `COMPLETE_ON_MAIN`, an RTI Integrated Architecture/Security/Quality Audit and a Full Project Strict Audit are both mandatory before any next major phase - not yet due.
+A product arc, scheduled ahead of `ID-3` implementation (no conflict: `ID-3` had not begun any implementation when this decision was made). Full arc: `RTI-1` Requirement Artifact Contract → `RTI-2` File Requirements Ingestion → `RTI-3` Requirement Quality/Testability Analysis → `RTI-4` Test Design Generation → `RTI-5` Requirement↔Test Traceability/Coverage → `RTI-6` External Requirement Source Provider Contract → `RTI-7` concrete adapters for specific external issue trackers/requirements tools/test-management systems → `RTI-8` Test Case Publishing/Destinations. `RTI-1` through `RTI-7` are implemented, documented, and merged - see [PROVIDERS.md](PROVIDERS.md) for the RTI-7 Provider Authoring Contract, the durable record of what RTI-7 proved and what any future adapter (or reviewer of one) must guarantee. `RTI-8`'s implementation (generic publishing core, Azure DevOps Test Case destination, cross-vendor proof) is complete on `main`; its own durable architectural record ([PUBLISHING.md](PUBLISHING.md)) is complete on this branch and awaiting independent review before RTI-8 - and the full `RTI-1`-`RTI-8` arc - is formally closed. Once formally closed, an **RTI Integrated Audit** (authority boundaries, security, API/backcompat, deep imports, distribution, determinism, contracts, provenance, identity, no-hallucination, side effects, failure semantics, test quality, CI, documentation truth, dead architecture, scalability, release readiness) is the mandatory next gate, followed by the **Agentic Trust / AI Security / Memory Foundation** research track (`AISEC-1` through `AISEC-7`, then `MEM-1` through `MEM-9` - persistent autonomous agentic memory must not precede its own security architecture), and only then a Full Project Strict Audit and productization planning - none of this is started.
 
 ### RTI-1 — Requirement Artifact Contract
 
@@ -993,6 +1004,131 @@ const requirements = await loadRequirementsFromProvider(provider);
 **Testing**: fully offline - a local mock HTTP server plus a fetch-proxy exercise the real transport/WIQL-then-batch/retry/rate-limit/HTML-normalization code paths, including real-HTTP-round-trip proofs of the exact HTML nesting-depth boundary (64 succeeds, 65 fails cleanly) and the 20,000-item vendor-cap guard. **Live Azure proof: DEFERRED** (no sandbox credentials were available during this implementation) - offline correctness is not blocked on it.
 
 **Deliberately out of scope for this adapter**: Azure DevOps Server/TFS; tree/oneHop WIQL queries; any relation type beyond the two mapped above; a shared/generic transport abstraction with Jira (RTI-7G's cross-adapter architecture review concluded this is *not currently justified* - see [PROVIDERS.md](PROVIDERS.md#shared-production-code-decisions) for the full evidence and decision table); a provider registry.
+
+### RTI-8 — Test Case Publishing / Destinations
+
+RTI-8 is the write-side counterpart to RTI-6/RTI-7: a generic
+`TestDesignDestination` contract that publishes RTI-4's canonical
+`TestDesignArtifact[]` to an external test-management/tracking system,
+proved against one real concrete destination and against a genuine
+cross-vendor flow. Full durable record, contract (`MUST`/`SHOULD`/`MAY`),
+and carried debt: [PUBLISHING.md](PUBLISHING.md).
+
+**Source/destination separation, stated explicitly**: `RequirementsSourceProvider`
+(RTI-6) and `TestDesignDestination` (RTI-8A/8B) are independent contracts,
+with independent identity (`provider.id` and `destination.id` are never
+compared or assumed related), independent credentials, and independent
+error domains. A Jira source does not imply a Jira destination; an Azure
+source does not imply an Azure destination - `RTI-8J` (below) is the
+architectural proof that a Jira-sourced pipeline reaches an Azure-shaped
+destination with zero bridging code.
+
+#### RTI-8B — Generic Publishing Core
+
+Introduces `assertValidTestDesignArtifact(artifact, callerLabel)`
+(`scripts/ai/test-design.js`) and `publishTestDesigns(destination, request)`
+(`scripts/ai/test-design-publishing.js`) - the eighteenth and nineteenth
+public exports. `publishTestDesigns` is the vendor-neutral boundary through
+which a caller-supplied `TestDesignArtifact[]` is handed to an explicitly
+caller-supplied `TestDesignDestination`:
+
+```js
+const qa = require("qa-ai-agent");
+
+// requirements -> quality -> READY filter -> generation, all RTI-1..RTI-4
+const testDesigns = qa.generateTestDesigns(readyRequirements);
+
+const result = await qa.publishTestDesigns(destination, { testDesigns });
+// result.destinationId, result.allSucceeded, result.items[] (CREATED | FAILED)
+```
+
+**Pre-side-effect validation is the one hard guarantee this module makes**:
+destination shape, request shape, a `500`-item batch-size bound, every
+`TestDesignArtifact` (via `assertValidTestDesignArtifact`), and duplicate-id
+rejection all complete - with zero calls to `destination.publish()` - before
+that call happens at all. Once `publish()` is actually invoked, no further
+atomicity promise is made; an external SaaS write is not generally
+transactional and this module has no way to undo a side effect that already
+occurred. `CREATE_ONLY` (RTI-8A's own decision): the only two possible item
+statuses are `CREATED` and `FAILED` - no `UPDATED`/`SKIPPED`/upsert
+semantics exist, since `criterionIndex`'s snapshot-scoped identity gives no
+stable way to recognize "the same logical test as last time."
+
+Independently reviewed (`RTI-8C`): found one MEDIUM (a caller-supplied,
+unfrozen `TestDesignArtifact`'s nested `source`/`expectedResults` could be
+mutated by destination code - top-level freeze alone was insufficient),
+closed by a narrow corrective (`RTI-8B-C1`: every `TestDesignArtifact` now
+receives a fresh, deeply-frozen canonical copy via own-enumerable-data-property
+reads before the destination ever sees it), independently re-reviewed and
+approved, merged to `main` (PR #144).
+
+#### RTI-8F — Azure DevOps Test Case Destination
+
+Introduces `AzureDevOpsTestCaseDestination`
+(`scripts/ai/destinations/azure-devops-test-case-destination.js`), the first
+concrete `TestDesignDestination`, exported only via a public subpath:
+
+```js
+const { AzureDevOpsTestCaseDestination } = require("qa-ai-agent/destinations/azure-devops");
+
+const destination = new AzureDevOpsTestCaseDestination({
+  id: "azure-tests-prod",
+  organization: "contoso",
+  project: "MyProject",
+  auth: { type: "pat", token: process.env.AZURE_DEVOPS_PAT },
+  // timeoutMs is optional, default 15000, bounds [1000, 120000]
+});
+```
+
+`CREATE_ONLY`, sequential, never-retried `POST` to Azure's documented Work
+Item Create REST API against a fixed `https://dev.azure.com` authority
+(constructed only from validated `organization`/`project` - no caller
+`baseUrl`, no Azure DevOps Server/TFS support). Maps exactly
+`TestDesignArtifact.title → System.Title` and `objective`/`expectedResults →
+System.Description` (HTML-escaped) - no custom fields, and
+`Microsoft.VSTS.TCM.Steps` is deliberately never populated (no grounded
+action/step model exists in the canonical artifact; populating it would mean
+fabricating content, which RTI-3/RTI-4 already forbid upstream). Global
+short-circuit (401/403/404-target/429/redirect/ambiguous 5xx-or-transport)
+vs. per-item continuation (400/409) is classified per Azure's own documented
+semantics; `requirementId`/`source.requirementId`/`criterionId`/`criterionIndex`
+are treated as fully opaque, never parsed or used to build an Azure
+relation - this is what keeps the destination safe for a non-Azure source
+(see `RTI-8J` below). Credentials live in a true private `#config` class
+field - ten independent introspection vectors (`JSON.stringify`,
+`Object.keys`/`values`/`entries`/`getOwnPropertyNames`/`getOwnPropertyDescriptors`,
+spread, `Object.assign`, `util.inspect` with hidden properties shown) were
+each independently confirmed to leak zero token bytes.
+
+Independently reviewed (`RTI-8G`): **approved**, zero BLOCKER/MEDIUM, two
+LOW/INFO findings carried as debt (see [PUBLISHING.md](PUBLISHING.md#carry-forward-debt)).
+Merged to `main` (PR #146, via `RTI-8I`'s merge/post-merge proof; `RTI-8H`
+was skipped since no corrective was needed).
+
+#### RTI-8J — Cross-Vendor Integrated Proof
+
+```text
+VENDOR INDEPENDENCE:
+PROVEN
+```
+
+A real `JiraRequirementsProvider` ingested a realistic native Jira payload;
+the resulting `RequirementArtifact[]` passed through the real,
+unmodified `analyzeRequirementsQuality`, `generateTestDesigns`, and
+`publishTestDesigns`; a real `AzureDevOpsTestCaseDestination` (distinct
+`destination.id`, distinct credentials from the Jira side) received the
+result. The Jira-origin `requirementId` was confirmed absent from every
+Azure request body; planted HTML-significant content from the real Jira
+payload survived, correctly escaped, into the final Azure description;
+a static audit of the entire generic core found zero "jira"/"azure"
+occurrences; a fresh `npm pack`/`npm install` external-consumer proof,
+using only public subpaths, reproduced the identical flow. Full evidence
+chain: [PUBLISHING.md](PUBLISHING.md#cross-vendor-proof).
+
+**This is a proof about one real cross-vendor pair, not a universal-adapter
+claim** - it establishes that the architecture imposes no vendor-pairing
+coupling, which is what any future additional source or destination adapter
+depends on.
 
 ## Project structure
 
@@ -1447,9 +1583,16 @@ Both changes are eligibility gates, not evidence: a project match never becomes 
 - **`ROADMAP_RTI7G_TECHNICAL_WORK`: COMPLETE** - independent cross-adapter architecture review of Jira and Azure DevOps together. Concluded RTI-6's `{id, read()}` abstraction is already at the correct level and validated by both real adapters without any generic-core redesign; found no BLOCKER and no merge-preventing MEDIUM; escalated exactly one narrow Jira-local parity gap (unknown-top-level-config permissiveness and an unaudited vendor-keyed map lookup, both of which Azure's own corrective had already closed for itself) as `RTI-7I-A`. Explicitly rejected a shared retry helper and deferred both a shared safe-string-primitives extraction and a shared test-fixture extraction (see [PROVIDERS.md](PROVIDERS.md#shared-production-code-decisions) for the full evidence table) - no shared production code or shared test infrastructure was introduced. `RTI-7H` (a third adapter) classified `OPTIONAL / SKIP` - two real, materially heterogeneous adapters were judged sufficient architectural proof.
 - **`ROADMAP_RTI7H_TECHNICAL_WORK`: OPTIONAL / SKIP** - a third concrete adapter was evaluated by RTI-7G and judged not architecturally necessary; Jira and Azure DevOps already constitute sufficient heterogeneous proof of the RTI-6 abstraction. Not started, and not required before RTI-8.
 - **`ROADMAP_RTI7IA_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - Jira/Azure provider parity hardening: unknown top-level Jira config keys are now rejected at construction (matching Azure's already-hardened behavior), and Jira's native issue-type lookup now uses the same own-property-safe guard independently discovered and fixed in the Azure adapter. Independently reviewed and approved (no new findings - the exhaustive audit confirmed exactly one unguarded lookup existed and everything else in the file was already safe), merged to `main` (PR #142, merge commit `2978576588be9f5f5ba5b8ae6208d3b5d42cf1a3`).
-- **`ROADMAP_RTI7IB_TECHNICAL_WORK`: DOCUMENTATION COMPLETE — AWAITING INDEPENDENT REVIEW** - this documentation closure: the RTI-7 Provider Authoring Contract persisted to [PROVIDERS.md](PROVIDERS.md), stale roadmap wording corrected throughout this README, and all RTI-7G architecture decisions and carried-forward debt formally recorded (PR #143). Documentation-complete on this branch; RTI-7 is not formally declared closed until this PR is independently reviewed and merged. No production code was touched.
-- **`ROADMAP_RTI7_TECHNICAL_WORK`: NOT YET CLOSED ON MAIN** - Roadmap RTI-7 (External Requirements Source Providers) has all implementation and architecture gates complete: two materially heterogeneous real adapters (Jira, Azure DevOps) both implement RTI-6's `{id, read()}` contract exactly, each independently reviewed, hardened where findings required it, and post-merge certified; the cross-adapter architecture review found the abstraction sound and required no generic-core redesign. Formal closure is prepared by `RTI-7I-B` (the durable Provider Authoring Contract in [PROVIDERS.md](PROVIDERS.md)) and awaits that documentation's own independent review and merge. Once `RTI-7I-B` merges, `RTI-7` becomes `COMPLETE_ON_MAIN` and `RTI-8` becomes ready to start.
-- **`ROADMAP_RTI8_TECHNICAL_WORK`: NOT_STARTED**.
+- **`ROADMAP_RTI7IB_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - the RTI-7 Provider Authoring Contract persisted to [PROVIDERS.md](PROVIDERS.md), stale roadmap wording corrected throughout this README, and all RTI-7G architecture decisions and carried-forward debt formally recorded. Independently reviewed (approved) and merged to `main` (PR #143, merge commit `b16b87c`, with one documentation-only follow-up, `RTI-7I-B-C1`, correcting pre-merge roadmap-state wording).
+- **`ROADMAP_RTI7_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - Roadmap RTI-7 (External Requirements Source Providers) is formally closed: two materially heterogeneous real adapters (Jira, Azure DevOps) both implement RTI-6's `{id, read()}` contract exactly, each independently reviewed, hardened where findings required it, and post-merge certified; the cross-adapter architecture review found the abstraction sound and required no generic-core redesign; the durable Provider Authoring Contract (`RTI-7I-B`) is independently reviewed and merged. `RTI-8` is ready and has itself since progressed to implementation-complete (see below).
+- **`ROADMAP_RTI8A_TECHNICAL_WORK`: COMPLETE** - Publishing/Destinations architecture and contract design: the `TestDesignDestination` interface, `TestDesignPublishRequest`/`TestDesignPublishResult` shapes, `CREATE_ONLY`/no-generic-retry/sequential-processing/best-effort-per-item/global-short-circuit decisions, and the two-trust-boundary model (destination implementation trusted, destination's returned result untrusted) - refined with one round of user-provided deltas explicitly adopted (15000ms default timeout, `_links.html.href`-preferred location extraction, a distinct `AZURE_TEST_CASE_NOT_ATTEMPTED` code, 404 scoped to "target not found", 3xx added to the global-short-circuit table). Planning only - no code.
+- **`ROADMAP_RTI8B_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - `assertValidTestDesignArtifact`/`publishTestDesigns`, the generic publishing core implementing RTI-8A's approved contract exactly. Independent review (`RTI-8C`) found one MEDIUM (nested `TestDesignArtifact` fields mutable by destination code despite top-level freeze), closed by a narrow corrective (`RTI-8B-C1`: fresh, deeply-frozen canonical copies via own-enumerable-data-property reads), independently re-reviewed and approved, merged to `main` (PR #144, merge commit `a13e49f`). Post-merge exact-tree/CI certification: `RTI-8D`, complete.
+- **`ROADMAP_RTI8E_TECHNICAL_WORK`: COMPLETE** - Azure DevOps Test Case Destination architecture/contract/security/test design, independently verified against current Microsoft Learn documentation (Work Item Create REST API, `System.Title`'s 255-character limit, JSON Patch request shape, response envelope). Planning only - no code.
+- **`ROADMAP_RTI8E1_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - extraction of the shared `test/helpers/http-test-server.js` fixture (`withServer`/`respondJson`) from the Jira/Azure-provider test duplication, triggered by the Azure destination crossing RTI-8A's own carried "third network test adapter" extraction threshold. Byte-identical extraction (independently reproved against a base-`main` reconstruction), zero production diff, one genuine but pre-existing non-reentrancy hazard found, characterized, and carried as debt (never fixed). Independently reviewed (approved) and merged to `main` (PR #145, merge commit `ce2e682`).
+- **`ROADMAP_RTI8F_TECHNICAL_WORK`: COMPLETE_ON_MAIN** - `AzureDevOpsTestCaseDestination`, the first concrete `TestDesignDestination`, implementing RTI-8A/8E's approved contract exactly with zero RTI-8B/generic-core production changes. Independent review (`RTI-8G`) found zero BLOCKER/MEDIUM (two LOW/INFO findings carried as debt: a direct-`publish()` trust-model documentation gap, since closed by this documentation update, and `location` metadata checking hostname but not port), approved as submitted - `RTI-8H` (a corrective cycle) was therefore skipped. Merged to `main` (PR #146, merge commit `9c4131e`). Post-merge exact-tree/CI certification: `RTI-8I`, complete.
+- **`ROADMAP_RTI8J_TECHNICAL_WORK`: COMPLETE — VENDOR INDEPENDENCE PROVEN** - the cross-vendor end-to-end integrated review: a real `JiraRequirementsProvider` ingestion feeding the real, unmodified generic quality/generation/publishing core into a real `AzureDevOpsTestCaseDestination`, with zero bridging/mapping/translation code anywhere. Review-only (zero production diff, zero committed test file - executed as in-process scratch proof); full evidence chain in [PUBLISHING.md](PUBLISHING.md#cross-vendor-proof). One honestly-carried limitation found and reported, not fabricated around: the current Jira provider yields at most one `acceptanceCriteria` entry per issue.
+- **`ROADMAP_RTI8K_TECHNICAL_WORK`: DOCUMENTATION COMPLETE — AWAITING INDEPENDENT REVIEW** - this documentation closure: the RTI-8 Publishing/Destination Authoring Contract persisted to [PUBLISHING.md](PUBLISHING.md), stale roadmap/package-surface wording corrected throughout this README (the "8 symbols" public-API description had gone stale after RTI-1 through RTI-8B grew it to 19), a canonical cross-vendor usage example added, and all RTI-8 carried-forward debt formally recorded. Documentation-complete on this branch; `RTI-8`, and therefore the full `RTI-1`-`RTI-8` implementation arc, is not formally declared closed until this documentation is independently reviewed and merged. No production code, test code, or `package.json` was touched.
+- **`ROADMAP_RTI8_TECHNICAL_WORK`: NOT YET CLOSED ON MAIN** - Roadmap RTI-8 (Test Case Publishing/Destinations) has all implementation, architecture, and cross-vendor proof gates complete: the generic publishing core and one real concrete destination (Azure DevOps Test Case) are both `COMPLETE_ON_MAIN`, independently reviewed, hardened where a finding required it, and post-merge certified; the cross-vendor integrated review (`RTI-8J`) proved the architecture requires no source/destination bridging code. Formal closure is prepared by `RTI-8K` (the durable Publishing/Destination Authoring Contract in [PUBLISHING.md](PUBLISHING.md)) and awaits that documentation's own independent review and merge. Once `RTI-8K` merges, `RTI-8` becomes `COMPLETE_ON_MAIN`, the full `RTI-1`-`RTI-8` arc reaches `COMPLETE_ON_MAIN`, and the mandatory **RTI Integrated Audit** becomes the next gate (followed by the Agentic Trust / AI Security / Memory Foundation research track - `AISEC-1..7`, then `MEM-1..9` - and only then a Full Project Strict Audit and productization planning).
 
 ## AI Test Design & Test Automation (#22/#23)
 

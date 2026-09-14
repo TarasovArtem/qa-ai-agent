@@ -435,7 +435,10 @@ const { AzureDevOpsRequirementsProvider } = require("qa-ai-agent/providers/azure
 ```
 
 The root package export (`require("qa-ai-agent")`) stays generic — 17
-exports covering RTI-1 through RTI-6's public surface, with **no** vendor
+exports covering RTI-1 through RTI-6's public surface **as of RTI-7's own
+completion** (now 19, after RTI-8B added `assertValidTestDesignArtifact`/
+`publishTestDesigns` — see [PUBLISHING.md](PUBLISHING.md#package-and-registry-model)
+for the current count and the write-side subpath model), with **no** vendor
 adapter ever added to it. Deep imports to either adapter's internal file
 path are blocked by the package's own `exports` map. This model is proven
 scalable across two structurally different adapters with zero redesign
@@ -470,8 +473,8 @@ approved" by RTI-7's own completion:
 - Credential acquisition, refresh, or storage inside any provider.
 - A required live-SaaS dependency in CI.
 - Azure DevOps Server/TFS (on-premises) support.
-- RTI-8 (test case publishing/destinations) — a distinct, not-yet-started
-  roadmap phase.
+- RTI-8 (test case publishing/destinations) — a distinct roadmap phase,
+  since implemented; see [PUBLISHING.md](PUBLISHING.md).
 
 ## Carry-forward debt
 
