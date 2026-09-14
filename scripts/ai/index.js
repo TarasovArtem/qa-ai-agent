@@ -79,6 +79,23 @@
  *   test-management system, no provider registry, and no vendor-name
  *   branching is exported or implemented here yet - that is Roadmap RTI-7.
  *
+ *   assertValidTestDesignArtifact - the RTI-4-owned fail-closed validator
+ *   for the TestDesignArtifact contract (see scripts/ai/test-design.js's
+ *   own docstring), activated by Roadmap RTI-8's publishing boundary - the
+ *   first real external/persistence boundary TestDesignArtifact crosses.
+ *   `generateTestDesign`/`generateTestDesigns`'s own behavior is unchanged.
+ *
+ *   publishTestDesigns - the RTI-8B generic external publishing executor:
+ *   normalizes an explicitly caller-supplied TestDesignDestination's
+ *   published result into a validated TestDesignPublishResult (see
+ *   scripts/ai/test-design-publishing.js's own docstring for the full
+ *   destination contract, trust model, pre-side-effect validation
+ *   guarantee, and best-effort partial-failure semantics). Added by Roadmap
+ *   RTI-8B; no concrete destination for any specific external test-
+ *   management/tracking system, no destination registry, and no
+ *   vendor-name branching is exported or implemented here yet - that is a
+ *   later RTI-8 subphase.
+ *
  * DELIBERATELY NOT EXPORTED (internal implementation detail, never a
  * target-facing need - see the ID-1 planning report's own public-API
  * audit for the evidence this is based on):
@@ -122,9 +139,10 @@ const { assertValidRepositoryRoot } = require("./repository-root");
 const { assertValidRequirementArtifact } = require("./requirement-artifact");
 const { loadRequirementsFromFile } = require("./requirements-file");
 const { analyzeRequirementQuality, analyzeRequirementsQuality } = require("./requirement-quality");
-const { generateTestDesign, generateTestDesigns } = require("./test-design");
+const { generateTestDesign, generateTestDesigns, assertValidTestDesignArtifact } = require("./test-design");
 const { buildRequirementTraceability, analyzeRequirementsCoverage } = require("./requirement-traceability");
 const { loadRequirementsFromProvider } = require("./requirements-source-provider");
+const { publishTestDesigns } = require("./test-design-publishing");
 
 module.exports = {
   collectContext: { main: collectContext.main, runCli: collectContext.runCli },
@@ -141,7 +159,9 @@ module.exports = {
   analyzeRequirementsQuality,
   generateTestDesign,
   generateTestDesigns,
+  assertValidTestDesignArtifact,
   buildRequirementTraceability,
   analyzeRequirementsCoverage,
   loadRequirementsFromProvider,
+  publishTestDesigns,
 };
