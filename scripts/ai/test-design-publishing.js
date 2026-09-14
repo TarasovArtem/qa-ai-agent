@@ -160,13 +160,51 @@ function boundedDetail(errors) {
 // Object.getOwnPropertyDescriptor() never invokes a getter - matching
 // requirement-artifact.js's/test-design.js's own getOwnEnumerableDataProperty()
 // exactly. Used throughout Boundary B (the destination's returned result) so
-// a hostile accessor on untrusted result data is never invoked.
+// a hostile accessor on untrusted result data is never invoked, and by
+// buildCanonicalTestDesign() below for the same reason on the request side.
 function getOwnEnumerableDataProperty(object, key) {
   const descriptor = Object.getOwnPropertyDescriptor(object, key);
   if (!descriptor) return { present: false, valid: false, value: undefined };
   const isDataDescriptor = Object.prototype.hasOwnProperty.call(descriptor, "value");
   if (!descriptor.enumerable || !isDataDescriptor) return { present: true, valid: false, value: undefined };
   return { present: true, valid: true, value: descriptor.value };
+}
+
+// Builds a fresh, deeply frozen canonical TestDesignArtifact copy for a
+// destination to receive - RTI-8A's "destination must not mutate
+// TestDesignArtifact" MUST rule only holds in practice if the destination
+// physically cannot reach the caller's own object graph. A generator-
+// produced artifact is already frozen top-level AND nested (test-design.js),
+// but a manually-constructed, structurally-valid artifact a caller passes
+// directly is not guaranteed to be - freezing only the array/wrapper (as an
+// earlier version of this module did) left `artifact`, `artifact.source`,
+// and `artifact.expectedResults` all independently reachable and mutable
+// through the same object references the caller still holds. This function
+// is applied uniformly to every testDesign (generator output included, at
+// negligible cost) rather than branching on "already frozen or not," which
+// would be harder to reason about for no real benefit.
+//
+// Called only on artifacts that have already passed
+// assertValidTestDesignArtifact, but every field is still read via
+// getOwnEnumerableDataProperty (not reused from validation) so this helper
+// stays correct on its own regardless of call-site ordering, and never
+// risks invoking an accessor on the caller's object.
+function buildCanonicalTestDesign(artifact) {
+  const source = getOwnEnumerableDataProperty(artifact, "source").value;
+  const canonicalSource = { requirementId: getOwnEnumerableDataProperty(source, "requirementId").value };
+  const criterionIdField = getOwnEnumerableDataProperty(source, "criterionId");
+  if (criterionIdField.present) canonicalSource.criterionId = criterionIdField.value;
+  const criterionIndexField = getOwnEnumerableDataProperty(source, "criterionIndex");
+  if (criterionIndexField.present) canonicalSource.criterionIndex = criterionIndexField.value;
+
+  return Object.freeze({
+    id: getOwnEnumerableDataProperty(artifact, "id").value,
+    requirementId: getOwnEnumerableDataProperty(artifact, "requirementId").value,
+    title: getOwnEnumerableDataProperty(artifact, "title").value,
+    objective: getOwnEnumerableDataProperty(artifact, "objective").value,
+    expectedResults: Object.freeze([...getOwnEnumerableDataProperty(artifact, "expectedResults").value]),
+    source: Object.freeze(canonicalSource),
+  });
 }
 
 // Boundary A - destination SHAPE validation only (trusted executable code,
@@ -423,7 +461,14 @@ function validatePublishResult(rawResult, destination, testDesigns) {
  * and best-effort partial-failure semantics.
  *
  * @param {{id: string, publish: function}} destination a TestDesignDestination
- * @param {{testDesigns: object[]}} request a TestDesignPublishRequest
+ * @param {{testDesigns: object[]}} request a TestDesignPublishRequest -
+ *   `request.testDesigns` and its artifact objects are never mutated and
+ *   never handed to `destination` directly; the destination receives fresh,
+ *   deeply frozen canonical copies instead (see buildCanonicalTestDesign()),
+ *   so `destination.publish()`'s own `request.testDesigns[i]` is NOT
+ *   reference-equal to the caller's original `TestDesignArtifact` object,
+ *   deliberately - a destination cannot reach or corrupt the caller's own
+ *   (possibly unfrozen) artifact through it.
  * @returns {Promise<object>} a fresh, frozen TestDesignPublishResult -
  *   `{ destinationId, allSucceeded, items }`, `items` in `request.testDesigns`
  *   input order regardless of the order the destination returned
@@ -441,8 +486,13 @@ async function publishTestDesigns(destination, request) {
   assertValidDestinationShape(destination, "publishTestDesigns");
   assertValidPublishRequest(request, "publishTestDesigns");
 
-  const testDesigns = request.testDesigns;
-  const safeRequest = Object.freeze({ testDesigns: Object.freeze([...testDesigns]) });
+  // Fresh, deeply frozen canonical copies - see buildCanonicalTestDesign()'s
+  // own docstring. The destination and all downstream Boundary-B
+  // correspondence/result handling operate on these copies exclusively;
+  // request.testDesigns and its artifact objects (the caller's own,
+  // possibly unfrozen references) are never touched again after this point.
+  const canonicalTestDesigns = Object.freeze(request.testDesigns.map(buildCanonicalTestDesign));
+  const safeRequest = Object.freeze({ testDesigns: canonicalTestDesigns });
 
   let rawResult;
   try {
@@ -451,7 +501,7 @@ async function publishTestDesigns(destination, request) {
     throw new Error(`TEST_DESIGN_PUBLISH_FAILED: publishTestDesigns destination "${destination.id}" failed to publish test design(s).`, { cause: err });
   }
 
-  const { valid, errors, normalized } = validatePublishResult(rawResult, destination, testDesigns);
+  const { valid, errors, normalized } = validatePublishResult(rawResult, destination, canonicalTestDesigns);
   if (!valid) {
     throw new Error(
       `TEST_DESIGN_PUBLISH_RESULT_INVALID: publishTestDesigns destination "${destination.id}" returned an invalid publish result (${boundedDetail(

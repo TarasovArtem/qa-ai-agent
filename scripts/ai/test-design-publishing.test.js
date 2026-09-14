@@ -243,6 +243,160 @@ test("RTI-8B: does not mutate the caller's original request or testDesigns array
   assert.equal(Object.isFrozen(originalTestDesigns), false);
 });
 
+// --- RTI-8B-C1 corrective: destination cannot reach/corrupt a caller-owned,
+// manually-constructed, unfrozen TestDesignArtifact (top-level or nested) --
+
+function manualDesign(overrides = {}) {
+  return {
+    id: "REQ-MANUAL::test::1",
+    requirementId: "REQ-MANUAL",
+    title: "Original title",
+    objective: "Original objective",
+    expectedResults: ["original result"],
+    source: { requirementId: "REQ-MANUAL" },
+    ...overrides,
+  };
+}
+
+test("RTI-8B-C1: a manually-constructed artifact is accepted unfrozen (baseline for the mutation tests below)", () => {
+  const artifact = manualDesign();
+  assert.equal(Object.isFrozen(artifact), false);
+  assert.equal(Object.isFrozen(artifact.source), false);
+  assert.equal(Object.isFrozen(artifact.expectedResults), false);
+});
+
+test("RTI-8B-C1: a destination cannot mutate the top-level fields of a caller-supplied unfrozen artifact", async () => {
+  const artifact = manualDesign();
+  const dest = {
+    id: "mutator",
+    publish(request) {
+      try {
+        request.testDesigns[0].title = "MUTATED";
+        request.testDesigns[0].objective = "MUTATED";
+      } catch {
+        /* strict-mode assignment to a frozen object throws - either outcome is acceptable, only the caller-visible result matters */
+      }
+      return { destinationId: "mutator", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [artifact] });
+  assert.equal(artifact.title, "Original title");
+  assert.equal(artifact.objective, "Original objective");
+});
+
+test("RTI-8B-C1: a destination cannot mutate the nested source object of a caller-supplied unfrozen artifact", async () => {
+  const artifact = manualDesign({ source: { requirementId: "REQ-MANUAL", criterionId: "AC1" } });
+  const dest = {
+    id: "mutator",
+    publish(request) {
+      try {
+        request.testDesigns[0].source.requirementId = "MUTATED";
+        request.testDesigns[0].source.criterionId = "MUTATED";
+      } catch {
+        /* see above */
+      }
+      return { destinationId: "mutator", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [artifact] });
+  assert.equal(artifact.source.requirementId, "REQ-MANUAL");
+  assert.equal(artifact.source.criterionId, "AC1");
+});
+
+test("RTI-8B-C1: a destination cannot mutate an expectedResults element of a caller-supplied unfrozen artifact", async () => {
+  const artifact = manualDesign({ expectedResults: ["one", "two"] });
+  const dest = {
+    id: "mutator",
+    publish(request) {
+      try {
+        request.testDesigns[0].expectedResults[0] = "MUTATED";
+      } catch {
+        /* see above */
+      }
+      return { destinationId: "mutator", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [artifact] });
+  assert.deepEqual(artifact.expectedResults, ["one", "two"]);
+});
+
+test("RTI-8B-C1: a destination cannot push into the expectedResults array of a caller-supplied unfrozen artifact", async () => {
+  const artifact = manualDesign({ expectedResults: ["one"] });
+  const dest = {
+    id: "mutator",
+    publish(request) {
+      try {
+        request.testDesigns[0].expectedResults.push("EXTRA");
+      } catch {
+        /* see above */
+      }
+      return { destinationId: "mutator", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [artifact] });
+  assert.deepEqual(artifact.expectedResults, ["one"]);
+});
+
+test("RTI-8B-C1: the caller's original artifact, source, and expectedResults all remain unfrozen after publish (runner does not mutate caller ownership metadata)", async () => {
+  const artifact = manualDesign();
+  await publishTestDesigns(okDestination(), { testDesigns: [artifact] });
+  assert.equal(Object.isFrozen(artifact), false);
+  assert.equal(Object.isFrozen(artifact.source), false);
+  assert.equal(Object.isFrozen(artifact.expectedResults), false);
+});
+
+test("RTI-8B-C1: the destination receives a fresh, deeply frozen canonical copy - not the caller's own object graph", async () => {
+  const artifact = manualDesign();
+  let received;
+  const dest = {
+    id: "capture",
+    publish(request) {
+      received = request.testDesigns[0];
+      return { destinationId: "capture", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [artifact] });
+  assert.equal(Object.isFrozen(received), true);
+  assert.equal(Object.isFrozen(received.source), true);
+  assert.equal(Object.isFrozen(received.expectedResults), true);
+  assert.notEqual(received, artifact);
+  assert.notEqual(received.source, artifact.source);
+  assert.notEqual(received.expectedResults, artifact.expectedResults);
+  assert.deepEqual(received, JSON.parse(JSON.stringify(artifact)));
+});
+
+test("RTI-8B-C1: multiple artifacts each get an independent canonical copy (no shared source/expectedResults reference between them)", async () => {
+  const a = manualDesign({ id: "A::test::1", requirementId: "A", source: { requirementId: "A" } });
+  const b = manualDesign({ id: "B::test::1", requirementId: "B", source: { requirementId: "B" } });
+  let receivedA, receivedB;
+  const dest = {
+    id: "capture2",
+    publish(request) {
+      [receivedA, receivedB] = request.testDesigns;
+      return { destinationId: "capture2", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [a, b] });
+  assert.notEqual(receivedA.source, receivedB.source);
+  assert.notEqual(receivedA.expectedResults, receivedB.expectedResults);
+});
+
+test("RTI-8B-C1: generator-produced (already frozen) artifacts are copied uniformly too, with identical protective effect", async () => {
+  const [design] = designs();
+  assert.equal(Object.isFrozen(design), true);
+  let received;
+  const dest = {
+    id: "capture3",
+    publish(request) {
+      received = request.testDesigns[0];
+      return { destinationId: "capture3", allSucceeded: true, items: request.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "r" })) };
+    },
+  };
+  await publishTestDesigns(dest, { testDesigns: [design] });
+  assert.notEqual(received, design);
+  assert.deepEqual(received, JSON.parse(JSON.stringify(design)));
+});
+
 // --- result validation (Boundary B) - correspondence / ordering -------------
 
 test("RTI-8B: re-projects a reversed destination result into request input order", async () => {
