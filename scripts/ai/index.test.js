@@ -17,7 +17,7 @@ const assert = require("node:assert/strict");
 
 const api = require("./index");
 
-test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5/RTI-6 public API: exposes exactly the four namespaced pipeline entrypoints, the five fail-closed validators, the RTI-2 file ingestion adapter, the RTI-3 quality analyzers, the RTI-4 test design generators, the RTI-5 traceability/coverage functions, and the RTI-6 provider executor", () => {
+test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5/RTI-6/RTI-8B public API: exposes exactly the four namespaced pipeline entrypoints, the six fail-closed validators, the RTI-2 file ingestion adapter, the RTI-3 quality analyzers, the RTI-4 test design generators, the RTI-5 traceability/coverage functions, the RTI-6 provider executor, and the RTI-8B publishing executor", () => {
   assert.deepEqual(Object.keys(api).sort(), [
     "aggregateBrowserContext",
     "analyzeFailure",
@@ -29,6 +29,7 @@ test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5/RTI-6 public API: exposes exactly the f
     "assertValidProjectProfile",
     "assertValidRepositoryRoot",
     "assertValidRequirementArtifact",
+    "assertValidTestDesignArtifact",
     "buildRequirementTraceability",
     "collectContext",
     "collectHistory",
@@ -36,6 +37,7 @@ test("ID-1/RTI-1/RTI-2/RTI-3/RTI-4/RTI-5/RTI-6 public API: exposes exactly the f
     "generateTestDesigns",
     "loadRequirementsFromFile",
     "loadRequirementsFromProvider",
+    "publishTestDesigns",
   ]);
 });
 
@@ -94,6 +96,11 @@ test("RTI-6 public API: loadRequirementsFromProvider is present and callable", (
   assert.equal(typeof api.loadRequirementsFromProvider, "function");
 });
 
+test("RTI-8B public API: assertValidTestDesignArtifact and publishTestDesigns are present and callable", () => {
+  assert.equal(typeof api.assertValidTestDesignArtifact, "function");
+  assert.equal(typeof api.publishTestDesigns, "function");
+});
+
 test("ID-1 public API: exported main() functions are the exact same function references as the internal modules' own exports (no wrapping)", () => {
   assert.equal(api.collectContext.main, require("./collect-context").main);
   assert.equal(api.collectContext.runCli, require("./collect-context").runCli);
@@ -113,6 +120,8 @@ test("ID-1 public API: exported main() functions are the exact same function ref
   assert.equal(api.buildRequirementTraceability, require("./requirement-traceability").buildRequirementTraceability);
   assert.equal(api.analyzeRequirementsCoverage, require("./requirement-traceability").analyzeRequirementsCoverage);
   assert.equal(api.loadRequirementsFromProvider, require("./requirements-source-provider").loadRequirementsFromProvider);
+  assert.equal(api.assertValidTestDesignArtifact, require("./test-design").assertValidTestDesignArtifact);
+  assert.equal(api.publishTestDesigns, require("./test-design-publishing").publishTestDesigns);
 });
 
 // --- Deliberate exclusions (see index.js's own docstring for rationale) ----

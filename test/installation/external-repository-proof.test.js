@@ -477,6 +477,7 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "assertValidProjectProfile",
     "assertValidRepositoryRoot",
     "assertValidRequirementArtifact",
+    "assertValidTestDesignArtifact",
     "buildRequirementTraceability",
     "collectContext",
     "collectHistory",
@@ -484,6 +485,7 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     "generateTestDesigns",
     "loadRequirementsFromFile",
     "loadRequirementsFromProvider",
+    "publishTestDesigns",
   ]);
   assert.deepEqual(result.collectContextKeys, ["main", "runCli"]);
   assert.equal(result.deepImportBlocked, true, "a deep import into an unsupported internal path must be blocked by the exports field");

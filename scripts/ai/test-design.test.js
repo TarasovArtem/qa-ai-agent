@@ -13,7 +13,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { generateTestDesign, generateTestDesigns } = require("./test-design");
+const { generateTestDesign, generateTestDesigns, assertValidTestDesignArtifact } = require("./test-design");
 
 function art(overrides = {}) {
   return {
@@ -355,4 +355,166 @@ test("RTI-4 error model: error messages are bounded and do not dump entire artif
   } catch (err) {
     assert.equal(err.message.length < 2000, true);
   }
+});
+
+// --- RTI-8 activation: assertValidTestDesignArtifact ------------------------
+
+function validTestDesign(overrides = {}) {
+  return {
+    id: "REQ-X::test::1",
+    requirementId: "REQ-X",
+    title: "Example requirement — AC 1",
+    objective: "Verify that: something happens.",
+    expectedResults: ["something happens."],
+    source: { requirementId: "REQ-X", criterionId: "AC1" },
+    ...overrides,
+  };
+}
+
+test("RTI-8: assertValidTestDesignArtifact accepts a real generateTestDesign() output unchanged", () => {
+  const [design] = generateTestDesign(art({ id: "REQ-V1", content: "Return HTTP 200." }));
+  assert.equal(assertValidTestDesignArtifact(design, "test"), design);
+});
+
+test("RTI-8: assertValidTestDesignArtifact accepts every design in a full acceptanceCriteria batch, including the max-length worst case", () => {
+  const longTitle = "T".repeat(200);
+  const longText = "X".repeat(20000);
+  const criteria = Array.from({ length: 200 }, (_, i) => ({ id: `AC${i}`, text: longText }));
+  const requirement = art({ id: "R".repeat(190), title: longTitle, acceptanceCriteria: criteria });
+  const designs = generateTestDesigns([requirement]);
+  assert.equal(designs.length, 200);
+  for (const design of designs) assertValidTestDesignArtifact(design, "test");
+});
+
+test("RTI-8: assertValidTestDesignArtifact accepts a manually-constructed canonical artifact (content-only shape, no criterionId/criterionIndex)", () => {
+  const design = validTestDesign({ source: { requirementId: "REQ-X" } });
+  assert.equal(assertValidTestDesignArtifact(design, "test"), design);
+});
+
+test("RTI-8: assertValidTestDesignArtifact accepts criterionId-only", () => {
+  assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", criterionId: "AC1" } }), "test");
+});
+
+test("RTI-8: assertValidTestDesignArtifact accepts criterionIndex-only", () => {
+  assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", criterionIndex: 0 } }), "test");
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects undefined/null with TEST_DESIGN_ARTIFACT_REQUIRED", () => {
+  for (const bad of [undefined, null]) {
+    assert.throws(() => assertValidTestDesignArtifact(bad, "test"), /TEST_DESIGN_ARTIFACT_REQUIRED:/);
+  }
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects missing/empty id", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ id: undefined }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ id: "" }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects an unknown top-level key", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ bogus: 1 }), "test"), /unknown key "bogus"/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects missing requirementId", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ requirementId: undefined }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects source.requirementId !== requirementId", () => {
+  assert.throws(
+    () => assertValidTestDesignArtifact(validTestDesign({ requirementId: "REQ-X", source: { requirementId: "REQ-OTHER" } }), "test"),
+    /source\.requirementId: must equal/
+  );
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects missing title", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ title: undefined }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects missing objective", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ objective: undefined }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects empty expectedResults", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ expectedResults: [] }), "test"), /expectedResults/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects non-array expectedResults", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ expectedResults: "not an array" }), "test"), /expectedResults/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects an invalid expectedResults element", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ expectedResults: ["ok", ""] }), "test"), /expectedResults/);
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ expectedResults: ["ok", 42] }), "test"), /expectedResults/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects missing source", () => {
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ source: undefined }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects an unknown source key", () => {
+  assert.throws(
+    () => assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", bogus: 1 } }), "test"),
+    /source\.bogus: unknown key/
+  );
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects an empty criterionId", () => {
+  assert.throws(
+    () => assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", criterionId: "" } }), "test"),
+    /source\.criterionId/
+  );
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects a negative criterionIndex", () => {
+  assert.throws(
+    () => assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", criterionIndex: -1 } }), "test"),
+    /source\.criterionIndex/
+  );
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects a non-integer criterionIndex", () => {
+  assert.throws(
+    () => assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", criterionIndex: 1.5 } }), "test"),
+    /source\.criterionIndex/
+  );
+});
+
+test("RTI-8: assertValidTestDesignArtifact rejects criterionId AND criterionIndex both present (ambiguous - the generator never emits both)", () => {
+  assert.throws(
+    () => assertValidTestDesignArtifact(validTestDesign({ source: { requirementId: "REQ-X", criterionId: "AC1", criterionIndex: 0 } }), "test"),
+    /criterionId and criterionIndex must not both be present/
+  );
+});
+
+test("RTI-8: assertValidTestDesignArtifact never invokes an accessor getter on untrusted input", () => {
+  let getterCalled = false;
+  const hostileSource = { requirementId: "REQ-X" };
+  Object.defineProperty(hostileSource, "criterionId", {
+    get() {
+      getterCalled = true;
+      return "x";
+    },
+    enumerable: true,
+  });
+  assert.throws(() => assertValidTestDesignArtifact(validTestDesign({ source: hostileSource }), "test"), /TEST_DESIGN_ARTIFACT_INVALID/);
+  assert.equal(getterCalled, false);
+});
+
+test("RTI-8: assertValidTestDesignArtifact is not fooled by a value inherited from a polluted Object.prototype", () => {
+  const sentinelKey = "__td_validator_sentinel__";
+  Object.defineProperty(Object.prototype, sentinelKey, { value: "x", enumerable: true, configurable: true });
+  try {
+    const design = validTestDesign();
+    assert.equal(sentinelKey in design, true);
+    assert.equal(Object.keys(design).includes(sentinelKey), false);
+    assert.equal(assertValidTestDesignArtifact(design, "test"), design);
+  } finally {
+    delete Object.prototype[sentinelKey];
+  }
+});
+
+test("RTI-8: assertValidTestDesignArtifact does not mutate the artifact", () => {
+  const design = validTestDesign();
+  const before = JSON.stringify(design);
+  assertValidTestDesignArtifact(design, "test");
+  assert.equal(JSON.stringify(design), before);
 });

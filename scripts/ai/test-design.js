@@ -148,18 +148,22 @@
  * RTI-1's own validator already certified via getOwnEnumerableDataProperty()
  * (own, enumerable, data-only; an accessor's getter is never invoked).
  *
- * NO EXPLICIT VALIDATOR EXPORT (deliberate, re-evaluated from the roadmap's
- * own candidate design): unlike RequirementArtifact, a TestDesignArtifact
- * is never externally-authored untrusted input in this MVP - it is only
- * ever produced by this module's own deterministic construction, in
- * process, immediately consumed. There is no concrete external caller yet
- * (RTI-5/RTI-8 do not exist) that would receive an arbitrary
- * caller-supplied TestDesignArtifact needing hostile-input defense the way
- * RequirementArtifact does. Adding `assertValidTestDesignArtifact` now
- * would be exactly the kind of speculative complexity this repository
- * consistently avoids (see RTI-1's own deferred collection validator for
- * the identical precedent) - it is deferred until a real caller proves the
- * actual shape needed.
+ * VALIDATOR EXPORT - ACTIVATED BY RTI-8 (this module's own prior deferral,
+ * now resolved): the original MVP deliberately shipped with no exported
+ * `assertValidTestDesignArtifact`, reasoning that TestDesignArtifact was
+ * never externally-authored untrusted input - only ever produced by this
+ * module's own deterministic construction, in process, immediately
+ * consumed - and that no concrete external caller existed yet to prove the
+ * actual shape needed. That deferral explicitly named its own
+ * re-evaluation trigger (see requirement-traceability.js's own identical
+ * trigger language): "the moment TestDesignArtifact crosses an actual
+ * storage/network/external-import boundary (... or an RTI-8 stored/
+ * serialized round-trip)". Roadmap RTI-8 (publishing generated test
+ * designs to an external destination) is exactly that trigger -
+ * `assertValidTestDesignArtifact` below is RTI-4-owned (this module remains
+ * the one place that owns the TestDesignArtifact contract's shape) and is
+ * additive: `generateTestDesign`/`generateTestDesigns`'s own behavior and
+ * output shape are completely unchanged by its addition.
  *
  * DATA-ONLY, SHALLOW-FROZEN: every returned TestDesignArtifact, its
  * `expectedResults` array, and its `source` object are all frozen
@@ -182,6 +186,187 @@ function boundedDetail(errors) {
   const omitted = errors.length - shown.length;
   const joined = shown.join("; ") + (omitted > 0 ? `; ${omitted} additional error(s) omitted` : "");
   return joined.length <= MAX_VALIDATION_DETAIL_LENGTH ? joined : `${joined.slice(0, MAX_VALIDATION_DETAIL_LENGTH)}...`;
+}
+
+// --- assertValidTestDesignArtifact (RTI-8 activation - see module docstring
+// above) - shared primitives deliberately duplicated, not imported, matching
+// this repository's established "small duplicated primitives over premature
+// shared abstraction" convention (identical copies already exist in
+// requirement-artifact.js, requirement-traceability.js,
+// requirements-source-provider.js). ---------------------------------------
+
+const TD_MAX_STRING_LENGTH = 200; // requirementId, source.requirementId, source.criterionId
+// id/title are generator-composed from a requirement's own <=200-char id/
+// title plus a fixed "::test::<ordinal>"/" — AC <ordinal>" suffix (ordinal
+// bounded by RTI-1's own MAX_ARRAY_LENGTH=200 acceptanceCriteria cap) - a
+// tight 200-char bound would reject the generator's own legitimate output.
+const TD_MAX_ID_LENGTH = 256;
+const TD_MAX_TITLE_LENGTH = 256;
+// objective/expectedResults entries are generator-composed from a
+// requirement's own <=20000-char content/criterion text (plus a fixed
+// "Verify that: " prefix for objective) - sized with headroom above 20000.
+const TD_MAX_PROSE_LENGTH = 20100;
+const TD_MAX_ARRAY_LENGTH = 200;
+
+const TD_ARTIFACT_ALLOWED_KEYS = Object.freeze(["id", "requirementId", "title", "objective", "expectedResults", "source"]);
+const TD_SOURCE_ALLOWED_KEYS = Object.freeze(["requirementId", "criterionId", "criterionIndex"]);
+
+function tdIsPlainDataObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function tdIsNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function tdHasControlChar(value) {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 32 || code === 127) return true;
+  }
+  return false;
+}
+
+function tdIsSafeBoundedString(value, maxLength) {
+  return tdIsNonEmptyString(value) && value.length <= maxLength && !tdHasControlChar(value);
+}
+
+function tdIsNonNegativeInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+// Object.getOwnPropertyDescriptor() never invokes a getter - matching
+// requirement-artifact.js's own getOwnEnumerableDataProperty() exactly, so
+// an accessor-backed or inherited value is never trusted and an accessor's
+// getter is never invoked on this untrusted-data boundary.
+function tdGetOwnEnumerableDataProperty(object, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (!descriptor) return { present: false, valid: false, value: undefined };
+  const isDataDescriptor = Object.prototype.hasOwnProperty.call(descriptor, "value");
+  if (!descriptor.enumerable || !isDataDescriptor) return { present: true, valid: false, value: undefined };
+  return { present: true, valid: true, value: descriptor.value };
+}
+
+function tdPushUnknownKeyErrors(object, allowedKeys, errors, describe) {
+  const unknown = Object.keys(object).filter((key) => !allowedKeys.includes(key));
+  for (const key of unknown) errors.push(describe(key));
+}
+
+function validateTestDesignSource(source, requirementId, errors, path) {
+  if (!tdIsPlainDataObject(source)) {
+    errors.push(`${path}.source: must be a plain object`);
+    return;
+  }
+  tdPushUnknownKeyErrors(source, TD_SOURCE_ALLOWED_KEYS, errors, (key) => `${path}.source.${key}: unknown key is not permitted`);
+
+  const srcRequirementIdField = tdGetOwnEnumerableDataProperty(source, "requirementId");
+  if (!srcRequirementIdField.valid || !tdIsSafeBoundedString(srcRequirementIdField.value, TD_MAX_STRING_LENGTH)) {
+    errors.push(`${path}.source.requirementId: must be a non-empty, bounded own enumerable data string property`);
+  } else if (srcRequirementIdField.value !== requirementId) {
+    errors.push(`${path}.source.requirementId: must equal ${path}.requirementId (source/top-level requirement identity must never disagree)`);
+  }
+
+  const criterionIdField = tdGetOwnEnumerableDataProperty(source, "criterionId");
+  const hasCriterionId = criterionIdField.present;
+  if (hasCriterionId) {
+    if (!criterionIdField.valid || !tdIsSafeBoundedString(criterionIdField.value, TD_MAX_STRING_LENGTH)) {
+      errors.push(`${path}.source.criterionId: must be a non-empty, bounded string when supplied`);
+    }
+  }
+
+  const criterionIndexField = tdGetOwnEnumerableDataProperty(source, "criterionIndex");
+  const hasCriterionIndex = criterionIndexField.present;
+  if (hasCriterionIndex) {
+    if (!criterionIndexField.valid || !tdIsNonNegativeInteger(criterionIndexField.value)) {
+      errors.push(`${path}.source.criterionIndex: must be a non-negative integer when supplied`);
+    }
+  }
+
+  // Mirrors RTI-5's own identical rejection: a criterion reference must be
+  // unambiguous - the generator itself never emits both on one artifact.
+  if (hasCriterionId && hasCriterionIndex) {
+    errors.push(`${path}.source: criterionId and criterionIndex must not both be present (ambiguous criterion reference)`);
+  }
+}
+
+function validateTestDesignArtifact(artifact) {
+  const errors = [];
+  const path = "artifact";
+
+  if (!tdIsPlainDataObject(artifact)) {
+    return { valid: false, errors: [`${path} must be a plain, JSON-like object`] };
+  }
+
+  tdPushUnknownKeyErrors(artifact, TD_ARTIFACT_ALLOWED_KEYS, errors, (key) => `unknown key "${key}" is not permitted`);
+
+  const idField = tdGetOwnEnumerableDataProperty(artifact, "id");
+  if (!idField.valid || !tdIsSafeBoundedString(idField.value, TD_MAX_ID_LENGTH)) {
+    errors.push(`${path}.id: must be a non-empty, bounded own enumerable data string property`);
+  }
+
+  const requirementIdField = tdGetOwnEnumerableDataProperty(artifact, "requirementId");
+  let requirementIdValue;
+  if (!requirementIdField.valid || !tdIsSafeBoundedString(requirementIdField.value, TD_MAX_STRING_LENGTH)) {
+    errors.push(`${path}.requirementId: must be a non-empty, bounded own enumerable data string property`);
+  } else {
+    requirementIdValue = requirementIdField.value;
+  }
+
+  const titleField = tdGetOwnEnumerableDataProperty(artifact, "title");
+  if (!titleField.valid || !tdIsSafeBoundedString(titleField.value, TD_MAX_TITLE_LENGTH)) {
+    errors.push(`${path}.title: must be a non-empty, bounded own enumerable data string property`);
+  }
+
+  const objectiveField = tdGetOwnEnumerableDataProperty(artifact, "objective");
+  if (!objectiveField.valid || !tdIsSafeBoundedString(objectiveField.value, TD_MAX_PROSE_LENGTH)) {
+    errors.push(`${path}.objective: must be a non-empty, bounded own enumerable data string property`);
+  }
+
+  const expectedResultsField = tdGetOwnEnumerableDataProperty(artifact, "expectedResults");
+  if (!expectedResultsField.valid) {
+    errors.push(`${path}.expectedResults: must be an own enumerable data property`);
+  } else {
+    const value = expectedResultsField.value;
+    if (!Array.isArray(value) || value.length === 0 || value.length > TD_MAX_ARRAY_LENGTH) {
+      errors.push(`${path}.expectedResults: must be a non-empty array (max ${TD_MAX_ARRAY_LENGTH} entries)`);
+    } else if (!value.every((entry) => tdIsSafeBoundedString(entry, TD_MAX_PROSE_LENGTH))) {
+      errors.push(`${path}.expectedResults: every entry must be a non-empty, bounded string`);
+    }
+  }
+
+  const sourceField = tdGetOwnEnumerableDataProperty(artifact, "source");
+  if (!sourceField.valid) {
+    errors.push(`${path}.source: must be an own enumerable data property`);
+  } else {
+    validateTestDesignSource(sourceField.value, requirementIdValue, errors, path);
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Fail-closed structural validator for a TestDesignArtifact - the RTI-8
+ * activation of this module's own previously-deferred decision (see module
+ * docstring). Every field is read via own-enumerable-data-property access
+ * only; an accessor's getter is never invoked. Never mutates `artifact`.
+ *
+ * @param {object} artifact a candidate TestDesignArtifact
+ * @param {string} callerLabel identifies the calling module/function in
+ *   thrown error messages
+ * @returns {object} the same `artifact` reference, unchanged
+ * @throws {Error} TEST_DESIGN_ARTIFACT_REQUIRED / TEST_DESIGN_ARTIFACT_INVALID
+ */
+function assertValidTestDesignArtifact(artifact, callerLabel) {
+  if (artifact === undefined || artifact === null) {
+    throw new Error(`TEST_DESIGN_ARTIFACT_REQUIRED: ${callerLabel} requires an explicit TestDesignArtifact; none was supplied.`);
+  }
+  const { valid, errors } = validateTestDesignArtifact(artifact);
+  if (!valid) {
+    throw new Error(`TEST_DESIGN_ARTIFACT_INVALID: ${callerLabel} received an invalid TestDesignArtifact (${boundedDetail(errors)}).`);
+  }
+  return artifact;
 }
 
 function buildSourceRef(artifact, criterion, index) {
@@ -349,4 +534,5 @@ function generateTestDesigns(artifacts) {
 module.exports = {
   generateTestDesign,
   generateTestDesigns,
+  assertValidTestDesignArtifact,
 };
