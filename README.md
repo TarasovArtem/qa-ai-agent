@@ -1083,7 +1083,10 @@ const destination = new AzureDevOpsTestCaseDestination({
 `CREATE_ONLY`, sequential, never-retried `POST` to Azure's documented Work
 Item Create REST API against a fixed `https://dev.azure.com` authority
 (constructed only from validated `organization`/`project` - no caller
-`baseUrl`, no Azure DevOps Server/TFS support). Maps exactly
+`baseUrl`, no Azure DevOps Server/TFS support). Because Test Case creation
+is `CREATE_ONLY` and non-idempotent, repeating the same publish operation or
+re-running the pipeline may create duplicate remote Azure Test Cases. Maps
+exactly
 `TestDesignArtifact.title → System.Title` and `objective`/`expectedResults →
 System.Description` (HTML-escaped) - no custom fields, and
 `Microsoft.VSTS.TCM.Steps` is deliberately never populated (no grounded

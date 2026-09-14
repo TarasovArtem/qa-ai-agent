@@ -159,11 +159,14 @@ A `TestDesignDestination` implementation **SHOULD**:
    should not stop the batch, a condition likely to recur for every
    remaining item (global short-circuit), an ambiguous outcome where the
    remote write may or may not have happened, and "not attempted" (skipped
-   after a global short-circuit) — Azure's nine-code taxonomy
-   (`AZURE_TEST_CASE_DESTINATION_CONFIG_INVALID`, `CREATE_REJECTED`,
-   `AUTH_FAILED`, `PERMISSION_DENIED`, `TARGET_NOT_FOUND`, `RATE_LIMITED`,
-   `REDIRECT_BLOCKED`, `RESPONSE_INVALID`, `OUTCOME_UNKNOWN`,
-   `NOT_ATTEMPTED`) is a worked reference, not a mandated vocabulary.
+   after a global short-circuit) — Azure's worked reference uses one
+   constructor/config validation code (`AZURE_TEST_CASE_DESTINATION_CONFIG_INVALID`)
+   plus nine publish/runtime result codes (`AZURE_TEST_CASE_CREATE_REJECTED`,
+   `AZURE_TEST_CASE_AUTH_FAILED`, `AZURE_TEST_CASE_PERMISSION_DENIED`,
+   `AZURE_TEST_CASE_TARGET_NOT_FOUND`, `AZURE_TEST_CASE_RATE_LIMITED`,
+   `AZURE_TEST_CASE_REDIRECT_BLOCKED`, `AZURE_TEST_CASE_RESPONSE_INVALID`,
+   `AZURE_TEST_CASE_OUTCOME_UNKNOWN`, `AZURE_TEST_CASE_NOT_ATTEMPTED`) — this
+   is a worked reference, not a mandated vocabulary.
 3. Reject unknown top-level and nested config keys at construction, rather
    than silently ignoring typos or unsupported options.
 4. Be exposed via a **package subpath**, never expanding the root package
