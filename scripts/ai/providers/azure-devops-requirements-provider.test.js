@@ -10,77 +10,19 @@
  * exercises the real production URL construction, header construction,
  * method, the WIQL-then-batch control flow, and JSON-parsing code paths
  * with no live TLS server and no executable-callback test seam in public
- * config.
+ * config. The server/proxy mechanism itself (Roadmap RTI-8E1) is shared
+ * with the Jira requirements provider's own test suite via
+ * test/helpers/http-test-server.js - this file remains entirely
+ * responsible for its own Azure-shaped mock payloads and assertions; the
+ * shared module knows nothing about WIQL/batch/HTML normalization.
  */
 
-const { test, after } = require("node:test");
+const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const http = require("node:http");
 
 const { AzureDevOpsRequirementsProvider } = require("./azure-devops-requirements-provider");
 const { loadRequirementsFromProvider } = require("../requirements-source-provider");
-
-// --- test infrastructure ---------------------------------------------------
-
-function startMockServer(handler) {
-  const server = http.createServer((req, res) => {
-    const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf8");
-      req.rawBody = raw;
-      try {
-        req.jsonBody = raw.length > 0 ? JSON.parse(raw) : undefined;
-      } catch {
-        req.jsonBody = undefined;
-      }
-      handler(req, res);
-    });
-  });
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
-  });
-}
-
-function closeServer(server) {
-  return new Promise((resolve) => server.close(resolve));
-}
-
-let activeRestore = null;
-function proxyFetchTo(port) {
-  const originalFetch = global.fetch;
-  global.fetch = (url, options) => {
-    const parsed = new URL(url);
-    const proxied = `http://127.0.0.1:${port}${parsed.pathname}${parsed.search}`;
-    return originalFetch(proxied, options);
-  };
-  activeRestore = () => {
-    global.fetch = originalFetch;
-    activeRestore = null;
-  };
-  return activeRestore;
-}
-
-after(() => {
-  if (activeRestore) activeRestore();
-});
-
-async function withServer(handler, fn) {
-  const { server, port } = await startMockServer(handler);
-  const restore = proxyFetchTo(port);
-  try {
-    return await fn(port);
-  } finally {
-    restore();
-    await closeServer(server);
-  }
-}
-
-function respondJson(res, status, body, headers = {}) {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json", ...headers });
-  res.end(payload);
-}
+const { withServer, respondJson } = require("../../../test/helpers/http-test-server");
 
 function makeConfig(overrides = {}) {
   return {
