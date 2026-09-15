@@ -235,6 +235,14 @@ function assertValidDestinationShape(destination, callerLabel) {
 // TestDesignArtifact entry gets the full own-enumerable-data-property
 // hardening via assertValidTestDesignArtifact - the same split RTI-4/RTI-5
 // already use between their own outer-collection and inner-entry checks.
+//
+// Reads `request.testDesigns` exactly once and returns that exact array
+// reference. The caller (publishTestDesigns) MUST reuse the returned
+// reference for canonicalization rather than re-reading `request.testDesigns`
+// itself - a second independent read of a getter-backed `testDesigns`
+// property could otherwise return different content than what was just
+// validated here (RTIA-B01), silently defeating the batch-size bound and
+// the artifact/duplicate checks below.
 function assertValidPublishRequest(request, callerLabel) {
   if (request === undefined || request === null) {
     throw new Error(`TEST_DESIGN_PUBLISH_REQUEST_REQUIRED: ${callerLabel} requires an explicit TestDesignPublishRequest; none was supplied.`);
@@ -281,6 +289,8 @@ function assertValidPublishRequest(request, callerLabel) {
   if (collectionErrors.length > 0) {
     throw new Error(`TEST_DESIGN_PUBLISH_REQUEST_INVALID: ${callerLabel} received a request with duplicate testDesign id(s) (${boundedDetail(collectionErrors)}).`);
   }
+
+  return testDesigns;
 }
 
 // Boundary B - the destination's returned result is UNTRUSTED DATA.
@@ -484,14 +494,21 @@ function validatePublishResult(rawResult, destination, testDesigns) {
  */
 async function publishTestDesigns(destination, request) {
   assertValidDestinationShape(destination, "publishTestDesigns");
-  assertValidPublishRequest(request, "publishTestDesigns");
+  // request.testDesigns is read exactly once, inside assertValidPublishRequest,
+  // which returns that same array reference below - it is deliberately never
+  // re-read from `request` again. A second independent read (of a getter- or
+  // Proxy-backed `testDesigns` property) could return content that was never
+  // validated by the call above, bypassing the batch-size bound and the
+  // artifact/duplicate checks (RTIA-B01) - reusing the single validated
+  // reference is the fix, not merely a style preference.
+  const testDesigns = assertValidPublishRequest(request, "publishTestDesigns");
 
   // Fresh, deeply frozen canonical copies - see buildCanonicalTestDesign()'s
   // own docstring. The destination and all downstream Boundary-B
   // correspondence/result handling operate on these copies exclusively;
-  // request.testDesigns and its artifact objects (the caller's own,
-  // possibly unfrozen references) are never touched again after this point.
-  const canonicalTestDesigns = Object.freeze(request.testDesigns.map(buildCanonicalTestDesign));
+  // the caller's own testDesigns array and its artifact objects (possibly
+  // unfrozen references) are never touched again after this point.
+  const canonicalTestDesigns = Object.freeze(testDesigns.map(buildCanonicalTestDesign));
   const safeRequest = Object.freeze({ testDesigns: canonicalTestDesigns });
 
   let rawResult;
