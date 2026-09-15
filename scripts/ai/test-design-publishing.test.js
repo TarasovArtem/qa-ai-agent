@@ -159,6 +159,101 @@ test("RTI-8B: rejects duplicate testDesign ids, zero destination calls", async (
   assert.equal(dest.calls, 0);
 });
 
+// --- RTIA-C1: single-read trust boundary (request.testDesigns) --------------
+//
+// The RTI Integrated Audit (RTIA-B01) found that publishTestDesigns() read
+// `request.testDesigns` twice - once to validate, once to canonicalize - so
+// a getter-/Proxy-backed `testDesigns` property that returned different
+// content on its second invocation could reach destination.publish() having
+// never been checked by the validation that just ran against its first
+// invocation's content. These tests reproduce that exact scenario and prove
+// the fix: exactly one read, and the destination only ever sees what was
+// actually validated.
+
+function validTestDesign(id, overrides = {}) {
+  return { id, requirementId: id, title: `title-${id}`, objective: "o", expectedResults: ["x"], source: { requirementId: id }, ...overrides };
+}
+
+test("RTI-8B: request.testDesigns is read exactly once for an ordinary, well-behaved request", async () => {
+  const dest = okDestination();
+  let reads = 0;
+  const request = {
+    get testDesigns() {
+      reads++;
+      return [validTestDesign("only")];
+    },
+  };
+  const result = await publishTestDesigns(dest, request);
+  assert.equal(reads, 1);
+  assert.equal(dest.calls, 1);
+  assert.equal(result.items[0].testDesignId, "only");
+});
+
+test("RTI-8B: a getter that grows past MAX_PUBLISH_BATCH_SIZE on a later read cannot bypass the batch-size bound", async () => {
+  const dest = okDestination();
+  const small = [validTestDesign("only")];
+  const oversized = Array.from({ length: 501 }, (_, i) => validTestDesign(`overflow-${i}`));
+  let reads = 0;
+  const request = { get testDesigns() { reads++; return reads === 1 ? small : oversized; } };
+  const result = await publishTestDesigns(dest, request);
+  assert.equal(reads, 1, "a second read would have observed the oversized array");
+  assert.equal(dest.calls, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].testDesignId, "only");
+});
+
+test("RTI-8B: a getter returning different well-formed content on a later read cannot change what is published", async () => {
+  const dest = okDestination();
+  const validated = [validTestDesign("x", { title: "VALIDATED-CONTENT" })];
+  const swapped = [validTestDesign("x", { title: "NEVER-VALIDATED-CONTENT" })];
+  let reads = 0;
+  let publishedTitle;
+  const spyDest = {
+    id: "spy",
+    async publish(req) {
+      publishedTitle = req.testDesigns[0].title;
+      return { destinationId: "spy", allSucceeded: true, items: req.testDesigns.map((td) => ({ testDesignId: td.id, status: "CREATED", remoteId: "1" })) };
+    },
+  };
+  const request = { get testDesigns() { reads++; return reads === 1 ? validated : swapped; } };
+  await publishTestDesigns(spyDest, request);
+  assert.equal(reads, 1, "a second read would have observed the swapped content");
+  assert.equal(publishedTitle, "VALIDATED-CONTENT");
+});
+
+test("RTI-8B: an invalid first snapshot rejects the whole call even if a later read would be valid, zero destination calls", async () => {
+  const dest = okDestination();
+  const oversized = Array.from({ length: 501 }, (_, i) => validTestDesign(`overflow-${i}`));
+  const valid = [validTestDesign("only")];
+  let reads = 0;
+  const request = { get testDesigns() { reads++; return reads === 1 ? oversized : valid; } };
+  await assert.rejects(() => publishTestDesigns(dest, request), /exceeding the maximum publish batch size/);
+  assert.equal(reads, 1, "the caller cannot escape rejection by changing what a later read would return");
+  assert.equal(dest.calls, 0);
+});
+
+test("RTI-8B: a Proxy-wrapped request (a realistic lazy-relation/instrumentation pattern) is read exactly once", async () => {
+  const dest = okDestination();
+  let getTraps = 0;
+  const target = { testDesigns: [validTestDesign("proxied")] };
+  const proxied = new Proxy(target, {
+    get(obj, prop, receiver) {
+      if (prop === "testDesigns") getTraps++;
+      return Reflect.get(obj, prop, receiver);
+    },
+  });
+  const result = await publishTestDesigns(dest, proxied);
+  assert.equal(getTraps, 1);
+  assert.equal(result.items[0].testDesignId, "proxied");
+});
+
+test("RTI-8B: a getter that throws surfaces before any destination call, no secret/internal leakage", async () => {
+  const dest = okDestination();
+  const request = { get testDesigns() { throw new Error("sentinel-getter-failure"); } };
+  await assert.rejects(() => publishTestDesigns(dest, request), /sentinel-getter-failure/);
+  assert.equal(dest.calls, 0);
+});
+
 // --- invocation semantics ----------------------------------------------------
 
 test("RTI-8B: invokes destination.publish exactly once on success", async () => {
