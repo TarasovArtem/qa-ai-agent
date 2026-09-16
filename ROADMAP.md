@@ -230,7 +230,7 @@ multi-role governance architecture track, if and when one is defined.
 ## 8. Current critical path
 
 ```text
-CRW1-A  →  CRW1-B  →  CRW1-C  →  CRW1-D
+CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B  →  CRW1-C  →  CRW1-D
   →  CRW2
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
@@ -247,14 +247,34 @@ definition is stated once, here, and governs the status line below — so that
 line does not need to be rewritten merely because a PR opens, is reviewed,
 or merges.
 
-**Current slice: `CRW1-A` — ACTIVE** (per the definition above: true during
-implementation, during independent review, immediately after merge, and
-until post-merge truth proof completes; the post-merge truth proof stage is
-expected to update this line once it lands). Historical lower-level critical
-paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit READY")
-describe *past* states of this project and remain accurate as history in
-README's own roadmap-by-roadmap record — they are not the current critical
-path and must not be read as such.
+**`CRW1-A` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
+[closure evidence](#crw1-a-closure-evidence) below); per the lifecycle
+definition above, this slice exited `ACTIVE` when that proof completed.
+
+**Current slice: `CRW1-B` — `READY`** (technically unblocked by `CRW1-A`'s
+closure; intentionally not yet begun by governance sequencing — see the
+`READY` definition in [§2](#2-status-vocabulary)). Historical lower-level
+critical paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit
+READY") describe *past* states of this project and remain accurate as
+history in README's own roadmap-by-roadmap record — they are not the
+current critical path and must not be read as such.
+
+### CRW1-A closure evidence
+
+```text
+PR:            #150
+merge SHA:      f7b2647e388c3bc2ea90e1ba9f75d4fcc91234e9
+approved HEAD:  85b79fa6744b6e7edf6a8ccc8800dd6529a15811
+approved TREE:  99301251da8ffdf65040aeba89dc3abbf1b1a8e5
+post-merge CI:  run 35103324158 — PASS (attempt 1: one known transient
+                Firefox live-network poiTiles timeout, unrelated to this
+                docs-only change — see README's #19.7F-B4B precedent;
+                attempt 2: 7/7 success)
+
+CRW1A-R01: CLOSED_ON_MAIN   CRW1A-R02: CLOSED_ON_MAIN
+C-1: CLOSED_ON_MAIN   C-2: CLOSED_ON_MAIN   C-3: RECORDED_ON_MAIN
+C-4: CLOSED_ON_MAIN   A-4: CLOSED_ON_MAIN
+```
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
