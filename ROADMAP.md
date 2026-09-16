@@ -239,11 +239,22 @@ CRW1-A  →  CRW1-B  →  CRW1-C  →  CRW1-D
   →  Productization
 ```
 
-**`CRW1-A` (this update) is the currently active slice.** Historical
-lower-level critical paths (`CS6`, `CS7`, "RTI implementation", "RTI
-Integrated Audit READY") describe *past* states of this project and remain
-accurate as history in README's own roadmap-by-roadmap record — they are not
-the current critical path and must not be read as such.
+**Slice lifecycle status semantics.** This project's governance already
+defines a slice's lifecycle as: implementation → independent exact-head
+review → merge → post-merge truth proof. A slice is **ACTIVE** from the
+start of implementation until its post-merge truth proof completes. This
+definition is stated once, here, and governs the status line below — so that
+line does not need to be rewritten merely because a PR opens, is reviewed,
+or merges.
+
+**Current slice: `CRW1-A` — ACTIVE** (per the definition above: true during
+implementation, during independent review, immediately after merge, and
+until post-merge truth proof completes; the post-merge truth proof stage is
+expected to update this line once it lands). Historical lower-level critical
+paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit READY")
+describe *past* states of this project and remain accurate as history in
+README's own roadmap-by-roadmap record — they are not the current critical
+path and must not be read as such.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
