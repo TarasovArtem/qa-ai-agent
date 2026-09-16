@@ -251,9 +251,12 @@ or merges.
 [closure evidence](#crw1-a-closure-evidence) below); per the lifecycle
 definition above, this slice exited `ACTIVE` when that proof completed.
 
-**Current slice: `CRW1-B` — `READY`** (technically unblocked by `CRW1-A`'s
-closure; intentionally not yet begun by governance sequencing — see the
-`READY` definition in [§2](#2-status-vocabulary)). Historical lower-level
+**Current slice: `CRW1-B` — `ACTIVE`** (per the definition above: true
+during implementation, during independent review, immediately after merge,
+and until post-merge truth proof completes). `CRW1-B` closes `B-5` — Node
+22 enforcement (`.nvmrc`, `.npmrc` `engine-strict=true`, and the CI Node
+inventory brought into compliance); `B-5` itself remains open until
+`CRW1-B`'s post-merge truth proof lands. Historical lower-level
 critical paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit
 READY") describe *past* states of this project and remain accurate as
 history in README's own roadmap-by-roadmap record — they are not the
