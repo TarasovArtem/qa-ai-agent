@@ -230,7 +230,7 @@ multi-role governance architecture track, if and when one is defined.
 ## 8. Current critical path
 
 ```text
-CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B  →  CRW1-C  →  CRW1-D
+CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C  →  CRW1-D
   →  CRW2
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
@@ -251,12 +251,17 @@ or merges.
 [closure evidence](#crw1-a-closure-evidence) below); per the lifecycle
 definition above, this slice exited `ACTIVE` when that proof completed.
 
-**Current slice: `CRW1-B` — `ACTIVE`** (per the definition above: true
-during implementation, during independent review, immediately after merge,
-and until post-merge truth proof completes). `CRW1-B` closes `B-5` — Node
-22 enforcement (`.nvmrc`, `.npmrc` `engine-strict=true`, and the CI Node
-inventory brought into compliance); `B-5` itself remains open until
-`CRW1-B`'s post-merge truth proof lands. Historical lower-level
+**`CRW1-B` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
+[closure evidence](#crw1-b-closure-evidence) below); per the lifecycle
+definition above, this slice exited `ACTIVE` when that proof completed.
+`CRW1-B` closed `B-5` — Node 22 is now a fail-closed repository runtime
+contract (`.nvmrc`, `.npmrc` `engine-strict=true`, and the full CI Node
+inventory), independently verified.
+
+**Current slice: `CRW1-C` — `READY`** (technically unblocked by `CRW1-B`'s
+closure; intentionally not yet begun by governance sequencing — see the
+`READY` definition in [§2](#2-status-vocabulary)). `CRW1-C` addresses `B-2`
+— PR/Issue/Governance Metadata, which remains open. Historical lower-level
 critical paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit
 READY") describe *past* states of this project and remain accurate as
 history in README's own roadmap-by-roadmap record — they are not the
@@ -277,6 +282,25 @@ post-merge CI:  run 35103324158 — PASS (attempt 1: one known transient
 CRW1A-R01: CLOSED_ON_MAIN   CRW1A-R02: CLOSED_ON_MAIN
 C-1: CLOSED_ON_MAIN   C-2: CLOSED_ON_MAIN   C-3: RECORDED_ON_MAIN
 C-4: CLOSED_ON_MAIN   A-4: CLOSED_ON_MAIN
+```
+
+### CRW1-B closure evidence
+
+```text
+PR:            #152
+merge SHA:      7039f9cb4e11332838eca4a03c5f87aaca089fd7
+approved HEAD:  74e29e804cc3bc5baac13143183f9afe0622c652
+approved TREE:  82b8f398b63d5ead920589f5e49538dba9bc940a
+post-merge CI:  run 35144019276 — PASS (7/7, attempt 1, exact merge SHA)
+
+Node contract:  package.json engines 22.x + .npmrc engine-strict=true +
+                .nvmrc 22; unsupported Node24 fails closed (EBADENGINE);
+                supported Node22 CI passes (unit 3951/3951/0/0, Linux)
+Cypress:        container Node 22.21.0; installed/executed Cypress both
+                15.21.1, no mismatch
+
+CRW1B-R01: CLOSED_ON_MAIN
+B-5: CLOSED_ON_MAIN
 ```
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
