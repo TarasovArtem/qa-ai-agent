@@ -159,9 +159,24 @@ jobs:
       actions: read
     # cypress/included bundles Node, npm and matching pre-installed browser
     # binaries for the same Cypress version declared in package.json, so no
-    # separate Node setup or binary caching step is needed.
+    # separate Node setup or binary caching step is needed. Pinned to an
+    # explicit, immutable full-form tag rather than the short `15.21.1` tag
+    # (Roadmap CRW1-B, B-5): the short tag's own bundled Node silently
+    # drifted to 24.20.0 - unsupported per this repo's `engines.node: 22.x`
+    # contract, confirmed via `npm warn EBADENGINE` already present in CI
+    # logs before this fix - while the full tag pins the bundled Node
+    # version (22.21.0) permanently, so it cannot drift again the same way.
+    # No cypress/included tag bundles Node 22.x for Cypress 15.21.1 itself
+    # (verified against Docker Hub); this is the newest available Cypress
+    # 15.x + Node 22.x combination. The container's own pre-cached Cypress
+    # binary (15.5.0) therefore differs from the 15.21.1 that `npm ci`
+    # installs from package-lock.json - Cypress transparently downloads the
+    # matching 15.21.1 binary at run time in that case (standard, supported
+    # behavior whenever an image's cached binary doesn't match the
+    # installed package version), so the actual Cypress/browser versions
+    # exercised by the test run are unaffected by this tag choice.
     container:
-      image: cypress/included:15.21.1
+      image: cypress/included:cypress-15.5.0-node-22.21.0-chrome-141.0.7390.107-1-ff-144.0-edge-141.0.3537.92-1
       options: --shm-size=1gb
     strategy:
       fail-fast: false

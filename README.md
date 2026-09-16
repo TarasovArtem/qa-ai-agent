@@ -201,6 +201,10 @@ Full detail: [Current Multi-Framework Status](#current-multi-framework-status), 
 
 ## Running Locally
 
+Requires Node.js `22.x` (see [.nvmrc](.nvmrc); `nvm use` if using nvm) -
+`npm install`/`npm ci` fails closed on an unsupported Node major via
+`.npmrc`'s `engine-strict=true` (Roadmap CRW1-B).
+
     git clone https://github.com/TarasovArtem/qa-ai-agent.git
     cd qa-ai-agent
     npm install
@@ -1208,6 +1212,8 @@ depends on.
 ## Commands for running tests
 
 #### Installation
+
+Requires Node.js `22.x` (see [.nvmrc](.nvmrc)).
 
     git clone https://github.com/TarasovArtem/qa-ai-agent.git
     cd qa-ai-agent
