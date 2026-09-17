@@ -13,6 +13,15 @@ name: Supply-Chain Audit
 # analysis, the accepted high/critical baseline, and the PASS / VIOLATION /
 # INFRA_ERROR semantics this job enforces - a scanner/registry failure must
 # never be silently treated as a pass.
+#
+# CRW1-D-C1 (CRW1D-R02): the trigger paths below deliberately include this
+# workflow's own implementation files, not only the dependency manifests.
+# Without this, a PR that changes the monitoring logic itself (this file,
+# or audit-drift-check.js/.test.js) never executes the workflow it is
+# changing - the very first real-world proof of CRW1-D's own implementation
+# PR (#157) hit exactly this: it modified all three of these files and the
+# workflow never ran. Self-surfacing on its own changes is what makes this
+# workflow self-validating rather than merely self-describing.
 on:
   schedule:
     - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
@@ -20,12 +29,18 @@ on:
     paths:
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/supply-chain-audit.yml"
+      - "scripts/diagnostics/audit-drift-check.js"
+      - "scripts/diagnostics/audit-drift-check.test.js"
   push:
     branches:
       - main
     paths:
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/supply-chain-audit.yml"
+      - "scripts/diagnostics/audit-drift-check.js"
+      - "scripts/diagnostics/audit-drift-check.test.js"
   workflow_dispatch: {}
 
 permissions:
