@@ -227,6 +227,66 @@ multi-role governance architecture track, if and when one is defined.
   the revised sequence. The project adapted the remediation program into
   CRW1 / CRW2 / the Architecture Conformance Gate."
 
+### Subsequent owner decision — Trusted Retrieval and Continuous Learning
+
+```text
+Original adopted future sequence:
+  AISEC
+    → MEM-1 .. MEM-9
+    → Full Project Strict Audit
+    → Productization
+
+Subsequent architecture refinement:
+  AISEC
+    → MEM-1 .. MEM-6
+    → RAG-1 .. RAG-12
+    → MEM-7 .. MEM-9
+    → LEARN-1 .. LEARN-9
+    → Full Project Strict Audit
+    → Productization
+
+Reason:  memory trust architecture must precede persistent retrieval
+         authority; RAG must be validated (relevance, isolation,
+         trust/freshness filtering) before the final memory proof
+         (`MEM-7..MEM-9`) can be meaningfully exercised, since that
+         proof validates integrated retrieval/memory behavior;
+         continuous learning depends on verified outcomes and a
+         frozen evaluation baseline, both of which presuppose RAG and
+         Memory already exist; fine-tuning remains an optional
+         experiment, never a prerequisite for RAG or Memory
+         completion.
+Decision owner: Project owner.
+```
+
+**Provenance — what must never be claimed about this specific
+decision:**
+
+- ❌ "The conformance audit required RAG." — false; the conformance
+  audit (dated 2026-09-16, see [§6](#6-conformance-remediation-program))
+  never mentions RAG, retrieval, or continuous learning.
+- ❌ "The RTI Integrated Audit approved continuous learning." — false;
+  the RTI Integrated Audit's scope (see [§5](#5-rti-closure)) is the
+  #1-23 reactive-triage/generative pipelines, not memory or learning
+  architecture.
+- ❌ "AISEC requires fine-tuning." — false; fine-tuning is optional
+  (`LEARN-6`, see [§10](#10-mem--agentic-memory-foundation)) and is
+  not an AISEC entry or exit criterion.
+- ✅ The repository roadmap originally planned `AISEC → MEM-1..9 →
+  Full Project Strict Audit → Productization` (the "Original adopted
+  future sequence" above, itself first recorded by this same §7 at
+  `CRW1-A` closure). Subsequent project design work introduced
+  trusted retrieval/RAG and feedback-driven continuous learning as
+  additional, separately governed architecture layers. The project
+  owner decided to formally integrate those layers into the canonical
+  sequence, at the position shown above. This roadmap update
+  (`ROADMAP-V3.3-SYNC`) records that decision; it does not implement
+  any part of it.
+
+This decision does **not** change the current execution gate: as of
+this update, `CRW1-D` remains the current slice (`READY`, unstarted —
+see [§8](#8-current-critical-path)), and `RAG`/`LEARN` are both
+`NOT_STARTED` (see [§10](#10-mem--agentic-memory-foundation)).
+
 ## 8. Current critical path
 
 ```text
@@ -234,10 +294,20 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  CRW2
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
-  →  MEM-1 .. MEM-9
+  →  MEM-1 .. MEM-6
+  →  RAG-1 .. RAG-12
+  →  MEM-7 .. MEM-9
+  →  LEARN-1 .. LEARN-9
   →  Full Project Strict Audit
   →  Productization
 ```
+
+This is the canonical future sequence following the [subsequent owner
+decision](#7-owner-phase-order-decision) recorded in §7. It does not
+change the current gate: the current slice remains `CRW1-D`, and
+nothing from `AISEC` onward is active. See [§10](#10-mem--agentic-memory-foundation)
+for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
+`MEM-6` and `MEM-7`.
 
 **Slice lifecycle status semantics.** This project's governance already
 defines a slice's lifecycle as: implementation → independent exact-head
@@ -378,8 +448,87 @@ All: `NOT_STARTED`.
 ## 10. MEM — Agentic Memory Foundation
 
 ```text
-MEM: NOT_STARTED
+MEM:   NOT_STARTED
+RAG:   NOT_STARTED
+LEARN: NOT_STARTED
 ```
+
+This section covers three related, but **not synonymous**, future
+architecture layers: persistent agentic memory (`MEM`), trusted
+project-scoped retrieval (`RAG`, [§10.1](#101-rag--trusted-retrieval--knowledge-grounding)),
+and feedback-driven continuous learning (`LEARN`, [§10.2](#102-learn--feedback--continuous-learning)).
+None of the three exists in this codebase today. Nothing in this
+section — including every stage list below — is implemented, proven,
+or scheduled to begin ahead of `CRW1-D` (see [§8](#8-current-critical-path)).
+
+### Concept separation
+
+These five terms are related but distinct. Conflating them is itself a
+governance risk this section exists to prevent:
+
+- **RAG** — what external or project knowledge is *retrieved into
+  runtime context* for a given task. Read-time, request-scoped.
+- **Memory** — what information *may persist across runs*, and under
+  what trust/provenance rules. Write-time and persistence-scoped;
+  governs what RAG is even allowed to index or retrieve from.
+- **Feedback** — evidence about whether a specific agent decision or
+  output was correct or useful. An observation about one outcome, not
+  itself a promotion into memory or training data.
+- **Training Dataset** — a separately governed collection of verified,
+  eligible examples that *may* become eligible for model adaptation.
+  Distinct from both memory and raw feedback.
+- **Fine-Tuning** — optional modification of model behavior using an
+  approved training dataset. Never a substitute for RAG freshness or
+  for memory's provenance model; never required for RAG or Memory to
+  be considered complete.
+
+**Required invariant:** `RAG data != Memory authority != Training
+data`. The following pipeline is explicitly **prohibited** and must
+never be implemented implicitly:
+
+```text
+AI output  →  automatically trusted memory  →  automatically training data
+```
+
+The required conceptual flow is instead:
+
+```text
+AI / runtime output
+  → candidate record
+  → provenance
+  → deterministic/policy validation
+  → verification / outcome
+  → trust classification
+  → eligible memory and/or dataset path
+```
+
+No content is autonomously promoted from "AI produced it" to "trusted"
+at any point in this flow.
+
+### Security / trust invariants
+
+These govern `MEM`, `RAG`, and `LEARN` alike:
+
+1. Untrusted external content never becomes trusted memory
+   automatically.
+2. Untrusted external content never becomes training data
+   automatically.
+3. RAG retrieval never bypasses project scope.
+4. Similarity score never overrides authorization/trust hard filters.
+5. Memory poisoning is a security concern, not merely a
+   relevance-quality concern.
+6. Training-data poisoning is controlled independently from memory
+   poisoning.
+7. Human or deterministic verification is required for any record
+   entering a high-trust learning path.
+8. Fine-tuning never becomes a substitute for RAG freshness.
+9. RAG never becomes a substitute for authorization.
+10. Cross-project retrieval is prohibited by default.
+11. Evaluation data and training data must remain distinguishable at
+    all times.
+12. Model-adaptation rollout must be reversible.
+
+### MEM-1 .. MEM-9 — memory stage list
 
 ```text
 MEM-1  Agentic Memory Use-Case Research
@@ -393,9 +542,224 @@ MEM-8  Minimal Memory Proof
 MEM-9  Independent Memory Security Review
 ```
 
+All: `NOT_STARTED`.
+
+**Sequencing** (per the [subsequent owner decision](#7-owner-phase-order-decision)):
+`MEM-1..MEM-6` (the foundation stage — use-case research through
+cross-project isolation) establish memory's trust model *before* any
+retrieval system is allowed to read from it. `RAG-1..RAG-12`
+([§10.1](#101-rag--trusted-retrieval--knowledge-grounding)) then
+implements the controlled retrieval layer over that trustworthy,
+project-scoped knowledge. `MEM-7..MEM-9` (the integrated verification
+stage) run *after* `RAG` exists, because retrieval/relevance/
+contamination tests, the minimal memory proof, and the independent
+memory security review all validate integrated retrieval/memory
+behavior that cannot be meaningfully exercised before a retrieval
+layer exists to exercise it. This ordering is an intentional
+architectural decision, not accidental renumbering — the `MEM-1..MEM-9`
+numbering itself is unchanged from its original definition.
+
 Persistent autonomous agentic memory does not exist in this codebase today,
 and must not be implemented before AISEC's own security architecture exists —
 `AISEC → MEM`, never the reverse.
+
+### 10.1 RAG — Trusted Retrieval & Knowledge Grounding
+
+```text
+RAG: NOT_STARTED
+```
+
+**Purpose:** provide project-scoped, provenance-aware, trust-filtered
+retrieval of relevant QA/project knowledge without modifying
+base-model weights.
+
+```text
+RAG-1   Knowledge Source Inventory
+RAG-2   Canonical Document / Chunk Contract
+RAG-3   Metadata & Provenance Model
+RAG-4   Embedding Provider Abstraction
+RAG-5   Vector Store Abstraction
+RAG-6   Project-Scoped Retrieval
+RAG-7   Hybrid Search
+RAG-8   Reranking
+RAG-9   Trust / Freshness / Conflict Filters
+RAG-10  Retrieval Evaluation
+RAG-11  Poisoning / Cross-Project Isolation Tests
+RAG-12  Minimal Production Proof
+```
+
+All: `NOT_STARTED`. Do not claim implemented, proof-complete, or
+production-ready; do not claim a vector database or embedding provider
+has been selected — this roadmap update is planning only.
+
+Key outcomes each stage is expected to establish, once actually
+undertaken:
+
+- **RAG-1** identifies supported knowledge-source classes (repository
+  documents, requirements, test artifacts, CI/test execution history,
+  verified historical QA knowledge, approved governance/security
+  knowledge) and explicitly classifies each as trusted, conditionally
+  trusted, untrusted, or forbidden-to-index.
+- **RAG-2**/**RAG-3** define a normalized retrievable unit (id,
+  content, source type, `projectId`, source reference, version, chunk
+  identity, parent-document identity, timestamps) with enough
+  provenance metadata (provenance, trust, verification, version,
+  `createdAt`/`updatedAt`/`expiresAt`, supersession, framework, tags,
+  integrity metadata) for deterministic filtering — no
+  embedding-provider-specific domain semantics.
+- **RAG-4**/**RAG-5** put the embedding implementation and the vector
+  store behind generic provider/adapter contracts (no provider-name
+  branching in generic core, no credentials in config files,
+  caller/env-owned credentials) so a specific vendor is never committed
+  to at roadmap level.
+- **RAG-6** requires the current `ProjectProfile.id` to scope every
+  retrieval — no implicit cross-project retrieval.
+- **RAG-7**/**RAG-8** combine lexical and vector retrieval (hard
+  filters → lexical → vector → merge → rerank), preferring
+  deterministic/inspectable reranking first; any later LLM reranking
+  must not silently override trust boundaries. Fixed scoring
+  coefficients are not mandated at roadmap level — implementation must
+  be evidence-driven.
+- **RAG-9** filters candidates by project scope, trust tier,
+  verification status, version, expiry, supersession, framework
+  compatibility, and source quality, and must detect (not silently
+  resolve by picking stale content) conflicting knowledge.
+- **RAG-10** defines measurable retrieval-quality evaluation (e.g.
+  Recall@K, Precision@K, MRR/ranking quality, relevance, irrelevant-
+  retrieval rate, stale-retrieval rate, cross-project contamination
+  rate — exact metrics may be refined during implementation).
+- **RAG-11** requires adversarial tests (malicious repository text,
+  malicious requirement content, poisoned historical memory,
+  prompt-injection-bearing chunks, cross-project retrieval,
+  credential/context leakage, stale superseded knowledge) that must
+  fail closed.
+- **RAG-12** is a small controlled proof — verified project knowledge
+  indexed, scoped retrieval, trust filtering, grounded runtime context
+  — with no autonomous trust escalation, no cross-project
+  contamination, and no automatic training-data promotion.
+
+**Trusted knowledge flow:**
+
+```text
+source
+  → normalization
+  → provenance
+  → trust classification
+  → chunk/document contract
+  → index
+  → hard project/trust filters
+  → retrieval
+  → reranking
+  → conflict/staleness checks
+  → grounded runtime context
+```
+
+The model must receive retrieved knowledge as context/evidence, not as
+hidden authority.
+
+**Retrieval evaluation principle:** retrieval quality must be measured
+separately from generation quality. A successful generation cannot
+hide irrelevant retrieval, stale retrieval, cross-project retrieval, or
+poisoned retrieval — this separation is load-bearing, not optional.
+
+### 10.2 LEARN — Feedback & Continuous Learning
+
+```text
+LEARN:       NOT_STARTED
+Fine-tuning: OPTIONAL
+```
+
+**Objective:** allow QA Agent performance to improve over time using
+verified outcomes, without treating raw AI output as truth.
+
+```text
+LEARN-1  Feedback Event Contract
+LEARN-2  Outcome / Reward Model
+LEARN-3  Training Dataset Builder
+LEARN-4  Quality / Deduplication / Contamination Filters
+LEARN-5  Baseline Evaluation Set
+LEARN-6  Fine-Tuning Experiment (OPTIONAL EXPERIMENT)
+LEARN-7  Champion vs Challenger Evaluation
+LEARN-8  Regression / Safety Gate
+LEARN-9  Controlled Rollout
+```
+
+All: `NOT_STARTED`. Do not claim any model is currently trained,
+adapted, or "continuously learning" today unless independent
+repository evidence proves it — no such evidence currently exists.
+
+Key outcomes each stage is expected to establish, once actually
+undertaken:
+
+- **LEARN-1** defines structured feedback events (accepted, rejected,
+  corrected, partially accepted, confirmed root cause, successful fix,
+  false positive, false negative, human override).
+- **LEARN-2** defines how actual task outcome is represented (e.g.
+  test case accepted, automation generated successfully, root cause
+  confirmed, fix resolved failure, recommendation rejected, regression
+  introduced, human correction required) — not necessarily reduced to
+  one opaque scalar unless later justified.
+- **LEARN-3** builds a training dataset only from eligible, verified
+  records, kept auditable and reproducible, and explicitly separate
+  from runtime memory and evaluation data.
+- **LEARN-4** requires deduplication, near-duplicate detection, label
+  quality, provenance, PII/secrets exclusion, customer-data-boundary
+  enforcement, cross-project isolation, AI-self-output-contamination
+  detection, and stale/version filtering.
+- **LEARN-5** creates frozen evaluation sets (quality, safety,
+  regression, project isolation, hallucination resistance, QA-domain
+  behavior) *before* any model adaptation; training examples must not
+  silently leak into evaluation sets.
+- **LEARN-6** — `OPTIONAL EXPERIMENT`. Fine-tuning is not required for
+  RAG or Memory completion, and only begins once a verified dataset, an
+  evaluation baseline, a training-eligibility policy, and passing
+  security/privacy gates all exist. Its purpose is behavioral
+  adaptation, not project memory.
+- **LEARN-7** compares the current production/baseline model against
+  an adapted challenger, preferring blinded/frozen evaluation, with no
+  automatic promotion.
+- **LEARN-8** requires the challenger to demonstrate no critical
+  safety regression, no project-isolation regression, no grounding
+  regression, and no QA-quality regression beyond an accepted
+  threshold — failure means do not deploy.
+- **LEARN-9** is a bounded deployment of an adapted model only after
+  passing evaluation, with rollback, version identity, observability,
+  evaluation provenance, and controlled scope. No autonomous continuous
+  weight updates in production.
+
+**Feedback flow:**
+
+```text
+runtime task
+  → model/agent output
+  → deterministic or human outcome
+  → feedback event
+  → validation
+  → trusted feedback record
+  → optional memory candidate
+  → optional training-dataset eligibility
+```
+
+Memory eligibility and training eligibility are separate decisions —
+one record reaching a "trusted feedback record" does not automatically
+grant either.
+
+**Evaluation principle:** no adapted model is deployable solely
+because training completed. The required chain is: dataset eligibility
+→ frozen baseline evaluation → adaptation experiment → challenger
+evaluation → regression/safety gate → controlled rollout. No automatic
+production promotion at any point in that chain.
+
+**Terminology:** prefer "model adaptation", "optional fine-tuning
+experiment", and "controlled model rollout" over vague terms like
+"self-learning" or "AI learns by itself" unless such a term is
+explicitly defined elsewhere first.
+
+**Data governance:** any future training eligibility must exclude or
+explicitly govern secrets, credentials, PII, private customer data,
+restricted project data, and unverified external content. This file
+does not invent specific retention periods; detailed policies belong
+to the future `AISEC`/`MEM`/`LEARN` design stages themselves.
 
 ## 11. Full Project Strict Audit
 
@@ -403,10 +767,24 @@ and must not be implemented before AISEC's own security architecture exists —
 NOT_STARTED
 ```
 
-Comes after AISEC and MEM foundations are established — not to be confused
-with the RTI Integrated Audit (a narrower, RTI-subsystem-scoped audit,
-already `PASS WITH DEFERRED DEBT`). The Full Project Strict Audit is a
-distinct, broader, later gate.
+Comes after AISEC, MEM, RAG, and LEARN foundations are all established —
+not to be confused with the RTI Integrated Audit (a narrower,
+RTI-subsystem-scoped audit, already `PASS WITH DEFERRED DEBT`). The
+Full Project Strict Audit is a distinct, broader, later gate. Its
+scope, once active, explicitly includes (in addition to whatever else
+is in scope at that time):
+
+- RAG trust boundaries
+- retrieval isolation (project scoping, cross-project contamination)
+- memory provenance
+- feedback integrity
+- training dataset governance
+- evaluation contamination (training/evaluation separation)
+- optional fine-tuning safety
+- rollout/rollback controls for any adapted model
+
+Recording this scope now does not start the audit; it remains
+`NOT_STARTED`.
 
 ## 12. Productization
 
@@ -469,6 +847,58 @@ Once `CRW1` → `CRW2` → the Architecture Conformance Gate all close, `AISEC-1
 becomes the next active gate. This file will be updated at each transition;
 `README.md`'s own roadmap section will continue to carry the detailed
 technical evidence for whatever completes.
+
+**Target architecture, including the layers recorded by this update**
+(conceptual — not a claim that any of these layers are implemented;
+see [§9](#9-aisec--agentic-trust--ai-security-foundation) and
+[§10](#10-mem--agentic-memory-foundation) for current status of each):
+
+```text
+QA AI Agent Core
+ |
+ |- RTI Layer
+ |   -> Requirements Sources
+ |   -> Quality
+ |   -> Test Design
+ |   -> Traceability
+ |   -> Destinations
+ |
+ |- Agentic Trust & Security
+ |   -> threat model
+ |   -> identity / authorization
+ |   -> policy
+ |   -> adversarial evaluation
+ |
+ |- Memory Layer
+ |   -> scoped, provenance-aware persistent memory
+ |
+ |- Retrieval / RAG Layer
+ |   -> source normalization
+ |   -> indexing
+ |   -> project-scoped retrieval
+ |   -> trust/freshness filters
+ |   -> reranking
+ |
+ |- Feedback / Learning Layer
+ |   -> verified outcomes
+ |   -> feedback records
+ |   -> dataset eligibility
+ |   -> evaluation
+ |   -> optional model adaptation
+ |
+ |- Functional UI Domain
+ |- API / Performance / Data / Security Testing domains
+ |- Governance Profiles
+ `- UI Control Plane + CLI/API/Library
+```
+
+This target state adds **trusted, project-grounded retrieval**,
+**provenance-aware memory**, a **verified feedback loop**, and
+**optional, controlled model adaptation** to the previously recorded
+target — with runtime knowledge (RAG) architecturally separated from
+weight adaptation (fine-tuning) throughout, per [§10](#10-mem--agentic-memory-foundation)'s
+concept separation. It does not change any historical completion claim
+recorded elsewhere in this file.
 
 ## 16. Historical roadmap provenance
 
