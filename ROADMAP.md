@@ -147,11 +147,21 @@ Future domain-expansion prerequisites (not gates in the current critical path)
         negative/load testing)
 ```
 
-Only `CRW1-A`'s five findings (`C-1`, `C-2`, `C-3`, `C-4`, `A-4`) are
-addressed by the current documentation-truth-sync work. Every other finding
-listed above (`A-1`, `A-2`, `A-3`, `B-1` through `B-6`, `D-1` through `D-3`)
-remains **open**, explicitly carried here, not implemented, and not
-implied-complete by this update.
+The adopted program above is executed incrementally, one slice at a time;
+each slice's own [closure evidence](#crw1-a-closure-evidence) block in
+[§8](#8-current-critical-path) is this file's authoritative record of what
+has actually closed. As of the current canonical state, `CRW1-A`, `CRW1-B`,
+and `CRW1-C` are `COMPLETE_ON_MAIN`: `C-1`, `C-2`, `C-4`, and `A-4` are
+`CLOSED_ON_MAIN`; `C-3` is `RECORDED_ON_MAIN` per its existing owner-decision
+disposition (see [§7](#7-owner-phase-order-decision)); `B-5` (closed by
+`CRW1-B`) and `B-2` (closed by `CRW1-C`) are `CLOSED_ON_MAIN`. `CRW1-D` is
+the current slice — `READY`, not yet begun — and its finding, `B-3`,
+remains **open**. `CRW2` and the Architecture Conformance Gate have not
+started; every finding mapped to them (`A-2`, `B-1`, `B-4`, `B-6`, `A-1`,
+`A-3`, `D-2`) remains **open**. `D-1` and `D-3` remain explicitly
+**DEFERRED**. This paragraph is updated as each slice's closure evidence
+lands — it is not itself a slice-status line subject to the ACTIVE-lifecycle
+exemption defined in [§8](#8-current-critical-path).
 
 ## 7. Owner phase-order decision
 
