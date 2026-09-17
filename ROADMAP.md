@@ -605,8 +605,9 @@ only under these conditions:
 ## 8. Current critical path
 
 ```text
-CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)  →  CRW1-D (COMPLETE_ON_MAIN)
-  →  {  CRW2-A2 / A-2,  CRW2-B1 / B-1,  CRW2-B4 / B-4,  CRW2-B6 / B-6  }  (PARALLEL, remaining)
+CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)
+  →  {  CRW1-D / B-3 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
+         CRW2-A2 / A-2,  CRW2-B1 / B-1,  CRW2-B4 / B-4,  CRW2-B6 / B-6  }  (PARALLEL ORIGINAL SET)
   →  CONFORMANCE-INTEGRATION-CHECK
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
@@ -619,19 +620,28 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
 ```
 
 This is the canonical future sequence following the [subsequent owner
-decision](#7-owner-phase-order-decision) recorded in §7. `CRW1-D` was the
-first of the five parallel-authorized tracks to close — see [closure
-evidence](#crw1-d-closure-evidence) below — and has exited the `{ }`
-parallel set accordingly; the remaining four tracks in `{ }` are still
-authorized to execute **in parallel** (see §6's "Parallel execution model"
-for the mandatory safety controls) — this replaces the previously
-strictly-serial `CRW1-D → CRW2` framing. `CONFORMANCE-INTEGRATION-CHECK` is a
-mandatory synchronization barrier, not an optional formality: the
-Architecture Conformance Gate does not become `READY` merely because all
-remaining PRs merged — it still requires `A-2`, `B-1`, `B-4`, and `B-6` all
-`CLOSED_ON_MAIN` (`B-3` already is) plus a passing integration check, which
-has **not** run yet (four of the five closure conditions remain open).
-Nothing from `AISEC` onward is active, except the narrow,
+decision](#7-owner-phase-order-decision) recorded in §7. `CRW1-D` was one of
+the original five parallel-authorized tracks in `{ }` — never a serial
+predecessor to the other four — and remains shown inside that same group,
+now annotated `COMPLETE_ON_MAIN` / `CLOSED_ON_MAIN`: it merely happened to
+close first, per its own [closure evidence](#crw1-d-closure-evidence) below;
+that closure did **not** unlock or gate the remaining four tracks — their
+authorization came from the owner's parallelization decision itself (§7),
+not from `CRW1-D` finishing. `CRW2-A2`, `CRW2-B1`, `CRW2-B4`, and `CRW2-B6`
+remain independently `READY`/`OPEN`, exactly as before `CRW1-D` closed (see
+§6's "Parallel execution model" for the mandatory safety controls — this
+representation matches §6's own diagram, which has shown `CRW1-D` inside the
+same parallel group throughout). This replaces the previously
+strictly-serial `CRW1-D → CRW2` framing — and must not be misread as
+reconstructing it: there is still no serial arrow from `CRW1-D` into the
+remaining four. `CONFORMANCE-INTEGRATION-CHECK` is a mandatory
+synchronization barrier, not an optional formality: the Architecture
+Conformance Gate does not become `READY` merely because all remaining PRs
+merged — it still requires `B-3`, `A-2`, `B-1`, `B-4`, and `B-6` all
+`CLOSED_ON_MAIN` (`B-3` already is — a satisfied condition, not a removed
+one) plus a passing integration check, which has **not** run yet (four of
+the five closure conditions remain open). Nothing from `AISEC` onward is
+active, except the narrow,
 explicitly-provisional early-research exception also recorded in §7 (early
 `AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` research, off-`main`, not
 merge-authorized before the Gate). See [§10](#10-mem--agentic-memory-foundation)
