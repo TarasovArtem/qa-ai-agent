@@ -1,0 +1,84 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Do not paste secrets, tokens, credentials, or private customer data into this form.**
+        If this report concerns a security-sensitive issue, please describe it at a high
+        level only and avoid exploit details here — see
+        [SECURITY.md](https://github.com/TarasovArtem/qa-ai-agent/blob/main/SECURITY.md)
+        for this project's data-governance and trust model. This repository does not
+        currently have a separate private vulnerability-reporting channel; a maintainer
+        will follow up before any sensitive detail is made public.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem description
+      description: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, as minimal as possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Core QA Agent
+        - Requirements / Test Design
+        - Providers / Destinations
+        - Packaging / Installation
+        - CI / Tooling
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS, browser (if relevant), package version.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or evidence
+      description: Paste any relevant output. Redact anything sensitive first.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+    validations:
+      required: false
