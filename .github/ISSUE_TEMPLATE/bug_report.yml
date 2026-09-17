@@ -7,13 +7,22 @@ body:
       value: |
         Thanks for taking the time to report a bug.
 
-        **Do not paste secrets, tokens, credentials, or private customer data into this form.**
-        If this report concerns a security-sensitive issue, please describe it at a high
-        level only and avoid exploit details here — see
-        [SECURITY.md](https://github.com/TarasovArtem/qa-ai-agent/blob/main/SECURITY.md)
-        for this project's data-governance and trust model. This repository does not
-        currently have a separate private vulnerability-reporting channel; a maintainer
-        will follow up before any sensitive detail is made public.
+        **This is a public issue form — anything you submit here is visible immediately.**
+
+        **Do not paste secrets, tokens, credentials, or private customer data into this
+        form.**
+
+        **Do not use this public form to disclose a suspected vulnerability, exploit
+        details, or other sensitive security information.** This repository currently
+        has no private vulnerability-reporting channel, so there is no way to submit
+        that kind of report confidentially here.
+
+        If the problem can be described as a non-sensitive symptom or behavior (no
+        exploit path, secret, or vulnerability detail), report it normally below.
+
+        See [SECURITY.md](https://github.com/TarasovArtem/qa-ai-agent/blob/main/SECURITY.md)
+        for this project's security, privacy, and AI data-governance architecture — it
+        does not describe a vulnerability-reporting process.
 
   - type: textarea
     id: problem
