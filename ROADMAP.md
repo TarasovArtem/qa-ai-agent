@@ -258,10 +258,20 @@ definition above, this slice exited `ACTIVE` when that proof completed.
 contract (`.nvmrc`, `.npmrc` `engine-strict=true`, and the full CI Node
 inventory), independently verified.
 
-**Current slice: `CRW1-C` — `READY`** (technically unblocked by `CRW1-B`'s
-closure; intentionally not yet begun by governance sequencing — see the
-`READY` definition in [§2](#2-status-vocabulary)). `CRW1-C` addresses `B-2`
-— PR/Issue/Governance Metadata, which remains open. Historical lower-level
+**Current slice: `CRW1-C` — `ACTIVE`** (per the definition above: true
+during implementation, during independent review, immediately after merge,
+and until post-merge truth proof completes). `CRW1-C` addresses `B-2` —
+repository governance metadata: a durable PR template, bug-report and
+feature-request issue forms, and issue-template configuration
+(`.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/`).
+`CODEOWNERS` is intentionally omitted — this is a solo-maintainer
+repository (one collaborator with admin access; branch protection's
+`require_code_owner_reviews` and `required_approving_review_count` are
+both unset), matching README's own already-documented solo-maintainer
+governance profile (`SG1`); revisit if multiple maintainers, distinct
+ownership domains, or code-owner review enforcement are ever introduced.
+`B-2` itself remains open until `CRW1-C`'s post-merge truth proof lands.
+Historical lower-level
 critical paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit
 READY") describe *past* states of this project and remain accurate as
 history in README's own roadmap-by-roadmap record — they are not the
