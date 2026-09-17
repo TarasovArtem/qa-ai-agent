@@ -260,7 +260,7 @@ inventory), independently verified.
 
 **Current slice: `CRW1-C` — `ACTIVE`** (per the definition above: true
 during implementation, during independent review, immediately after merge,
-and until post-merge truth proof completes). `CRW1-C` closes `B-2` —
+and until post-merge truth proof completes). `CRW1-C` addresses `B-2` —
 repository governance metadata: a durable PR template, bug-report and
 feature-request issue forms, and issue-template configuration
 (`.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/`).
