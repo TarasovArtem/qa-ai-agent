@@ -230,7 +230,7 @@ multi-role governance architecture track, if and when one is defined.
 ## 8. Current critical path
 
 ```text
-CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C  →  CRW1-D
+CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)  →  CRW1-D
   →  CRW2
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
@@ -258,20 +258,27 @@ definition above, this slice exited `ACTIVE` when that proof completed.
 contract (`.nvmrc`, `.npmrc` `engine-strict=true`, and the full CI Node
 inventory), independently verified.
 
-**Current slice: `CRW1-C` — `ACTIVE`** (per the definition above: true
-during implementation, during independent review, immediately after merge,
-and until post-merge truth proof completes). `CRW1-C` addresses `B-2` —
-repository governance metadata: a durable PR template, bug-report and
-feature-request issue forms, and issue-template configuration
-(`.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/`).
-`CODEOWNERS` is intentionally omitted — this is a solo-maintainer
-repository (one collaborator with admin access; branch protection's
-`require_code_owner_reviews` and `required_approving_review_count` are
-both unset), matching README's own already-documented solo-maintainer
-governance profile (`SG1`); revisit if multiple maintainers, distinct
-ownership domains, or code-owner review enforcement are ever introduced.
-`B-2` itself remains open until `CRW1-C`'s post-merge truth proof lands.
-Historical lower-level
+**`CRW1-C` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
+[closure evidence](#crw1-c-closure-evidence) below); per the lifecycle
+definition above, this slice exited `ACTIVE` when that proof completed.
+`CRW1-C` closed `B-2` — repository governance metadata is now in place: a
+durable PR template, bug-report and feature-request issue forms, and
+issue-template configuration (`.github/pull_request_template.md`,
+`.github/ISSUE_TEMPLATE/`), including a security-reporting boundary that
+accurately reflects the absence of a private vulnerability-reporting
+channel. `CODEOWNERS` remains intentionally omitted — this is a
+solo-maintainer repository (one collaborator with admin access; branch
+protection's `require_code_owner_reviews` and
+`required_approving_review_count` are both unset), matching README's own
+already-documented solo-maintainer governance profile (`SG1`); revisit if
+multiple maintainers, distinct ownership domains, or code-owner review
+enforcement are ever introduced.
+
+**Current slice: `CRW1-D` — `READY`** (technically unblocked by
+`CRW1-C`'s closure; intentionally not yet begun by governance sequencing
+— see the `READY` definition in [§2](#2-status-vocabulary)). `CRW1-D`
+addresses `B-3` — Supply-Chain Monitoring, which remains open. Historical
+lower-level
 critical paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit
 READY") describe *past* states of this project and remain accurate as
 history in README's own roadmap-by-roadmap record — they are not the
@@ -311,6 +318,32 @@ Cypress:        container Node 22.21.0; installed/executed Cypress both
 
 CRW1B-R01: CLOSED_ON_MAIN
 B-5: CLOSED_ON_MAIN
+```
+
+### CRW1-C closure evidence
+
+```text
+PR:            #154
+merge SHA:      735d24bebe93ef8ac67219df0c759d46745109b8
+approved HEAD:  70d6d13462c69cc086aa991fb4ce3b67294649f3
+approved TREE:  334edcd5e51ed336efc92d2a720dd8528a1d6ff2
+post-merge CI:  run 35219569594 — PASS (7/7, attempt 1, exact merge SHA)
+
+Governance metadata: PR template (durable, no volatile CI/review/merge
+                state); bug-report + feature-request issue forms
+                (structurally valid, no fabricated labels/assignees);
+                issue-template config (`blank_issues_enabled: true`, no
+                fabricated contact links); security-reporting boundary
+                explicit (public form prohibits suspected-vulnerability/
+                sensitive-security disclosure, no private channel
+                fabricated, SECURITY.md accurately described as
+                architecture, not a reporting process)
+CODEOWNERS:     INTENTIONALLY_OMITTED — solo-maintainer repository, no
+                distinct ownership partition, no code-owner review
+                enforcement; revisit if that changes
+
+CRW1C-R01: CLOSED_ON_MAIN   CRW1C-R02: CLOSED_ON_MAIN
+B-2: CLOSED_ON_MAIN
 ```
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
