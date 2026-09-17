@@ -147,21 +147,220 @@ Future domain-expansion prerequisites (not gates in the current critical path)
         negative/load testing)
 ```
 
-The adopted program above is executed incrementally, one slice at a time;
-each slice's own [closure evidence](#crw1-a-closure-evidence) block in
+The adopted program above is executed against per-finding closure evidence —
+**not necessarily one slice at a time**; see "Parallel execution model"
+immediately below for the current authorized execution mode. Each slice's
+own [closure evidence](#crw1-a-closure-evidence) block in
 [§8](#8-current-critical-path) is this file's authoritative record of what
 has actually closed. As of the current canonical state, `CRW1-A`, `CRW1-B`,
 and `CRW1-C` are `COMPLETE_ON_MAIN`: `C-1`, `C-2`, `C-4`, and `A-4` are
 `CLOSED_ON_MAIN`; `C-3` is `RECORDED_ON_MAIN` per its existing owner-decision
 disposition (see [§7](#7-owner-phase-order-decision)); `B-5` (closed by
-`CRW1-B`) and `B-2` (closed by `CRW1-C`) are `CLOSED_ON_MAIN`. `CRW1-D` is
-the current slice — `READY`, not yet begun — and its finding, `B-3`,
-remains **open**. `CRW2` and the Architecture Conformance Gate have not
-started; every finding mapped to them (`A-2`, `B-1`, `B-4`, `B-6`, `A-1`,
-`A-3`, `D-2`) remains **open**. `D-1` and `D-3` remain explicitly
-**DEFERRED**. This paragraph is updated as each slice's closure evidence
-lands — it is not itself a slice-status line subject to the ACTIVE-lifecycle
-exemption defined in [§8](#8-current-critical-path).
+`CRW1-B`) and `B-2` (closed by `CRW1-C`) are `CLOSED_ON_MAIN`. Five findings —
+`B-3` (`CRW1-D`) and `A-2`/`B-1`/`B-4`/`B-6` (`CRW2`) — are `READY`,
+authorized to begin in parallel per the model below, and all remain **open**.
+The Architecture Conformance Gate has not started; its own findings (`A-1`,
+`A-3`, `D-2`) remain **open**. `D-1` and `D-3` remain explicitly
+**DEFERRED**. This paragraph is updated as each finding's own closure
+evidence lands — it is not itself a slice-status line subject to the
+ACTIVE-lifecycle exemption defined in [§8](#8-current-critical-path).
+
+### Parallel execution model
+
+```text
+Execution mode:             PARALLEL AUTHORIZED (owner decision — see §7's
+                             "Parallelized Conformance Execution")
+Architecture Gate barrier:  waits for all five findings CLOSED_ON_MAIN
+                             AND a passing CONFORMANCE-INTEGRATION-CHECK
+```
+
+```text
+                               +-- CRW1-D / B-3 ------+
+                               +-- CRW2-A2 / A-2 -----+
+ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -----+--> CONFORMANCE-INTEGRATION-CHECK
+                               +-- CRW2-B4 / B-4 -----+                |
+                               +-- CRW2-B6 / B-6 -----+                v
+                                                          Architecture Conformance Gate
+```
+
+`CRW2` is a **grouping label, not one implementation unit**. `CRW2-A2`
+(`A-2`), `CRW2-B1` (`B-1`), `CRW2-B4` (`B-4`), and `CRW2-B6` (`B-6`) are four
+independently implemented findings, each with its own branch, PR, primary
+finding ownership, review, merge, and post-merge certification. No artificial
+order exists among the five tracks (`CRW1-D`, `CRW2-A2`, `CRW2-B1`,
+`CRW2-B4`, `CRW2-B6`) unless an actual dependency or semantic overlap is
+discovered between two of them.
+
+**Mandatory parallel-safety controls** (project policy as of this update):
+
+1. Every parallel-track PR declares its primary finding, known dependencies,
+   shared semantic surfaces, and potential overlaps (template below).
+2. Every PR has exactly **one** primary finding owner. A PR may touch
+   another finding's semantic surface but may not claim closure of a second
+   finding unless governance explicitly re-scopes it — this prevents double
+   closure, ambiguous ownership, and competing closure records.
+3. Two PRs touching the same semantic contract (e.g. the `package.json`
+   contract, evaluation exit semantics, branch-inventory format, workflow
+   required contexts, the governance status model itself) are **not**
+   independent — their relationship must be explicitly declared as
+   `DEPENDENT`, `ORDERED`, or `COORDINATED`, not left implicit.
+4. **Git mergeability is not proof of semantic independence.** A PR may
+   merge cleanly while invalidating another track's assumptions. Before
+   merging a parallel `HEAVY` PR whose exact-head review predates the
+   current tip of `main`: identify what merged in between; if it touches
+   the PR's declared semantic surfaces, a *targeted* semantic re-review is
+   mandatory; if it does not, an identity refresh plus exact-head CI is
+   sufficient. Do not automatically rerun a full review when no relevant
+   overlap exists, and do not skip re-review when one does.
+5. No automatic rebase purely for ceremony — rebase only when required for
+   mergeability or actual semantic compatibility. Never merge a HEAD
+   different from the one that was actually reviewed and authorized.
+
+Required PR-body fields for every parallel-track PR:
+
+```text
+Primary finding:          <finding>
+Known dependencies:       <none/list>
+Shared semantic surfaces: <paths/contracts>
+Potential overlap:        <other track / none>
+```
+
+**`CONFORMANCE-INTEGRATION-CHECK`** — a lightweight synchronization barrier
+immediately before the Architecture Conformance Gate. It is **not** a new
+implementation phase and **not** another full audit; it is a final
+combined-state readiness check confirming the five independently correct
+conformance changes are also correct *together* on current `main`.
+
+Inputs required: `B-3`, `A-2`, `B-1`, `B-4`, `B-6` all `CLOSED_ON_MAIN`.
+Checks: main CI green; all five findings still closed (none reopened by
+another PR); no cross-PR semantic contradiction; no incompatible
+policy/runtime assumption; package/public API changed only where explicitly
+intended; roadmap statuses coherent; branch/workflow/evaluation/governance
+contracts agree; no unresolved integration defect. Output: `PASS` or `FAIL`.
+Only `PASS` sets `Architecture Conformance Gate: READY` — Gate readiness is
+**never** reduced to "all five PRs merged"; both the five closures and a
+passing integration check are required. No additional implementation PR is
+needed solely for this check unless it finds a defect.
+
+**Concurrency guidance:** recommended maximum active `HEAVY` implementation
+PRs at once is 3–5 (the five current conformance tracks are an acceptable
+practical upper bound); `LIGHT` research/documentation work may exist
+additionally — avoid opening an uncontrolled number of `HEAVY` tracks. For
+CI: `HEAVY` tracks run full required CI; `LIGHT` tracks require the same
+branch-protection-required CI but should not be rerun purely for ceremony
+when an existing exact-SHA run already proves the required state — in
+particular, do not multiply live-site browser suites with redundant manual
+reruns.
+
+**Current parallel track status** (`READY` means authorized/unblocked —
+**not** `ACTIVE`; a track becomes `ACTIVE` only once its own implementation
+actually begins, per the existing lifecycle definition in
+[§8](#8-current-critical-path)):
+
+| Track | Finding | State | Review class | Primary dependency |
+|---|---|---|---|---|
+| `CRW1-D` | `B-3` | `READY` | TBD (actual diff decides) | none declared |
+| `CRW2-A2` | `A-2` | `READY` | TBD (actual diff decides) | none declared |
+| `CRW2-B1` | `B-1` | `READY` | TBD (actual diff decides) | none declared |
+| `CRW2-B4` | `B-4` | `READY` | TBD (actual diff decides) | none declared |
+| `CRW2-B6` | `B-6` | `READY` | TBD (actual diff decides) | none declared |
+
+This table tracks durable transitions only (`READY` → `COMPLETE_ON_MAIN`, or
+Gate readiness) — it does not require a `ROADMAP.md` commit for every
+implementation-started/review-requested/CI-rerun/PR-merged event;
+intermediate lifecycle detail belongs in each PR's own metadata, not here.
+
+### Review classification (LIGHT / HEAVY)
+
+Every PR is classified when opened, as exactly one of two classes — there is
+no third class, and uncertainty resolves to `HEAVY`:
+
+- **`LIGHT`** — the diff is provably non-executable: no runtime behavior
+  change, no security-enforcement change, no package/public-API change, no
+  executable CI/workflow change, and no mixed executable change. Typical
+  `LIGHT` surfaces: `*.md`, `ROADMAP.md`, `README.md`, `CLAUDE.md`,
+  `CONTRIBUTING.md`, PR/issue templates, non-executable governance metadata.
+  `LIGHT` does **not** mean "content doesn't matter" — it means the
+  technical/executable surface is provably untouched; focused semantic
+  review of the authority model, security policy, project identity,
+  lifecycle rules, merge/review policy, product-surface descriptions, and
+  canonical roadmap decisions remains mandatory even on a `LIGHT` PR,
+  because a docs-only PR can still carry a serious governance defect — as
+  `ROADMAPV33-R01` itself demonstrated.
+- **`HEAVY`** — anything touching or materially affecting `scripts/**`,
+  `.github/workflows/**`, `package.json`/`package-lock.json`,
+  runtime/production logic, security contracts/enforcement,
+  provider/destination logic, evaluation behavior, test execution, CI
+  semantics, or public API/package behavior. A mixed docs+executable diff
+  is always `HEAVY`.
+
+**Escalation is one-directional**: `LIGHT` may escalate to `HEAVY` during
+implementation or review; `HEAVY` may never be downgraded to `LIGHT` during
+review.
+
+`LIGHT` review requires one independent pass covering: exact base/HEAD/TREE;
+diff scope; proof no technical/executable surface changed; CI green on exact
+HEAD; focused semantic truth/coherence review; no obvious status
+contradiction; no actual defect left open. It does **not** require a
+40–100-question terminal checklist, a full package/runtime re-audit when the
+diff already proves those surfaces untouched, or repeated re-verification of
+unrelated technical areas. `LIGHT` reduces ceremony — it never authorizes a
+known defect; any real `BLOCKER`/`HIGH`/`MEDIUM`/`LOW`/`INFO` finding must
+still be fixed before approval.
+
+`HEAVY` review is unchanged from this project's existing full governance
+model: exact identity, full adversarial review, risk-specific terminal
+questions, zero-open-new-defect, explicit merge authorization, post-merge
+certification.
+
+Every PR body must declare its class:
+
+```text
+Review class: LIGHT / HEAVY
+Reason:       <short evidence-based reason>
+```
+
+### Pre-PR full-file self-sweep (mandatory)
+
+Before opening any PR touching `ROADMAP.md` or `README.md`, the implementer
+must sweep the **entire** file (not only the changed hunks) for status- and
+scope-bearing language — at minimum: `remains open`/`remain open`, `OPEN`,
+`CLOSED_ON_MAIN`, `COMPLETE_ON_MAIN`, `RECORDED_ON_MAIN`, `READY`, `ACTIVE`,
+`NOT_STARTED`, `DEFERRED`, `current`/`currently`, `only`, `every other`,
+`pending`, `next`, plus every relevant finding/track name — and inspect
+every meaningful hit for contradiction with current canonical truth. This
+rule exists because `ROADMAPV33-R01` (a pre-existing, newly-discovered
+defect) would have been caught before review, not during it, had this sweep
+already been standard practice. A clean sweep is a cheap defect **filter**,
+not proof of semantic correctness — it does not replace focused semantic
+review.
+
+### GOV-VERIFY-1 (tracked, non-blocking)
+
+`GOV-VERIFY-1` — Reusable Merge-Gate Verification Automation — is recorded
+here as a tracked future task, classification `HEAVY`, **non-blocking**: it
+does not block `CRW1-D`, `CRW2`, or the Architecture Conformance Gate unless
+separately decided later. Purpose: produce reusable evidence for exact
+base/HEAD/TREE SHAs, diff scope against forbidden paths, `npm pack`
+baseline/diff, a branch-protection snapshot, and exact-SHA CI lookup (with
+explicit `pull_request` vs. `push` event-type validation) — likely as
+`scripts/governance/verify-merge-gate.sh` and/or a workflow wrapper.
+
+`GOV-VERIFY-1` must be an **evidence producer, never a merge authority**: it
+must never emit a single `SAFE_TO_MERGE=true`-style verdict; its output
+should be discrete evidence fields (e.g. `BASE_MATCH`, `HEAD_MATCH`,
+`TREE_MATCH`, `FORBIDDEN_PATHS`, `PACK_DIFF`, `CI_EXACT_SHA`, `CI_EVENT`,
+`BRANCH_PROTECTION_STATUS`), with human/governance review remaining the
+actual decision authority. It must be **fail-closed**: incomplete evidence
+(branch-protection API unreachable, an ambiguous or multiple-event CI run, a
+HEAD/TREE mismatch, an incomplete pack comparison, a stale cached result)
+must report `UNKNOWN`/`FAIL`, never a silent `PASS`. When actually
+implemented, its `HEAVY` review must include negative-fixture tests for at
+least: green CI on the wrong SHA; a `pull_request` run mistaken for
+post-merge `push` proof and vice versa; a forbidden technical path hidden
+among docs; `npm pack` file-count/surface drift; an unavailable or partial
+branch-protection/GitHub-API read; a HEAD/TREE mismatch; and a stale cached
+CI result.
 
 ## 7. Owner phase-order decision
 
@@ -293,15 +492,114 @@ decision:**
   any part of it.
 
 This decision does **not** change the current execution gate: as of
-this update, `CRW1-D` remains the current slice (`READY`, unstarted —
-see [§8](#8-current-critical-path)), and `RAG`/`LEARN` are both
-`NOT_STARTED` (see [§10](#10-mem--agentic-memory-foundation)).
+this update, `RAG`/`LEARN` are both `NOT_STARTED` (see
+[§10](#10-mem--agentic-memory-foundation)).
+
+### Subsequent owner decision — Parallelized Conformance Execution
+
+```text
+Previous model:   CRW1-D → CRW2 → Architecture Conformance Gate
+                  (strictly serial)
+
+New model:        After ROADMAP-V3.3-SYNC's own certification, the following
+                  five implementation tracks may start independently and
+                  concurrently:
+
+                    CRW1-D  / B-3
+                    CRW2-A2 / A-2
+                    CRW2-B1 / B-1
+                    CRW2-B4 / B-4
+                    CRW2-B6 / B-6
+
+                  Each uses its own branch, PR, primary finding ownership,
+                  review classification, review, merge, and post-merge
+                  certification. See §6's "Parallel execution model" for the
+                  full mandatory safety controls this requires.
+
+Decision owner:   Project owner.
+```
+
+The Architecture Conformance Gate remains a **hard integration barrier**: it
+may not start until all five tracks above are `CLOSED_ON_MAIN` **and** a
+`CONFORMANCE-INTEGRATION-CHECK` (§6) passes. Parallelizing *implementation*
+does not parallelize *correctness responsibility*, and it does not waive
+semantic-integration validation — Git mergeability alone is never treated as
+proof that two parallel tracks are actually compatible (§6).
+
+**Provenance — what must never be claimed about this decision:**
+
+- ❌ "Parallel execution means CRW1-D and CRW2 are done once their PRs
+  merge." — false; the Architecture Conformance Gate additionally requires a
+  passing `CONFORMANCE-INTEGRATION-CHECK` (§6).
+- ❌ "Parallel authorization removes the review requirement for any of the
+  five tracks." — false; each track still requires its own review, at
+  `LIGHT` or `HEAVY` classification per §6's review model — `HEAVY` rigor is
+  explicitly unweakened by this decision.
+- ✅ The owner decided implementation of independent findings may proceed
+  concurrently, subject to explicit dependency declarations and a mandatory
+  pre-Gate integration check — this reduces unnecessary serialization, not
+  verification.
+
+### Subsequent owner decision — Early AISEC/MEM Research Parallelism
+
+```text
+Authorized early research-only stages:
+
+  AISEC-1  Agentic Threat Model Research
+  AISEC-2  Prompt / Indirect Injection Study
+  AISEC-6  Security Architecture Decision Record
+
+  MEM-1    Agentic Memory Use-Case Research
+  MEM-2    Memory Taxonomy & Trust Model
+
+These may begin while CRW1-D / CRW2-A2 / CRW2-B1 / CRW2-B4 / CRW2-B6 are
+still being implemented.
+Decision owner: Project owner.
+```
+
+This is a **conscious narrowing, not a cancellation**, of the principle
+recorded earlier in this section ("Agentic trust/security boundaries should
+be defined before agentic authority grows further"). Mainline
+execution/integration still follows the Architecture Conformance Gate
+barrier in full; only selected research/analysis work may begin early, and
+only under these conditions:
+
+- Early research exists off-`main` — a long-lived draft PR, research branch,
+  or research document — and may collect evidence, compare options, identify
+  threats, draft ADR options, and define *provisional* taxonomy/trust
+  models. It may **not** be treated as accepted architecture.
+- Every early AISEC/MEM research PR/document must include an explicit
+  **Assumptions** section stating at minimum: `A-1` unresolved, `A-3`
+  unresolved, `D-2` unresolved, Architecture Conformance Gate not closed —
+  plus its own provisional conclusions, and an explicit statement that those
+  conclusions "must be revalidated after Architecture Gate: YES".
+- Before Architecture Gate closure, early research may **not** finalize the
+  public product surface, public API contract, runtime authority contract,
+  persistence schema, final threat-model scope, an accepted security ADR, or
+  a final memory-persistence contract. It may propose options; it may not
+  silently convert options into canonical decisions.
+- `AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` may **start** early. They may
+  **not merge into `main`** before all five conformance findings are closed,
+  `CONFORMANCE-INTEGRATION-CHECK` passes, and the Architecture Conformance
+  Gate itself closes/certifies. Only after Gate decisions are known is early
+  research revalidated (reopen/re-read assumptions → invalidate outdated
+  ones → remove obsolete options → update conclusions → targeted review)
+  and merge-authorized — a draft research PR is never merge-authorized
+  merely because it was written earlier.
+- No other AISEC/MEM stage, and no `RAG`/`LEARN` stage, receives early-start
+  permission: `AISEC-3`/`4`/`5`/`7`, all of `MEM-3..MEM-9`, all of
+  `RAG-1..RAG-12`, and all of `LEARN-1..LEARN-9` remain blocked until the
+  Architecture Conformance Gate closes, exactly as recorded in
+  [§8](#8-current-critical-path) and [§10](#10-mem--agentic-memory-foundation).
+  The research exception does **not** move `RAG`/`LEARN` earlier in the
+  canonical sequence.
 
 ## 8. Current critical path
 
 ```text
-CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)  →  CRW1-D
-  →  CRW2
+CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)
+  →  {  CRW1-D / B-3,  CRW2-A2 / A-2,  CRW2-B1 / B-1,  CRW2-B4 / B-4,  CRW2-B6 / B-6  }  (PARALLEL)
+  →  CONFORMANCE-INTEGRATION-CHECK
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
@@ -313,9 +611,16 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
 ```
 
 This is the canonical future sequence following the [subsequent owner
-decision](#7-owner-phase-order-decision) recorded in §7. It does not
-change the current gate: the current slice remains `CRW1-D`, and
-nothing from `AISEC` onward is active. See [§10](#10-mem--agentic-memory-foundation)
+decision](#7-owner-phase-order-decision) recorded in §7. The five tracks in
+`{ }` are authorized to execute **in parallel** (see §6's "Parallel execution
+model" for the mandatory safety controls) — this replaces the previously
+strictly-serial `CRW1-D → CRW2` framing. `CONFORMANCE-INTEGRATION-CHECK` is a
+mandatory synchronization barrier, not an optional formality: the
+Architecture Conformance Gate does not become `READY` merely because all
+five PRs merged. Nothing from `AISEC` onward is active, except the narrow,
+explicitly-provisional early-research exception also recorded in §7 (early
+`AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` research, off-`main`, not
+merge-authorized before the Gate). See [§10](#10-mem--agentic-memory-foundation)
 for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
 `MEM-6` and `MEM-7`.
 
@@ -354,15 +659,29 @@ already-documented solo-maintainer governance profile (`SG1`); revisit if
 multiple maintainers, distinct ownership domains, or code-owner review
 enforcement are ever introduced.
 
-**Current slice: `CRW1-D` — `READY`** (technically unblocked by
-`CRW1-C`'s closure; intentionally not yet begun by governance sequencing
-— see the `READY` definition in [§2](#2-status-vocabulary)). `CRW1-D`
-addresses `B-3` — Supply-Chain Monitoring, which remains open. Historical
-lower-level
-critical paths (`CS6`, `CS7`, "RTI implementation", "RTI Integrated Audit
-READY") describe *past* states of this project and remain accurate as
-history in README's own roadmap-by-roadmap record — they are not the
-current critical path and must not be read as such.
+**Current parallel tracks — all `READY`, none `ACTIVE`** (technically
+unblocked by `CRW1-C`'s closure; per the [subsequent owner
+decision](#7-owner-phase-order-decision) recorded in §7, all five may begin
+implementation independently and concurrently — see the `READY` definition
+in [§2](#2-status-vocabulary) and §6's "Current parallel track status" table
+for the live per-track state):
+
+```text
+CRW1-D   (B-3 — Supply-Chain Monitoring)                            READY
+CRW2-A2  (A-2 — Strict evaluation/regression blocking semantics)    READY
+CRW2-B1  (B-1 — Versioned branch inventory)                         READY
+CRW2-B4  (B-4 — Fail-closed test-infrastructure verification)       READY
+CRW2-B6  (B-6 — Versioned governance/process knowledge)             READY
+```
+
+All five findings (`B-3`, `A-2`, `B-1`, `B-4`, `B-6`) remain **open** — a
+track is `READY` (authorized/unblocked) only, and becomes `ACTIVE` only once
+its own implementation actually begins, per the slice-lifecycle definition
+above; `READY` is not itself a claim that any implementation has started.
+Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
+"RTI Integrated Audit READY") describe *past* states of this project and
+remain accurate as history in README's own roadmap-by-roadmap record — they
+are not the current critical path and must not be read as such.
 
 ### CRW1-A closure evidence
 
@@ -454,6 +773,20 @@ AISEC-7  Adversarial Security Test Harness
 ```
 
 All: `NOT_STARTED`.
+
+**Research lane (early-start exception).** Per the [subsequent owner
+decision — Early AISEC/MEM Research
+Parallelism](#7-owner-phase-order-decision) recorded in §7, `AISEC-1`,
+`AISEC-2`, and `AISEC-6` only may begin as `DRAFT`/`PROVISIONAL`/`OFF-MAIN`
+research while the parallel conformance tracks (§6/§8) are still being
+implemented. They may not merge into `main` before the Architecture
+Conformance Gate closes, and any conclusions reached remain provisional and
+subject to mandatory post-Gate revalidation — see §7 for the full
+assumptions/freeze-boundary/merge-barrier rules. `AISEC-3`, `AISEC-4`,
+`AISEC-5`, and `AISEC-7` receive **no** early-start permission; they remain
+blocked until the Gate closes, same as `AISEC` execution generally. This
+research lane is separate from, and must not be confused with, the mainline
+critical path in [§8](#8-current-critical-path).
 
 ## 10. MEM — Agentic Memory Foundation
 
@@ -572,6 +905,18 @@ numbering itself is unchanged from its original definition.
 Persistent autonomous agentic memory does not exist in this codebase today,
 and must not be implemented before AISEC's own security architecture exists —
 `AISEC → MEM`, never the reverse.
+
+**Research lane (early-start exception).** Per the [subsequent owner
+decision — Early AISEC/MEM Research
+Parallelism](#7-owner-phase-order-decision) recorded in §7, `MEM-1` and
+`MEM-2` only may begin as `DRAFT`/`PROVISIONAL`/`OFF-MAIN` research while
+the parallel conformance tracks (§6/§8) are still being implemented. They
+may not merge into `main` before the Architecture Conformance Gate closes,
+and any provisional taxonomy/trust-model conclusions remain subject to
+mandatory post-Gate revalidation. `MEM-3` through `MEM-9` receive **no**
+early-start permission and remain blocked until the Gate closes, same as
+`MEM` generally — the research exception does not move persistence,
+poisoning-analysis, or verification work earlier.
 
 ### 10.1 RAG — Trusted Retrieval & Knowledge Grounding
 
