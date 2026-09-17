@@ -1,0 +1,51 @@
+name: Supply-Chain Audit
+
+# CRW1-D / B-3 (Supply-Chain Monitoring): ongoing drift detection for the
+# already-committed lockfile's own known vulnerabilities. A point-in-time
+# audit goes stale - CS3's own audit (2026-09-08, PR #115) recorded 1 high
+# finding; a second high-severity advisory (js-yaml) was disclosed after
+# CS3 and had gone completely unmonitored until this workflow existed. This
+# job is distinct from dependency-review.yml, which only inspects what a
+# PR's own manifest diff newly introduces, not the existing lockfile's
+# accumulated advisories.
+#
+# See scripts/diagnostics/audit-drift-check.js for the full reachability
+# analysis, the accepted high/critical baseline, and the PASS / VIOLATION /
+# INFRA_ERROR semantics this job enforces - a scanner/registry failure must
+# never be silently treated as a pass.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches:
+      - main
+    paths:
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit-drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run supply-chain audit drift check
+        run: node scripts/diagnostics/audit-drift-check.js
