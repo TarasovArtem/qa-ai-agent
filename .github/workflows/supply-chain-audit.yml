@@ -1,0 +1,66 @@
+name: Supply-Chain Audit
+
+# CRW1-D / B-3 (Supply-Chain Monitoring): ongoing drift detection for the
+# already-committed lockfile's own known vulnerabilities. A point-in-time
+# audit goes stale - CS3's own audit (2026-09-08, PR #115) recorded 1 high
+# finding; a second high-severity advisory (js-yaml) was disclosed after
+# CS3 and had gone completely unmonitored until this workflow existed. This
+# job is distinct from dependency-review.yml, which only inspects what a
+# PR's own manifest diff newly introduces, not the existing lockfile's
+# accumulated advisories.
+#
+# See scripts/diagnostics/audit-drift-check.js for the full reachability
+# analysis, the accepted high/critical baseline, and the PASS / VIOLATION /
+# INFRA_ERROR semantics this job enforces - a scanner/registry failure must
+# never be silently treated as a pass.
+#
+# CRW1-D-C1 (CRW1D-R02): the trigger paths below deliberately include this
+# workflow's own implementation files, not only the dependency manifests.
+# Without this, a PR that changes the monitoring logic itself (this file,
+# or audit-drift-check.js/.test.js) never executes the workflow it is
+# changing - the very first real-world proof of CRW1-D's own implementation
+# PR (#157) hit exactly this: it modified all three of these files and the
+# workflow never ran. Self-surfacing on its own changes is what makes this
+# workflow self-validating rather than merely self-describing.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/supply-chain-audit.yml"
+      - "scripts/diagnostics/audit-drift-check.js"
+      - "scripts/diagnostics/audit-drift-check.test.js"
+  push:
+    branches:
+      - main
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/supply-chain-audit.yml"
+      - "scripts/diagnostics/audit-drift-check.js"
+      - "scripts/diagnostics/audit-drift-check.test.js"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit-drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run supply-chain audit drift check
+        run: node scripts/diagnostics/audit-drift-check.js

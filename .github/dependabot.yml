@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # npm ecosystem: keeps package.json/package-lock.json dependency versions
+  # visible over time, so a newly-vulnerable version doesn't silently age
+  # in place between manual audits (CRW1-D / B-3). Grouped into a single
+  # weekly PR to avoid the noisy-configuration/unnecessary-PR-churn failure
+  # mode this repository explicitly wants to avoid.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # GitHub Actions ecosystem: every `uses:` reference in this repository's
+  # workflows is pinned to a commit SHA (see .github/workflows/cypress.yml,
+  # CS3) specifically so that updates happen only via a reviewed PR, never
+  # silently through a floating tag. Dependabot here proposes SHA-to-SHA
+  # update PRs (with the human-readable version in a trailing comment,
+  # matching this repository's existing pinning convention) rather than
+  # leaving pinned actions to go stale indefinitely.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
