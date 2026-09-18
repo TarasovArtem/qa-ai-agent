@@ -25,7 +25,7 @@
  * purpose-prefix `classes` pattern instead of an exact name that would go
  * stale the moment the branch is deleted.
  *
- * Scope boundary: this is A-2-shaped governance metadata for branches, not
+ * Scope boundary: this is B-1-scoped governance metadata for branches, not
  * a general Git policy framework (see docs/branch-inventory-v1.md's "What
  * this does not do"). It does not close B-4 (global fail-closed
  * test-infrastructure verification - this module's own fail-closed
