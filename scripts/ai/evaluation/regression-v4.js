@@ -34,6 +34,7 @@ const path = require("node:path");
 const { validateDatasetV4 } = require("./dataset-v4-schema");
 const { validateBaselineV4 } = require("./baseline-v4-schema");
 const { evaluateDatasetV4 } = require("./scoring-v4");
+const { resolvePolicyForVersion, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset-v4.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v4.json");
@@ -332,12 +333,15 @@ function run(datasetPath, baselinePath) {
   const currentEvaluation = evaluateDatasetV4(dataset);
   const comparison = compareEvaluationToBaselineV4(currentEvaluation, baseline);
 
-  if (comparison.status === "BASELINE_MISMATCH") {
-    return { exitCode: 1, output: formatRegressionReportV4(comparison) };
-  }
-
-  // Informational only, same as v1/v2: even REGRESSED exits 0 here.
-  return { exitCode: 0, output: formatRegressionReportV4(comparison) };
+  // CRW2-A2 / A-2: exit code (including BASELINE_MISMATCH) comes entirely
+  // from the single shared execution-policy authority (execution-policy.js).
+  // v4's formally assigned, documented policy is INFORMATIONAL, same as
+  // v1-v3 - see docs/evaluation-execution-policy-v1.md for the full
+  // rationale. No change to v4's actual CI behavior.
+  const policy = resolvePolicyForVersion("v4");
+  const { exitCode, reason } = resolveExitCode(comparison.status, policy);
+  const policyFooter = `\n\nExecution policy: ${policy}\nBlocking decision: ${exitCode === 0 ? "NON-BLOCKING" : "BLOCKED"}\nReason: ${reason}`;
+  return { exitCode, output: formatRegressionReportV4(comparison) + policyFooter };
 }
 
 function main() {

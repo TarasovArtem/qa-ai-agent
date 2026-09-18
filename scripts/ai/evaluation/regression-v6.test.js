@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const { run, compareEvaluationToBaselineV6, compareQualityTernary, compareGateStatus } = require("./regression-v6");
 const { evaluateDatasetV6 } = require("./scoring-v6");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DATASET_PATH = path.join(__dirname, "dataset-v6.json");
 const BASELINE_PATH = path.join(__dirname, "baseline-v6.json");
@@ -207,4 +208,48 @@ test("determinism: two independent run() invocations on the same files produce b
   const b = run(DATASET_PATH, BASELINE_PATH);
   assert.equal(a.output, b.output);
   assert.equal(a.exitCode, b.exitCode);
+});
+
+// --- CRW2-A2 / A-2: v6's formally decided execution policy is
+// STRICT - a REGRESSED (or IMPROVED) comparison must exit 1, unchanged from
+// v6's pre-existing `comparison.baselineMatched ? 0 : 1` behavior. ---
+
+test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy authority to exit 1 (v6 is STRICT)", () => {
+  const { exitCode } = resolveExitCode("REGRESSED", POLICY.STRICT);
+  assert.equal(exitCode, 1);
+});
+
+test("CRW2-A2: an IMPROVED comparison also maps to exit 1 under STRICT (an improvement still requires a reviewed baseline update)", () => {
+  const { exitCode } = resolveExitCode("IMPROVED", POLICY.STRICT);
+  assert.equal(exitCode, 1);
+});
+
+// End-to-end proof (real file I/O): a deliberately mutated copy of the
+// real, committed baseline-v6.json - pointing at the same real, unmutated
+// dataset-v6.json - produces a genuine REGRESSED verdict through run()
+// exactly as it would happen in this repository's own CI, and confirms
+// run() blocks (exit 1). Deterministic, no network.
+test("CRW2-A2 end-to-end: run() against the real dataset-v6.json with a deliberately regressed baseline copy exits 1 (STRICT policy blocks, unchanged by this PR)", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+
+  // TD-V6-011's requirementGrounding is a genuine, real "known weakness" -
+  // "fail" in both the committed baseline and the real current evaluation
+  // (unchanged). Mutating only the baseline's copy to "pass" makes the real,
+  // unmutated current evaluation ("fail") a genuine pass -> fail regression,
+  // without needing to touch dataset-v6.json or guess at scoring internals.
+  const mutatedBaseline = require("./baseline-v6.json");
+  assert.equal(mutatedBaseline.samples["TD-V6-011"].requirementGrounding, "fail");
+  const mutated = JSON.parse(JSON.stringify(mutatedBaseline));
+  mutated.samples["TD-V6-011"].requirementGrounding = "pass";
+
+  const tmpPath = path.join(os.tmpdir(), `crw2-a2-regressed-baseline-v6-${process.pid}.json`);
+  fs.writeFileSync(tmpPath, JSON.stringify(mutated));
+  try {
+    const result = run(DATASET_PATH, tmpPath);
+    assert.match(result.output, /Status: REGRESSED/);
+    assert.equal(result.exitCode, 1, "v6 is STRICT - a real, reproduced regression must block (exit 1)");
+  } finally {
+    fs.unlinkSync(tmpPath);
+  }
 });

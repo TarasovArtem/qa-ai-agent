@@ -1247,9 +1247,18 @@ any of the following. Each remains explicitly open:
   `package.json`'s `exports`/`files` actually expose today (19 root exports;
   see README) — this file does not imply #22/#23 are, or are not, part of
   that surface.
-- **`A-2`** — whether all evaluation/regression dimensions strictly block
-  merges is not yet formally decided/enforced; do not read any current
-  wording elsewhere as already guaranteeing this.
+- **`A-2`** — evaluation/regression merge-blocking policy is now formally
+  specified by
+  [`docs/evaluation-execution-policy-v1.md`](../docs/evaluation-execution-policy-v1.md)
+  and enforced by a single runtime authority
+  (`scripts/ai/evaluation/execution-policy.js`): `v1`-`v5` are `INFORMATIONAL`
+  (report `REGRESSED` truthfully, never block — a deliberate, evidenced
+  decision, not an unaddressed default), `v6` is `STRICT` (only an exact
+  match to its reviewed baseline exits 0). This work is implemented on
+  `CRW2-A2` (PR #162) and **remains pending independent HEAVY review and
+  merge** — do not read this as `A-2: CLOSED_ON_MAIN` until that PR's own
+  post-merge certification records it as such in
+  [§8](#8-current-critical-path)'s closure-evidence convention.
 - **`A-3`** — the relationship between the #22/#23 generative pipeline's own
   `RequirementModel`/`TestCaseModel` and RTI's deterministic
   `RequirementArtifact`/`TestDesignArtifact` is not yet decided (unify,

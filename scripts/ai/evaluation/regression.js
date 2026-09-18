@@ -33,6 +33,7 @@ const path = require("node:path");
 const { validateDataset } = require("./dataset-schema");
 const { validateBaseline } = require("./baseline-schema");
 const { evaluateDataset } = require("./scoring");
+const { resolvePolicyForVersion, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v1.json");
@@ -310,16 +311,18 @@ function run(datasetPath, baselinePath) {
   const currentEvaluation = evaluateDataset(dataset);
   const comparison = compareEvaluationToBaseline(currentEvaluation, baseline);
 
-  // A sample-set mismatch means the baseline can't safely be compared at
-  // all - report it as a real failure, not as a REGRESSED/IMPROVED verdict.
-  if (comparison.status === "BASELINE_MISMATCH") {
-    return { exitCode: 1, output: formatRegressionReport(comparison) };
-  }
-
-  // Phase 3 is offline/informational only - this PR adds no CI gate, so
-  // even a REGRESSED status exits 0 here. A later CI integration may map
-  // REGRESSED to a non-zero exit; that mapping is deliberately not made yet.
-  return { exitCode: 0, output: formatRegressionReport(comparison) };
+  // CRW2-A2 / A-2: exit code (including the BASELINE_MISMATCH case) comes
+  // entirely from the single shared execution-policy authority
+  // (execution-policy.js) - one status-to-exit-code decision point, not a
+  // hardcoded early return plus a separate policy branch. v1's formally
+  // assigned, documented policy is INFORMATIONAL - see
+  // docs/evaluation-execution-policy-v1.md for the full rationale. This
+  // changes nothing about v1's actual CI behavior (still exit 0 on
+  // REGRESSED, still exit 1 on BASELINE_MISMATCH).
+  const policy = resolvePolicyForVersion("v1");
+  const { exitCode, reason } = resolveExitCode(comparison.status, policy);
+  const policyFooter = `\n\nExecution policy: ${policy}\nBlocking decision: ${exitCode === 0 ? "NON-BLOCKING" : "BLOCKED"}\nReason: ${reason}`;
+  return { exitCode, output: formatRegressionReport(comparison) + policyFooter };
 }
 
 function main() {
