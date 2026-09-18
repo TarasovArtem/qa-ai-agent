@@ -33,7 +33,7 @@ const path = require("node:path");
 const { validateDataset } = require("./dataset-schema");
 const { validateBaseline } = require("./baseline-schema");
 const { evaluateDataset } = require("./scoring");
-const { POLICY, resolveExitCode } = require("./execution-policy");
+const { resolvePolicyForVersion, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v1.json");
@@ -311,21 +311,18 @@ function run(datasetPath, baselinePath) {
   const currentEvaluation = evaluateDataset(dataset);
   const comparison = compareEvaluationToBaseline(currentEvaluation, baseline);
 
-  // A sample-set mismatch means the baseline can't safely be compared at
-  // all - report it as a real failure, not as a REGRESSED/IMPROVED verdict.
-  if (comparison.status === "BASELINE_MISMATCH") {
-    return { exitCode: 1, output: formatRegressionReport(comparison) };
-  }
-
-  // CRW2-A2 (closes A-2): exit code now comes from the single shared
-  // execution-policy authority (execution-policy.js) instead of an inline
-  // decision here. v1's formally decided, documented policy is
-  // INFORMATIONAL - see execution-policy.js's own header comment for the
-  // full v1-v5/v6 rationale. This changes nothing about v1's actual CI
-  // behavior (still exit 0 on REGRESSED) - it makes the decision explicit
-  // and testable instead of implicit and duplicated per file.
-  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
-  return { exitCode, output: formatRegressionReport(comparison) };
+  // CRW2-A2 / A-2: exit code (including the BASELINE_MISMATCH case) comes
+  // entirely from the single shared execution-policy authority
+  // (execution-policy.js) - one status-to-exit-code decision point, not a
+  // hardcoded early return plus a separate policy branch. v1's formally
+  // assigned, documented policy is INFORMATIONAL - see
+  // docs/evaluation-execution-policy-v1.md for the full rationale. This
+  // changes nothing about v1's actual CI behavior (still exit 0 on
+  // REGRESSED, still exit 1 on BASELINE_MISMATCH).
+  const policy = resolvePolicyForVersion("v1");
+  const { exitCode, reason } = resolveExitCode(comparison.status, policy);
+  const policyFooter = `\n\nExecution policy: ${policy}\nBlocking decision: ${exitCode === 0 ? "NON-BLOCKING" : "BLOCKED"}\nReason: ${reason}`;
+  return { exitCode, output: formatRegressionReport(comparison) + policyFooter };
 }
 
 function main() {

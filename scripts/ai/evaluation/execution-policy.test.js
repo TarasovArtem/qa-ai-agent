@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { POLICY, resolveExitCode } = require("./execution-policy");
+const { POLICY, VERSION_POLICY, resolvePolicyForVersion, resolveExitCode } = require("./execution-policy");
 
 // --- STRICT policy: only an exact baseline match exits 0 ---
 
@@ -86,4 +86,38 @@ test("full INFORMATIONAL x status matrix", () => {
     ["REGRESSED", "IMPROVED", "UNCHANGED", "BASELINE_MISMATCH"].map((s) => resolveExitCode(s, POLICY.INFORMATIONAL).exitCode),
     [0, 0, 0, 1],
   );
+});
+
+// --- resolvePolicyForVersion: centralized version -> policy assignment ---
+
+test("VERSION_POLICY formally assigns v1-v5 INFORMATIONAL and v6 STRICT", () => {
+  assert.deepEqual(VERSION_POLICY, {
+    v1: POLICY.INFORMATIONAL,
+    v2: POLICY.INFORMATIONAL,
+    v3: POLICY.INFORMATIONAL,
+    v4: POLICY.INFORMATIONAL,
+    v5: POLICY.INFORMATIONAL,
+    v6: POLICY.STRICT,
+  });
+});
+
+test("resolvePolicyForVersion returns the assigned policy for each known version", () => {
+  assert.equal(resolvePolicyForVersion("v1"), POLICY.INFORMATIONAL);
+  assert.equal(resolvePolicyForVersion("v2"), POLICY.INFORMATIONAL);
+  assert.equal(resolvePolicyForVersion("v3"), POLICY.INFORMATIONAL);
+  assert.equal(resolvePolicyForVersion("v4"), POLICY.INFORMATIONAL);
+  assert.equal(resolvePolicyForVersion("v5"), POLICY.INFORMATIONAL);
+  assert.equal(resolvePolicyForVersion("v6"), POLICY.STRICT);
+});
+
+test("resolvePolicyForVersion fails closed (throws) on an unknown version - never defaults to INFORMATIONAL or any other policy", () => {
+  assert.throws(() => resolvePolicyForVersion("v7"), /No formally assigned execution policy/);
+  assert.throws(() => resolvePolicyForVersion("v0"), /No formally assigned execution policy/);
+  assert.throws(() => resolvePolicyForVersion(""), /No formally assigned execution policy/);
+  assert.throws(() => resolvePolicyForVersion(undefined), /No formally assigned execution policy/);
+});
+
+test("resolvePolicyForVersion does not fall back to Object.prototype properties for a version key (e.g. \"toString\", \"constructor\")", () => {
+  assert.throws(() => resolvePolicyForVersion("toString"), /No formally assigned execution policy/);
+  assert.throws(() => resolvePolicyForVersion("constructor"), /No formally assigned execution policy/);
 });

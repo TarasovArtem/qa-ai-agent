@@ -447,7 +447,7 @@ test("known Experiment #2 recommendedFix deficiency (fail -> fail) is unchanged,
   assert.equal(comparison.status, "UNCHANGED");
 });
 
-// --- CRW2-A2 (closes A-2): v1's formally decided execution policy is
+// --- CRW2-A2 / A-2: v1's formally decided execution policy is
 // INFORMATIONAL - a REGRESSED comparison must still exit 0. ---
 
 test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy authority to exit 0 (v1 is INFORMATIONAL)", () => {
@@ -483,7 +483,27 @@ test("CRW2-A2 end-to-end: run() against the real dataset.json with a deliberatel
   try {
     const result = run(DATASET_PATH, tmpBaselinePath);
     assert.match(result.output, /Status: REGRESSED/);
+    assert.match(result.output, /Execution policy: INFORMATIONAL/);
     assert.equal(result.exitCode, 0, "v1 is INFORMATIONAL - a real, reproduced regression must still exit 0");
+  } finally {
+    fs.unlinkSync(tmpBaselinePath);
+  }
+});
+
+// CRW2-A2: BASELINE_MISMATCH is a structural failure and blocks under
+// EVERY policy, including INFORMATIONAL - proven through run() itself, not
+// just the pure comparator, now that BASELINE_MISMATCH is routed through
+// the same shared execution-policy authority as REGRESSED/IMPROVED/
+// UNCHANGED.
+test("CRW2-A2: run() exits 1 on BASELINE_MISMATCH even though v1 is INFORMATIONAL (structural failure blocks under every policy)", () => {
+  const mutatedBaseline = loadRealBaseline();
+  delete mutatedBaseline.samples["experiment-2-broken-selector"];
+
+  const tmpBaselinePath = path.join(os.tmpdir(), `crw2-a2-mismatch-baseline-v1-${process.pid}.json`);
+  fs.writeFileSync(tmpBaselinePath, JSON.stringify(mutatedBaseline));
+  try {
+    const result = run(DATASET_PATH, tmpBaselinePath);
+    assert.equal(result.exitCode, 1);
   } finally {
     fs.unlinkSync(tmpBaselinePath);
   }

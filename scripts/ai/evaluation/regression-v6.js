@@ -60,7 +60,7 @@ const path = require("node:path");
 const { validateDatasetV6 } = require("./dataset-v6-schema");
 const { validateBaselineV6 } = require("./baseline-v6-schema");
 const { evaluateDatasetV6, DIMENSIONS } = require("./scoring-v6");
-const { POLICY, resolveExitCode } = require("./execution-policy");
+const { resolvePolicyForVersion, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset-v6.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v6.json");
@@ -233,13 +233,17 @@ function run(datasetPath, baselinePath) {
 
   // Strict drift policy (Roadmap #22G-C1, closes G-2): only an exact
   // match to the committed, reviewed baseline is safe - see this module's
-  // own header comment. CRW2-A2 (closes A-2): exit code now comes from the
-  // single shared execution-policy authority (execution-policy.js) instead
-  // of an inline `comparison.baselineMatched ? 0 : 1` here - identical
-  // result (STRICT already means "only UNCHANGED exits 0"), now explicit
-  // and shared with v1-v5's own (INFORMATIONAL) policy declaration.
-  const { exitCode } = resolveExitCode(comparison.status, POLICY.STRICT);
-  return { exitCode, output: formatRegressionReportV6(comparison) };
+  // own header comment. CRW2-A2 / A-2: exit code comes from the single
+  // shared execution-policy authority (execution-policy.js), formally
+  // assigned STRICT for v6 - see docs/evaluation-execution-policy-v1.md for
+  // the full rationale. Identical result to the prior inline
+  // `comparison.baselineMatched ? 0 : 1` (STRICT already means "only
+  // UNCHANGED exits 0"), now explicit, centrally assigned, and shared with
+  // v1-v5's own (INFORMATIONAL) policy declaration.
+  const policy = resolvePolicyForVersion("v6");
+  const { exitCode, reason } = resolveExitCode(comparison.status, policy);
+  const policyFooter = `\n\nExecution policy: ${policy}\nBlocking decision: ${exitCode === 0 ? "NON-BLOCKING" : "BLOCKED"}\nReason: ${reason}`;
+  return { exitCode, output: formatRegressionReportV6(comparison) + policyFooter };
 }
 
 function main() {

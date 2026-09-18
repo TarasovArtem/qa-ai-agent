@@ -1,30 +1,26 @@
 /**
  * Single execution-policy authority for regression*.js's exit-code
- * semantics (CRW2-A2, closes A-2).
+ * semantics (CRW2-A2, addressing conformance finding A-2).
  *
- * Discovery (see the implementation PR for the full architecture map):
- * regression.js (v1) and regression-v2..v5.js all compute the exact same
- * comparison-status vocabulary - `REGRESSED` / `IMPROVED` / `UNCHANGED` /
- * `BASELINE_MISMATCH` - but decided the resulting exit code inline, in each
- * file's own run(), with an unconditional `exitCode: 0` after a successful
- * comparison (REGRESSED included). regression-v6.js instead computes
+ * The full formal decision - why v1-v5 are INFORMATIONAL, why v6 is STRICT,
+ * the evidence behind that split, and the criteria for changing it later -
+ * is recorded durably in docs/evaluation-execution-policy-v1.md. This file
+ * is the *runtime enforcement* of that decision, not the decision record
+ * itself; keep both in sync if the decision ever changes.
+ *
+ * Discovery summary: regression.js (v1) and regression-v2..v5.js all
+ * compute the exact same comparison-status vocabulary - `REGRESSED` /
+ * `IMPROVED` / `UNCHANGED` / `BASELINE_MISMATCH` - but originally decided
+ * the resulting exit code inline, in each file's own run(), with an
+ * unconditional `exitCode: 0` after a successful comparison (REGRESSED
+ * included). regression-v6.js instead computed
  * `exitCode = comparison.baselineMatched ? 0 : 1` (i.e. only UNCHANGED
- * exits 0; REGRESSED, IMPROVED, and BASELINE_MISMATCH all exit 1). ROADMAP's
- * own A-2 finding is precise about what was actually missing: "whether all
- * evaluation/regression dimensions strictly block merges is not yet
- * formally decided/enforced" - not that v1-v5's informational behavior was
- * itself a bug. It is a deliberate, extensively documented design decision
- * (see .github/workflows/cypress.yml's own "QA Agent evaluation" job
- * comment): v1-v5 score QA-failure-triage classification accuracy, an
- * inherently fuzzier, curated-judgment metric where blocking merges on
- * every fluctuation would be actively harmful; v6 scores Test Design
- * quality against a human-reviewed, committed baseline, where any drift -
- * in either direction - requires a deliberate, reviewed baseline update,
- * making a strict gate appropriate. This module makes that decision
- * *explicit, named, and testable* rather than leaving it implicit and
- * duplicated per file - it deliberately does not change v1-v5's or v6's
- * actual CI behavior (see each regression*.js's own updated run(), and the
- * cross-version regression matrix in this module's own test file).
+ * exits 0; REGRESSED, IMPROVED, and BASELINE_MISMATCH all exit 1). This
+ * module makes that decision *explicit, named, centrally assigned, and
+ * testable* rather than leaving it implicit and duplicated per file - it
+ * deliberately does not change v1-v5's or v6's actual CI behavior (see each
+ * regression*.js's own updated run(), and the cross-version regression
+ * matrix in this module's own test file).
  *
  * Never called for the pre-comparison validation-failure path
  * (dataset/baseline schema errors): every regression*.js already exits 1
@@ -38,6 +34,37 @@ const POLICY = Object.freeze({
   STRICT: "STRICT",
   INFORMATIONAL: "INFORMATIONAL",
 });
+
+// Single, declarative version -> policy assignment (see
+// docs/evaluation-execution-policy-v1.md for the full rationale per
+// version). regression*.js's own run() no longer hardcodes its policy
+// inline - each imports VERSION_POLICY.vN instead, so this table is the one
+// place that assignment is made, not six.
+const VERSION_POLICY = Object.freeze({
+  v1: POLICY.INFORMATIONAL,
+  v2: POLICY.INFORMATIONAL,
+  v3: POLICY.INFORMATIONAL,
+  v4: POLICY.INFORMATIONAL,
+  v5: POLICY.INFORMATIONAL,
+  v6: POLICY.STRICT,
+});
+
+/**
+ * Looks up the formally assigned policy for a version key ("v1".."v6").
+ * Fails closed (throws) on any version this table does not recognize -
+ * never silently defaults an unknown version to INFORMATIONAL (or to any
+ * other policy). Callers that cannot tolerate a throw should validate the
+ * version key against `Object.keys(VERSION_POLICY)` first.
+ *
+ * @param {string} version
+ * @returns {string} POLICY.STRICT | POLICY.INFORMATIONAL
+ */
+function resolvePolicyForVersion(version) {
+  if (!Object.prototype.hasOwnProperty.call(VERSION_POLICY, version)) {
+    throw new Error(`No formally assigned execution policy for version "${version}" - refusing to guess or default`);
+  }
+  return VERSION_POLICY[version];
+}
 
 const KNOWN_STATUSES = new Set(["REGRESSED", "IMPROVED", "UNCHANGED", "BASELINE_MISMATCH"]);
 
@@ -76,4 +103,4 @@ function resolveExitCode(status, policy) {
   return { exitCode: 1, reason: `unknown execution policy "${policy}" - fails closed, never silently passes` };
 }
 
-module.exports = { POLICY, resolveExitCode };
+module.exports = { POLICY, VERSION_POLICY, resolvePolicyForVersion, resolveExitCode };

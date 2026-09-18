@@ -410,7 +410,7 @@ test("formatRegressionReportV4: reports Experiment #41's fabricatedEvidence/root
   assert.match(output, /Correlation baseline:\n(.*\n)*\s+- experiment-47-post-prompt-grounding-revalidation: construction=pass, transport=pass, reasoning=pass/);
 });
 
-// CRW2-A2 (closes A-2): v4's formally decided execution policy is
+// CRW2-A2 / A-2: v4's formally decided execution policy is
 // INFORMATIONAL, same as v1-v3 - a REGRESSED comparison must still exit 0.
 test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy authority to exit 0 (v4 is INFORMATIONAL)", () => {
   const baseline = makeSyntheticBaseline();
@@ -422,4 +422,22 @@ test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy a
 
   const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
   assert.equal(exitCode, 0);
+});
+
+// End-to-end proof (real file I/O through run()).
+test("CRW2-A2 end-to-end: run() against the real dataset-v4.json with a deliberately regressed baseline copy still exits 0 (INFORMATIONAL)", () => {
+  const mutatedBaseline = loadRealBaselineV4();
+  assert.equal(mutatedBaseline.samples["experiment-2-broken-selector"].classificationStatus, "fail");
+  mutatedBaseline.samples["experiment-2-broken-selector"].classificationStatus = "pass";
+
+  const tmpPath = path.join(require("node:os").tmpdir(), `crw2-a2-regressed-baseline-v4-${process.pid}.json`);
+  fs.writeFileSync(tmpPath, JSON.stringify(mutatedBaseline));
+  try {
+    const result = run(DATASET_V4_PATH, tmpPath);
+    assert.match(result.output, /Status: REGRESSED/);
+    assert.match(result.output, /Execution policy: INFORMATIONAL/);
+    assert.equal(result.exitCode, 0);
+  } finally {
+    fs.unlinkSync(tmpPath);
+  }
 });

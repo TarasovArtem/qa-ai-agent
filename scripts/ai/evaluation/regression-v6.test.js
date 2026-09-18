@@ -210,7 +210,7 @@ test("determinism: two independent run() invocations on the same files produce b
   assert.equal(a.exitCode, b.exitCode);
 });
 
-// --- CRW2-A2 (closes A-2): v6's formally decided execution policy is
+// --- CRW2-A2 / A-2: v6's formally decided execution policy is
 // STRICT - a REGRESSED (or IMPROVED) comparison must exit 1, unchanged from
 // v6's pre-existing `comparison.baselineMatched ? 0 : 1` behavior. ---
 
