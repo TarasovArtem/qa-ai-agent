@@ -85,8 +85,34 @@ classification:
   still checks for it defensively (see its own adversarial test coverage)
   rather than relying on JavaScript object/iteration order as implicit,
   undocumented precedence.
-- **`INVALID_INPUT`** - the input itself is not a plausible branch short
-  name (non-string, empty, contains whitespace, or contains `refs/`).
+- **`INVALID_INPUT`** - the branch-name argument itself is not a plausible
+  branch short name (non-string, empty, contains whitespace, or contains
+  `refs/`).
+- **`INVALID_MANIFEST`** - the supplied `manifest` argument itself fails
+  `validateManifest()`. Distinct from `INVALID_INPUT` (which describes the
+  branch-name argument) and from `UNKNOWN` (which presumes a *valid*
+  manifest that simply has no matching class) - an invalid manifest is
+  never silently treated as "no class matched", because that would let a
+  caller mistake "the contract itself is broken" for "this branch is
+  merely unrecognized". Precedence is branch-input shape first, then
+  manifest validity, then classification - see `classifyBranch()`'s own
+  docstring. `errors` (the same array `validateManifest()` itself would
+  return) is included so a caller understands why classification was
+  refused.
+
+**`classifyBranch()` never merely assumes a supplied manifest is valid.**
+Every call - including against the built-in default `MANIFEST` - runs
+`validateManifest()` first and only proceeds to classification on a
+`VALID` result. This closes a real gap: before this hardening, a
+caller-supplied manifest that `validateManifest()` would reject as
+`INVALID` (e.g. a named branch entry with an invalid `kind`, or a `classes`
+entry with an unparseable regex) could still be silently consumed by
+`classifyBranch()` and produce an authoritative-looking `NAMED`/`CLASSIFIED`
+result - or, for some malformed shapes (e.g. `null`), throw instead of
+returning a status at all. Neither is acceptable for a function documented
+as fail-closed and never-throwing; `classifyBranch()` is guaranteed today
+to never throw for any `manifest`/`branchName` shape, and an invalid
+manifest can never produce a privileged classification.
 
 **Input contract - no hidden normalization.** `classifyBranch()` expects a
 short branch name exactly as `git rev-parse --abbrev-ref HEAD` or

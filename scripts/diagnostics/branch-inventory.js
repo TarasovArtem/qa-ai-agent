@@ -145,6 +145,7 @@ const CLASSIFY_STATUS = Object.freeze({
   UNKNOWN: "UNKNOWN",
   AMBIGUOUS: "AMBIGUOUS",
   INVALID_INPUT: "INVALID_INPUT",
+  INVALID_MANIFEST: "INVALID_MANIFEST",
 });
 
 const VALID_CLASS_KINDS = new Set(["transient", "automation"]);
@@ -259,12 +260,22 @@ function validateManifest(manifest) {
 }
 
 /**
- * Classifies a branch short-name against a (assumed already-valid)
- * manifest. Never throws. Fails closed: an unrecognized input shape is
- * `INVALID_INPUT`, a name matching zero classes is `UNKNOWN`, a name
- * matching more than one class is `AMBIGUOUS` (never silently resolved by
- * object/iteration order) - none of these ever fall back to a privileged
- * classification.
+ * Classifies a branch short-name against a manifest. Never throws for any
+ * input shape covered by this contract - this includes a malformed
+ * `manifest` argument, not just a malformed `branchName`. Precedence is
+ * branch-input shape first, then manifest validity, then classification:
+ *
+ *   1. malformed `branchName` -> `INVALID_INPUT`
+ *   2. `branchName` valid, but `manifest` fails `validateManifest()` ->
+ *      `INVALID_MANIFEST` (with the validator's own `errors`) - a caller
+ *      supplying a custom manifest is never trusted on the strength of its
+ *      shape alone; `validateManifest()` is the single structural/semantic
+ *      validation authority and this function always consumes its result
+ *      rather than re-implementing a partial check.
+ *   3. both valid: a name matching zero classes is `UNKNOWN`, a name
+ *      matching more than one class is `AMBIGUOUS` (never silently
+ *      resolved by object/iteration order) - none of these three, nor
+ *      `INVALID_MANIFEST`, ever fall back to a privileged classification.
  *
  * Input contract (deliberately no hidden normalization - see
  * docs/branch-inventory-v1.md "Input contract"): `branchName` must be a
@@ -276,8 +287,9 @@ function validateManifest(manifest) {
  * guess a caller's intent.
  *
  * @param {unknown} branchName
- * @param {object} [manifest] - defaults to the built-in MANIFEST
- * @returns {{ status: string, class: string|null, kind: string|null, protected: boolean|null, matches?: string[] }}
+ * @param {object} [manifest] - defaults to the built-in MANIFEST; any
+ *   caller-supplied value is validated, never merely assumed valid
+ * @returns {{ status: string, class: string|null, kind: string|null, protected: boolean|null, matches?: string[], errors?: string[] }}
  */
 function classifyBranch(branchName, manifest = MANIFEST) {
   if (typeof branchName !== "string" || branchName.length === 0) {
@@ -287,26 +299,20 @@ function classifyBranch(branchName, manifest = MANIFEST) {
     return { status: CLASSIFY_STATUS.INVALID_INPUT, class: null, kind: null, protected: null };
   }
 
+  const manifestCheck = validateManifest(manifest);
+  if (manifestCheck.result !== MANIFEST_RESULT.VALID) {
+    return { status: CLASSIFY_STATUS.INVALID_MANIFEST, class: null, kind: null, protected: null, errors: manifestCheck.errors };
+  }
+
   const namedBranches = manifest.namedBranches;
-  if (
-    namedBranches &&
-    typeof namedBranches === "object" &&
-    !Array.isArray(namedBranches) &&
-    Object.hasOwn(namedBranches, branchName)
-  ) {
+  if (Object.hasOwn(namedBranches, branchName)) {
     const named = namedBranches[branchName];
     return { status: CLASSIFY_STATUS.NAMED, class: branchName, kind: named.kind, protected: named.protected };
   }
 
   const matches = [];
-  for (const [className, entry] of Object.entries(manifest.classes || {})) {
-    let compiled;
-    try {
-      compiled = new RegExp(entry.pattern);
-    } catch {
-      continue; // an invalid pattern here means the manifest itself is invalid - validateManifest() is the authority for surfacing that, this function never trusts an unvalidated manifest to decide a real classification
-    }
-    if (compiled.test(branchName)) matches.push(className);
+  for (const [className, entry] of Object.entries(manifest.classes)) {
+    if (new RegExp(entry.pattern).test(branchName)) matches.push(className);
   }
 
   if (matches.length === 0) {

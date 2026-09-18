@@ -278,6 +278,145 @@ test("prototype-inheritance hardening does not regress main/feature/docs/dependa
   assert.equal(classifyBranch("release/2.0", MANIFEST).status, CLASSIFY_STATUS.UNKNOWN);
 });
 
+// --- classifyBranch() must never trust a malformed/invalid caller-
+// supplied manifest (CRW2B1-R03): a valid branchName argument against an
+// invalid manifest must classify INVALID_MANIFEST, never throw, and never
+// produce an authoritative-looking NAMED/CLASSIFIED/UNKNOWN/AMBIGUOUS
+// result. This is classifyBranch()'s own contract, not merely
+// validateManifest()'s - so every case below calls classifyBranch()
+// directly, not the validator. ---
+
+function validManifestFixture2() {
+  return {
+    schemaVersion: 1,
+    defaultBranch: "main",
+    namedBranches: { main: { kind: "long-lived", protected: true, purpose: "x" } },
+    classes: { feature: { pattern: "^feature/", kind: "transient", protected: false, purpose: "x" } },
+  };
+}
+
+test("classifyBranch never throws for a malformed manifest argument, and classifies INVALID_MANIFEST", () => {
+  // `undefined` is deliberately excluded here: classifyBranch(name, undefined)
+  // triggers the `manifest = MANIFEST` default parameter (identical to
+  // omitting the argument entirely), so it correctly resolves to the
+  // valid built-in manifest, not a malformed one - that is normal
+  // JavaScript default-parameter semantics, not this defect.
+  for (const bad of [null, "not-an-object", 42, [], {}]) {
+    assert.doesNotThrow(() => classifyBranch("main", bad));
+    const result = classifyBranch("main", bad);
+    assert.equal(result.status, CLASSIFY_STATUS.INVALID_MANIFEST, `expected INVALID_MANIFEST for manifest=${JSON.stringify(bad)}`);
+    assert.equal(result.class, null);
+    assert.ok(Array.isArray(result.errors) && result.errors.length > 0);
+  }
+});
+
+test("classifyBranch(name) with the manifest argument omitted entirely uses the valid built-in MANIFEST", () => {
+  assert.equal(classifyBranch("main").status, CLASSIFY_STATUS.NAMED);
+});
+
+test("classifyBranch: unsupported schema version -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.schemaVersion = 999;
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: missing schema version -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  delete m.schemaVersion;
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: missing/unrepresented default branch -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.defaultBranch = "trunk";
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: invalid class regex -> INVALID_MANIFEST, never UNKNOWN, never throws", () => {
+  const m = validManifestFixture2();
+  m.classes.feature.pattern = "^feature/(";
+  assert.doesNotThrow(() => classifyBranch("feature/x", m));
+  const result = classifyBranch("feature/x", m);
+  assert.equal(result.status, CLASSIFY_STATUS.INVALID_MANIFEST);
+  assert.notEqual(result.status, CLASSIFY_STATUS.UNKNOWN);
+});
+
+test("classifyBranch: unknown class kind -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.classes.feature.kind = "sort-of-transient";
+  assert.equal(classifyBranch("feature/x", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: invalid named-branch kind -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.namedBranches.main.kind = "eternal";
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: non-boolean protected on a named branch -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.namedBranches.main.protected = "yes";
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: classes not an object -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.classes = "feature";
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: namedBranches not an object -> INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.namedBranches = "main";
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.INVALID_MANIFEST);
+});
+
+test("classifyBranch: the privileged-entry reproduction case - an own `main` entry with an invalid kind/protected must never classify NAMED", () => {
+  const m = {
+    schemaVersion: 1,
+    defaultBranch: "main",
+    namedBranches: { main: { kind: "not-a-real-kind", protected: "yes", purpose: "invalid fixture" } },
+    classes: {},
+  };
+  assert.equal(validateManifest(m).result, MANIFEST_RESULT.INVALID);
+  const result = classifyBranch("main", m);
+  assert.equal(result.status, CLASSIFY_STATUS.INVALID_MANIFEST);
+  assert.notEqual(result.status, CLASSIFY_STATUS.NAMED);
+});
+
+test("classifyBranch: a structurally valid manifest with a genuine class overlap still classifies AMBIGUOUS, not INVALID_MANIFEST", () => {
+  const m = validManifestFixture2();
+  m.classes.featureAlias = { pattern: "^feature", kind: "transient", protected: false, purpose: "overlaps feature/ on purpose for this test" };
+  assert.equal(validateManifest(m).result, MANIFEST_RESULT.VALID);
+  const result = classifyBranch("feature/x", m);
+  assert.equal(result.status, CLASSIFY_STATUS.AMBIGUOUS);
+});
+
+test("classifyBranch: a valid custom manifest classifies normally (no regression from hardening)", () => {
+  const m = validManifestFixture2();
+  assert.equal(classifyBranch("main", m).status, CLASSIFY_STATUS.NAMED);
+  assert.equal(classifyBranch("feature/x", m).status, CLASSIFY_STATUS.CLASSIFIED);
+  assert.equal(classifyBranch("docs/x", m).status, CLASSIFY_STATUS.UNKNOWN);
+});
+
+test("classifyBranch: invalid branchName takes precedence over an invalid manifest (INVALID_INPUT, not INVALID_MANIFEST)", () => {
+  const result = classifyBranch("", null);
+  assert.equal(result.status, CLASSIFY_STATUS.INVALID_INPUT);
+});
+
+test("prototype-inheritance hardening (CRW2B1-C2) is preserved after manifest-validation hardening (CRW2B1-C3)", () => {
+  for (const name of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+    assert.equal(classifyBranch(name, MANIFEST).status, CLASSIFY_STATUS.UNKNOWN);
+  }
+  const ownManifest = {
+    schemaVersion: 1,
+    defaultBranch: "constructor",
+    namedBranches: { constructor: { kind: "long-lived", protected: true, purpose: "fixture" } },
+    classes: {},
+  };
+  assert.equal(classifyBranch("constructor", ownManifest).status, CLASSIFY_STATUS.NAMED);
+});
+
 // --- getCurrentBranch: repositoryRoot required, no cwd authority ---
 
 test("getCurrentBranch requires an explicit repositoryRoot, never falls back to cwd", () => {
