@@ -163,9 +163,11 @@ evidence](#crw1-d-closure-evidence) in §8). `A-2` (`CRW2-A2`) is now also
 `CLOSED_ON_MAIN` — the second of the five to close (see [closure
 evidence](#crw2-a2-closure-evidence) in §8). `B-1` (`CRW2-B1`) is now also
 `CLOSED_ON_MAIN` — the third of the five to close (see [closure
-evidence](#crw2-b1-closure-evidence) in §8). The remaining two findings —
-`B-4`/`B-6` (`CRW2`) — are `READY`, authorized to begin in
-parallel per the model below, and both remain **open**. The Architecture
+evidence](#crw2-b1-closure-evidence) in §8). `B-4` (`CRW2-B4`) is now also
+`CLOSED_ON_MAIN` — the fourth of the five to close (see [closure
+evidence](#crw2-b4-closure-evidence) in §8). The remaining finding —
+`B-6` (`CRW2`) — is `READY`, authorized to begin per the model below, and
+remains **open**. The Architecture
 Conformance Gate has not started; its own findings (`A-1`, `A-3`, `D-2`)
 remain **open**. `D-1` and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
@@ -185,7 +187,7 @@ Architecture Gate barrier:  waits for all five findings CLOSED_ON_MAIN
                                +-- CRW1-D / B-3 --(CLOSED_ON_MAIN)--+
                                +-- CRW2-A2 / A-2 -(CLOSED_ON_MAIN)--+
 ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORMANCE-INTEGRATION-CHECK
-                               +-- CRW2-B4 / B-4 -------------------+                |
+                               +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+                |
                                +-- CRW2-B6 / B-6 -------------------+                v
                                                                         Architecture Conformance Gate
 ```
@@ -194,8 +196,10 @@ ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORM
 tracks to close — see [closure evidence](#crw1-d-closure-evidence) in §8.
 `CRW2-A2` (`A-2`) is the second to close — see [closure
 evidence](#crw2-a2-closure-evidence) in §8. `CRW2-B1` (`B-1`) is the third
-to close — see [closure evidence](#crw2-b1-closure-evidence) in §8. All
-three remain shown in this diagram (marked `CLOSED_ON_MAIN`) to show the
+to close — see [closure evidence](#crw2-b1-closure-evidence) in §8.
+`CRW2-B4` (`B-4`) is the fourth to close — see [closure
+evidence](#crw2-b4-closure-evidence) in §8. All
+four remain shown in this diagram (marked `CLOSED_ON_MAIN`) to show the
 full original parallel set rather than silently shrinking it. `CRW2` is a
 **grouping label, not one implementation unit**. `CRW2-A2` (`A-2`),
 `CRW2-B1` (`B-1`), `CRW2-B4` (`B-4`), and `CRW2-B6` (`B-6`) are four
@@ -204,7 +208,7 @@ finding ownership, review, merge, and post-merge certification. No
 artificial order ever existed among the five original tracks (`CRW1-D`,
 `CRW2-A2`, `CRW2-B1`, `CRW2-B4`, `CRW2-B6`) unless an actual dependency or
 semantic overlap is discovered between two of them — none was found for
-`CRW1-D`'s, `CRW2-A2`'s, or `CRW2-B1`'s own implementation.
+`CRW1-D`'s, `CRW2-A2`'s, `CRW2-B1`'s, or `CRW2-B4`'s own implementation.
 
 **Mandatory parallel-safety controls** (project policy as of this update):
 
@@ -277,7 +281,7 @@ actually begins, per the existing lifecycle definition in
 | `CRW1-D` | `B-3` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #157 |
 | `CRW2-A2` | `A-2` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #162 |
 | `CRW2-B1` | `B-1` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #164 |
-| `CRW2-B4` | `B-4` | `READY` | TBD (actual diff decides) | none declared |
+| `CRW2-B4` | `B-4` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #166 |
 | `CRW2-B6` | `B-6` | `READY` | TBD (actual diff decides) | none declared |
 
 This table tracks durable transitions only (`READY` → `COMPLETE_ON_MAIN`, or
@@ -616,7 +620,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  {  CRW1-D / B-3 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-A2 / A-2 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B1 / B-1 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
-         CRW2-B4 / B-4,  CRW2-B6 / B-6  }  (PARALLEL ORIGINAL SET)
+         CRW2-B4 / B-4 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
+         CRW2-B6 / B-6  }  (PARALLEL ORIGINAL SET)
   →  CONFORMANCE-INTEGRATION-CHECK
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
@@ -630,30 +635,36 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
 
 This is the canonical future sequence following the [subsequent owner
 decision](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
-`CRW2-A2`, and `CRW2-B1` were three of the original five parallel-authorized
-tracks in `{ }` — none a serial predecessor to the other two — and all
-three remain shown inside that same group, now annotated `COMPLETE_ON_MAIN`
-/ `CLOSED_ON_MAIN`: they merely happened to close first, second, and third,
+`CRW2-A2`, `CRW2-B1`, and `CRW2-B4` were four of the original five
+parallel-authorized tracks in `{ }` — none a serial predecessor to the
+other — and all
+four remain shown inside that same group, now annotated `COMPLETE_ON_MAIN`
+/ `CLOSED_ON_MAIN`: they merely happened to close first, second, third, and
+fourth,
 per their own closure evidence ([`CRW1-D`](#crw1-d-closure-evidence),
 [`CRW2-A2`](#crw2-a2-closure-evidence),
-[`CRW2-B1`](#crw2-b1-closure-evidence)) below; none of those closures
-**unlocked or gated** the remaining two tracks — their authorization came
+[`CRW2-B1`](#crw2-b1-closure-evidence),
+[`CRW2-B4`](#crw2-b4-closure-evidence)) below; none of those closures
+**unlocked or gated** the remaining track — its authorization came
 from the owner's parallelization decision itself (§7), not from `CRW1-D`,
-`CRW2-A2`, or `CRW2-B1` finishing. `CRW2-B4` and `CRW2-B6` remain
-independently `READY`/`OPEN`, exactly as before `CRW1-D`/`CRW2-A2`/`CRW2-B1`
+`CRW2-A2`, `CRW2-B1`, or `CRW2-B4` finishing. `CRW2-B6` remains
+independently `READY`/`OPEN`, exactly as before `CRW1-D`/`CRW2-A2`/
+`CRW2-B1`/`CRW2-B4`
 closed (see §6's "Parallel execution model" for the mandatory safety
 controls — this representation matches §6's own diagram, which has shown
-`CRW1-D`, `CRW2-A2`, and `CRW2-B1` inside the same parallel group
+`CRW1-D`, `CRW2-A2`, `CRW2-B1`, and `CRW2-B4` inside the same parallel group
 throughout). This replaces the previously strictly-serial `CRW1-D → CRW2`
 framing — and must not be misread as reconstructing it: there is still no
-serial arrow from `CRW1-D`, `CRW2-A2`, or `CRW2-B1` into the remaining two.
+serial arrow from `CRW1-D`, `CRW2-A2`, `CRW2-B1`, or `CRW2-B4` into the
+remaining track.
 `CONFORMANCE-INTEGRATION-CHECK` is a mandatory synchronization barrier, not
 an optional formality: the Architecture Conformance Gate does not become
 `READY` merely because all remaining PRs merged — it still requires `B-3`,
-`A-2`, `B-1`, `B-4`, and `B-6` all `CLOSED_ON_MAIN` (`B-3`, `A-2`, and `B-1`
-already are — three satisfied conditions, not removed ones) plus a passing
-integration check, which has **not** run yet (two of the five closure
-conditions remain open). Nothing from `AISEC` onward is
+`A-2`, `B-1`, `B-4`, and `B-6` all `CLOSED_ON_MAIN` (`B-3`, `A-2`, `B-1`,
+and `B-4`
+already are — four satisfied conditions, not removed ones) plus a passing
+integration check, which has **not** run yet (one of the five closure
+conditions remains open — `B-6`). Nothing from `AISEC` onward is
 active, except the narrow,
 explicitly-provisional early-research exception also recorded in §7 (early
 `AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` research, off-`main`, not
@@ -733,19 +744,31 @@ classification) — this records the already-certified implementation
 closure, not a re-assertion of the technical review itself. `CRW2-B1` was
 the third of the five parallel-authorized tracks (§6) to close.
 
-**Remaining parallel tracks — all `READY`, none `ACTIVE`** (technically
+**`CRW2-B4` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
+[closure evidence](#crw2-b4-closure-evidence) below); per the lifecycle
+definition above, this slice exited `ACTIVE` when that proof completed.
+`CRW2-B4` closed `B-4` — the external installation proof's shared `npm
+pack`/`npm install` fixture now builds inside one explicit, first-run
+bootstrap test instead of a `before()` hook: a required-fixture failure
+still fails closed (non-zero exit, no dependent `PASS`, no dependent
+`SKIP`) but now surfaces its root cause exactly once instead of duplicating
+the identical raw error across all fourteen dependent tests — this records
+the already-certified implementation closure, not a re-assertion of the
+technical review itself. `CRW2-B4` was the fourth of the five
+parallel-authorized tracks (§6) to close.
+
+**Remaining parallel track — `READY`, not `ACTIVE`** (technically
 unblocked by `CRW1-C`'s closure; per the [subsequent owner
-decision](#7-owner-phase-order-decision) recorded in §7, both remaining
-tracks may begin implementation independently and concurrently — see the
+decision](#7-owner-phase-order-decision) recorded in §7, this remaining
+track may begin implementation independently — see the
 `READY` definition in [§2](#2-status-vocabulary) and §6's "Current parallel
 track status" table for the live per-track state):
 
 ```text
-CRW2-B4  (B-4 — Fail-closed test-infrastructure verification)       READY
 CRW2-B6  (B-6 — Versioned governance/process knowledge)             READY
 ```
 
-The remaining two findings (`B-4`, `B-6`) remain **open** — a
+The remaining finding (`B-6`) remains **open** — a
 track is `READY` (authorized/unblocked) only, and becomes `ACTIVE` only once
 its own implementation actually begins, per the slice-lifecycle definition
 above; `READY` is not itself a claim that any implementation has started.
@@ -921,6 +944,64 @@ CRW2B1-R03: CLOSED_ON_MAIN   CRW2B1-R04: CLOSED
 CRW2B1-R05: CLOSED           CRW2B1-R06: CLOSED_ON_MAIN
 CRW2B1-R07: CLOSED           CRW2B1-R08: CLOSED
 B-1: CLOSED_ON_MAIN
+```
+
+### CRW2-B4 closure evidence
+
+```text
+PR:             #166
+merge SHA:      a58338b1289fbe8040d5b4c139e63be4410ecbf4
+approved HEAD:  7c6a00b831069d1a9f04c659c20303fd0e36d19c
+approved TREE:  8bae84d2c025be99755534806f61534797fb1244
+merge method:   standard two-parent (parent1 5853f1127d81c0a3bbf4d206d237fd95c62b6414,
+                parent2 7c6a00b831069d1a9f04c659c20303fd0e36d19c)
+post-merge CI:  run 35372235589 — PASS (7/7, attempt 1, exact merge SHA, event push)
+
+Fail-closed test-infrastructure verification: the external installation
+                proof's shared fixture (a real `npm pack` + `npm install`
+                into a temp external repo, ~14 dependent tests) built
+                inside a `before()` hook whose thrown error node:test
+                re-reports, verbatim, against every dependent test
+                independently — reproduced with a real `node --test`
+                child process: exit code already reliably non-zero
+                (fail-closed, no false green, no silent skip), but the
+                identical raw root-cause stack was duplicated across all
+                14 dependent failures, reading as "14 independent
+                defects" instead of "1 shared infrastructure failure"
+                (misleading test evidence, not a false-pass defect).
+                Fixed: the fixture now builds inside one explicit,
+                first-run "ID-2 bootstrap" test; every dependent test is
+                registered through a local `test()` wrapper that checks a
+                module-level `bootstrapError` first — on a bootstrap
+                failure each dependent still fails closed (never `PASS`,
+                never `SKIP`) but carries a short `TEST_INFRA_SETUP_FAILED`
+                pointer instead of re-deriving the full raw error; the real
+                root cause now surfaces exactly once, in the bootstrap
+                test's own failure. A dedicated real-runner proof suite
+                (`test/installation/external-repository-proof-fail-closed.test.js`)
+                independently confirms, via genuine `node --test
+                --test-reporter=tap` child processes (not self-referential
+                unit tests): the pre-fix cascade reproduces from the base
+                commit; the post-fix pattern still exits non-zero on a
+                required setup failure; every dependent failure carries
+                the short marker; no dependent test can `PASS` or `SKIP`
+                on a bootstrap failure (proven per-dependent, not by an
+                ambiguous absence check); and a succeeding bootstrap still
+                lets every dependent run and pass normally. Every child
+                `node --test` spawn explicitly strips `NODE_TEST_*` from
+                its environment (otherwise Node silently treats the child
+                as an already-coordinated recursive worker and skips it
+                entirely — exit 0, no output, misleadingly "successful").
+                6/6 proof-suite tests pass, 15/15 external installation
+                proof tests pass, 4050/4058 full relevant suite (8
+                pre-existing, unrelated skips, 0 failures). No
+                public-API/package change (`npm pack --dry-run`: 80 files,
+                shasum `6edcaeae3fae5bc280d90359a623c978c4c11d44`,
+                unchanged).
+
+CRW2B4-R01: CLOSED   CRW2B4-R02: CLOSED
+CRW2B4-R03: CLOSED   CRW2B4-R04: CLOSED
+B-4: CLOSED_ON_MAIN
 ```
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
