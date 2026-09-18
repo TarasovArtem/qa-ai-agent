@@ -33,6 +33,14 @@
  * evidence-clarity contract without the ~5s real npm round-trip. No
  * network access; only a temp file written and removed within this
  * process's own scratch directory.
+ *
+ * Every child spawn pins `--test-reporter=tap` explicitly: node:test's
+ * default reporter auto-selects "spec" (✔/✖ symbols) or "tap" (plain
+ * "ok"/"not ok" lines) depending on the running process's own
+ * environment - observed to actually differ between a local Node 24 run
+ * and this repository's CI runner's Node 22, for reasons outside this
+ * file's control. Pinning the reporter removes that ambiguity so the
+ * assertions below are deterministic everywhere, not just locally.
  */
 
 const { test } = require("node:test");
@@ -100,6 +108,23 @@ function childEnv() {
   return env;
 }
 
+// node:test's default reporter auto-selects "spec" (✔/✖ symbols) or "tap"
+// (plain "ok"/"not ok" lines) depending on the running process's own
+// stdout/environment - observed to differ between a local run and this
+// repository's own CI runner (Node 22 vs Node 24), independently of
+// anything this file controls. Every child spawn below pins
+// `--test-reporter=tap` explicitly so its output format is deterministic
+// regardless of the outer environment, instead of relying on ambient
+// auto-detection.
+const TAP_ARGS = ["--test", "--test-reporter=tap"];
+
+function tapOk(output, name) {
+  return new RegExp(`^ok \\d+ - ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(output);
+}
+function tapNotOk(output, name) {
+  return new RegExp(`^not ok \\d+ - ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(output);
+}
+
 function runHarness(shouldFail) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-fail-closed-harness-"));
   const file = path.join(dir, "harness.test.js");
@@ -108,7 +133,7 @@ function runHarness(shouldFail) {
     let exitCode = 0;
     let output = "";
     try {
-      output = execFileSync(process.execPath, ["--test", file], { encoding: "utf8", env: childEnv() });
+      output = execFileSync(process.execPath, [...TAP_ARGS, file], { encoding: "utf8", env: childEnv() });
     } catch (err) {
       exitCode = typeof err.status === "number" ? err.status : 1;
       output = (err.stdout ? err.stdout.toString() : "") + (err.stderr ? err.stderr.toString() : "");
@@ -137,7 +162,7 @@ test("dependent C", () => {});
     let exitCode = 0;
     let output = "";
     try {
-      output = execFileSync(process.execPath, ["--test", file], { encoding: "utf8", env: childEnv() });
+      output = execFileSync(process.execPath, [...TAP_ARGS, file], { encoding: "utf8", env: childEnv() });
     } catch (err) {
       exitCode = typeof err.status === "number" ? err.status : 1;
       output = (err.stdout ? err.stdout.toString() : "") + (err.stderr ? err.stderr.toString() : "");
@@ -157,11 +182,11 @@ test("dependent C", () => {});
 test("CRW2-B4 post-fix: bootstrap-test + local test() wrapper pattern still exits non-zero on required setup failure (real runner, real process)", () => {
   const { exitCode, output } = runHarness(true);
   assert.notEqual(exitCode, 0, "a failed bootstrap must still exit non-zero");
-  assert.match(output, /✖ bootstrap: builds the shared fixture/);
+  assert.ok(tapNotOk(output, "bootstrap: builds the shared fixture"), "bootstrap test must report not ok");
   assert.match(output, /SYNTHETIC_REQUIRED_FIXTURE_BUILD_FAILURE/, "the real root cause must appear in the bootstrap test's own failure");
-  assert.match(output, /✖ dependent A/);
-  assert.match(output, /✖ dependent B/);
-  assert.match(output, /✖ dependent C/);
+  assert.ok(tapNotOk(output, "dependent A"));
+  assert.ok(tapNotOk(output, "dependent B"));
+  assert.ok(tapNotOk(output, "dependent C"));
 });
 
 test("CRW2-B4 post-fix: dependent test failures carry the short TEST_INFRA_SETUP_FAILED marker, not a re-derived raw error each time (evidence-clarity proof)", () => {
@@ -173,16 +198,18 @@ test("CRW2-B4 post-fix: dependent test failures carry the short TEST_INFRA_SETUP
 test("CRW2-B4 post-fix: no dependent test can silently PASS or SKIP when the bootstrap fixture failed (fail-closed, never a false green)", () => {
   const { exitCode, output } = runHarness(true);
   assert.notEqual(exitCode, 0);
-  assert.doesNotMatch(output, /✔ dependent/, "no dependent test may report PASS when its required bootstrap fixture failed");
-  assert.doesNotMatch(output, /ℹ skipped [1-9]/, "no dependent test may be silently skipped instead of failing closed");
+  assert.equal(tapOk(output, "dependent A"), false, "no dependent test may report ok when its required bootstrap fixture failed");
+  assert.equal(tapOk(output, "dependent B"), false);
+  assert.equal(tapOk(output, "dependent C"), false);
+  assert.doesNotMatch(output, /# skipped [1-9]|ℹ skipped [1-9]/, "no dependent test may be silently skipped instead of failing closed");
 });
 
 test("CRW2-B4 positive path: a succeeding bootstrap lets every dependent test run and pass normally, exit 0 (real runner, real process)", () => {
   const { exitCode, output } = runHarness(false);
   assert.equal(exitCode, 0);
-  assert.match(output, /✔ bootstrap: builds the shared fixture/);
-  assert.match(output, /✔ dependent A/);
-  assert.match(output, /✔ dependent B/);
-  assert.match(output, /✔ dependent C/);
+  assert.ok(tapOk(output, "bootstrap: builds the shared fixture"));
+  assert.ok(tapOk(output, "dependent A"));
+  assert.ok(tapOk(output, "dependent B"));
+  assert.ok(tapOk(output, "dependent C"));
   assert.doesNotMatch(output, /TEST_INFRA_SETUP_FAILED/);
 });
