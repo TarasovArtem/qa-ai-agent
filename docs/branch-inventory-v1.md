@@ -31,11 +31,15 @@ this document and that module together.
 This repository has exactly **one** long-lived, GitHub-protected branch:
 `main` (confirmed live via `gh api repos/.../branches/main/protection` -
 required status checks, `enforce_admins`, no force-push/deletion). Every
-other branch observed is transient: created for one PR, merged, and
-deleted. A manifest that tried to list every transient branch by exact name
-would be stale within days. This is why the manifest uses a **hybrid
-model**: `main` is a `namedBranches` exact entry; everything else is a
-`classes` purpose-prefix pattern.
+other observed branch is transient or automation-owned: it is not a
+long-lived integration branch and is expected to have a bounded lifecycle.
+Many are created for one PR and later merged and deleted; others (e.g.
+`proof/*`, `spike/*`, some `experiment/*`) may instead be abandoned,
+retained temporarily, or closed without ever merging - see each class's own
+`purpose` in the table below. A manifest that tried to list every one of
+these branches by exact name would be stale within days regardless. This is
+why the manifest uses a **hybrid model**: `main` is a `namedBranches` exact
+entry; everything else is a `classes` purpose-prefix pattern.
 
 | Class | Pattern | Kind | Purpose |
 |---|---|---|---|
