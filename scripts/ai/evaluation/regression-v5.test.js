@@ -16,6 +16,7 @@ const {
   compareModelShouldCreateBugCorrect,
   run,
 } = require("./regression-v5");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DATASET_PATH = path.join(__dirname, "dataset-v5.json");
 const BASELINE_PATH = path.join(__dirname, "baseline-v5.json");
@@ -243,4 +244,22 @@ test("MUTATION: knowledgeUsage partial->pass is an improvement through the full 
   assert.equal(k1Result.knowledgeUsage.change, "improvement");
   assert.equal(comparison.status, "IMPROVED");
   // baseline-v5.json on disk was never touched.
+});
+
+// CRW2-A2 (closes A-2): v5's formally decided execution policy is
+// INFORMATIONAL, same as v1-v4 - a REGRESSED comparison must still exit 0.
+test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy authority to exit 0 (v5 is INFORMATIONAL)", () => {
+  const originalDataset = fs.readFileSync(DATASET_PATH, "utf8");
+  const dataset = JSON.parse(originalDataset);
+  const k1 = dataset.samples.find((s) => s.id === "K1-relevant-timeout-knowledge");
+  assert.equal(k1.quality.inferenceQuality, "partial", "precondition: K1 must currently be curated as partial");
+  k1.quality.inferenceQuality = "fail";
+
+  const evaluation = evaluateDatasetV5(dataset);
+  const baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8"));
+  const comparison = compareEvaluationToBaselineV5(evaluation, baseline);
+  assert.equal(comparison.status, "REGRESSED");
+
+  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
+  assert.equal(exitCode, 0);
 });

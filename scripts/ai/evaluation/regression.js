@@ -33,6 +33,7 @@ const path = require("node:path");
 const { validateDataset } = require("./dataset-schema");
 const { validateBaseline } = require("./baseline-schema");
 const { evaluateDataset } = require("./scoring");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v1.json");
@@ -316,10 +317,15 @@ function run(datasetPath, baselinePath) {
     return { exitCode: 1, output: formatRegressionReport(comparison) };
   }
 
-  // Phase 3 is offline/informational only - this PR adds no CI gate, so
-  // even a REGRESSED status exits 0 here. A later CI integration may map
-  // REGRESSED to a non-zero exit; that mapping is deliberately not made yet.
-  return { exitCode: 0, output: formatRegressionReport(comparison) };
+  // CRW2-A2 (closes A-2): exit code now comes from the single shared
+  // execution-policy authority (execution-policy.js) instead of an inline
+  // decision here. v1's formally decided, documented policy is
+  // INFORMATIONAL - see execution-policy.js's own header comment for the
+  // full v1-v5/v6 rationale. This changes nothing about v1's actual CI
+  // behavior (still exit 0 on REGRESSED) - it makes the decision explicit
+  // and testable instead of implicit and duplicated per file.
+  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
+  return { exitCode, output: formatRegressionReport(comparison) };
 }
 
 function main() {

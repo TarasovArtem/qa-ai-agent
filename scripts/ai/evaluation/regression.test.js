@@ -5,8 +5,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const os = require("node:os");
+
 const { compareEvaluationToBaseline, formatRegressionReport, run } = require("./regression");
 const { evaluateDataset } = require("./scoring");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DATASET_PATH = path.join(__dirname, "dataset.json");
 const BASELINE_PATH = path.join(__dirname, "baseline-v1.json");
@@ -442,4 +445,46 @@ test("known Experiment #2 recommendedFix deficiency (fail -> fail) is unchanged,
   assert.equal(exp2.recommendedFix.change, "unchanged");
   assert.equal(exp2.recommendedFix.baseline, "fail");
   assert.equal(comparison.status, "UNCHANGED");
+});
+
+// --- CRW2-A2 (closes A-2): v1's formally decided execution policy is
+// INFORMATIONAL - a REGRESSED comparison must still exit 0. ---
+
+test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy authority to exit 0 (v1 is INFORMATIONAL)", () => {
+  const baseline = makeSyntheticBaseline();
+  const current = makeSyntheticCurrentEvaluation({
+    "exp-3": makeCurrentSample("exp-3", { classificationStatus: "incorrect", shouldRetryCorrect: true, shouldCreateBugCorrect: true }),
+  });
+  const comparison = compareEvaluationToBaseline(current, baseline);
+  assert.equal(comparison.status, "REGRESSED");
+
+  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
+  assert.equal(exitCode, 0);
+});
+
+// End-to-end proof (real file I/O, not just the pure comparator): a
+// deliberately mutated copy of the real, committed baseline-v1.json -
+// pointing to the same real, unmutated dataset.json - produces a genuine
+// REGRESSED verdict through run() exactly as it would happen in this
+// repository's own CI, and confirms run() still returns exit 0. This is
+// both the "A-2 finding is real" reproduction and the "the fix
+// deliberately preserves it" proof in one deterministic test - no network,
+// no flaky external data.
+test("CRW2-A2 end-to-end: run() against the real dataset.json with a deliberately regressed baseline copy still exits 0 (documented INFORMATIONAL policy, unchanged by this PR)", () => {
+  const mutatedBaseline = loadRealBaseline();
+  // experiment-2-broken-selector is genuinely "fail" in the real dataset
+  // (see the "known deficiency" tests above) - claiming the baseline had it
+  // as "pass" manufactures a real, deterministic classification regression.
+  assert.equal(mutatedBaseline.samples["experiment-2-broken-selector"].classificationStatus, "fail");
+  mutatedBaseline.samples["experiment-2-broken-selector"].classificationStatus = "pass";
+
+  const tmpBaselinePath = path.join(os.tmpdir(), `crw2-a2-regressed-baseline-v1-${process.pid}.json`);
+  fs.writeFileSync(tmpBaselinePath, JSON.stringify(mutatedBaseline));
+  try {
+    const result = run(DATASET_PATH, tmpBaselinePath);
+    assert.match(result.output, /Status: REGRESSED/);
+    assert.equal(result.exitCode, 0, "v1 is INFORMATIONAL - a real, reproduced regression must still exit 0");
+  } finally {
+    fs.unlinkSync(tmpBaselinePath);
+  }
 });

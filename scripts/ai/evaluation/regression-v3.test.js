@@ -7,6 +7,7 @@ const path = require("node:path");
 
 const { compareEvaluationToBaselineV3, formatRegressionReportV3, run } = require("./regression-v3");
 const { evaluateDatasetV3 } = require("./scoring-v3");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DATASET_V3_PATH = path.join(__dirname, "dataset-v3.json");
 const BASELINE_V3_PATH = path.join(__dirname, "baseline-v3.json");
@@ -552,4 +553,18 @@ test("Part 3B success direction, but recommendedFix regresses instead of improvi
   assert.equal(exp41.evidence.change, "improvement");
   assert.equal(exp41.correlationReasoning.change, "improvement");
   assert.equal(exp41.recommendedFix.change, "regression");
+});
+
+// CRW2-A2 (closes A-2): v3's formally decided execution policy is
+// INFORMATIONAL, same as v1/v2 - a REGRESSED comparison must still exit 0.
+test("CRW2-A2: a REGRESSED comparison maps through the shared execution-policy authority to exit 0 (v3 is INFORMATIONAL)", () => {
+  const baseline = makeSyntheticBaseline();
+  const current = makeSyntheticCurrentEvaluation({
+    "exp-41": makeCurrentSample("exp-41", { classificationStatus: "incorrect", correlationConstruction: "pass", correlationTransport: "pass", correlationReasoning: "fail", fabricatedEvidence: false }),
+  });
+  const comparison = compareEvaluationToBaselineV3(current, baseline);
+  assert.equal(comparison.status, "REGRESSED");
+
+  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
+  assert.equal(exitCode, 0);
 });

@@ -64,6 +64,7 @@ const path = require("node:path");
 const { validateDatasetV5 } = require("./dataset-v5-schema");
 const { validateBaselineV5 } = require("./baseline-v5-schema");
 const { evaluateDatasetV5 } = require("./scoring-v5");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset-v5.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v5.json");
@@ -399,7 +400,13 @@ function run(datasetPath, baselinePath) {
     return { exitCode: 1, output: formatRegressionReportV5(comparison) };
   }
 
-  return { exitCode: 0, output: formatRegressionReportV5(comparison) };
+  // CRW2-A2 (closes A-2): exit code now comes from the single shared
+  // execution-policy authority (execution-policy.js). v5's formally
+  // decided, documented policy is INFORMATIONAL, same as v1-v4 - see
+  // execution-policy.js's own header comment for the full rationale. No
+  // change to v5's actual CI behavior.
+  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
+  return { exitCode, output: formatRegressionReportV5(comparison) };
 }
 
 function main() {

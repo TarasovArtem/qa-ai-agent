@@ -30,6 +30,7 @@ const path = require("node:path");
 const { validateDatasetV2 } = require("./dataset-v2-schema");
 const { validateBaselineV2 } = require("./baseline-v2-schema");
 const { evaluateDatasetV2 } = require("./scoring-v2");
+const { POLICY, resolveExitCode } = require("./execution-policy");
 
 const DEFAULT_DATASET_PATH = path.join(__dirname, "dataset-v2.json");
 const DEFAULT_BASELINE_PATH = path.join(__dirname, "baseline-v2.json");
@@ -336,8 +337,13 @@ function run(datasetPath, baselinePath) {
     return { exitCode: 1, output: formatRegressionReportV2(comparison) };
   }
 
-  // Informational only, same as v1: even REGRESSED exits 0 here.
-  return { exitCode: 0, output: formatRegressionReportV2(comparison) };
+  // CRW2-A2 (closes A-2): exit code now comes from the single shared
+  // execution-policy authority (execution-policy.js). v2's formally
+  // decided, documented policy is INFORMATIONAL, same as v1 - see
+  // execution-policy.js's own header comment for the full rationale. No
+  // change to v2's actual CI behavior.
+  const { exitCode } = resolveExitCode(comparison.status, POLICY.INFORMATIONAL);
+  return { exitCode, output: formatRegressionReportV2(comparison) };
 }
 
 function main() {
