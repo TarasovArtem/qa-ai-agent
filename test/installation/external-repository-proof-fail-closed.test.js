@@ -118,11 +118,25 @@ function childEnv() {
 // auto-detection.
 const TAP_ARGS = ["--test", "--test-reporter=tap"];
 
+function escapeRegex(name) {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function tapOk(output, name) {
-  return new RegExp(`^ok \\d+ - ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(output);
+  return new RegExp(`^ok \\d+ - ${escapeRegex(name)}$`, "m").test(output);
 }
 function tapNotOk(output, name) {
-  return new RegExp(`^not ok \\d+ - ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(output);
+  return new RegExp(`^not ok \\d+ - ${escapeRegex(name)}$`, "m").test(output);
+}
+// CRW2B4-R02: `tapOk()`'s `$` end-of-line anchor already means it never
+// matches a skipped TAP line (real observed format: `ok N - name # SKIP`,
+// confirmed against a real `node --test --test-reporter=tap` child), but
+// "not caught by tapOk" does not by itself distinguish FAILED from
+// SKIPPED - a caller relying only on `tapOk(...) === false` cannot tell
+// the two apart. This is the explicit, per-test detector for the SKIP
+// case, so a caller can assert all three states (ok / not ok / skipped)
+// independently rather than inferring SKIPPED from the absence of OK.
+function tapSkipped(output, name) {
+  return new RegExp(`^ok \\d+ - ${escapeRegex(name)}\\s*#\\s*SKIP\\b`, "mi").test(output);
 }
 
 function runHarness(shouldFail) {
@@ -198,10 +212,49 @@ test("CRW2-B4 post-fix: dependent test failures carry the short TEST_INFRA_SETUP
 test("CRW2-B4 post-fix: no dependent test can silently PASS or SKIP when the bootstrap fixture failed (fail-closed, never a false green)", () => {
   const { exitCode, output } = runHarness(true);
   assert.notEqual(exitCode, 0);
-  assert.equal(tapOk(output, "dependent A"), false, "no dependent test may report ok when its required bootstrap fixture failed");
-  assert.equal(tapOk(output, "dependent B"), false);
-  assert.equal(tapOk(output, "dependent C"), false);
-  assert.doesNotMatch(output, /# skipped [1-9]|ℹ skipped [1-9]/, "no dependent test may be silently skipped instead of failing closed");
+  // CRW2B4-R02: assert each of the three possible TAP outcomes explicitly
+  // per dependent test, not just "not ok" absence - a global "# skipped N"
+  // summary counter cannot, by itself, tell a caller WHICH test skipped,
+  // and would stay silent forever if this harness ever grew an unrelated
+  // skipped test elsewhere. Per-test tapOk/tapSkipped/tapNotOk is the
+  // actual, precise proof that each specific dependent is REQUIRED-FAILED,
+  // never PASSED, never SKIPPED.
+  for (const name of ["dependent A", "dependent B", "dependent C"]) {
+    assert.equal(tapOk(output, name), false, `${name} must not report ok when its required bootstrap fixture failed`);
+    assert.equal(tapSkipped(output, name), false, `${name} must not be silently skipped instead of failing closed`);
+    assert.equal(tapNotOk(output, name), true, `${name} must report not ok (the only fail-closed outcome for a required dependency)`);
+  }
+});
+
+test("CRW2-B4 proof-suite self-test: tapSkipped() actually detects a real TAP '# SKIP' directive (real runner, real process) - guards the detector itself against silent regression", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-skip-detector-self-test-"));
+  const file = path.join(dir, "harness.test.js");
+  fs.writeFileSync(
+    file,
+    `
+"use strict";
+const { test } = require("node:test");
+test("dependent A", { skip: true }, () => {});
+test("dependent B", () => {});
+`,
+  );
+  try {
+    let exitCode = 0;
+    let output = "";
+    try {
+      output = execFileSync(process.execPath, [...TAP_ARGS, file], { encoding: "utf8", env: childEnv() });
+    } catch (err) {
+      exitCode = typeof err.status === "number" ? err.status : 1;
+      output = (err.stdout ? err.stdout.toString() : "") + (err.stderr ? err.stderr.toString() : "");
+    }
+    assert.equal(exitCode, 0, "a genuinely skipped (not failed) test is not itself a failure - sanity check on the fixture");
+    assert.equal(tapSkipped(output, "dependent A"), true, "tapSkipped() must detect a real, explicitly-skipped TAP test - if this ever goes false, the detector itself has silently broken");
+    assert.equal(tapOk(output, "dependent A"), false, "a skipped test's TAP line must not also satisfy the plain ok() detector");
+    assert.equal(tapSkipped(output, "dependent B"), false, "an ordinary passing test must not be misdetected as skipped");
+    assert.equal(tapOk(output, "dependent B"), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("CRW2-B4 positive path: a succeeding bootstrap lets every dependent test run and pass normally, exit 0 (real runner, real process)", () => {
