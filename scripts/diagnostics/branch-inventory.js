@@ -184,7 +184,7 @@ function validateManifest(manifest) {
   if (!namedBranches || typeof namedBranches !== "object" || Array.isArray(namedBranches)) {
     errors.push("namedBranches must be a non-null, non-array object");
   } else {
-    if (typeof manifest.defaultBranch === "string" && !(manifest.defaultBranch in namedBranches)) {
+    if (typeof manifest.defaultBranch === "string" && !Object.hasOwn(namedBranches, manifest.defaultBranch)) {
       errors.push(`defaultBranch "${manifest.defaultBranch}" is not represented in namedBranches`);
     }
     for (const [name, entry] of Object.entries(namedBranches)) {
@@ -287,8 +287,14 @@ function classifyBranch(branchName, manifest = MANIFEST) {
     return { status: CLASSIFY_STATUS.INVALID_INPUT, class: null, kind: null, protected: null };
   }
 
-  const named = manifest.namedBranches && manifest.namedBranches[branchName];
-  if (named) {
+  const namedBranches = manifest.namedBranches;
+  if (
+    namedBranches &&
+    typeof namedBranches === "object" &&
+    !Array.isArray(namedBranches) &&
+    Object.hasOwn(namedBranches, branchName)
+  ) {
+    const named = namedBranches[branchName];
     return { status: CLASSIFY_STATUS.NAMED, class: branchName, kind: named.kind, protected: named.protected };
   }
 

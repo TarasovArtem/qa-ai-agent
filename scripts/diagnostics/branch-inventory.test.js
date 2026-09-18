@@ -233,6 +233,51 @@ test("adversarial branch names never accidentally classify into a privileged/wro
   }
 });
 
+// --- prototype-inheritance hardening (CRW2B1-R02): inherited
+// Object.prototype properties must never be treated as declared named
+// branches, in either classification or manifest validation ---
+
+test("classifyBranch: Object.prototype keys are UNKNOWN against the real MANIFEST, never NAMED", () => {
+  for (const name of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+    const result = classifyBranch(name, MANIFEST);
+    assert.equal(result.status, CLASSIFY_STATUS.UNKNOWN, `${name} must not resolve to an inherited property`);
+    assert.equal(result.class, null);
+  }
+});
+
+test("validateManifest: defaultBranch equal to an inherited-only Object.prototype key -> INVALID", () => {
+  for (const protoKey of ["constructor", "toString", "hasOwnProperty"]) {
+    const m = validManifestFixture();
+    m.defaultBranch = protoKey;
+    m.namedBranches = {}; // no own declaration of protoKey - only inherited via the prototype chain
+    const result = validateManifest(m);
+    assert.equal(result.result, MANIFEST_RESULT.INVALID, `defaultBranch "${protoKey}" must be rejected`);
+    assert.ok(result.errors.some((e) => e.includes(`defaultBranch "${protoKey}" is not represented in namedBranches`)));
+  }
+});
+
+test("an explicitly, OWN-declared namedBranches entry named \"constructor\" is legitimately VALID/NAMED", () => {
+  // Distinguishes "an inherited key must never count" from "the string
+  // itself is globally forbidden" - own declaration is honored.
+  const m = {
+    schemaVersion: 1,
+    defaultBranch: "constructor",
+    namedBranches: { constructor: { kind: "long-lived", protected: true, purpose: "fixture" } },
+    classes: {},
+  };
+  assert.equal(validateManifest(m).result, MANIFEST_RESULT.VALID);
+  const result = classifyBranch("constructor", m);
+  assert.deepEqual(result, { status: CLASSIFY_STATUS.NAMED, class: "constructor", kind: "long-lived", protected: true });
+});
+
+test("prototype-inheritance hardening does not regress main/feature/docs/dependabot classification", () => {
+  assert.equal(classifyBranch("main", MANIFEST).status, CLASSIFY_STATUS.NAMED);
+  assert.equal(classifyBranch("feature/x", MANIFEST).status, CLASSIFY_STATUS.CLASSIFIED);
+  assert.equal(classifyBranch("docs/x", MANIFEST).status, CLASSIFY_STATUS.CLASSIFIED);
+  assert.equal(classifyBranch("dependabot/npm_and_yarn/x", MANIFEST).status, CLASSIFY_STATUS.CLASSIFIED);
+  assert.equal(classifyBranch("release/2.0", MANIFEST).status, CLASSIFY_STATUS.UNKNOWN);
+});
+
 // --- getCurrentBranch: repositoryRoot required, no cwd authority ---
 
 test("getCurrentBranch requires an explicit repositoryRoot, never falls back to cwd", () => {
