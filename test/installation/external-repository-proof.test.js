@@ -36,7 +36,7 @@
  * defaults to "mock").
  */
 
-const { test, before, after } = require("node:test");
+const { test: nodeTest, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -361,33 +361,76 @@ function runPlan(externalRepoDir, plan, env) {
   return { ...result, __exitCode: exitCode, __stderr: stderr };
 }
 
-// --- Module-level fixtures (built once in before(), reused across tests) ---
+// --- Module-level fixtures (built once in the bootstrap test below, reused
+// across the 14 dependent tests that follow it) ---
+//
+// CRW2-B4: a shared fixture built in a `before()` hook that throws makes
+// every dependent test in this file independently report FAILED with the
+// exact same raw npm/fs stack trace (reproduced: 14/14 tests fail,
+// identical trace, when the fixture build fails) - still fail-closed
+// (exit code stays non-zero, nothing silently passes or skips), but the
+// report reads as "14 independent product/test defects" rather than the
+// true "1 infrastructure/fixture-build failure blocked 14 unrelated-
+// looking checks", which is misleading test evidence. Fix: the fixture is
+// now built inside one explicit, first-run "ID-2 bootstrap" test instead
+// of a hook - a setup failure there surfaces the real root cause exactly
+// once, in one clearly-labeled failure - and every dependent test below
+// (via the local `test()` wrapper, shadowing node:test's own) still fails
+// closed on a bootstrap failure, but with a short, clearly-labeled
+// TEST_INFRA_SETUP_FAILED message pointing back at the bootstrap test's
+// own failure, instead of re-deriving/re-printing the same raw error 14
+// times. No dependent test can misreport PASS or silently SKIP when the
+// bootstrap fixture is missing - see this file's own test coverage for
+// both the bootstrap-failure and bootstrap-success paths.
 
 let tarballPath;
 let scratchDir;
 let externalRepoDir;
 let preInstallManifest;
+let bootstrapError = null;
 
-before(() => {
-  scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "id2-scratch-"));
-  const packOutput = npm(`pack --json --pack-destination "${scratchDir}"`, REPO_ROOT);
-  const packed = JSON.parse(packOutput)[0];
-  tarballPath = path.join(scratchDir, packed.filename);
-  assert.ok(fs.existsSync(tarballPath), "npm pack must produce a real tarball file");
+nodeTest("ID-2 bootstrap: builds the shared external-repository fixture (npm pack + npm install into a temp external repo)", () => {
+  try {
+    scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "id2-scratch-"));
+    const packOutput = npm(`pack --json --pack-destination "${scratchDir}"`, REPO_ROOT);
+    const packed = JSON.parse(packOutput)[0];
+    tarballPath = path.join(scratchDir, packed.filename);
+    assert.ok(fs.existsSync(tarballPath), "npm pack must produce a real tarball file");
 
-  externalRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "id2-external-repo-"));
-  npm("init -y", externalRepoDir);
-  npm(`install --no-audit --no-fund "${tarballPath}"`, externalRepoDir);
+    externalRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "id2-external-repo-"));
+    npm("init -y", externalRepoDir);
+    npm(`install --no-audit --no-fund "${tarballPath}"`, externalRepoDir);
 
-  fs.writeFileSync(path.join(externalRepoDir, "id2-runner.js"), RUNNER_SCRIPT);
+    fs.writeFileSync(path.join(externalRepoDir, "id2-runner.js"), RUNNER_SCRIPT);
 
-  preInstallManifest = hashManifest(path.join(externalRepoDir, "node_modules", "qa-ai-agent"));
+    preInstallManifest = hashManifest(path.join(externalRepoDir, "node_modules", "qa-ai-agent"));
+  } catch (err) {
+    bootstrapError = err;
+    throw err; // this test's own failure is the single, authoritative root-cause report
+  }
 });
 
 after(() => {
   if (scratchDir) fs.rmSync(scratchDir, { recursive: true, force: true });
   if (externalRepoDir) fs.rmSync(externalRepoDir, { recursive: true, force: true });
 });
+
+// Shadows node:test's own `test` for every registration below this point.
+// A REQUIRED dependency (the bootstrap fixture) that failed to build must
+// never let a dependent test proceed as though it succeeded - each
+// dependent test still fails closed (never a false PASS, never a silent
+// SKIP), but with a short, clearly-labeled message instead of repeating
+// the bootstrap's own raw error 14 times over.
+function test(name, fn) {
+  return nodeTest(name, () => {
+    if (bootstrapError) {
+      throw new Error(
+        `TEST_INFRA_SETUP_FAILED: the shared "ID-2 bootstrap" fixture failed to build - see that test's own failure for the real root cause (${bootstrapError.message})`,
+      );
+    }
+    return fn();
+  });
+}
 
 // --- 1. Physical externality --------------------------------------------
 
