@@ -165,9 +165,12 @@ evidence](#crw2-a2-closure-evidence) in §8). `B-1` (`CRW2-B1`) is now also
 `CLOSED_ON_MAIN` — the third of the five to close (see [closure
 evidence](#crw2-b1-closure-evidence) in §8). `B-4` (`CRW2-B4`) is now also
 `CLOSED_ON_MAIN` — the fourth of the five to close (see [closure
-evidence](#crw2-b4-closure-evidence) in §8). The remaining finding —
-`B-6` (`CRW2`) — is `READY`, authorized to begin per the model below, and
-remains **open**. The Architecture
+evidence](#crw2-b4-closure-evidence) in §8). `B-6` (`CRW2-B6`) is now also
+`CLOSED_ON_MAIN` — the fifth and final of the five parallel-authorized
+findings to close (see [closure evidence](#crw2-b6-closure-evidence) in
+§8). All five original parallel-authorized findings are now
+`CLOSED_ON_MAIN`; `CONFORMANCE-INTEGRATION-CHECK` is now eligible to run
+but has **not** run yet. The Architecture
 Conformance Gate has not started; its own findings (`A-1`, `A-3`, `D-2`)
 remain **open**. `D-1` and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
@@ -187,8 +190,8 @@ Architecture Gate barrier:  waits for all five findings CLOSED_ON_MAIN
                                +-- CRW1-D / B-3 --(CLOSED_ON_MAIN)--+
                                +-- CRW2-A2 / A-2 -(CLOSED_ON_MAIN)--+
 ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORMANCE-INTEGRATION-CHECK
-                               +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+                |
-                               +-- CRW2-B6 / B-6 -------------------+                v
+                               +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+          (eligible, not yet run)
+                               +-- CRW2-B6 / B-6 -(CLOSED_ON_MAIN)--+                v
                                                                         Architecture Conformance Gate
 ```
 
@@ -198,17 +201,21 @@ tracks to close — see [closure evidence](#crw1-d-closure-evidence) in §8.
 evidence](#crw2-a2-closure-evidence) in §8. `CRW2-B1` (`B-1`) is the third
 to close — see [closure evidence](#crw2-b1-closure-evidence) in §8.
 `CRW2-B4` (`B-4`) is the fourth to close — see [closure
-evidence](#crw2-b4-closure-evidence) in §8. All
-four remain shown in this diagram (marked `CLOSED_ON_MAIN`) to show the
+evidence](#crw2-b4-closure-evidence) in §8. `CRW2-B6` (`B-6`) is the fifth
+and final to close — see [closure evidence](#crw2-b6-closure-evidence) in
+§8. All
+five remain shown in this diagram (marked `CLOSED_ON_MAIN`) to show the
 full original parallel set rather than silently shrinking it. `CRW2` is a
 **grouping label, not one implementation unit**. `CRW2-A2` (`A-2`),
 `CRW2-B1` (`B-1`), `CRW2-B4` (`B-4`), and `CRW2-B6` (`B-6`) are four
 independently implemented findings, each with its own branch, PR, primary
 finding ownership, review, merge, and post-merge certification. No
 artificial order ever existed among the five original tracks (`CRW1-D`,
-`CRW2-A2`, `CRW2-B1`, `CRW2-B4`, `CRW2-B6`) unless an actual dependency or
-semantic overlap is discovered between two of them — none was found for
-`CRW1-D`'s, `CRW2-A2`'s, `CRW2-B1`'s, or `CRW2-B4`'s own implementation.
+`CRW2-A2`, `CRW2-B1`, `CRW2-B4`, `CRW2-B6`) — they were independently
+authorized in parallel and merely happened to close in this observed
+order; no dependency or semantic overlap was discovered between any two
+of them across `CRW1-D`'s, `CRW2-A2`'s, `CRW2-B1`'s, `CRW2-B4`'s, or
+`CRW2-B6`'s own implementation.
 
 **Mandatory parallel-safety controls** (project policy as of this update):
 
@@ -282,7 +289,7 @@ actually begins, per the existing lifecycle definition in
 | `CRW2-A2` | `A-2` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #162 |
 | `CRW2-B1` | `B-1` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #164 |
 | `CRW2-B4` | `B-4` | `COMPLETE_ON_MAIN` | `HEAVY` | none — closed, PR #166 |
-| `CRW2-B6` | `B-6` | `READY` | TBD (actual diff decides) | none declared |
+| `CRW2-B6` | `B-6` | `COMPLETE_ON_MAIN` | `LIGHT` | none — closed, PR #168 |
 
 This table tracks durable transitions only (`READY` → `COMPLETE_ON_MAIN`, or
 Gate readiness) — it does not require a `ROADMAP.md` commit for every
@@ -621,8 +628,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          CRW2-A2 / A-2 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B1 / B-1 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B4 / B-4 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
-         CRW2-B6 / B-6  }  (PARALLEL ORIGINAL SET)
-  →  CONFORMANCE-INTEGRATION-CHECK
+         CRW2-B6 / B-6 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN)  }  (PARALLEL ORIGINAL SET)
+  →  CONFORMANCE-INTEGRATION-CHECK (eligible — not yet run)
   →  Architecture Conformance Gate
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
@@ -635,36 +642,34 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
 
 This is the canonical future sequence following the [subsequent owner
 decision](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
-`CRW2-A2`, `CRW2-B1`, and `CRW2-B4` were four of the original five
+`CRW2-A2`, `CRW2-B1`, `CRW2-B4`, and `CRW2-B6` were the original five
 parallel-authorized tracks in `{ }` — none a serial predecessor to the
 other — and all
-four remain shown inside that same group, now annotated `COMPLETE_ON_MAIN`
-/ `CLOSED_ON_MAIN`: they merely happened to close first, second, third, and
-fourth,
+five remain shown inside that same group, now annotated `COMPLETE_ON_MAIN`
+/ `CLOSED_ON_MAIN`: they merely happened to close first, second, third,
+fourth, and fifth,
 per their own closure evidence ([`CRW1-D`](#crw1-d-closure-evidence),
 [`CRW2-A2`](#crw2-a2-closure-evidence),
 [`CRW2-B1`](#crw2-b1-closure-evidence),
-[`CRW2-B4`](#crw2-b4-closure-evidence)) below; none of those closures
-**unlocked or gated** the remaining track — its authorization came
-from the owner's parallelization decision itself (§7), not from `CRW1-D`,
-`CRW2-A2`, `CRW2-B1`, or `CRW2-B4` finishing. `CRW2-B6` remains
-independently `READY`/`OPEN`, exactly as before `CRW1-D`/`CRW2-A2`/
-`CRW2-B1`/`CRW2-B4`
-closed (see §6's "Parallel execution model" for the mandatory safety
-controls — this representation matches §6's own diagram, which has shown
-`CRW1-D`, `CRW2-A2`, `CRW2-B1`, and `CRW2-B4` inside the same parallel group
-throughout). This replaces the previously strictly-serial `CRW1-D → CRW2`
+[`CRW2-B4`](#crw2-b4-closure-evidence),
+[`CRW2-B6`](#crw2-b6-closure-evidence)) below; none of those closures
+**unlocked or gated** any other — each track's authorization came
+from the owner's parallelization decision itself (§7), not from any other
+track finishing. This
+representation matches §6's own diagram, which has shown all five inside
+the same parallel group throughout. This replaces the previously
+strictly-serial `CRW1-D → CRW2`
 framing — and must not be misread as reconstructing it: there is still no
-serial arrow from `CRW1-D`, `CRW2-A2`, `CRW2-B1`, or `CRW2-B4` into the
-remaining track.
+serial arrow among any of the five.
 `CONFORMANCE-INTEGRATION-CHECK` is a mandatory synchronization barrier, not
 an optional formality: the Architecture Conformance Gate does not become
-`READY` merely because all remaining PRs merged — it still requires `B-3`,
-`A-2`, `B-1`, `B-4`, and `B-6` all `CLOSED_ON_MAIN` (`B-3`, `A-2`, `B-1`,
-and `B-4`
-already are — four satisfied conditions, not removed ones) plus a passing
-integration check, which has **not** run yet (one of the five closure
-conditions remains open — `B-6`). Nothing from `AISEC` onward is
+`READY` merely because all five findings closed — it still requires `B-3`,
+`A-2`, `B-1`, `B-4`, and `B-6` all `CLOSED_ON_MAIN` (all five now are —
+five satisfied conditions, the full original-five predicate) plus a
+passing
+integration check, which has **not** run yet (all five closure
+conditions are now satisfied; the integration check itself is eligible
+but has not been run). Nothing from `AISEC` onward is
 active, except the narrow,
 explicitly-provisional early-research exception also recorded in §7 (early
 `AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` research, off-`main`, not
@@ -757,21 +762,28 @@ the already-certified implementation closure, not a re-assertion of the
 technical review itself. `CRW2-B4` was the fourth of the five
 parallel-authorized tracks (§6) to close.
 
-**Remaining parallel track — `READY`, not `ACTIVE`** (technically
-unblocked by `CRW1-C`'s closure; per the [subsequent owner
-decision](#7-owner-phase-order-decision) recorded in §7, this remaining
-track may begin implementation independently — see the
-`READY` definition in [§2](#2-status-vocabulary) and §6's "Current parallel
-track status" table for the live per-track state):
+**`CRW2-B6` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
+[closure evidence](#crw2-b6-closure-evidence) below); per the lifecycle
+definition above, this slice exited `ACTIVE` when that proof completed.
+`CRW2-B6` closed `B-6` — a durable, versioned governance/process
+knowledge catalog (`docs/governance-process-v1.md`) now exists: it
+indexes the existing versioned contracts by subject/version/authority,
+states an explicit subject-scoped authority hierarchy, and records — for
+the first time durably — the independent-review requirement and the
+self-approval/self-merge/self-closure prohibition, an atomic
+version-transition model with deterministic pre-/post-merge authority
+and no "newest wins" heuristic, and a fail-closed conflict-handling rule
+— this records the already-certified implementation closure, not a
+re-assertion of the technical review itself. `CRW2-B6` was the fifth and
+final of the five parallel-authorized tracks (§6) to close.
 
-```text
-CRW2-B6  (B-6 — Versioned governance/process knowledge)             READY
-```
-
-The remaining finding (`B-6`) remains **open** — a
-track is `READY` (authorized/unblocked) only, and becomes `ACTIVE` only once
-its own implementation actually begins, per the slice-lifecycle definition
-above; `READY` is not itself a claim that any implementation has started.
+**All five original parallel-authorized tracks are now `COMPLETE_ON_MAIN`
+/ `CLOSED_ON_MAIN`** — none remains `READY` or `ACTIVE`. `CONFORMANCE-
+INTEGRATION-CHECK` (§6) is now eligible to run — all five of its required
+inputs (`B-3`, `A-2`, `B-1`, `B-4`, `B-6`) are `CLOSED_ON_MAIN` — but it
+has **not** run yet; see §6 for what it checks and what its `PASS` result
+would (and would not) unlock. The Architecture Conformance Gate remains
+`NOT_STARTED` until that check runs and passes.
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
 "RTI Integrated Audit READY") describe *past* states of this project and
 remain accurate as history in README's own roadmap-by-roadmap record — they
@@ -1002,6 +1014,61 @@ Fail-closed test-infrastructure verification: the external installation
 CRW2B4-R01: CLOSED   CRW2B4-R02: CLOSED
 CRW2B4-R03: CLOSED   CRW2B4-R04: CLOSED
 B-4: CLOSED_ON_MAIN
+```
+
+### CRW2-B6 closure evidence
+
+```text
+PR:             #168
+merge SHA:      c2e11fa31a3378355cef7498814f89ee789f427a
+approved HEAD:  2ad7cbd9b0c4a74ec071fcb306b4721a44c96740
+approved TREE:  9ffb26e65e05b118c9a52f57e9b1a6a837cf5d38
+merge method:   standard two-parent (parent1 2505cd21272b899cef5658d7a1e2035e4acc0cbe,
+                parent2 2ad7cbd9b0c4a74ec071fcb306b4721a44c96740)
+post-merge CI:  run 35429454890 — PASS (7/7, attempt 1, exact merge SHA, event push)
+
+Versioned governance/process knowledge: a durable catalog
+                (`docs/governance-process-v1.md`) now indexes this
+                repository's existing versioned contracts
+                (`docs/branch-inventory-v1.md`, `docs/evaluation-
+                execution-policy-v1.md`, `docs/qa-generation-contracts-
+                v1.md`) by subject/version/normative-source/executable-
+                authority, and states an explicit, subject-scoped
+                authority hierarchy (executable authority > versioned
+                normative contract > canonical lifecycle/status
+                authority > descriptive project documentation >
+                historical evidence). Records, for the first time
+                durably: the independent-review requirement and the
+                self-approval/self-merge/self-closure prohibition
+                (separation by role and turn, not by tool/human
+                identity); that granting merge authorization and
+                executing the merge are separate steps in separate
+                turns/missions; the standard-two-parent-merge, exact-
+                head, post-merge-certification-on-exact-SHA, zero-open-
+                new-defect, and metadata-truth-synchronization rules
+                this project already practiced but had never recorded;
+                and a fail-closed conflict-handling rule (never a
+                "newest wins" heuristic). Defines an atomic
+                version-transition model (Case A: successor + predecessor
+                supersession marker + catalog update all land in one
+                reviewed PR, with the predecessor remaining canonically
+                `CURRENT` on `main` until that exact PR merges; Case B:
+                narrow catalog-repair exception only) with deterministic
+                pre-/post-merge authority and no intermediate ambiguous
+                state, plus explicit change-control categories
+                (editorial, catalog synchronization, normative change,
+                retirement, emergency correction). States the future
+                `RAG`/`MEM` discovery-entry-point relationship without
+                implementing any retrieval, embedding, persistence, or
+                resolver. Docs-only: no runtime/executable/workflow/
+                package change. No public-API/package change (`npm pack
+                --dry-run`: 80 files, shasum
+                `6edcaeae3fae5bc280d90359a623c978c4c11d44`, unchanged).
+
+CRW2B6-R01: CLOSED   CRW2B6-R02: CLOSED   CRW2B6-R03: CLOSED
+CRW2B6-R04: CLOSED   CRW2B6-R05: CLOSED   CRW2B6-R06: CLOSED
+CRW2B6-R07: CLOSED   CRW2B6-R08: CLOSED   CRW2B6-R09: CLOSED
+B-6: CLOSED_ON_MAIN
 ```
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
