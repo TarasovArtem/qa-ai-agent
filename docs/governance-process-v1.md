@@ -206,29 +206,62 @@ self-modification. There are five kinds of change:
 - **Editorial clarification** (wording, formatting, a broken-link fix
   that does not change which source or version is pointed to): no
   version bump.
-- **Catalog synchronization** — a reference-only update to an *existing*
-  catalog entry's `Current version`, `Normative source`, or `Supersedes`
-  column, caused solely by an independently reviewed and merged version
-  change in the *referenced* contract (e.g. `branch-inventory-v1.md` →
-  `branch-inventory-v2.md`): does **not** require a new version of this
-  document, **provided all** of the following hold —
-  1. the new referenced version already exists and was independently
-     reviewed and merged;
+- **Catalog synchronization** — an update to an *existing* catalog
+  entry's `Current version`, `Normative source`, or `Supersedes` column,
+  driven by a version transition of the *referenced* contract (e.g.
+  `branch-inventory-v1.md` → `branch-inventory-v2.md`): does **not**
+  require a new version of this document, **provided all** of the
+  following hold —
+  1. the transition follows one of the two governed models immediately
+     below (Case A — atomic version transition, or Case B — catalog
+     repair);
   2. the "Authority hierarchy" above is unchanged;
   3. the knowledge domain's subject/meaning is unchanged;
   4. no rule in "Review, merge, and lifecycle process" changes;
-  5. exactly one version of the referenced contract ends up marked
-     `CURRENT` — the prior version is marked superseded (per the rule
-     above) in the same reviewed PR.
+  5. the transition's exact merged HEAD leaves exactly one version of the
+     referenced contract marked `CURRENT`, with the prior version
+     explicitly marked superseded.
 
   If any of these five do not hold, the change is a **normative change**
   (below), not catalog synchronization.
+
+  **Case A — atomic version transition (the normal path).** The
+  successor artifact does not yet exist on `main`. One reviewed PR
+  contains, as one exact HEAD: the successor artifact (e.g.
+  `branch-inventory-v2.md`); the terminal supersession marker added to
+  the predecessor (`branch-inventory-v1.md`'s `Status: SUPERSEDED` /
+  `Superseded by:` header); the catalog pointer update in this document;
+  and any executable counterpart change that domain's own contract
+  requires. **Before that PR merges, `main`'s canonical `CURRENT`
+  version for that domain remains the predecessor** — a successor
+  artifact existing only on an open PR branch is never authoritative,
+  no matter how complete the PR looks. Independent review evaluates the
+  entire transition as one exact HEAD, exactly as any other governed PR.
+  Only once that exact HEAD is merged and post-merge certified does the
+  successor become the sole `CURRENT` version and the predecessor become
+  canonically `SUPERSEDED` — there is no intermediate state on `main`
+  where the catalog points to a stale or nonexistent version.
+
+  **Case B — catalog repair / late synchronization (the exception).** A
+  successor version already exists on `main` from a previously accepted,
+  separate transition, but this document's catalog was never updated in
+  that transition (a pre-existing gap, not the normal path). A later
+  corrective PR may synchronize the catalog alone: it must identify the
+  already-merged, already-reviewed successor, mark the predecessor
+  superseded if not already marked, and leave exactly one `CURRENT`
+  version — never inferred by "newest file" or timestamp. Case B exists
+  only to repair a gap; Case A is the path every future transition
+  should follow so that gap is never created in the first place.
+
 - **Normative change** (a new knowledge domain added, the authority
   hierarchy reordered, a rule in "Review, merge, and lifecycle process"
   amended, or a catalog-pointer update that fails any catalog-
   synchronization condition above): new version (`v2`) of *this*
   document, with `v1` explicitly marked superseded per the rule above —
-  never deleted, never left ambiguous.
+  never deleted, never left ambiguous. Introducing a successor artifact
+  for *another* cataloged domain (Case A above) is not, by itself, a
+  normative change to this document — the referenced domain's own
+  version changes; this document's own rules do not.
 - **Retirement/deprecation**: an entry may be marked retired if its
   subject no longer applies; it is never removed silently.
 - **Emergency correction**: allowed, without a version bump, **only**
@@ -243,36 +276,81 @@ self-modification. There are five kinds of change:
 
 A simple explicit integer version (`v1`, `v2`, ...) is used, matching this
 repository's existing `docs/*-v1.md` convention — no SemVer machinery is
-introduced.
+introduced. **A version transition's review class (`LIGHT` or `HEAVY`) is
+decided by its own actual cumulative diff**, per "Review classification"
+above — a docs-only successor keeps a transition `LIGHT`; a successor
+that also requires an executable counterpart change makes it `HEAVY`.
+Catalog synchronization does not, by itself, force either class.
 
-### Worked example — a referenced contract's own version bump
+### Worked example — a referenced contract's own version bump (Case A)
 
-If `docs/branch-inventory-v2.md` is independently reviewed and merged in
-the future: (1) `branch-inventory-v1.md` gains a terminal
-`Status: SUPERSEDED` / `Superseded by: branch-inventory-v2.md` header in
-that same reviewed PR, its historical body otherwise untouched; (2) this
-document's `BRANCH_GOVERNANCE` row changes `Current version` to `v2`,
-`Normative source` to the `v2` path, and `Supersedes` to `v1`; (3)
-because that update satisfies every catalog-synchronization condition
-above (domain, hierarchy, and process rules unchanged), this document —
-`governance-process-v1.md` — does **not** itself bump to `v2`; (4)
-exactly one version (`branch-inventory-v2.md`) is `CURRENT`, decided
-explicitly by the catalog entry, never by a "newest wins" heuristic.
+**Base `main`:** `BRANCH_GOVERNANCE`'s `Current version` is `v1`;
+`branch-inventory-v1.md` is `CURRENT`.
+
+**Transition PR** (one exact HEAD, reviewed as a whole) adds:
+`docs/branch-inventory-v2.md`; any required `MANIFEST`/code change in
+`scripts/diagnostics/branch-inventory.js`; a terminal
+`Status: SUPERSEDED` / `Superseded by: branch-inventory-v2.md` header on
+`branch-inventory-v1.md` (its historical body otherwise untouched); and
+this document's `BRANCH_GOVERNANCE` row updated to
+`Current version: v2`, `Normative source: branch-inventory-v2.md`,
+`Supersedes: v1`.
+
+**Before merge:** `main` still has `branch-inventory-v1.md` as the sole
+`CURRENT` `BRANCH_GOVERNANCE` source — the open PR branch's proposed
+`v2` is not yet authoritative.
+
+**After independent review, exact-head merge, and post-merge
+certification:** `branch-inventory-v2.md` is the sole `CURRENT` version;
+`branch-inventory-v1.md` is canonically `SUPERSEDED`; the catalog points
+to `v2`. `governance-process-v1.md` (this document) does **not** itself
+bump to `v2` — this was a Case A catalog synchronization (all five
+conditions held; `governance-process`'s own rules did not change). No
+"newest wins" heuristic was used at any point — the transition PR's own
+exact reviewed content, not a file timestamp or filename comparison,
+determined the outcome.
 
 ### Worked example — this document's own normative change
 
-If a future rule change amends this document's own normative content
-(e.g. the review/merge-execution separation rule above): (1) a new
-`docs/governance-process-v2.md` is created, its own text declaring
-`Supersedes: governance-process-v1.md`; (2) `governance-process-v1.md`
-gains the same terminal `Status: SUPERSEDED` / `Superseded by:` header
-described above, in that same reviewed PR — its historical `v1` policy
-body is not otherwise edited, never mutated into a "v1.1"; (3) `v2`
-becomes the sole `CURRENT` `REVIEW_MERGE_GOVERNANCE`/governance-process
-contract, and every other catalog entry that referenced `v1` is updated
-to reference `v2` in that same PR; (4) no machine-readable manifest is
-required for any of this — it remains docs-only governance, resolved by
-ordinary reviewed edits, never by inference.
+**Base `main`:** `governance-process-v1.md` is `CURRENT` for
+`REVIEW_MERGE_GOVERNANCE`.
+
+**Transition PR** (one exact HEAD) adds `docs/governance-process-v2.md`
+— its own text declaring `Supersedes: governance-process-v1.md`, and
+carrying `v2`'s own copy of the full knowledge catalog (including its
+own `REVIEW_MERGE_GOVERNANCE` row, now pointing at itself); adds the
+terminal `Status: SUPERSEDED` / `Superseded by: governance-process-v2.md`
+header to `governance-process-v1.md` (its historical `v1` policy body
+not otherwise edited, never mutated into a "v1.1"); and updates any
+other in-repository reference that pointed at `v1`.
+
+**Before merge:** `main` still has `governance-process-v1.md` as
+`CURRENT` — the open PR's `v2` is not yet authoritative, exactly as in
+Case A.
+
+**After merge and certification:** `governance-process-v2.md` is the
+sole `CURRENT` governance-process contract; `v1` is `SUPERSEDED` and
+purely historical — a future reader consults `v2`'s own catalog table
+going forward, not `v1`'s. Unlike the `BRANCH_GOVERNANCE` example, this
+transition **does** require the version bump: the rules `governance-
+process` itself governs changed, so this is a **normative change**, not
+catalog synchronization, per "Change control" above.
+
+### Fail-closed transition rule
+
+A version-transition PR (Case A) must never be approved if, at its
+proposed merged HEAD, any of the following would hold: the successor
+artifact is missing; the predecessor lacks its supersession marker; the
+catalog still points to the predecessor; the catalog points to a
+nonexistent successor; two versions of the same domain are both marked
+`CURRENT`; no version is marked `CURRENT`; or the authority hierarchy
+changed without a `governance-process` version bump. This is a human/
+process review rule — not an automated validator — applied by whoever
+reviews the transition, per "Conflict handling" above. No temporal
+heuristic ever substitutes for it: a newer commit, a newer filename, a
+higher-version-looking filename, or an open PR's own existence never by
+itself makes a version authoritative — only a merged, reviewed
+transition does.
 
 ## Relationship to future RAG / Memory
 
