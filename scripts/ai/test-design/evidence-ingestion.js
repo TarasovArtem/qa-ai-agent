@@ -51,10 +51,31 @@
  * supplied `RequirementArtifact` with RTI-1's own
  * `assertValidRequirementArtifact()`, deterministically projects it to
  * plain evidence text (title/content/acceptance-criteria only - never
- * `source.location`, `metadata`, or any other field), and DELEGATES actual
- * `EvidenceRef` construction to `ingestRequirementEvidence()` above
- * unchanged - canonical evidence ownership (the invariant this whole module
- * exists to establish) is never touched or duplicated by the adapter.
+ * `source.location`, `metadata`, or any other field), and reuses
+ * `buildCanonicalEvidenceBundle()` - the same canonical-construction
+ * primitive `ingestRequirementEvidence()` above itself uses - to assign
+ * `EvidenceRef`s; canonical evidence ownership (the invariant this whole
+ * module exists to establish) is never touched or duplicated by the
+ * adapter.
+ *
+ * ARTIFACT EVIDENCE BUDGET (ACG-A3 corrective, finding ACG-A3-R02): RTI-1
+ * structural validity alone does NOT guarantee a `RequirementArtifact` is
+ * representable by this adapter. `RequirementArtifact.content` is valid up
+ * to 20000 characters and `acceptanceCriteria` up to 200 entries at up to
+ * 20000 characters each (scripts/ai/requirement-artifact.js) - far more
+ * than a single evidence item can carry. This adapter enforces its own
+ * explicit, named `ARTIFACT_EVIDENCE_LIMITS` (see below) BEFORE ever
+ * building a bundle, so an oversized artifact fails closed with an
+ * artifact-facing `$.artifacts[i]`/`$.artifacts` error - never the
+ * direct-text path's internal `$.sources[...]` error, and never silently
+ * truncated. Those limits are deliberately equal to `LIMITS` above, not
+ * coincidentally: `scripts/ai/test-design/requirement-model-generator.js`
+ * (#22C) imports `LIMITS` from this module and independently re-validates
+ * every evidence bundle against these exact same thresholds regardless of
+ * ingestion path, so no relaxation here could ever be honored end-to-end
+ * without also changing that separate, out-of-scope, security-reviewed
+ * trust boundary. See docs/architecture-model-boundary-v1.md's "Artifact
+ * evidence budget" section for the full rationale.
  *
  * INPUT SAFETY / GETTER SAFETY: `assertValidRequirementArtifact(artifact,
  * ...)` is called FIRST, before the adapter reads a single property of
@@ -103,6 +124,31 @@ const LIMITS = Object.freeze({
   MAX_AGGREGATE_TEXT_LENGTH: 20000,
 });
 
+// ACG-A3 corrective (finding ACG-A3-R02): the artifact-evidence budget
+// below is DELIBERATELY equal in value to LIMITS above - this is not the
+// original bug (silently reusing the direct-text path's own bound) restated
+// unchanged; it is a distinct, explicitly-named, independently-derived
+// contract that happens to land on the same numbers for a specific, provable
+// reason. scripts/ai/test-design/requirement-model-generator.js (#22C)
+// imports LIMITS from THIS module and independently re-validates every
+// evidence bundle it receives - regardless of which ingestion path produced
+// it - against these exact same per-item/aggregate thresholds as its own
+// caller-can't-be-trusted trust-boundary re-check (see that module's own
+// MAX_REQUIREMENT_MODEL_RESPONSE_CHARS, itself derived from
+// LIMITS.MAX_AGGREGATE_TEXT_LENGTH). Raising a bound here for the artifact
+// path alone could therefore never be honored end-to-end: an oversized
+// bundle would simply be rejected later, by #22C's own re-validation, with
+// an even more disconnected error that can no longer be traced back to the
+// originating RequirementArtifact. See
+// docs/architecture-model-boundary-v1.md's "Artifact evidence budget"
+// section for the full rationale and its explicit consequence: RTI-1
+// structural validity alone does not guarantee a RequirementArtifact's
+// projection is accepted by this adapter.
+const ARTIFACT_EVIDENCE_LIMITS = Object.freeze({
+  MAX_PROJECTED_TEXT_LENGTH: LIMITS.MAX_SOURCE_TEXT_LENGTH,
+  MAX_AGGREGATE_PROJECTED_TEXT_LENGTH: LIMITS.MAX_AGGREGATE_TEXT_LENGTH,
+});
+
 // Roadmap #22B supports exactly one source class: direct user-provided
 // requirement text (see the #22A readiness audit's "minimum useful first
 // source set" recommendation). Uploaded documents, repository docs,
@@ -142,6 +188,29 @@ function deepFreeze(value) {
     return Object.freeze(value);
   }
   return value;
+}
+
+// ACG-A3 corrective (ACG-A3-R02): the ONE place either ingestion path
+// (direct-text or RequirementArtifact-derived) assigns canonical
+// EvidenceRef.id/kind/sourceId - factored out so canonical evidence
+// ownership stays enforced in exactly one place regardless of which public
+// function produced `texts`. Never exported, never a public API: `texts`
+// must already be validated (bounded, non-empty strings, already within
+// whichever contract's own bounds) by the caller - this helper performs no
+// validation of its own and therefore never produces an error of any kind.
+function buildCanonicalEvidenceBundle(projectId, texts) {
+  const evidenceItems = texts.map((text, i) => {
+    const ordinal = formatOrdinal(i + 1);
+    return {
+      evidenceRef: {
+        id: `evidence-${ordinal}`,
+        kind: EVIDENCE_KIND_USER_INPUT,
+        sourceId: `user-input-${ordinal}`,
+      },
+      text,
+    };
+  });
+  return deepFreeze({ projectId, evidenceItems });
 }
 
 /**
@@ -216,22 +285,7 @@ function ingestRequirementEvidence(input, { expectedProjectId } = {}) {
     return { ok: false, errors };
   }
 
-  const evidenceItems = validSources.map((text, i) => {
-    const ordinal = formatOrdinal(i + 1);
-    return {
-      evidenceRef: {
-        id: `evidence-${ordinal}`,
-        kind: EVIDENCE_KIND_USER_INPUT,
-        sourceId: `user-input-${ordinal}`,
-      },
-      text,
-    };
-  });
-
-  const bundle = deepFreeze({
-    projectId: input.projectId,
-    evidenceItems,
-  });
+  const bundle = buildCanonicalEvidenceBundle(input.projectId, validSources);
 
   return { ok: true, bundle };
 }
@@ -298,8 +352,12 @@ function projectRequirementArtifactToEvidenceText(artifact) {
  * evidenceRefId }` pairs (input order preserved) giving traceability back
  * to the source `RequirementArtifact` WITHOUT adding any new field to the
  * frozen v1 `EvidenceRef` schema. Returns `{ ok: false, errors }` on any
- * validation failure - errors never echo raw artifact content, matching
- * this module's own existing privacy convention.
+ * validation failure, including an oversized projection (see
+ * `ARTIFACT_EVIDENCE_LIMITS` above) - errors never echo raw artifact
+ * content, matching this module's own existing privacy convention, and
+ * always reference this function's own `$.artifacts[...]`/`$.artifacts`
+ * input shape, never the unrelated direct-text `$.sources[...]` shape
+ * (ACG-A3-R02).
  */
 function ingestRequirementArtifactsAsEvidence(input, { expectedProjectId } = {}) {
   const errors = [];
@@ -350,32 +408,69 @@ function ingestRequirementArtifactsAsEvidence(input, { expectedProjectId } = {})
     }
   }
 
+  // ACG-A3-R02 corrective: artifact-domain evidence-budget validation runs
+  // HERE, entirely before any call into the direct-text path, so an
+  // oversized artifact can never produce ingestRequirementEvidence()'s own
+  // internal $.sources[...] error - it fails closed with an artifact-facing
+  // path instead. Meaningful only once every artifact was itself
+  // individually valid, matching this function's own existing convention
+  // above (a still-malformed artifact has already been reported; a
+  // length figure computed over its projection would be meaningless).
+  let projectedTexts = [];
+  if (validatedArtifacts.length === artifacts?.length && validatedArtifacts.length > 0) {
+    projectedTexts = validatedArtifacts.map((artifact) => projectRequirementArtifactToEvidenceText(artifact));
+
+    projectedTexts.forEach((text, i) => {
+      if (text.length > ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH) {
+        errors.push(
+          err(
+            `$.artifacts[${i}]`,
+            ERROR_CODES.INVALID_VALUE,
+            `$.artifacts[${i}] projected evidence exceeds the maximum supported length of ${ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH}`
+          )
+        );
+      }
+    });
+
+    if (projectedTexts.every((text) => text.length <= ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH)) {
+      const aggregateLength = projectedTexts.reduce((sum, text) => sum + text.length, 0);
+      if (aggregateLength > ARTIFACT_EVIDENCE_LIMITS.MAX_AGGREGATE_PROJECTED_TEXT_LENGTH) {
+        errors.push(
+          err(
+            "$.artifacts",
+            ERROR_CODES.INVALID_VALUE,
+            `$.artifacts aggregate projected evidence exceeds the maximum of ${ARTIFACT_EVIDENCE_LIMITS.MAX_AGGREGATE_PROJECTED_TEXT_LENGTH}`
+          )
+        );
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors };
   }
 
   // One RequirementArtifact -> exactly one evidence item, preserving input
-  // order, so the index-aligned mapping below is unambiguous.
-  const sources = validatedArtifacts.map((artifact) => ({ text: projectRequirementArtifactToEvidenceText(artifact) }));
-
-  const ingestResult = ingestRequirementEvidence({ projectId: input.projectId, sources }, { expectedProjectId });
-  if (!ingestResult.ok) {
-    return ingestResult;
-  }
+  // order, so the index-aligned mapping below is unambiguous. Builds the
+  // bundle directly via the same canonical primitive ingestRequirementEvidence()
+  // itself uses - never by delegating to that function - so no direct-text
+  // $.sources[...] error path is structurally reachable from this function.
+  const bundle = buildCanonicalEvidenceBundle(input.projectId, projectedTexts);
 
   const mapping = deepFreeze(
     validatedArtifacts.map((artifact, i) => ({
       requirementArtifactId: artifact.id,
-      evidenceRefId: ingestResult.bundle.evidenceItems[i].evidenceRef.id,
+      evidenceRefId: bundle.evidenceItems[i].evidenceRef.id,
     }))
   );
 
-  return { ok: true, bundle: ingestResult.bundle, mapping };
+  return { ok: true, bundle, mapping };
 }
 
 module.exports = {
   ingestRequirementEvidence,
   ingestRequirementArtifactsAsEvidence,
   LIMITS,
+  ARTIFACT_EVIDENCE_LIMITS,
   EVIDENCE_KIND_USER_INPUT,
 };

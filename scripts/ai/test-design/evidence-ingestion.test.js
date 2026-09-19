@@ -3,8 +3,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { ingestRequirementEvidence, ingestRequirementArtifactsAsEvidence, LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
+const { ingestRequirementEvidence, ingestRequirementArtifactsAsEvidence, LIMITS, ARTIFACT_EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
 const { validateEvidenceRef, EVIDENCE_REF_KINDS } = require("../generation/primitives");
+const { validateRequirementArtifact } = require("../requirement-artifact");
 
 function validInput(overrides = {}) {
   return {
@@ -673,4 +674,189 @@ test("A3: the mapping array is frozen", () => {
   assert.equal(result.ok, true);
   assert.ok(Object.isFrozen(result.mapping));
   assert.ok(Object.isFrozen(result.mapping[0]));
+});
+
+// =========================================================================
+// ACG-A3-R02 corrective: artifact evidence budget + error-surface fix.
+// Root cause: ingestRequirementArtifactsAsEvidence() used to delegate
+// straight to ingestRequirementEvidence(), so a RequirementArtifact whose
+// projection exceeded the direct-text MAX_SOURCE_TEXT_LENGTH (4000) was
+// rejected via that function's own internal $.sources[...] error - a path
+// the artifact adapter's own callers never supplied. The corrective adds an
+// explicit, named, documented ARTIFACT_EVIDENCE_LIMITS pre-check that runs
+// BEFORE any bundle is built, so oversized artifacts fail closed with an
+// artifact-facing $.artifacts[i]/$.artifacts error instead. The numeric
+// values are unchanged (still 4000/20000) - see evidence-ingestion.js's own
+// docstring for why raising them is not actually possible without also
+// touching requirement-model-generator.js's independent #22C re-validation,
+// which imports these same LIMITS and is out of scope here.
+// =========================================================================
+
+// Builds a minimal, otherwise-valid artifact (single-char title, no
+// acceptanceCriteria) whose deterministic projection
+// (`Title: T\nContent: ...`) is EXACTLY `targetLength` characters -
+// avoids hand-computed magic numbers scattered across every boundary test
+// below. Minimum representable length is 19 (an 18-char prefix plus a
+// single non-empty content character).
+function artifactWithProjectedLength(targetLength) {
+  const title = "T";
+  const prefixLength = `Title: ${title}\nContent: `.length;
+  return validArtifact({ title, content: "a".repeat(targetLength - prefixLength), acceptanceCriteria: undefined });
+}
+
+test("A3-R02: reviewer's exact reproduction case (5400-char content, RTI-1-valid) is rejected with an artifact-facing error, never a $.sources leak", () => {
+  const content = "This is a realistic requirement description sentence. ".repeat(100);
+  assert.ok(content.length > ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH, "fixture must actually exceed the adapter's own budget");
+  const artifact = validArtifact({ content, acceptanceCriteria: undefined });
+  assert.equal(validateRequirementArtifact(artifact).valid, true, "fixture must be RTI-1-valid");
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.every((e) => !e.path.includes("$.sources")));
+  assert.ok(result.errors.some((e) => e.path === "$.artifacts[0]" && e.code === "INVALID_VALUE"));
+});
+
+test("A3-R02: direct-text ingestion still rejects raw text over 4000 chars (direct-text contract unchanged)", () => {
+  const text = "a".repeat(LIMITS.MAX_SOURCE_TEXT_LENGTH + 1);
+  const result = ingestRequirementEvidence(validInput({ sources: [{ text }] }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.sources[0].text"));
+});
+
+test("A3-R02: a RequirementArtifact with content near RTI-1's own MAX_CONTENT_LENGTH (20000) is RTI-1-valid but rejected by the adapter with an artifact-facing budget error", () => {
+  const content = "a".repeat(19999);
+  const artifact = validArtifact({ content, acceptanceCriteria: undefined });
+  assert.equal(validateRequirementArtifact(artifact).valid, true);
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.artifacts[0]" && e.code === "INVALID_VALUE"));
+  assert.ok(result.errors.every((e) => !e.path.includes("$.sources")));
+});
+
+test("A3-R02: an oversized projection caused by acceptanceCriteria text (not content) is rejected the same way, proving the fix is not hardcoded to the content field", () => {
+  const artifact = validArtifact({
+    content: undefined,
+    acceptanceCriteria: [{ id: "ac-1", text: "a".repeat(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH + 500) }],
+  });
+  assert.equal(validateRequirementArtifact(artifact).valid, true);
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.artifacts[0]" && e.code === "INVALID_VALUE"));
+  assert.ok(result.errors.every((e) => !e.path.includes("$.sources")));
+});
+
+// --- Per-artifact bound: exact boundaries -----------------------------------
+
+test("A3-R02: per-artifact projected text exactly at the limit is accepted", () => {
+  const artifact = artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH);
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, true);
+});
+
+test("A3-R02: per-artifact projected text one under the limit is accepted", () => {
+  const artifact = artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH - 1);
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, true);
+});
+
+test("A3-R02: per-artifact projected text one over the limit is rejected", () => {
+  const artifact = artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH + 1);
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.artifacts[0]" && e.code === "INVALID_VALUE"));
+});
+
+// --- Aggregate bound ---------------------------------------------------------
+
+test("A3-R02: aggregate projected evidence exactly at the limit, spread across artifacts each individually at their own limit, is accepted", () => {
+  // 5 artifacts * 4000 chars = 20000 = MAX_AGGREGATE_PROJECTED_TEXT_LENGTH
+  // exactly - each individually exactly at MAX_PROJECTED_TEXT_LENGTH too.
+  const perArtifact = ARTIFACT_EVIDENCE_LIMITS.MAX_AGGREGATE_PROJECTED_TEXT_LENGTH / 5;
+  assert.equal(perArtifact, ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH);
+  const artifacts = Array.from({ length: 5 }, (_, i) => ({ ...artifactWithProjectedLength(perArtifact), id: `req-${i}` }));
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts }));
+  assert.equal(result.ok, true);
+});
+
+test("A3-R02: aggregate projected evidence one under the limit is accepted", () => {
+  const artifacts = [
+    ...Array.from({ length: 4 }, (_, i) => ({ ...artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH), id: `req-${i}` })),
+    { ...artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH - 1), id: "req-4" },
+  ];
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts }));
+  assert.equal(result.ok, true);
+});
+
+test("A3-R02: aggregate projected evidence over the limit is rejected at $.artifacts, with every individual artifact still within its own per-artifact limit", () => {
+  // 6 artifacts * 3334 chars = 20004 > MAX_AGGREGATE_PROJECTED_TEXT_LENGTH
+  // (20000), while each individual artifact (3334) stays well under
+  // MAX_PROJECTED_TEXT_LENGTH (4000) - isolates the aggregate bound from
+  // the per-artifact bound, mirroring the equivalent direct-text test above.
+  const perArtifact = Math.ceil((ARTIFACT_EVIDENCE_LIMITS.MAX_AGGREGATE_PROJECTED_TEXT_LENGTH + 1) / 6);
+  assert.ok(perArtifact <= ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH, "test fixture must stay within the per-artifact limit");
+  const artifacts = Array.from({ length: 6 }, (_, i) => ({ ...artifactWithProjectedLength(perArtifact), id: `req-${i}` }));
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts }));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.artifacts" && e.code === "INVALID_VALUE"));
+  assert.ok(result.errors.every((e) => !e.path.includes("$.sources")));
+});
+
+// --- Error-surface / privacy -------------------------------------------------
+
+test("A3-R02: no artifact-adapter error path ever contains $.sources, across every size-related rejection", () => {
+  const oversizedOne = artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH + 1);
+  const perArtifact = Math.ceil((ARTIFACT_EVIDENCE_LIMITS.MAX_AGGREGATE_PROJECTED_TEXT_LENGTH + 1) / 6);
+  const aggregateOverflow = Array.from({ length: 6 }, (_, i) => ({ ...artifactWithProjectedLength(perArtifact), id: `req-${i}` }));
+
+  for (const artifacts of [[oversizedOne], aggregateOverflow]) {
+    const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts }));
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.every((e) => !e.path.includes("$.sources") && e.code !== "INVALID_TYPE"),
+      `no $.sources leakage / no misleading INVALID_TYPE, got ${JSON.stringify(result.errors)}`
+    );
+  }
+});
+
+test("A3-R02: an oversized artifact's error never echoes its content, acceptance-criteria text, metadata, source.location, or projectId", () => {
+  const marker = "SECRET_ACG_A3_R02_MARKER_" + "x".repeat(30);
+  const artifact = validArtifact({
+    content: marker + "a".repeat(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH),
+    acceptanceCriteria: undefined,
+    metadata: { secretField: marker },
+    source: { type: "file", location: marker, sourceId: "x" },
+  });
+  const result = ingestRequirementArtifactsAsEvidence({ projectId: marker, artifacts: [artifact] });
+  assert.equal(result.ok, false);
+  const serialized = JSON.stringify(result.errors);
+  assert.ok(!serialized.includes(marker), `marker must not leak into errors, got ${serialized}`);
+});
+
+// --- Existing guarantees preserved under the size fix ------------------------
+
+test("A3-R02: mapping remains correct for a boundary-valid (exactly-at-limit) artifact", () => {
+  const artifact = { ...artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH), id: "req-boundary" };
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mapping, [{ requirementArtifactId: "req-boundary", evidenceRefId: "evidence-0001" }]);
+});
+
+test("A3-R02: a large valid artifact's projection is deterministic (byte-identical across repeated calls)", () => {
+  const artifact = artifactWithProjectedLength(ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH);
+  const input = validArtifactsInput({ artifacts: [artifact] });
+  const a = JSON.stringify(ingestRequirementArtifactsAsEvidence(input));
+  const b = JSON.stringify(ingestRequirementArtifactsAsEvidence(input));
+  assert.equal(a, b);
+});
+
+test("A3-R02: processing a large artifact (valid or oversized) does not mutate the input artifact", () => {
+  for (const length of [ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH, ARTIFACT_EVIDENCE_LIMITS.MAX_PROJECTED_TEXT_LENGTH + 1]) {
+    const artifact = artifactWithProjectedLength(length);
+    // structuredClone (unlike a JSON round-trip) preserves an own,
+    // undefined-valued key exactly as artifactWithProjectedLength()
+    // constructs it (acceptanceCriteria: undefined), so this comparison
+    // isn't confused by JSON.stringify silently dropping that key.
+    const snapshot = structuredClone(artifact);
+    ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
+    assert.deepEqual(artifact, snapshot);
+  }
 });

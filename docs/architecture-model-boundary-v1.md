@@ -168,6 +168,56 @@ A future version of this document may extend the projection if a real
 caller proves one of these fields is needed as grounding text — this is
 a decision for that future version, not a default to reach for now.
 
+### Artifact evidence budget
+
+**RTI-1 structural validity alone does not guarantee a `RequirementArtifact`
+is representable by this adapter** (ACG-A3 corrective, finding
+ACG-A3-R02 - discovered during independent review). `RequirementArtifact
+.content` is valid up to 20000 characters and `acceptanceCriteria` up to
+200 entries at up to 20000 characters each
+(`scripts/ai/requirement-artifact.js`) - far more than a single evidence
+item can carry.
+
+The adapter enforces its own explicit, named budget
+(`ARTIFACT_EVIDENCE_LIMITS` in `scripts/ai/test-design/evidence-ingestion.js`)
+against each artifact's deterministic projection, **before** any evidence
+bundle is built:
+
+```text
+MAX_PROJECTED_TEXT_LENGTH:            4000   (per artifact projection)
+MAX_AGGREGATE_PROJECTED_TEXT_LENGTH: 20000   (per collection)
+```
+
+An artifact whose projection exceeds the per-artifact limit fails closed
+with an artifact-facing `$.artifacts[i]` error; a collection whose combined
+projected text exceeds the aggregate limit (with every individual artifact
+still within its own limit) fails closed with a `$.artifacts` error. Neither
+case truncates, summarizes, or otherwise silently drops any part of a
+projection - a caller either gets the complete projection or a clear
+rejection, never a partial one.
+
+**Why these numbers, specifically, and why they are not raised to match
+RTI-1's own larger limits**: `scripts/ai/test-design/
+requirement-model-generator.js` (`#22C`) imports this same module's shared
+`LIMITS` and independently re-validates every evidence bundle it receives -
+regardless of which ingestion path produced it - against these exact same
+per-item/aggregate thresholds, as its own caller-can't-be-trusted trust-
+boundary re-check (its own `MAX_REQUIREMENT_MODEL_RESPONSE_CHARS` is itself
+derived from `LIMITS.MAX_AGGREGATE_TEXT_LENGTH`). Raising the artifact
+adapter's own acceptance threshold above these numbers could therefore never
+be honored end-to-end: an oversized bundle would simply be rejected later,
+by `#22C`'s own independent re-validation, with an even more disconnected
+error that can no longer be traced back to the originating
+`RequirementArtifact`. Changing that downstream, separately-reviewed trust
+boundary is explicitly out of scope for this adapter.
+
+This is therefore a deliberate, documented, narrower **adapter-specific
+evidence-budget profile** layered on top of RTI-1's own (larger) structural
+contract - not a relaxation of RTI-1, and not an accidental reuse of an
+unrelated bound. A future version of this document may revisit these
+numbers if `#22C`'s own downstream contract changes; that is a decision for
+that future version, not a default to reach for now.
+
 ### Traceability without touching the frozen `EvidenceRef` schema
 
 `EvidenceRef` identity (`id`/`kind`/`sourceId`) remains entirely owned by
