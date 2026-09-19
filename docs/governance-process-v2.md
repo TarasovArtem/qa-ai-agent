@@ -1,16 +1,40 @@
-# Governance Process v1
+# Governance Process v2
 
 CRW2-B6, addressing conformance finding B-6.
 
-Status: **SUPERSEDED**
-Superseded by: [`governance-process-v2.md`](governance-process-v2.md)
+Status: **CURRENT**
+Supersedes: [`governance-process-v1.md`](governance-process-v1.md)
+
+## Why v2 exists
+
+Governance Process v1's own "Change control" rule (below, carried forward
+unchanged) classifies *"a new knowledge domain added"* to the catalog as a
+**normative change** requiring a version bump — never a catalog-only
+synchronization. Architecture Conformance Gate finding `A-3` introduced
+exactly that: a new normative architecture-boundary contract
+([`docs/architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md),
+defining the relationship between RTI's deterministic model stack and the
+`#22`/`#23` generative model stack). Per v1's own rule, this requires `v1`
+to be marked superseded and `v2` to carry the new
+`ARCHITECTURE_MODEL_BOUNDARY` catalog entry — this document performs
+exactly that transition, atomically, in the same reviewed PR that
+introduces the new domain, following v1's own "Case A" atomic-transition
+model (see "Change control" below) applied to this document's own
+self-version-transition worked example.
+
+**No other normative rule changes in this transition.** The authority
+hierarchy, the independent-review/self-approval/self-merge/self-closure
+prohibition, merge method, post-merge certification, zero-open-new-defect
+policy, metadata-truth synchronization, current/historical/supersession
+semantics, conflict handling, and every existing catalog entry besides the
+one addition below are carried forward from `v1` unchanged.
 
 ## Why this exists
 
 A conformance analysis flagged `B-6`: this repository's governance/process
-knowledge is not durably versioned. Before this document, that was
-concretely true in one specific, load-bearing way — not merely "some docs
-could be better organized":
+knowledge is not durably versioned. Before this document existed (as
+`v1`), that was concretely true in one specific, load-bearing way — not
+merely "some docs could be better organized":
 
 - Three narrow, subject-specific versioned contracts already exist
   ([`docs/branch-inventory-v1.md`](branch-inventory-v1.md),
@@ -32,9 +56,9 @@ could be better organized":
   self-close its own finding, or mark a stage `COMPLETE_ON_MAIN`/
   `CLOSED_ON_MAIN`. A full-repository search (`ROADMAP.md`, `README.md`,
   `SECURITY.md`, `PROVIDERS.md`, `PUBLISHING.md`, `docs/**`) for
-  `self-approv`, `self-merge`, `same session`, `same agent` returns zero
-  matches. This rule has been followed in practice but has never had a
-  durable home.
+  `self-approv`, `self-merge`, `same session`, `same agent` returned zero
+  matches at the time `v1` was written. This rule has been followed in
+  practice but had never had a durable home.
 
 **This document does not implement anything executable.** It is a
 docs-only catalog and normative-rule record. It creates no runtime
@@ -48,15 +72,17 @@ do" below for the explicit boundary.
 | `BRANCH_GOVERNANCE` | Branch classes, protection expectations | v1 | [`docs/branch-inventory-v1.md`](branch-inventory-v1.md) | [`scripts/diagnostics/branch-inventory.js`](../scripts/diagnostics/branch-inventory.js) | CURRENT | — | Reviewed PR updating both doc and `MANIFEST` together |
 | `EVALUATION_EXECUTION` | Evaluation/regression merge-blocking policy (v1-v6) | v1 | [`docs/evaluation-execution-policy-v1.md`](evaluation-execution-policy-v1.md) | [`scripts/ai/evaluation/execution-policy.js`](../scripts/ai/evaluation/execution-policy.js) | CURRENT | — | Reviewed PR satisfying that document's own four-point promotion criteria |
 | `QA_GENERATION_CONTRACTS` | `RequirementModel`→`TestCaseModel`→`AutomationCandidate`→`AutomationPlan` data contracts | v1 | [`docs/qa-generation-contracts-v1.md`](qa-generation-contracts-v1.md) | `scripts/ai/generation/*` | CURRENT | — | Reviewed PR updating doc and validators together |
-| `REVIEW_MERGE_GOVERNANCE` | Independent-review requirement, self-approval/self-merge/self-closure prohibition, merge method, post-merge certification, zero-open-new-defect policy | v1 | **this document**, §"Review, merge, and lifecycle process" | none (human/process rule, not automated) | CURRENT | — | Reviewed PR to this document |
+| `ARCHITECTURE_MODEL_BOUNDARY` | Relationship between deterministic RTI artifacts (`RequirementArtifact`, `TestDesignArtifact`) and `#22`/`#23` generative models (`RequirementModel`, `TestCaseModel`); allowed cross-context adapter boundary | v1 | [`docs/architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md) | RequirementArtifact validator: [`scripts/ai/requirement-artifact.js`](../scripts/ai/requirement-artifact.js); `#22` generative validators: `scripts/ai/generation/*`; allowed evidence adapter: [`scripts/ai/test-design/evidence-ingestion.js`](../scripts/ai/test-design/evidence-ingestion.js) | CURRENT | — | Reviewed PR changing the normative boundary contract and any executable adapter/validators affected by that contract together |
+| `REVIEW_MERGE_GOVERNANCE` | Independent-review requirement, self-approval/self-merge/self-closure prohibition, merge method, post-merge certification, zero-open-new-defect policy | v2 | **this document**, §"Review, merge, and lifecycle process" | none (human/process rule, not automated) | CURRENT | v1 | Reviewed PR to this document |
 | `LIFECYCLE_STATUS_AUTHORITY` | Current sequence, active gate, per-finding lifecycle state | continuously updated in place (not per-edit versioned) | [`ROADMAP.md`](../ROADMAP.md) §2/§6/§8 | none — ROADMAP.md itself is the authority | CURRENT | — | Reviewed PR per this project's own standing merge-gate process |
 | `PACKAGE_GOVERNANCE` | What ships in the published npm package | implicit (tracked by `package.json` `files`) | `package.json` `files` field | `npm pack` | CURRENT | — | Reviewed PR changing `files` |
 
 This catalog references existing content; it does not duplicate any of
 the above documents' own substance. `BRANCH_GOVERNANCE`, `EVALUATION_EXECUTION`,
-and `QA_GENERATION_CONTRACTS` are unchanged by `B-6` — this document adds
-the missing index and the missing `REVIEW_MERGE_GOVERNANCE` entry, which
-previously existed only as unrecorded practice.
+`QA_GENERATION_CONTRACTS`, `LIFECYCLE_STATUS_AUTHORITY`, and
+`PACKAGE_GOVERNANCE` are unchanged by this `v2` transition — only
+`REVIEW_MERGE_GOVERNANCE` (now pointing at `v2`, superseding `v1`) and the
+new `ARCHITECTURE_MODEL_BOUNDARY` entry changed.
 
 ## Authority hierarchy
 
@@ -74,7 +100,7 @@ invented ordering):
    This mirrors `BRANCH_GOVERNANCE`'s and `EVALUATION_EXECUTION`'s own
    existing convention of updating doc and code together on any change.
 2. **Versioned normative contract** — a `docs/*-vN.md` file such as the
-   three catalogued above (including this one). Durable, explicit,
+   ones catalogued above (including this one). Durable, explicit,
    reviewed-on-change policy for one narrow subject.
 3. **Canonical lifecycle/status authority** — `ROADMAP.md`, for current
    sequence, active gate, and per-finding lifecycle state, per its own
@@ -96,16 +122,16 @@ Some of this section's rules already had a durable, if terse, name in
 `ROADMAP.md` §6 before this document existed — `zero-open-new-defect`,
 `explicit merge authorization`, and `post-merge certification` are each
 already named there as part of the existing `HEAVY` review model. What
-had **not** existed anywhere, before this document, is: a comprehensive
-governance/process knowledge catalog; an explicit cross-document authority
-hierarchy; an explicit definition of what makes a review "independent"
-(the self-approval/self-merge/self-closure prohibition below); metadata-
-truth synchronization as a stated durable rule (previously only
-operational habit); and a current/historical/supersession model. This
-section records both — the already-named rules precisely, and the
-previously-undocumented rules for the first time — without restating
-every operational checklist already living in `ROADMAP.md` §6 (linked,
-not duplicated).
+had **not** existed anywhere, before `v1` of this document, is: a
+comprehensive governance/process knowledge catalog; an explicit
+cross-document authority hierarchy; an explicit definition of what makes
+a review "independent" (the self-approval/self-merge/self-closure
+prohibition below); metadata-truth synchronization as a stated durable
+rule (previously only operational habit); and a current/historical/
+supersession model. This section records both — the already-named rules
+precisely, and the previously-undocumented rules for the first time —
+without restating every operational checklist already living in
+`ROADMAP.md` §6 (linked, not duplicated).
 
 - **Independent review is mandatory before any finding may be marked
   `COMPLETE_ON_MAIN`/`CLOSED_ON_MAIN`.** "Independent" means: the actor or
@@ -185,7 +211,10 @@ not duplicated).
   closes the apparent paradox of "editing v1 to say superseded": the
   edit is a terminal status marker, not a substantive change, and by
   itself never triggers a version bump of the document being marked (see
-  "Change control" below for the full rule).
+  "Change control" below for the full rule). This document's own
+  transition from `v1` to `v2` applied exactly this rule to itself — see
+  [`governance-process-v1.md`](governance-process-v1.md)'s own terminal
+  marker.
 
 ## Conflict handling (fail-closed)
 
@@ -243,7 +272,12 @@ self-modification. There are five kinds of change:
   Only once that exact HEAD is merged and post-merge certified does the
   successor become the sole `CURRENT` version and the predecessor become
   canonically `SUPERSEDED` — there is no intermediate state on `main`
-  where the catalog points to a stale or nonexistent version.
+  where the catalog points to a stale or nonexistent version. **This
+  document's own `v1` → `v2` transition follows this exact Case A model
+  applied to itself** (see the worked example below) — it was performed
+  atomically, in the same reviewed PR that introduced the
+  `ARCHITECTURE_MODEL_BOUNDARY` domain triggering it, never as a
+  postponed Case B repair.
 
   **Case B — catalog repair / late synchronization (the exception).** A
   successor version already exists on `main` from a previously accepted,
@@ -260,11 +294,14 @@ self-modification. There are five kinds of change:
   hierarchy reordered, a rule in "Review, merge, and lifecycle process"
   amended, or a catalog-pointer update that fails any catalog-
   synchronization condition above): new version (`v2`) of *this*
-  document, with `v1` explicitly marked superseded per the rule above —
-  never deleted, never left ambiguous. Introducing a successor artifact
-  for *another* cataloged domain (Case A above) is not, by itself, a
-  normative change to this document — the referenced domain's own
-  version changes; this document's own rules do not.
+  document, with the prior version explicitly marked superseded per the
+  rule above — never deleted, never left ambiguous. Introducing a
+  successor artifact for *another* cataloged domain (Case A above) is
+  not, by itself, a normative change to this document — the referenced
+  domain's own version changes; this document's own rules do not. This
+  `v1` → `v2` transition is itself an example of a genuine normative
+  change: a new knowledge domain (`ARCHITECTURE_MODEL_BOUNDARY`) was
+  added to the catalog.
 - **Retirement/deprecation**: an entry may be marked retired if its
   subject no longer applies; it is never removed silently.
 - **Emergency correction**: allowed, without a version bump, **only**
@@ -306,12 +343,12 @@ this document's `BRANCH_GOVERNANCE` row updated to
 **After independent review, exact-head merge, and post-merge
 certification:** `branch-inventory-v2.md` is the sole `CURRENT` version;
 `branch-inventory-v1.md` is canonically `SUPERSEDED`; the catalog points
-to `v2`. `governance-process-v1.md` (this document) does **not** itself
-bump to `v2` — this was a Case A catalog synchronization (all five
-conditions held; `governance-process`'s own rules did not change). No
-"newest wins" heuristic was used at any point — the transition PR's own
-exact reviewed content, not a file timestamp or filename comparison,
-determined the outcome.
+to `v2`. This document does **not** itself bump versions for this
+example — this was a Case A catalog synchronization (all five conditions
+held; this document's own rules did not change). No "newest wins"
+heuristic was used at any point — the transition PR's own exact reviewed
+content, not a file timestamp or filename comparison, determined the
+outcome.
 
 ### Worked example — this document's own normative change
 
@@ -336,8 +373,11 @@ sole `CURRENT` governance-process contract; `v1` is `SUPERSEDED` and
 purely historical — a future reader consults `v2`'s own catalog table
 going forward, not `v1`'s. Unlike the `BRANCH_GOVERNANCE` example, this
 transition **does** require the version bump: the rules `governance-
-process` itself governs changed, so this is a **normative change**, not
-catalog synchronization, per "Change control" above.
+process` itself governs changed (a new catalog domain was added), so
+this is a **normative change**, not catalog synchronization, per
+"Change control" above. **This is exactly the transition this document
+itself is: `v2`, produced by this same worked example applied to itself,
+introducing the `ARCHITECTURE_MODEL_BOUNDARY` domain.**
 
 ### Fail-closed transition rule
 
@@ -380,7 +420,9 @@ model-generated policy change becomes trusted merely by being generated
 or merely by existing in the repository — presence in the repository is
 not, by itself, proof of normative authority (see "Authority hierarchy").
 Any future change to this document still goes through the same
-independent-review process this document itself defines.
+independent-review process this document itself defines. This `v2`
+document was itself introduced through exactly that same independent-
+review process — no self-modification occurred.
 
 ## Explicit out-of-scope
 
@@ -395,6 +437,10 @@ independent-review process this document itself defines.
   producer, never a merge authority) and implements none of it.
 - **`B-1`'s branch classification and `A-2`'s execution policy** — both
   referenced by catalog entry above, neither reopened nor duplicated.
+- **`A-3`'s own architecture-boundary contract substance** — referenced
+  by catalog entry above (`ARCHITECTURE_MODEL_BOUNDARY`), never
+  duplicated here. Model-relationship rules live in
+  `docs/architecture-model-boundary-v1.md`, not in this document.
 - **Security-reporting redesign** — `SECURITY.md`'s own reporting/trust
   boundaries are unchanged by this document.
 
@@ -402,15 +448,18 @@ independent-review process this document itself defines.
 
 - It does not close `B-1`, `A-2`, or `B-4` — all three are already
   `CLOSED_ON_MAIN`, referenced here only as catalog entries.
+- It does not close Architecture Conformance Gate finding `A-3` on
+  canonical `ROADMAP.md` — that remains a separate, later closure-sync
+  mission, after independent review, merge, and post-merge certification
+  of the implementation this catalog entry now indexes.
 - It does not implement `GOV-VERIFY-1`.
 - It does not implement `RAG`, `MEM`, or any retrieval/embedding/
   persistence mechanism.
 - It does not create a machine-readable manifest, validator, or resolver.
-  Discovery for this finding found no evidence any script needs
-  deterministic programmatic resolution of "current" governance knowledge
-  today; if that need arises later, a schema-versioned, fail-closed
-  manifest would be a separate, `HEAVY`-classified change, not silently
-  added here.
+  No evidence exists that any script needs deterministic programmatic
+  resolution of "current" governance knowledge today; if that need
+  arises later, a schema-versioned, fail-closed manifest would be a
+  separate, `HEAVY`-classified change, not silently added here.
 - It does not change `CONFORMANCE-INTEGRATION-CHECK` or the Architecture
   Conformance Gate — both remain exactly as `ROADMAP.md` already states.
 - It does not grant any AI agent, script, or process automated merge or
