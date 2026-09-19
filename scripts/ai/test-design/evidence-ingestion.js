@@ -40,12 +40,46 @@
  * Pure, synchronous, deterministic, offline: no filesystem, network,
  * provider, timestamp, random, or environment-derived identity. The same
  * ordered input always produces a deep-equal bundle.
+ *
+ * REQUIREMENTARTIFACT EVIDENCE ADAPTER (Roadmap ACG-A3, Architecture
+ * Conformance Gate finding A-3): `ingestRequirementArtifactsAsEvidence()`
+ * below is the ONE explicit, opt-in, one-directional seam between RTI's
+ * deterministic `RequirementArtifact` contract (scripts/ai/
+ * requirement-artifact.js) and this #22 evidence layer - see
+ * docs/architecture-model-boundary-v1.md for the full normative contract.
+ * It is a thin adapter, not a second ingestion engine: it validates each
+ * supplied `RequirementArtifact` with RTI-1's own
+ * `assertValidRequirementArtifact()`, deterministically projects it to
+ * plain evidence text (title/content/acceptance-criteria only - never
+ * `source.location`, `metadata`, or any other field), and DELEGATES actual
+ * `EvidenceRef` construction to `ingestRequirementEvidence()` above
+ * unchanged - canonical evidence ownership (the invariant this whole module
+ * exists to establish) is never touched or duplicated by the adapter.
+ *
+ * INPUT SAFETY / GETTER SAFETY: `assertValidRequirementArtifact(artifact,
+ * ...)` is called FIRST, before the adapter reads a single property of
+ * `artifact`. This mirrors scripts/ai/requirement-quality.js's own
+ * established, independently-reviewed precedent for consuming a validated
+ * `RequirementArtifact` exactly: every field the adapter subsequently reads
+ * (`id`, `title`, `content`, `acceptanceCriteria[].id`/`.text`) is EXACTLY
+ * one of the fields RTI-1's own validator already certified via
+ * `getOwnEnumerableDataProperty()` (own, enumerable, data-only - never an
+ * inherited, non-enumerable, or accessor-backed value; a data descriptor
+ * has no getter function left to invoke a second time, so a value already
+ * certified this way cannot differ between the validation call and the
+ * adapter's own read). Execution is fully synchronous with no intervening
+ * async boundary between validation and these reads, so no concurrent
+ * mutation of `artifact` can occur between the two (single-threaded JS, no
+ * I/O in between) - matching requirement-quality.js's own documented
+ * reasoning exactly rather than re-implementing RTI-1's hardening
+ * primitives a second time in this module.
  */
 
 "use strict";
 
 const { ERROR_CODES, err } = require("../generation/errors");
-const { isPlainObject, isBoundedText, collectUnknownKeyErrors, validateProjectId } = require("../generation/primitives");
+const { isPlainObject, isBoundedText, collectUnknownKeyErrors, collectDuplicateIdErrors, validateProjectId } = require("../generation/primitives");
+const { assertValidRequirementArtifact } = require("../requirement-artifact");
 
 // Roadmap #22B-owned bounds - deliberately local to this module, never
 // added to or read from scripts/ai/generation/limits.js (that file bounds
@@ -202,4 +236,146 @@ function ingestRequirementEvidence(input, { expectedProjectId } = {}) {
   return { ok: true, bundle };
 }
 
-module.exports = { ingestRequirementEvidence, LIMITS, EVIDENCE_KIND_USER_INPUT };
+// Roadmap ACG-A3 (Architecture Conformance Gate finding A-3) - the one
+// explicit, opt-in adapter allowed by docs/architecture-model-boundary-v1.md:
+// RequirementArtifact[] -> #22 evidence, never the reverse, never a direct
+// RequirementModel coercion. See this module's own docstring for the full
+// rationale, including the INPUT SAFETY / GETTER SAFETY reasoning this
+// function relies on.
+const ARTIFACT_INPUT_ALLOWED_KEYS = Object.freeze(["projectId", "artifacts"]);
+const INGEST_ARTIFACTS_CALLER_LABEL = "ingestRequirementArtifactsAsEvidence";
+
+// Deterministic, offline, no AI, no summarization: same validated artifact
+// always produces byte-identical evidence text. Field order is fixed
+// (title, then content, then acceptance criteria in original array order).
+// Deliberately excludes `source.location` (never filesystem/executable
+// authority), `metadata` (no evidence-backed reason to surface it yet), and
+// `relationships[]` (structural cross-references, not requirement wording -
+// resolving them would invent an RTI collection-level responsibility
+// RequirementArtifact's own contract explicitly defers). `type`/`priority`/
+// `labels` are likewise left out of v1: none carry requirement *wording*,
+// and omitting them keeps the projection minimal-sufficient rather than
+// maximal - see docs/architecture-model-boundary-v1.md for the full
+// rationale and how to extend this list if a real caller ever needs one of
+// these fields as grounding text.
+function projectRequirementArtifactToEvidenceText(artifact) {
+  const lines = [`Title: ${artifact.title}`];
+  if (typeof artifact.content === "string" && artifact.content.length > 0) {
+    lines.push(`Content: ${artifact.content}`);
+  }
+  if (artifact.acceptanceCriteria.length > 0) {
+    lines.push("Acceptance Criteria:");
+    artifact.acceptanceCriteria.forEach((criterion) => lines.push(`- ${criterion.text}`));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Validates and deterministically adapts `input.artifacts` (RTI-1
+ * `RequirementArtifact[]`) into a canonical #22 evidence bundle, by
+ * delegating actual `EvidenceRef` construction to
+ * `ingestRequirementEvidence()` above unchanged.
+ *
+ * `input` shape: { projectId: string, artifacts: RequirementArtifact[] }.
+ * Every `artifacts[i]` must independently satisfy RTI-1's own
+ * `assertValidRequirementArtifact()` - this adapter never re-implements or
+ * loosens that contract. `artifacts[i].id` values must be unique (an
+ * unambiguous artifact -> evidence mapping is required - see `mapping`
+ * below); a duplicate id fails closed as `DUPLICATE_ID`, matching every
+ * other collection validator in this codebase family
+ * (`collectDuplicateIdErrors()`, scripts/ai/generation/primitives.js).
+ * `artifacts` is bounded by the same `LIMITS.MAX_SOURCES` this module
+ * already enforces for direct-text sources - each artifact becomes exactly
+ * one evidence item, so the same prompt-budget reasoning applies unchanged.
+ *
+ * `options.expectedProjectId` behaves exactly as it does for
+ * `ingestRequirementEvidence()` - passed straight through.
+ *
+ * Returns `{ ok: true, bundle, mapping }` on success - `bundle` is the
+ * IDENTICAL shape `ingestRequirementEvidence()` itself returns (frozen,
+ * canonical `EvidenceRef`s, never caller-influenced), and `mapping` is a
+ * separate, frozen, adapter-owned array of `{ requirementArtifactId,
+ * evidenceRefId }` pairs (input order preserved) giving traceability back
+ * to the source `RequirementArtifact` WITHOUT adding any new field to the
+ * frozen v1 `EvidenceRef` schema. Returns `{ ok: false, errors }` on any
+ * validation failure - errors never echo raw artifact content, matching
+ * this module's own existing privacy convention.
+ */
+function ingestRequirementArtifactsAsEvidence(input, { expectedProjectId } = {}) {
+  const errors = [];
+
+  if (!isPlainObject(input)) {
+    return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "input must be a plain object")] };
+  }
+
+  collectUnknownKeyErrors(input, ARTIFACT_INPUT_ALLOWED_KEYS, "$", errors);
+  validateProjectId(input.projectId, "$.projectId", errors, { expectedProjectId });
+
+  const artifacts = input.artifacts;
+  const validatedArtifacts = [];
+
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    errors.push(err("$.artifacts", ERROR_CODES.MISSING_FIELD, "$.artifacts must be a non-empty array"));
+  } else if (artifacts.length > LIMITS.MAX_SOURCES) {
+    errors.push(err("$.artifacts", ERROR_CODES.INVALID_VALUE, `$.artifacts exceeds the maximum of ${LIMITS.MAX_SOURCES}`));
+  } else {
+    artifacts.forEach((artifact, i) => {
+      const path = `$.artifacts[${i}]`;
+      try {
+        assertValidRequirementArtifact(artifact, INGEST_ARTIFACTS_CALLER_LABEL);
+      } catch (e) {
+        errors.push(err(path, ERROR_CODES.INVALID_VALUE, `${path} is not a valid RequirementArtifact`));
+        return;
+      }
+      // See module docstring's INPUT SAFETY / GETTER SAFETY section - every
+      // field read below was already certified an own-enumerable-data
+      // property by the assertValidRequirementArtifact() call immediately
+      // above, with no intervening async boundary.
+      const acceptanceCriteria = Array.isArray(artifact.acceptanceCriteria)
+        ? artifact.acceptanceCriteria.map((criterion) => ({ id: criterion.id, text: criterion.text }))
+        : [];
+      validatedArtifacts.push({
+        id: artifact.id,
+        title: artifact.title,
+        content: artifact.content,
+        acceptanceCriteria,
+      });
+    });
+
+    // Meaningful only once every artifact was itself individually valid -
+    // matching this module's own existing "only chase valid entries into a
+    // cross-check" convention above.
+    if (validatedArtifacts.length === artifacts.length) {
+      collectDuplicateIdErrors(validatedArtifacts, "id", "$.artifacts", errors);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  // One RequirementArtifact -> exactly one evidence item, preserving input
+  // order, so the index-aligned mapping below is unambiguous.
+  const sources = validatedArtifacts.map((artifact) => ({ text: projectRequirementArtifactToEvidenceText(artifact) }));
+
+  const ingestResult = ingestRequirementEvidence({ projectId: input.projectId, sources }, { expectedProjectId });
+  if (!ingestResult.ok) {
+    return ingestResult;
+  }
+
+  const mapping = deepFreeze(
+    validatedArtifacts.map((artifact, i) => ({
+      requirementArtifactId: artifact.id,
+      evidenceRefId: ingestResult.bundle.evidenceItems[i].evidenceRef.id,
+    }))
+  );
+
+  return { ok: true, bundle: ingestResult.bundle, mapping };
+}
+
+module.exports = {
+  ingestRequirementEvidence,
+  ingestRequirementArtifactsAsEvidence,
+  LIMITS,
+  EVIDENCE_KIND_USER_INPUT,
+};
