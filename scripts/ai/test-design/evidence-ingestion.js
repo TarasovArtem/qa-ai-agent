@@ -326,9 +326,15 @@ function projectRequirementArtifactToEvidenceText(artifact) {
 
 /**
  * Validates and deterministically adapts `input.artifacts` (RTI-1
- * `RequirementArtifact[]`) into a canonical #22 evidence bundle, by
- * delegating actual `EvidenceRef` construction to
- * `ingestRequirementEvidence()` above unchanged.
+ * `RequirementArtifact[]`) into a canonical #22 evidence bundle.
+ *
+ * Artifact validation, projection, and artifact-specific evidence-budget
+ * checks (ACG-A3-R02) are performed in this function. Canonical
+ * `EvidenceRef` construction is then performed by
+ * `buildCanonicalEvidenceBundle()` - the same internal primitive
+ * `ingestRequirementEvidence()` above also uses. This function does NOT
+ * call `ingestRequirementEvidence()` and therefore never exposes that
+ * direct-text path's `$.sources[...]` error surface (ACG-A3-R03).
  *
  * `input` shape: { projectId: string, artifacts: RequirementArtifact[] }.
  * Every `artifacts[i]` must independently satisfy RTI-1's own
