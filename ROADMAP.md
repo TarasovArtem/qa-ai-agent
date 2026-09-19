@@ -169,9 +169,10 @@ evidence](#crw2-b4-closure-evidence) in §8). `B-6` (`CRW2-B6`) is now also
 `CLOSED_ON_MAIN` — the fifth and final of the five parallel-authorized
 findings to close (see [closure evidence](#crw2-b6-closure-evidence) in
 §8). All five original parallel-authorized findings are now
-`CLOSED_ON_MAIN`; `CONFORMANCE-INTEGRATION-CHECK` is now eligible to run
-but has **not** run yet. The Architecture
-Conformance Gate has not started; its own findings (`A-1`, `A-3`, `D-2`)
+`CLOSED_ON_MAIN`, and `CONFORMANCE-INTEGRATION-CHECK` has now **passed**
+(see [integration evidence](#conformance-integration-check-evidence) in
+§6) — the Architecture Conformance Gate is therefore `READY`, but Gate
+**execution** has **not started**; its own findings (`A-1`, `A-3`, `D-2`)
 remain **open**. `D-1` and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
 not itself a slice-status line subject to the ACTIVE-lifecycle exemption
@@ -182,17 +183,19 @@ defined in [§8](#8-current-critical-path).
 ```text
 Execution mode:             PARALLEL AUTHORIZED (owner decision — see §7's
                              "Parallelized Conformance Execution")
-Architecture Gate barrier:  waits for all five findings CLOSED_ON_MAIN
-                             AND a passing CONFORMANCE-INTEGRATION-CHECK
+Architecture Gate barrier:  waited for all five findings CLOSED_ON_MAIN
+                             AND a passing CONFORMANCE-INTEGRATION-CHECK —
+                             both now hold; Gate state: READY / NOT_STARTED
 ```
 
 ```text
                                +-- CRW1-D / B-3 --(CLOSED_ON_MAIN)--+
                                +-- CRW2-A2 / A-2 -(CLOSED_ON_MAIN)--+
 ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORMANCE-INTEGRATION-CHECK
-                               +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+          (eligible, not yet run)
+                               +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+                (PASS)
                                +-- CRW2-B6 / B-6 -(CLOSED_ON_MAIN)--+                v
-                                                                        Architecture Conformance Gate
+                                                              Architecture Conformance Gate
+                                                                (READY / NOT_STARTED)
 ```
 
 `CRW1-D` (`B-3`) is the first of the five originally-authorized parallel
@@ -267,6 +270,12 @@ Only `PASS` sets `Architecture Conformance Gate: READY` — Gate readiness is
 **never** reduced to "all five PRs merged"; both the five closures and a
 passing integration check are required. No additional implementation PR is
 needed solely for this check unless it finds a defect.
+
+**Current result: `PASS`.** The check ran read-only against evaluated
+`main` `c5f7c21cb5ce25cae3649c93796a7ad6c6c3e37a` and found zero actual
+defects — see [integration evidence](#conformance-integration-check-evidence)
+below for the durable summary. `Architecture Conformance Gate: READY` as
+a result; Gate **execution** has not started (see §8).
 
 **Concurrency guidance:** recommended maximum active `HEAVY` implementation
 PRs at once is 3–5 (the five current conformance tracks are an acceptable
@@ -629,8 +638,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          CRW2-B1 / B-1 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B4 / B-4 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B6 / B-6 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN)  }  (PARALLEL ORIGINAL SET)
-  →  CONFORMANCE-INTEGRATION-CHECK (eligible — not yet run)
-  →  Architecture Conformance Gate
+  →  CONFORMANCE-INTEGRATION-CHECK (PASS)
+  →  Architecture Conformance Gate (READY / NOT_STARTED)
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
@@ -661,19 +670,25 @@ the same parallel group throughout. This replaces the previously
 strictly-serial `CRW1-D → CRW2`
 framing — and must not be misread as reconstructing it: there is still no
 serial arrow among any of the five.
-`CONFORMANCE-INTEGRATION-CHECK` is a mandatory synchronization barrier, not
-an optional formality: the Architecture Conformance Gate does not become
-`READY` merely because all five findings closed — it still requires `B-3`,
+`CONFORMANCE-INTEGRATION-CHECK` was a mandatory synchronization barrier, not
+an optional formality: the Architecture Conformance Gate never becomes
+`READY` merely because all five findings closed — it required `B-3`,
 `A-2`, `B-1`, `B-4`, and `B-6` all `CLOSED_ON_MAIN` (all five now are —
-five satisfied conditions, the full original-five predicate) plus a
+five satisfied conditions, the full original-five predicate) **plus** a
 passing
-integration check, which has **not** run yet (all five closure
-conditions are now satisfied; the integration check itself is eligible
-but has not been run). Nothing from `AISEC` onward is
+integration check. Both conditions now hold: the integration check ran
+read-only against current `main` and returned `PASS` (see [integration
+evidence](#conformance-integration-check-evidence) in §8 above), so
+`Architecture Conformance Gate: READY`. Gate **execution** has **not**
+started — this READY state is eligibility, not activation. Nothing from
+`AISEC` onward is
 active, except the narrow,
 explicitly-provisional early-research exception also recorded in §7 (early
 `AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` research, off-`main`, not
-merge-authorized before the Gate). See [§10](#10-mem--agentic-memory-foundation)
+merge-authorized before the Gate). Gate readiness does not change this —
+mainline `AISEC`/`MEM`/`RAG`/`LEARN` remain gated on the Gate's own
+execution and closure, not merely its readiness. See
+[§10](#10-mem--agentic-memory-foundation)
 for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
 `MEM-6` and `MEM-7`.
 
@@ -779,11 +794,14 @@ final of the five parallel-authorized tracks (§6) to close.
 
 **All five original parallel-authorized tracks are now `COMPLETE_ON_MAIN`
 / `CLOSED_ON_MAIN`** — none remains `READY` or `ACTIVE`. `CONFORMANCE-
-INTEGRATION-CHECK` (§6) is now eligible to run — all five of its required
-inputs (`B-3`, `A-2`, `B-1`, `B-4`, `B-6`) are `CLOSED_ON_MAIN` — but it
-has **not** run yet; see §6 for what it checks and what its `PASS` result
-would (and would not) unlock. The Architecture Conformance Gate remains
-`NOT_STARTED` until that check runs and passes.
+INTEGRATION-CHECK` (§6) has now **passed** — all five of its required
+inputs (`B-3`, `A-2`, `B-1`, `B-4`, `B-6`) are `CLOSED_ON_MAIN` and the
+check itself found zero actual defects on the combined current-`main`
+state; see [integration evidence](#conformance-integration-check-evidence)
+above for what it checked and its durable result. The Architecture
+Conformance Gate is therefore **`READY`** — but Gate **execution** has
+**not started**; `READY` is eligibility, not activation, and the Gate's
+own findings (`A-1`, `A-3`, `D-2`) remain open.
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
 "RTI Integrated Audit READY") describe *past* states of this project and
 remain accurate as history in README's own roadmap-by-roadmap record — they
@@ -1070,6 +1088,42 @@ CRW2B6-R04: CLOSED   CRW2B6-R05: CLOSED   CRW2B6-R06: CLOSED
 CRW2B6-R07: CLOSED   CRW2B6-R08: CLOSED   CRW2B6-R09: CLOSED
 B-6: CLOSED_ON_MAIN
 ```
+
+### CONFORMANCE-INTEGRATION-CHECK evidence
+
+```text
+evaluated main:       c5f7c21cb5ce25cae3649c93796a7ad6c6c3e37a
+evaluated TREE:       ffe895e883f2eed33438302be3338bb81b2c8258
+current-main CI:      35434036530 — PASS (event push, exact evaluated SHA)
+
+required inputs:
+B-3: CLOSED_ON_MAIN
+A-2: CLOSED_ON_MAIN
+B-1: CLOSED_ON_MAIN
+B-4: CLOSED_ON_MAIN
+B-6: CLOSED_ON_MAIN
+
+all five closures:                               PRESERVED
+cross-PR consistency:                            PASS
+policy/runtime compatibility:                     PASS
+package/public API:                               PASS
+roadmap coherence:                                PASS
+branch/workflow/evaluation/governance contracts:  AGREE
+unresolved integration defect:                    ABSENT
+zero-open-new-defect:                             PASS
+repository mutation during check:                 NONE
+
+CONFORMANCE-INTEGRATION-CHECK: PASS
+```
+
+This check was performed read-only — it created no branch, commit, or PR,
+and found no BLOCKER/HIGH/MEDIUM/LOW/INFO integration finding. Its `PASS`
+result satisfies the second half of the Architecture Conformance Gate
+barrier (§6); combined with all five findings above being
+`CLOSED_ON_MAIN`, `Architecture Conformance Gate: READY`. Gate
+**execution** has not started — its own findings (`A-1`, `A-3`, `D-2`)
+remain open, and nothing downstream (`AISEC`/`MEM`/`RAG`/`LEARN`) is
+activated by this evidence.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
