@@ -46,7 +46,7 @@
  * below is the ONE explicit, opt-in, one-directional seam between RTI's
  * deterministic `RequirementArtifact` contract (scripts/ai/
  * requirement-artifact.js) and this #22 evidence layer - see
- * docs/architecture-model-boundary-v1.md for the full normative contract.
+ * docs/architecture-model-boundary-v2.md for the full normative contract.
  * It is a thin adapter, not a second ingestion engine: it validates each
  * supplied `RequirementArtifact` with RTI-1's own
  * `assertValidRequirementArtifact()`, deterministically projects it to
@@ -69,12 +69,12 @@
  * artifact-facing `$.artifacts[i]`/`$.artifacts` error - never the
  * direct-text path's internal `$.sources[...]` error, and never silently
  * truncated. Those limits are deliberately equal to `LIMITS` above, not
- * coincidentally: `scripts/ai/test-design/requirement-model-generator.js`
+ * coincidentally: `scripts/ai/generative-test-design/requirement-model-generator.js`
  * (#22C) imports `LIMITS` from this module and independently re-validates
  * every evidence bundle against these exact same thresholds regardless of
  * ingestion path, so no relaxation here could ever be honored end-to-end
  * without also changing that separate, out-of-scope, security-reviewed
- * trust boundary. See docs/architecture-model-boundary-v1.md's "Artifact
+ * trust boundary. See docs/architecture-model-boundary-v2.md's "Artifact
  * evidence budget" section for the full rationale.
  *
  * INPUT SAFETY / GETTER SAFETY: `assertValidRequirementArtifact(artifact,
@@ -129,7 +129,7 @@ const LIMITS = Object.freeze({
 // original bug (silently reusing the direct-text path's own bound) restated
 // unchanged; it is a distinct, explicitly-named, independently-derived
 // contract that happens to land on the same numbers for a specific, provable
-// reason. scripts/ai/test-design/requirement-model-generator.js (#22C)
+// reason. scripts/ai/generative-test-design/requirement-model-generator.js (#22C)
 // imports LIMITS from THIS module and independently re-validates every
 // evidence bundle it receives - regardless of which ingestion path produced
 // it - against these exact same per-item/aggregate thresholds as its own
@@ -140,7 +140,7 @@ const LIMITS = Object.freeze({
 // bundle would simply be rejected later, by #22C's own re-validation, with
 // an even more disconnected error that can no longer be traced back to the
 // originating RequirementArtifact. See
-// docs/architecture-model-boundary-v1.md's "Artifact evidence budget"
+// docs/architecture-model-boundary-v2.md's "Artifact evidence budget"
 // section for the full rationale and its explicit consequence: RTI-1
 // structural validity alone does not guarantee a RequirementArtifact's
 // projection is accepted by this adapter.
@@ -291,7 +291,7 @@ function ingestRequirementEvidence(input, { expectedProjectId } = {}) {
 }
 
 // Roadmap ACG-A3 (Architecture Conformance Gate finding A-3) - the one
-// explicit, opt-in adapter allowed by docs/architecture-model-boundary-v1.md:
+// explicit, opt-in adapter allowed by docs/architecture-model-boundary-v2.md:
 // RequirementArtifact[] -> #22 evidence, never the reverse, never a direct
 // RequirementModel coercion. See this module's own docstring for the full
 // rationale, including the INPUT SAFETY / GETTER SAFETY reasoning this
@@ -309,7 +309,7 @@ const INGEST_ARTIFACTS_CALLER_LABEL = "ingestRequirementArtifactsAsEvidence";
 // RequirementArtifact's own contract explicitly defers). `type`/`priority`/
 // `labels` are likewise left out of v1: none carry requirement *wording*,
 // and omitting them keeps the projection minimal-sufficient rather than
-// maximal - see docs/architecture-model-boundary-v1.md for the full
+// maximal - see docs/architecture-model-boundary-v2.md for the full
 // rationale and how to extend this list if a real caller ever needs one of
 // these fields as grounding text.
 function projectRequirementArtifactToEvidenceText(artifact) {

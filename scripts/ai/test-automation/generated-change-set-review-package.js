@@ -14,7 +14,7 @@
  * AutomationCandidate (that is #22F's own, separate, unrelated human gate),
  * and it never writes to disk, touches Git, or executes generated code -
  * those belong to a later, separate stage (#23F, not built here). This
- * module has no dependency on scripts/ai/test-design/** and no knowledge
+ * module has no dependency on scripts/ai/generative-test-design/** and no knowledge
  * of RequirementModel/TestCaseModel/AutomationCandidate.
  *
  * WHAT #23E ANSWERS: "has a human review decision been recorded against

@@ -1,10 +1,22 @@
-# Architecture Model Boundary v1
+# Architecture Model Boundary v2
 
-CRW2-ACG-A3, addressing Architecture Conformance Gate finding A-3.
+CRW2-ACG-A3, addressing Architecture Conformance Gate finding A-3; path
+transition ACG-D2, addressing finding D-2.
 
-Status: **SUPERSEDED**.
+Status: **CURRENT**.
 
-Superseded by: [`architecture-model-boundary-v2.md`](architecture-model-boundary-v2.md) (ACG-D2).
+Supersedes: [`architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md).
+
+## What changed from v1
+
+The A-3 decision (`SEPARATE_BOUNDED_CONTEXTS`), the single permitted seam
+(`RequirementArtifact[]` → `#22` evidence), the adapter
+`ingestRequirementArtifactsAsEvidence()`, its limits, `EvidenceRef`
+ownership, one-way direction, explicit opt-in and fail-closed validation are
+carried forward unchanged. Only the executable path of the adapter changed:
+ACG-D2 renamed the private directory `scripts/ai/test-design/` to
+`scripts/ai/generative-test-design/`. This is a path/authority transition,
+not a boundary redesign.
 
 Subject: the relationship between RTI's deterministic model stack
 (`RequirementArtifact`, `TestDesignArtifact`) and the `#22`/`#23`
@@ -26,7 +38,7 @@ about this relationship (see `ROADMAP.md`) — but no document actually
 prompts, or provider calls.** It defines the architectural boundary and
 records the one explicit conversion this boundary permits; the runtime
 adapter that implements that one conversion lives in
-[`scripts/ai/test-design/evidence-ingestion.js`](../scripts/ai/test-design/evidence-ingestion.js)
+[`scripts/ai/generative-test-design/evidence-ingestion.js`](../scripts/ai/generative-test-design/evidence-ingestion.js)
 (`ingestRequirementArtifactsAsEvidence()`), reviewed and merged alongside
 this document.
 
@@ -181,7 +193,7 @@ ACG-A3-R02 - discovered during independent review). `RequirementArtifact
 item can carry.
 
 The adapter enforces its own explicit, named budget
-(`ARTIFACT_EVIDENCE_LIMITS` in `scripts/ai/test-design/evidence-ingestion.js`)
+(`ARTIFACT_EVIDENCE_LIMITS` in `scripts/ai/generative-test-design/evidence-ingestion.js`)
 against each artifact's deterministic projection, **before** any evidence
 bundle is built:
 
@@ -199,7 +211,7 @@ projection - a caller either gets the complete projection or a clear
 rejection, never a partial one.
 
 **Why these numbers, specifically, and why they are not raised to match
-RTI-1's own larger limits**: `scripts/ai/test-design/
+RTI-1's own larger limits**: `scripts/ai/generative-test-design/
 requirement-model-generator.js` (`#22C`) imports this same module's shared
 `LIMITS` and independently re-validates every evidence bundle it receives -
 regardless of which ingestion path produced it - against these exact same
@@ -262,9 +274,9 @@ entry point into the same existing evidence layer.
 
 This document does **not** create, imply, or require a public package
 API change. `#22`/`#23` remain intentionally internal (Architecture
-Conformance Gate finding `A-1`, decided separately, not yet
-implemented) — `ingestRequirementArtifactsAsEvidence()` is exported only
-from `scripts/ai/test-design/evidence-ingestion.js` (an internal module
+Conformance Gate finding `A-1`, decided separately as
+`PRIVATE_GENERATIVE_SURFACE` in `package-surface-v2.md`) — `ingestRequirementArtifactsAsEvidence()` is exported only
+from `scripts/ai/generative-test-design/evidence-ingestion.js` (an internal module
 path), never from `scripts/ai/index.js`, and `package.json`'s `exports`
 field is unchanged by this document or its adapter.
 
@@ -285,10 +297,11 @@ never bypass grounding.
 
 - It does not implement `#22`'s or `#23`'s own generation logic, prompts,
   or provider calls.
-- It does not resolve Architecture Conformance Gate finding `A-1`
-  (package/public-API surface) or `D-2` (`test-design.js` vs.
-  `test-design/` naming) — both remain separately decided, separately
-  implemented Gate slices.
+- It does not decide the package/public-API surface (`A-1`, see
+  `package-surface-v2.md`) or change the canonical `ROADMAP.md` status of
+  `D-2` (the `test-design.js` vs. former `test-design/` naming collision,
+  resolved by renaming the private directory) — those are separately
+  decided lifecycle steps.
 - It does not expand `TestDesignArtifact` with step-level structure, and
   does not shrink `TestCaseModel`'s existing structure.
 - It does not create a machine-readable manifest, resolver, or runtime

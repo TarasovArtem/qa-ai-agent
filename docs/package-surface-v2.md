@@ -1,10 +1,24 @@
-# Package Surface v1
+# Package Surface v2
 
-CRW2-ACG-A1, addressing Architecture Conformance Gate finding A-1.
+CRW2-ACG-A1, addressing Architecture Conformance Gate finding A-1; path
+transition ACG-D2, addressing finding D-2.
 
-Status: **SUPERSEDED**.
+Status: **CURRENT**.
 
-Superseded by: [`package-surface-v2.md`](package-surface-v2.md) (ACG-D2).
+Supersedes: [`package-surface-v1.md`](package-surface-v1.md).
+
+## What changed from v1
+
+The A-1 decision (`A1_DECISION: PRIVATE_GENERATIVE_SURFACE`) and every
+semantic rule below are carried forward unchanged. Only the repository path
+of the private `#22` directory changed: ACG-D2 renamed it from
+`scripts/ai/test-design/` to `scripts/ai/generative-test-design/`, while the
+deterministic RTI module `scripts/ai/test-design.js` keeps its identity.
+The distribution file set is unchanged (45 files); because `package.json`
+itself ships and its `files` field changed, the tarball bytes and shasum
+changed: 45 files / `cbbea05237a25d35df5cd026b9e58441bbcc1060` at A-1 (historical),
+45 files / `bdf502ab65327532da238a7d76312cb14b89a7b6` after D-2. The
+manifest path set is identical; only the shipped `package.json` bytes differ.
 
 Subject: the installable product surface of the `qa-ai-agent` npm package —
 which modules are supported public API, and which files are physically
@@ -81,7 +95,7 @@ supported import.
 | other modules transitively required by a public entrypoint (adapters, providers, knowledge loader/schema, validators, RTI modules, and the internal helper modules they require) | `SHIPPED_PRIVATE_RUNTIME_DEPENDENCY` | yes |
 | `scripts/ai/knowledge/units/*.json` (loaded by directory at runtime, so not visible to a static require graph) | `SHIPPED_PRIVATE_RUNTIME_DEPENDENCY` (data) | yes |
 | `scripts/ai/generation/**` | `REPOSITORY_ONLY_PRIVATE` | **no** |
-| `scripts/ai/test-design/**` (directory) | `REPOSITORY_ONLY_PRIVATE` | **no** |
+| `scripts/ai/generative-test-design/**` (directory) | `REPOSITORY_ONLY_PRIVATE` | **no** |
 | `scripts/ai/test-automation/**` | `REPOSITORY_ONLY_PRIVATE` | **no** |
 | `scripts/ai/format-pr-comment.js`, `scripts/ai/normalized-failure.js`, `scripts/ai/pr-comment-client.js` | `REPOSITORY_ONLY_CI_HELPER` | **no** |
 | `*.test.js`, `__fixtures__`, `scripts/ai/evaluation/**` | `TEST_ONLY` / `EVALUATION_ONLY` | no |
@@ -102,11 +116,11 @@ Two rules follow:
    package is not a reason to keep shipping it.
 
 `scripts/ai/test-design.js` (the deterministic RTI module, required by the
-root entrypoint) and `scripts/ai/test-design/` (the private `#22` directory)
-are different paths that happen to share a base name. Node resolves
-`require("./test-design")` to the file first, so the public module is
-unaffected by the directory being excluded. Renaming either is Gate finding
-`D-2` and is **not** decided here.
+root entrypoint) and `scripts/ai/generative-test-design/` (the private `#22`
+directory) no longer share a base name: ACG-D2 (Gate finding `D-2`) renamed
+the private directory from `scripts/ai/test-design/`. `require("./test-design")`
+resolves to the file, unchanged. The A-1 decision itself did not change; only
+the repository path implementing the private surface did.
 
 Three root-level CI helpers (`format-pr-comment.js`, `normalized-failure.js`,
 `pr-comment-client.js`) are `REPOSITORY_ONLY_CI_HELPER`: no supported
@@ -126,15 +140,16 @@ scripts/ai
 !scripts/ai/__fixtures__
 !scripts/ai/evaluation
 !scripts/ai/generation
-!scripts/ai/test-design
+!scripts/ai/generative-test-design
 !scripts/ai/test-automation
 !scripts/ai/format-pr-comment.js
 !scripts/ai/normalized-failure.js
 !scripts/ai/pr-comment-client.js
 ```
 
-At the time of this decision the tarball is 45 files (previously 80): the 35
-removed files are exactly the private `generation` (8), `test-design/` (10)
+The tarball is 45 files (80 before A-1; the file count is unchanged by the D-2
+rename): the 35 files removed by A-1 are exactly the private `generation` (8),
+`generative-test-design/` (10, formerly `test-design/`)
 and `test-automation` (14) trees plus the three repository-only CI helpers
 (3). The removals were verified against the dependency graph — none is
 required by any supported entrypoint.
@@ -160,10 +175,10 @@ assumed excludable.
 
 ## The ACG-A3 adapter
 
-`scripts/ai/test-design/evidence-ingestion.js` — including
+`scripts/ai/generative-test-design/evidence-ingestion.js` — including
 `ingestRequirementArtifactsAsEvidence` — is `REPOSITORY_ONLY_PRIVATE` for
 packaging purposes. The `RequirementArtifact[]` → `#22` evidence seam decided
-by `A-3` (`docs/architecture-model-boundary-v1.md`) exists inside the
+by `A-3` (`docs/architecture-model-boundary-v2.md`) exists inside the
 repository; it does not become a package contract by existing there.
 
 ## Deep-import policy
@@ -209,10 +224,10 @@ review. It must never happen through accidental shipping or deep imports.
 ## What this document does not do
 
 - It does not add, remove or rename any public export or subpath.
-- It does not resolve `D-2` (the `test-design.js` / `test-design/` naming
-  collision).
+- It does not by itself change the canonical `ROADMAP.md` status of `D-2`;
+  that is a separate closure-sync mission after independent review, merge
+  and post-merge certification.
 - It does not decide npm-registry publication, versioning or release policy
   (`ID-3`).
-- It does not close Architecture Conformance Gate finding `A-1` on the
-  canonical `ROADMAP.md` — that is a separate closure-sync mission after
-  independent review, merge and post-merge certification.
+- It does not close the Architecture Conformance Gate. `A-1` is already
+  `CLOSED_ON_MAIN`; Gate closure is a separate lifecycle step.

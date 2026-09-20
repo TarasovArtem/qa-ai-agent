@@ -67,7 +67,7 @@ The result is an architecture where **the AI proposes and the deterministic/huma
 | Multi-provider AI abstraction | **Implemented, one provider CI-wired** | Groq is the real CI provider; Gemini's API compatibility is proven by one controlled call but Gemini is **not** CI-wired (no repository secret) |
 | Multi-framework portability | **Implemented, production** | Both Cypress and Playwright adapters run in real production CI today |
 | Multi-project portability | **Proven - synthetic and real** | Isolation boundary validated against a synthetic second project (Project B, Roadmap FPI-4A) and independently re-proven against a real, independently-existing external repository with a live SUT (`TarasovArtem/TargomoPlaywright`); this repository's own production CI still runs against exactly one real project - the second project exists only as an independently-reviewed, unmerged experiment |
-| Package boundary & public programmatic API | **Implemented, production** | `scripts/ai/index.js` exposes exactly 19 symbols (grown from the original 8 at Roadmap ID-1 through the Roadmap RTI-1 through RTI-8B additions - `collectContext`, `collectHistory`, `analyzeFailure`, `aggregateBrowserContext`, four `assertValid*` config validators, plus the RTI pipeline's `assertValidRequirementArtifact`, `loadRequirementsFromFile`, `analyzeRequirementQuality`/`analyzeRequirementsQuality`, `generateTestDesign`/`generateTestDesigns`, `buildRequirementTraceability`/`analyzeRequirementsCoverage`, `loadRequirementsFromProvider`, `assertValidTestDesignArtifact`, and `publishTestDesigns`) via `package.json`'s `main`/`exports`/`files`; concrete vendor providers/destinations are reachable only via package subpaths (`qa-ai-agent/providers/jira`, `qa-ai-agent/providers/azure-devops`, `qa-ai-agent/destinations/azure-devops`), never the root barrel; adapters and internal helpers are not part of the public surface - see Roadmap ID-1 below and [PROVIDERS.md](PROVIDERS.md)/[PUBLISHING.md](PUBLISHING.md) for the vendor-adapter contracts; the #22/#23 generative implementation (`scripts/ai/generation/`, `scripts/ai/test-design/`, `scripts/ai/test-automation/`) is repository-private - neither exported nor physically shipped in the package (see [docs/package-surface-v1.md](docs/package-surface-v1.md)) |
+| Package boundary & public programmatic API | **Implemented, production** | `scripts/ai/index.js` exposes exactly 19 symbols (grown from the original 8 at Roadmap ID-1 through the Roadmap RTI-1 through RTI-8B additions - `collectContext`, `collectHistory`, `analyzeFailure`, `aggregateBrowserContext`, four `assertValid*` config validators, plus the RTI pipeline's `assertValidRequirementArtifact`, `loadRequirementsFromFile`, `analyzeRequirementQuality`/`analyzeRequirementsQuality`, `generateTestDesign`/`generateTestDesigns`, `buildRequirementTraceability`/`analyzeRequirementsCoverage`, `loadRequirementsFromProvider`, `assertValidTestDesignArtifact`, and `publishTestDesigns`) via `package.json`'s `main`/`exports`/`files`; concrete vendor providers/destinations are reachable only via package subpaths (`qa-ai-agent/providers/jira`, `qa-ai-agent/providers/azure-devops`, `qa-ai-agent/destinations/azure-devops`), never the root barrel; adapters and internal helpers are not part of the public surface - see Roadmap ID-1 below and [PROVIDERS.md](PROVIDERS.md)/[PUBLISHING.md](PUBLISHING.md) for the vendor-adapter contracts; the #22/#23 generative implementation (`scripts/ai/generation/`, `scripts/ai/generative-test-design/`, `scripts/ai/test-automation/`) is repository-private - neither exported nor physically shipped in the package (see [docs/package-surface-v1.md](docs/package-surface-v1.md)) |
 | External-repository installation | **Proven** | A real `npm pack` -> `npm install <tarball>` into a physically separate, mkdtemp-isolated external repository exercised all four generic pipeline stages through the public API only, with zero `scripts/ai` production diff - see Roadmap ID-2 below |
 | Real existing-repository onboarding | **Proven, independently reviewed** | A real, independently-existing, previously-unrelated GitHub repository consumed the installed package via its public API only, with target-owned config/knowledge and its own real Playwright report/workflow - see [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below |
 | Reproducible versioned acquisition | **Proven** | A fresh external consumer, with no producer checkout, no warm npm cache, no SSH keys/agent, and no GitHub token of any kind, independently and reproducibly acquired an immutable, version-addressable git-tag reference (`github:TarasovArtem/qa-ai-agent#<tag>`) over anonymous HTTPS (`codeload.github.com`) - see [Roadmap FPI-2 - Terminal Audit](#roadmap-fpi-2--terminal-audit--full-project-independence) below |
@@ -181,7 +181,7 @@ Full detail: [Current Multi-Framework Status](#current-multi-framework-status), 
                                     Test Case), see PUBLISHING.md
       evaluation/                  Dataset/Baseline v1-v6, evaluate/regression scripts
       generation/                  #22/23-F0 shared contracts (RequirementModel, TestCaseModel, ...)
-      test-design/                 #22 AI Test Design (evidence -> reviewed design)
+      generative-test-design/      #22 AI Test Design (evidence -> reviewed design)
       test-automation/             #23 AI Test Automation (design -> controlled execution)
       *.js                         Core triage pipeline (collection, correlation, prompt, policy);
                                     also the RTI-1..RTI-6/RTI-8B generic RTI pipeline modules
@@ -1188,11 +1188,11 @@ depends on.
     ./scripts/ai/generation/automation-candidate.js
     ./scripts/ai/generation/automation-plan.js
 
-    ./scripts/ai/test-design/evidence-ingestion.js
-    ./scripts/ai/test-design/requirement-model-generator.js
-    ./scripts/ai/test-design/test-case-model-generator.js
-    ./scripts/ai/test-design/test-design-review-package.js
-    ./scripts/ai/test-design/test-design-review-record.js
+    ./scripts/ai/generative-test-design/evidence-ingestion.js
+    ./scripts/ai/generative-test-design/requirement-model-generator.js
+    ./scripts/ai/generative-test-design/test-case-model-generator.js
+    ./scripts/ai/generative-test-design/test-design-review-package.js
+    ./scripts/ai/generative-test-design/test-design-review-record.js
 
     ./scripts/ai/test-automation/automation-repository-context.js
     ./scripts/ai/test-automation/automation-plan-generator.js

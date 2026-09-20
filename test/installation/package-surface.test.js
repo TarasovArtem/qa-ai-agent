@@ -3,7 +3,7 @@
 /**
  * Roadmap ACG-A1 (Architecture Conformance Gate finding A-1): the package's
  * PHYSICAL distribution surface must match its SUPPORTED public surface -
- * see docs/package-surface-v1.md (A1_DECISION: PRIVATE_GENERATIVE_SURFACE).
+ * see docs/package-surface-v2.md (A1_DECISION: PRIVATE_GENERATIVE_SURFACE).
  *
  * Every assertion here inspects an ACTUAL artifact - `npm pack --dry-run
  * --json`'s own manifest, a real `npm pack` tarball installed into a fresh
@@ -51,11 +51,17 @@ const EXPECTED_ROOT_EXPORTS = [
 
 const EXPECTED_EXPORT_MAP_KEYS = [".", "./destinations/azure-devops", "./package.json", "./providers/azure-devops", "./providers/jira"];
 
-const PRIVATE_TREES = ["scripts/ai/generation/", "scripts/ai/test-design/", "scripts/ai/test-automation/"];
+const PRIVATE_TREES = ["scripts/ai/generation/", "scripts/ai/generative-test-design/", "scripts/ai/test-automation/"];
+
+// ACG-D2: the private #22 directory was renamed away from the name it shared
+// with the deterministic RTI module scripts/ai/test-design.js. The old
+// directory path must stay gone, unexported and uninstalled.
+const OLD_PRIVATE_DIRECTORY = "scripts/ai/test-design/";
+const OLD_PATH_DEEP_IMPORTS = ["qa-ai-agent/scripts/ai/test-design/evidence-ingestion.js"];
 
 // ACG-A1-R01: no supported entrypoint and no shipped module requires these;
 // their only consumers are this repository's own tests and GitHub Actions
-// workflow (REPOSITORY_ONLY_CI_HELPER in docs/package-surface-v1.md).
+// workflow (REPOSITORY_ONLY_CI_HELPER in docs/package-surface-v2.md).
 const REPOSITORY_ONLY_CI_HELPERS = ["scripts/ai/format-pr-comment.js", "scripts/ai/normalized-failure.js", "scripts/ai/pr-comment-client.js"];
 
 // Non-JS files a tarball may contain besides runtime-discovered knowledge data.
@@ -65,8 +71,8 @@ const PACKAGE_METADATA_FILES = ["package.json", "README.md"];
 // layer (including the ACG-A3 adapter), a #22 generator, and a #23 module.
 const PRIVATE_DEEP_IMPORTS = [
   "qa-ai-agent/scripts/ai/generation/requirement-model.js",
-  "qa-ai-agent/scripts/ai/test-design/evidence-ingestion.js",
-  "qa-ai-agent/scripts/ai/test-design/requirement-model-generator.js",
+  "qa-ai-agent/scripts/ai/generative-test-design/evidence-ingestion.js",
+  "qa-ai-agent/scripts/ai/generative-test-design/requirement-model-generator.js",
   "qa-ai-agent/scripts/ai/test-automation/generate-change-set.js",
 ];
 
@@ -92,8 +98,16 @@ test("A-1 manifest: the supported entrypoints and every explicit subpath target 
   assert.ok(manifestSet.has("scripts/ai/index.js"));
 });
 
-test("A-1 manifest: the deterministic RTI module test-design.js ships (it is NOT the private test-design/ directory)", () => {
+test("A-1 manifest: the deterministic RTI module test-design.js ships (it is NOT the private generative-test-design/ directory)", () => {
   assert.ok(manifestSet.has("scripts/ai/test-design.js"));
+});
+
+test("D-2 repository namespace: test-design.js is a file, the old test-design/ directory is gone, generative-test-design/ is a directory", () => {
+  const stat = (rel) => fs.statSync(path.join(REPO_ROOT, rel), { throwIfNoEntry: false });
+  assert.equal(stat("scripts/ai/test-design.js")?.isFile(), true, "scripts/ai/test-design.js must be a file");
+  assert.equal(stat("scripts/ai/test-design"), undefined, "scripts/ai/test-design/ must not exist (D-2 collision)");
+  assert.equal(stat("scripts/ai/generative-test-design")?.isDirectory(), true, "scripts/ai/generative-test-design/ must be a directory");
+  assert.equal(require.resolve("../../scripts/ai/test-design"), path.join(REPO_ROOT, "scripts/ai/test-design.js"), "require(\"./test-design\") must resolve to the RTI file");
 });
 
 test("A-1 manifest: no file from the private #22/#23 trees is shipped", () => {
@@ -104,7 +118,8 @@ test("A-1 manifest: no file from the private #22/#23 trees is shipped", () => {
       `${tree} must not be in the tarball`
     );
   }
-  assert.equal(manifestSet.has("scripts/ai/test-design/evidence-ingestion.js"), false, "the ACG-A3 adapter is private");
+  assert.equal(manifestSet.has("scripts/ai/generative-test-design/evidence-ingestion.js"), false, "the ACG-A3 adapter is private");
+  assert.deepEqual(manifest.filter((f) => f.startsWith(OLD_PRIVATE_DIRECTORY)), [], "the old private path must not appear in the tarball");
 });
 
 test("A-1 manifest: the three repository-only CI helpers are not shipped (they remain in the repository)", () => {
@@ -139,7 +154,7 @@ function stripComments(src) {
 
 // Node's own resolution order for a relative specifier: exact file, .js,
 // .json, then directory index - so `./test-design` resolves to the file
-// test-design.js even though a same-named directory exists (Gate finding D-2).
+// test-design.js (Gate finding D-2 removed the same-named directory).
 function resolveRelative(fromRel, spec) {
   const base = path.posix.join(path.posix.dirname(fromRel), spec);
   for (const candidate of [base, `${base}.js`, `${base}.json`, `${base}/index.js`]) {
@@ -237,7 +252,7 @@ for (const s of ["qa-ai-agent/providers/jira", "qa-ai-agent/providers/azure-devo
   try { const m = require(s); out.subpaths[s] = { ok: true, keys: Object.keys(m).sort() }; }
   catch (e) { out.subpaths[s] = { ok: false, code: e.code, message: e.message }; }
 }
-for (const s of ${JSON.stringify(PRIVATE_DEEP_IMPORTS)}) {
+for (const s of ${JSON.stringify([...PRIVATE_DEEP_IMPORTS, ...OLD_PATH_DEEP_IMPORTS])}) {
   try { require(s); out.deep[s] = { loaded: true }; }
   catch (e) { out.deep[s] = { loaded: false, code: e.code }; }
 }
@@ -341,7 +356,7 @@ for (const kind of ["tarball", "git"]) {
   });
 
   test(`A-1 ${label}: private deep imports are blocked by exports (proof A: encapsulation)`, () => {
-    for (const spec of PRIVATE_DEEP_IMPORTS) {
+    for (const spec of [...PRIVATE_DEEP_IMPORTS, ...OLD_PATH_DEEP_IMPORTS]) {
       assert.deepEqual(consumers[kind].result.deep[spec], { loaded: false, code: "ERR_PACKAGE_PATH_NOT_EXPORTED" }, spec);
     }
   });
@@ -351,7 +366,7 @@ for (const kind of ["tarball", "git"]) {
       const rel = spec.replace("qa-ai-agent/", "");
       assert.equal(fs.existsSync(path.join(consumers[kind].installed, rel)), false, `${rel} must not be installed`);
     }
-    for (const tree of PRIVATE_TREES) {
+    for (const tree of [...PRIVATE_TREES, OLD_PRIVATE_DIRECTORY]) {
       assert.equal(fs.existsSync(path.join(consumers[kind].installed, tree)), false, `${tree} must not be installed`);
     }
     assert.equal(fs.existsSync(path.join(consumers[kind].installed, "scripts/ai/test-design.js")), true, "the RTI module must be installed");
