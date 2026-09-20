@@ -1,34 +1,46 @@
-# Governance Process v2
+# Governance Process v3
 
 CRW2-B6, addressing conformance finding B-6.
 
-Status: **SUPERSEDED**
-Superseded by: [`governance-process-v3.md`](governance-process-v3.md)
-Supersedes: [`governance-process-v1.md`](governance-process-v1.md)
+Status: **CURRENT**
+Supersedes: [`governance-process-v2.md`](governance-process-v2.md)
 
-## Why v2 exists
+## Why v3 exists
 
-Governance Process v1's own "Change control" rule (below, carried forward
-unchanged) classifies *"a new knowledge domain added"* to the catalog as a
-**normative change** requiring a version bump — never a catalog-only
-synchronization. Architecture Conformance Gate finding `A-3` introduced
-exactly that: a new normative architecture-boundary contract
-([`docs/architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md),
-defining the relationship between RTI's deterministic model stack and the
-`#22`/`#23` generative model stack). Per v1's own rule, this requires `v1`
-to be marked superseded and `v2` to carry the new
-`ARCHITECTURE_MODEL_BOUNDARY` catalog entry — this document performs
-exactly that transition, atomically, in the same reviewed PR that
-introduces the new domain, following v1's own "Case A" atomic-transition
-model (see "Change control" below) applied to this document's own
-self-version-transition worked example.
+Architecture Conformance Gate finding `A-1` introduced the first versioned
+normative contract for the **existing** `PACKAGE_GOVERNANCE` knowledge domain:
+[`docs/package-surface-v1.md`](package-surface-v1.md) (decision
+`A1_DECISION: PRIVATE_GENERATIVE_SURFACE`), which defines the supported
+public surface (`exports`) separately from the physical distribution surface
+(`files`). Until now that domain's catalog row recorded its version as
+*implicit* and its normative source as the `package.json` `files` field
+itself.
+
+This is **not** catalog synchronization under this document's own "Change
+control" rule. Catalog synchronization requires (condition 1) that the change
+follow Case A or Case B, and (condition 5) that the prior version of the
+referenced contract be explicitly marked superseded. Here there is no
+predecessor artifact: the prior "version" is an unversioned field of
+`package.json`, which stays the domain's executable authority and cannot be
+marked `SUPERSEDED`. Case A and Case B cannot apply, so the change is a
+**normative change** requiring a new version of this document — performed
+atomically, in the same reviewed PR that introduces the new contract, per
+Case A applied to this document itself (see "Change control" below). It was
+deliberately not deferred: the catalog would otherwise point at a normative
+source that disagrees with the package's real contract.
+
+Version history: `v1` established the catalog and the review/merge rules;
+`v2` added the `ARCHITECTURE_MODEL_BOUNDARY` domain (finding `A-3`); `v3`
+gives `PACKAGE_GOVERNANCE` its first versioned normative source (finding
+`A-1`).
 
 **No other normative rule changes in this transition.** The authority
 hierarchy, the independent-review/self-approval/self-merge/self-closure
 prohibition, merge method, post-merge certification, zero-open-new-defect
 policy, metadata-truth synchronization, current/historical/supersession
-semantics, conflict handling, and every existing catalog entry besides the
-one addition below are carried forward from `v1` unchanged.
+semantics, conflict handling, and every catalog entry other than
+`PACKAGE_GOVERNANCE` and this document's own `REVIEW_MERGE_GOVERNANCE`
+pointer are carried forward from `v2` unchanged.
 
 ## Why this exists
 
@@ -74,16 +86,17 @@ do" below for the explicit boundary.
 | `EVALUATION_EXECUTION` | Evaluation/regression merge-blocking policy (v1-v6) | v1 | [`docs/evaluation-execution-policy-v1.md`](evaluation-execution-policy-v1.md) | [`scripts/ai/evaluation/execution-policy.js`](../scripts/ai/evaluation/execution-policy.js) | CURRENT | — | Reviewed PR satisfying that document's own four-point promotion criteria |
 | `QA_GENERATION_CONTRACTS` | `RequirementModel`→`TestCaseModel`→`AutomationCandidate`→`AutomationPlan` data contracts | v1 | [`docs/qa-generation-contracts-v1.md`](qa-generation-contracts-v1.md) | `scripts/ai/generation/*` | CURRENT | — | Reviewed PR updating doc and validators together |
 | `ARCHITECTURE_MODEL_BOUNDARY` | Relationship between deterministic RTI artifacts (`RequirementArtifact`, `TestDesignArtifact`) and `#22`/`#23` generative models (`RequirementModel`, `TestCaseModel`); allowed cross-context adapter boundary | v1 | [`docs/architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md) | RequirementArtifact validator: [`scripts/ai/requirement-artifact.js`](../scripts/ai/requirement-artifact.js); `#22` generative validators: `scripts/ai/generation/*`; allowed evidence adapter: [`scripts/ai/test-design/evidence-ingestion.js`](../scripts/ai/test-design/evidence-ingestion.js) | CURRENT | — | Reviewed PR changing the normative boundary contract and any executable adapter/validators affected by that contract together |
-| `REVIEW_MERGE_GOVERNANCE` | Independent-review requirement, self-approval/self-merge/self-closure prohibition, merge method, post-merge certification, zero-open-new-defect policy | v2 | **this document**, §"Review, merge, and lifecycle process" | none (human/process rule, not automated) | CURRENT | v1 | Reviewed PR to this document |
+| `REVIEW_MERGE_GOVERNANCE` | Independent-review requirement, self-approval/self-merge/self-closure prohibition, merge method, post-merge certification, zero-open-new-defect policy | v3 | **this document**, §"Review, merge, and lifecycle process" | none (human/process rule, not automated) | CURRENT | v2 | Reviewed PR to this document |
 | `LIFECYCLE_STATUS_AUTHORITY` | Current sequence, active gate, per-finding lifecycle state | continuously updated in place (not per-edit versioned) | [`ROADMAP.md`](../ROADMAP.md) §2/§6/§8 | none — ROADMAP.md itself is the authority | CURRENT | — | Reviewed PR per this project's own standing merge-gate process |
-| `PACKAGE_GOVERNANCE` | What ships in the published npm package | implicit (tracked by `package.json` `files`) | `package.json` `files` field | `npm pack` | CURRENT | — | Reviewed PR changing `files` |
+| `PACKAGE_GOVERNANCE` | What ships in the published npm package, and which modules are the supported public surface (`exports` vs. `files`; private generative surface) | v1 | [`docs/package-surface-v1.md`](package-surface-v1.md) | [`package.json`](../package.json) `exports`/`files` (declaration); `npm pack` (actual artifact); enforced by [`test/installation/package-surface.test.js`](../test/installation/package-surface.test.js) | CURRENT | — (previously implicit and unversioned: the `package.json` `files` field alone) | Reviewed PR changing the contract and `package.json` `exports`/`files` together |
 
 This catalog references existing content; it does not duplicate any of
 the above documents' own substance. `BRANCH_GOVERNANCE`, `EVALUATION_EXECUTION`,
-`QA_GENERATION_CONTRACTS`, `LIFECYCLE_STATUS_AUTHORITY`, and
-`PACKAGE_GOVERNANCE` are unchanged by this `v2` transition — only
-`REVIEW_MERGE_GOVERNANCE` (now pointing at `v2`, superseding `v1`) and the
-new `ARCHITECTURE_MODEL_BOUNDARY` entry changed.
+`QA_GENERATION_CONTRACTS`, `ARCHITECTURE_MODEL_BOUNDARY`, and
+`LIFECYCLE_STATUS_AUTHORITY` are unchanged by this `v3` transition — only
+`REVIEW_MERGE_GOVERNANCE` (now pointing at `v3`, superseding `v2`) and
+`PACKAGE_GOVERNANCE` (now versioned, pointing at
+`docs/package-surface-v1.md`) changed.
 
 ## Authority hierarchy
 
@@ -212,10 +225,11 @@ without restating every operational checklist already living in
   closes the apparent paradox of "editing v1 to say superseded": the
   edit is a terminal status marker, not a substantive change, and by
   itself never triggers a version bump of the document being marked (see
-  "Change control" below for the full rule). This document's own
-  transition from `v1` to `v2` applied exactly this rule to itself — see
-  [`governance-process-v1.md`](governance-process-v1.md)'s own terminal
-  marker.
+  "Change control" below for the full rule). Each of this document's own
+  transitions (`v1` → `v2`, `v2` → `v3`) applied exactly this rule to
+  the predecessor — see the terminal markers in
+  [`governance-process-v1.md`](governance-process-v1.md) and
+  [`governance-process-v2.md`](governance-process-v2.md).
 
 ## Conflict handling (fail-closed)
 
@@ -274,11 +288,11 @@ self-modification. There are five kinds of change:
   successor become the sole `CURRENT` version and the predecessor become
   canonically `SUPERSEDED` — there is no intermediate state on `main`
   where the catalog points to a stale or nonexistent version. **This
-  document's own `v1` → `v2` transition follows this exact Case A model
+  document's own `v2` → `v3` transition follows this exact Case A model
   applied to itself** (see the worked example below) — it was performed
   atomically, in the same reviewed PR that introduced the
-  `ARCHITECTURE_MODEL_BOUNDARY` domain triggering it, never as a
-  postponed Case B repair.
+  `docs/package-surface-v1.md` contract triggering it (as `v1` → `v2` was
+  for `ARCHITECTURE_MODEL_BOUNDARY`), never as a postponed Case B repair.
 
   **Case B — catalog repair / late synchronization (the exception).** A
   successor version already exists on `main` from a previously accepted,
@@ -294,15 +308,18 @@ self-modification. There are five kinds of change:
 - **Normative change** (a new knowledge domain added, the authority
   hierarchy reordered, a rule in "Review, merge, and lifecycle process"
   amended, or a catalog-pointer update that fails any catalog-
-  synchronization condition above): new version (`v2`) of *this*
-  document, with the prior version explicitly marked superseded per the
+  synchronization condition above): new version of *this*
+  document (`v2` after `v1`, `v3` after `v2`, ...), with the prior version explicitly marked superseded per the
   rule above — never deleted, never left ambiguous. Introducing a
   successor artifact for *another* cataloged domain (Case A above) is
   not, by itself, a normative change to this document — the referenced
-  domain's own version changes; this document's own rules do not. This
-  `v1` → `v2` transition is itself an example of a genuine normative
-  change: a new knowledge domain (`ARCHITECTURE_MODEL_BOUNDARY`) was
-  added to the catalog.
+  domain's own version changes; this document's own rules do not. Two
+  transitions of this document are examples: `v1` → `v2` (a new
+  knowledge domain, `ARCHITECTURE_MODEL_BOUNDARY`, was added) and `v2` →
+  `v3` (an existing domain, `PACKAGE_GOVERNANCE`, gained its first
+  versioned normative source; not catalog synchronization, because no
+  predecessor artifact exists to mark superseded, so Case A/Case B cannot
+  apply and synchronization condition 1 fails).
 - **Retirement/deprecation**: an entry may be marked retired if its
   subject no longer applies; it is never removed silently.
 - **Emergency correction**: allowed, without a version bump, **only**
@@ -353,32 +370,33 @@ outcome.
 
 ### Worked example — this document's own normative change
 
-**Base `main`:** `governance-process-v1.md` is `CURRENT` for
+**Base `main`:** `governance-process-v2.md` is `CURRENT` for
 `REVIEW_MERGE_GOVERNANCE`.
 
-**Transition PR** (one exact HEAD) adds `docs/governance-process-v2.md`
-— its own text declaring `Supersedes: governance-process-v1.md`, and
-carrying `v2`'s own copy of the full knowledge catalog (including its
+**Transition PR** (one exact HEAD) adds `docs/governance-process-v3.md`
+— its own text declaring `Supersedes: governance-process-v2.md`, and
+carrying `v3`'s own copy of the full knowledge catalog (including its
 own `REVIEW_MERGE_GOVERNANCE` row, now pointing at itself); adds the
-terminal `Status: SUPERSEDED` / `Superseded by: governance-process-v2.md`
-header to `governance-process-v1.md` (its historical `v1` policy body
-not otherwise edited, never mutated into a "v1.1"); and updates any
-other in-repository reference that pointed at `v1`.
+terminal `Status: SUPERSEDED` / `Superseded by: governance-process-v3.md`
+header to `governance-process-v2.md` (its historical `v2` policy body
+not otherwise edited, never mutated into a "v2.1"); and updates any
+other in-repository reference that pointed at `v2`. The earlier
+`v1` → `v2` transition followed the same pattern.
 
-**Before merge:** `main` still has `governance-process-v1.md` as
-`CURRENT` — the open PR's `v2` is not yet authoritative, exactly as in
+**Before merge:** `main` still has `governance-process-v2.md` as
+`CURRENT` — the open PR's `v3` is not yet authoritative, exactly as in
 Case A.
 
-**After merge and certification:** `governance-process-v2.md` is the
-sole `CURRENT` governance-process contract; `v1` is `SUPERSEDED` and
-purely historical — a future reader consults `v2`'s own catalog table
-going forward, not `v1`'s. Unlike the `BRANCH_GOVERNANCE` example, this
-transition **does** require the version bump: the rules `governance-
-process` itself governs changed (a new catalog domain was added), so
-this is a **normative change**, not catalog synchronization, per
-"Change control" above. **This is exactly the transition this document
-itself is: `v2`, produced by this same worked example applied to itself,
-introducing the `ARCHITECTURE_MODEL_BOUNDARY` domain.**
+**After merge and certification:** `governance-process-v3.md` is the
+sole `CURRENT` governance-process contract; `v2` (and `v1`) are
+`SUPERSEDED` and purely historical — a future reader consults `v3`'s own
+catalog table going forward. Unlike the `BRANCH_GOVERNANCE` example, this
+transition **does** require the version bump: the catalog pointer for an
+existing domain moved to a first versioned source with no predecessor
+artifact, so this is a **normative change**, not catalog synchronization,
+per "Change control" above. **This is exactly the transition this document
+itself is: `v3`, produced by this same worked example applied to itself,
+giving `PACKAGE_GOVERNANCE` its first versioned normative source.**
 
 ### Fail-closed transition rule
 
@@ -421,9 +439,9 @@ model-generated policy change becomes trusted merely by being generated
 or merely by existing in the repository — presence in the repository is
 not, by itself, proof of normative authority (see "Authority hierarchy").
 Any future change to this document still goes through the same
-independent-review process this document itself defines. This `v2`
-document was itself introduced through exactly that same independent-
-review process — no self-modification occurred.
+independent-review process this document itself defines. Each
+version of this document (`v1`, `v2`, `v3`) was introduced through exactly
+that same independent-review process — no self-modification occurred.
 
 ## Explicit out-of-scope
 
@@ -442,6 +460,10 @@ review process — no self-modification occurred.
   by catalog entry above (`ARCHITECTURE_MODEL_BOUNDARY`), never
   duplicated here. Model-relationship rules live in
   `docs/architecture-model-boundary-v1.md`, not in this document.
+- **`A-1`'s own package-surface contract substance** — referenced by
+  catalog entry above (`PACKAGE_GOVERNANCE`), never duplicated here. The
+  public-vs-physical package rules live in `docs/package-surface-v1.md`,
+  not in this document.
 - **Security-reporting redesign** — `SECURITY.md`'s own reporting/trust
   boundaries are unchanged by this document.
 
@@ -449,7 +471,7 @@ review process — no self-modification occurred.
 
 - It does not close `B-1`, `A-2`, or `B-4` — all three are already
   `CLOSED_ON_MAIN`, referenced here only as catalog entries.
-- It does not close Architecture Conformance Gate finding `A-3` on
+- It does not close Architecture Conformance Gate finding `A-1` on
   canonical `ROADMAP.md` — that remains a separate, later closure-sync
   mission, after independent review, merge, and post-merge certification
   of the implementation this catalog entry now indexes.

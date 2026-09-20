@@ -17,7 +17,10 @@
     "scripts/ai",
     "!scripts/ai/**/*.test.js",
     "!scripts/ai/__fixtures__",
-    "!scripts/ai/evaluation"
+    "!scripts/ai/evaluation",
+    "!scripts/ai/generation",
+    "!scripts/ai/test-design",
+    "!scripts/ai/test-automation"
   ],
   "scripts": {
     "cypress:open": "cypress open",
