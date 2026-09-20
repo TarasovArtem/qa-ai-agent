@@ -768,7 +768,7 @@ parallel-authorized tracks (§6) to close.
 definition above, this slice exited `ACTIVE` when that proof completed.
 `CRW2-A2` closed `A-2` — the evaluation/regression merge-blocking policy is
 now formally specified
-([`docs/evaluation-execution-policy-v1.md`](../docs/evaluation-execution-policy-v1.md))
+([`docs/evaluation-execution-policy-v1.md`](docs/evaluation-execution-policy-v1.md))
 and enforced by a single runtime authority
 (`scripts/ai/evaluation/execution-policy.js`): `v1`-`v5` are `INFORMATIONAL`,
 `v6` is `STRICT` — this records the already-certified implementation
@@ -780,8 +780,8 @@ the second of the five parallel-authorized tracks (§6) to close.
 definition above, this slice exited `ACTIVE` when that proof completed.
 `CRW2-B1` closed `B-1` — a versioned, durable, machine-readable branch
 inventory/classification authority now exists
-([`docs/branch-inventory-v1.md`](../docs/branch-inventory-v1.md),
-[`scripts/diagnostics/branch-inventory.js`](../scripts/diagnostics/branch-inventory.js)):
+([`docs/branch-inventory-v1.md`](docs/branch-inventory-v1.md),
+[`scripts/diagnostics/branch-inventory.js`](scripts/diagnostics/branch-inventory.js)):
 one named long-lived branch (`main`) plus thirteen evidenced transient/
 automation classes, fail-closed manifest validation, and fail-closed branch
 classification (an unrecognized branch is `UNKNOWN`, a malformed manifest
@@ -1646,7 +1646,7 @@ Wave 2 finding) and `A-3` (the first Gate-owned finding to close, via
   that surface.
 - **`A-2` — `CLOSED_ON_MAIN`** — evaluation/regression merge-blocking policy
   is formally specified by
-  [`docs/evaluation-execution-policy-v1.md`](../docs/evaluation-execution-policy-v1.md)
+  [`docs/evaluation-execution-policy-v1.md`](docs/evaluation-execution-policy-v1.md)
   and enforced by a single runtime authority
   (`scripts/ai/evaluation/execution-policy.js`): `v1`-`v5` are `INFORMATIONAL`
   (report `REGRESSED` truthfully, never block — a deliberate, evidenced
