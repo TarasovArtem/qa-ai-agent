@@ -169,11 +169,16 @@ evidence](#crw2-b4-closure-evidence) in §8). `B-6` (`CRW2-B6`) is now also
 `CLOSED_ON_MAIN` — the fifth and final of the five parallel-authorized
 findings to close (see [closure evidence](#crw2-b6-closure-evidence) in
 §8). All five original parallel-authorized findings are now
-`CLOSED_ON_MAIN`, and `CONFORMANCE-INTEGRATION-CHECK` has now **passed**
-(see [integration evidence](#conformance-integration-check-evidence) in
-§6) — the Architecture Conformance Gate is therefore `READY`, but Gate
-**execution** has **not started**; its own findings (`A-1`, `A-3`, `D-2`)
-remain **open**. `D-1` and `D-3` remain explicitly **DEFERRED**. This
+`CLOSED_ON_MAIN`, and `CONFORMANCE-INTEGRATION-CHECK` passed (see
+[integration evidence](#conformance-integration-check-evidence) in
+§8) — which made the Architecture Conformance Gate `READY` (eligibility,
+not activation). Gate **execution** has since **started**: the
+Architecture Conformance Gate is now **`ACTIVE`** / `IN_EXECUTION` (see
+"Gate-level status" in [§8](#8-current-critical-path)). Its first owned
+finding, `A-3`, is now `CLOSED_ON_MAIN` (`ACG-A3`, PR #171 — see [closure
+evidence](#acg-a3-closure-evidence) in §8); its remaining findings `A-1`
+and `D-2` remain **open**, and the Gate itself is **not** closed. `D-1`
+and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
 not itself a slice-status line subject to the ACTIVE-lifecycle exemption
 defined in [§8](#8-current-critical-path).
@@ -185,7 +190,9 @@ Execution mode:             PARALLEL AUTHORIZED (owner decision — see §7's
                              "Parallelized Conformance Execution")
 Architecture Gate barrier:  waited for all five findings CLOSED_ON_MAIN
                              AND a passing CONFORMANCE-INTEGRATION-CHECK —
-                             both now hold; Gate state: READY / NOT_STARTED
+                             both held, making the Gate READY; Gate
+                             execution has since started (ACG-A3), so
+                             Gate state now: ACTIVE / IN_EXECUTION
 ```
 
 ```text
@@ -195,7 +202,8 @@ ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORM
                                +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+                (PASS)
                                +-- CRW2-B6 / B-6 -(CLOSED_ON_MAIN)--+                v
                                                               Architecture Conformance Gate
-                                                                (READY / NOT_STARTED)
+                                                                (ACTIVE / IN_EXECUTION)
+                                                              [A-3 CLOSED_ON_MAIN; A-1 + D-2 OPEN]
 ```
 
 `CRW1-D` (`B-3`) is the first of the five originally-authorized parallel
@@ -274,8 +282,9 @@ needed solely for this check unless it finds a defect.
 **Current result: `PASS`.** The check ran read-only against evaluated
 `main` `c5f7c21cb5ce25cae3649c93796a7ad6c6c3e37a` and found zero actual
 defects — see [integration evidence](#conformance-integration-check-evidence)
-below for the durable summary. `Architecture Conformance Gate: READY` as
-a result; Gate **execution** has not started (see §8).
+below for the durable summary. The Architecture Conformance Gate became
+`READY` as a result (eligibility, not activation); Gate **execution** has
+since started and the Gate is now `ACTIVE` (see §8).
 
 **Concurrency guidance:** recommended maximum active `HEAVY` implementation
 PRs at once is 3–5 (the five current conformance tracks are an acceptable
@@ -604,10 +613,17 @@ only under these conditions:
   threats, draft ADR options, and define *provisional* taxonomy/trust
   models. It may **not** be treated as accepted architecture.
 - Every early AISEC/MEM research PR/document must include an explicit
-  **Assumptions** section stating at minimum: `A-1` unresolved, `A-3`
-  unresolved, `D-2` unresolved, Architecture Conformance Gate not closed —
-  plus its own provisional conclusions, and an explicit statement that those
-  conclusions "must be revalidated after Architecture Gate: YES".
+  **Assumptions** section stating at minimum, as of the `main` state it was
+  written against: `A-1` unresolved, `D-2` unresolved, `A-3`
+  `CLOSED_ON_MAIN` (decided as `SEPARATE_BOUNDED_CONTEXTS` — see
+  [`docs/architecture-model-boundary-v1.md`](docs/architecture-model-boundary-v1.md)
+  and [`ACG-A3` closure evidence](#acg-a3-closure-evidence)), Architecture
+  Conformance Gate not closed — plus its own provisional conclusions, and
+  an explicit statement that those conclusions "must be revalidated after
+  Architecture Gate: YES". (This bullet originally required `A-3` to be
+  stated as unresolved, which was accurate until `A-3` closed on `main`;
+  research written earlier may retain that historical assumption state
+  until its mandatory post-Gate revalidation.)
 - Before Architecture Gate closure, early research may **not** finalize the
   public product surface, public API contract, runtime authority contract,
   persistence schema, final threat-model scope, an accepted security ADR, or
@@ -639,7 +655,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          CRW2-B4 / B-4 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B6 / B-6 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN)  }  (PARALLEL ORIGINAL SET)
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
-  →  Architecture Conformance Gate (READY / NOT_STARTED)
+  →  Architecture Conformance Gate (ACTIVE / IN_EXECUTION)
+       [A-3 CLOSED_ON_MAIN; A-1 OPEN; D-2 OPEN]
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
@@ -676,18 +693,20 @@ an optional formality: the Architecture Conformance Gate never becomes
 `A-2`, `B-1`, `B-4`, and `B-6` all `CLOSED_ON_MAIN` (all five now are —
 five satisfied conditions, the full original-five predicate) **plus** a
 passing
-integration check. Both conditions now hold: the integration check ran
-read-only against current `main` and returned `PASS` (see [integration
-evidence](#conformance-integration-check-evidence) in §8 above), so
-`Architecture Conformance Gate: READY`. Gate **execution** has **not**
-started — this READY state is eligibility, not activation. Nothing from
-`AISEC` onward is
+integration check. Both conditions held: the integration check ran
+read-only against `main` at that time and returned `PASS` (see
+[integration evidence](#conformance-integration-check-evidence) in §8
+above), so the Gate became `READY`. `READY` was eligibility, not
+activation; Gate **execution** has since **started** and the Gate is now
+`ACTIVE` (`ACG-A3` / `A-3` `CLOSED_ON_MAIN` — see [closure
+evidence](#acg-a3-closure-evidence) below). Nothing from `AISEC` onward is
 active, except the narrow,
 explicitly-provisional early-research exception also recorded in §7 (early
 `AISEC-1`/`AISEC-2`/`AISEC-6`/`MEM-1`/`MEM-2` research, off-`main`, not
-merge-authorized before the Gate). Gate readiness does not change this —
+merge-authorized before the Gate). Neither Gate readiness nor the start of
+Gate execution changes this —
 mainline `AISEC`/`MEM`/`RAG`/`LEARN` remain gated on the Gate's own
-execution and closure, not merely its readiness. See
+closure, not merely its readiness or the start of its execution. See
 [§10](#10-mem--agentic-memory-foundation)
 for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
 `MEM-6` and `MEM-7`.
@@ -699,6 +718,13 @@ start of implementation until its post-merge truth proof completes. This
 definition is stated once, here, and governs the status line below — so that
 line does not need to be rewritten merely because a PR opens, is reviewed,
 or merges.
+
+**Gate-level status.** The same definition applies to the Architecture
+Conformance Gate as a whole: it became **`ACTIVE`** when its first owned
+implementation slice (`ACG-A3`) began, and remains `ACTIVE` until every
+finding it owns (`A-1`, `A-3`, `D-2`) is closed and certified. `IN_EXECUTION`
+is used alongside `ACTIVE` for the Gate only as a plain descriptor that
+Gate execution has started; it is not a separate lifecycle status.
 
 **`CRW1-A` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
 [closure evidence](#crw1-a-closure-evidence) below); per the lifecycle
@@ -742,7 +768,7 @@ parallel-authorized tracks (§6) to close.
 definition above, this slice exited `ACTIVE` when that proof completed.
 `CRW2-A2` closed `A-2` — the evaluation/regression merge-blocking policy is
 now formally specified
-([`docs/evaluation-execution-policy-v1.md`](../docs/evaluation-execution-policy-v1.md))
+([`docs/evaluation-execution-policy-v1.md`](docs/evaluation-execution-policy-v1.md))
 and enforced by a single runtime authority
 (`scripts/ai/evaluation/execution-policy.js`): `v1`-`v5` are `INFORMATIONAL`,
 `v6` is `STRICT` — this records the already-certified implementation
@@ -754,8 +780,8 @@ the second of the five parallel-authorized tracks (§6) to close.
 definition above, this slice exited `ACTIVE` when that proof completed.
 `CRW2-B1` closed `B-1` — a versioned, durable, machine-readable branch
 inventory/classification authority now exists
-([`docs/branch-inventory-v1.md`](../docs/branch-inventory-v1.md),
-[`scripts/diagnostics/branch-inventory.js`](../scripts/diagnostics/branch-inventory.js)):
+([`docs/branch-inventory-v1.md`](docs/branch-inventory-v1.md),
+[`scripts/diagnostics/branch-inventory.js`](scripts/diagnostics/branch-inventory.js)):
 one named long-lived branch (`main`) plus thirteen evidenced transient/
 automation classes, fail-closed manifest validation, and fail-closed branch
 classification (an unrecognized branch is `UNKNOWN`, a malformed manifest
@@ -799,9 +825,16 @@ inputs (`B-3`, `A-2`, `B-1`, `B-4`, `B-6`) are `CLOSED_ON_MAIN` and the
 check itself found zero actual defects on the combined current-`main`
 state; see [integration evidence](#conformance-integration-check-evidence)
 above for what it checked and its durable result. The Architecture
-Conformance Gate is therefore **`READY`** — but Gate **execution** has
-**not started**; `READY` is eligibility, not activation, and the Gate's
-own findings (`A-1`, `A-3`, `D-2`) remain open.
+Conformance Gate therefore became **`READY`** (eligibility, not
+activation) — and Gate **execution** has since **started**.
+
+**Architecture Conformance Gate — `ACTIVE` / `IN_EXECUTION`.** Its first
+owned finding, `A-3`, is `CLOSED_ON_MAIN` via `ACG-A3` (PR #171; see
+[ACG-A3 closure evidence](#acg-a3-closure-evidence) below) — the first
+Gate-owned finding to close. `A-1` and `D-2` remain `OPEN`, so the Gate is
+**not** closed. `D-1` and `D-3` remain `DEFERRED`. Nothing from
+`AISEC`/`MEM`/`RAG`/`LEARN` is started or activated by this state.
+
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
 "RTI Integrated Audit READY") describe *past* states of this project and
 remain accurate as history in README's own roadmap-by-roadmap record — they
@@ -1120,10 +1153,56 @@ This check was performed read-only — it created no branch, commit, or PR,
 and found no BLOCKER/HIGH/MEDIUM/LOW/INFO integration finding. Its `PASS`
 result satisfies the second half of the Architecture Conformance Gate
 barrier (§6); combined with all five findings above being
-`CLOSED_ON_MAIN`, `Architecture Conformance Gate: READY`. Gate
-**execution** has not started — its own findings (`A-1`, `A-3`, `D-2`)
-remain open, and nothing downstream (`AISEC`/`MEM`/`RAG`/`LEARN`) is
+`CLOSED_ON_MAIN`, the Architecture Conformance Gate became `READY`. As of
+this check, Gate **execution** had not started and its own findings
+(`A-1`, `A-3`, `D-2`) were all open — Gate execution subsequently began
+(see [ACG-A3 closure evidence](#acg-a3-closure-evidence) below for the
+current state). Nothing downstream (`AISEC`/`MEM`/`RAG`/`LEARN`) is
 activated by this evidence.
+
+### ACG-A3 closure evidence
+
+```text
+ACG-A3:          COMPLETE_ON_MAIN
+A-3:             CLOSED_ON_MAIN
+
+implementation PR: #171
+reviewed HEAD:   44b9577933b9e620111b42a9d39ca493e6c499ff
+reviewed TREE:   9579978e0d0076f71e82192e555c47cce747fd46
+merge SHA:       75ebd422fa62bc00330f7f76c5b0bae42395b2b7
+merge method:    standard two-parent (parent1 3376de650844b841393cbfa516ae0f5313d192f1,
+                 parent2 44b9577933b9e620111b42a9d39ca493e6c499ff;
+                 merge TREE == reviewed TREE)
+post-merge CI:   run 35453122605 — PASS (7/7, attempt 1, exact merge SHA, event push)
+
+architecture decision:   SEPARATE_BOUNDED_CONTEXTS
+normative contract:      docs/architecture-model-boundary-v1.md (v1, CURRENT)
+allowed adapter:         RequirementArtifact[] -> #22 evidence
+                         (`ingestRequirementArtifactsAsEvidence`, internal)
+artifact evidence profile: 4000 per projected artifact / 20000 aggregate;
+                         direct-text #22B contract preserved
+EvidenceRef ownership:   `buildCanonicalEvidenceBundle` (single builder)
+governance process:      docs/governance-process-v2.md CURRENT
+                         (v1 SUPERSEDED; ARCHITECTURE_MODEL_BOUNDARY registered)
+public API / package:    PRESERVED (19 root exports; 80 files; shasum
+                         `3cf3ceda0f5e51f172177e71b99143b2b825aedf`)
+
+ACG-A3-R01: CLOSED   ACG-A3-R02: CLOSED   ACG-A3-R03: CLOSED
+zero-open-new-defect: PASS
+
+A-1: UNCHANGED / OPEN   D-2: UNCHANGED / OPEN
+A-3: CLOSED_ON_MAIN
+```
+
+`RequirementArtifact`/`RequirementModel` and `TestDesignArtifact`/
+`TestCaseModel` are separate bounded contexts and are not implicitly
+interchangeable; the one explicit, opt-in, one-directional seam is
+`RequirementArtifact[]` → `#22` evidence. `docs/architecture-model-boundary-v1.md`
+is the normative contract — this evidence block is a proof summary, not a
+duplicate of it. `A-3` is the first Gate-owned finding to close; the
+Architecture Conformance Gate is `ACTIVE` / `IN_EXECUTION` and **not**
+closed (`A-1`, `D-2` open). Nothing downstream is activated by this
+evidence.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
@@ -1552,11 +1631,13 @@ activated:
 - **`D-3`** — controlled SUT, required before serious API/PERF negative/load
   testing against controlled targets.
 
-## 14. Open conformance architecture gates (not decided here)
+## 14. Conformance architecture findings
 
-`CRW1-A` **records** the Architecture Conformance Gate; it does not resolve
-any of the following. Each remains explicitly open, **except `A-2`, which
-has since closed** (retained here for historical continuity — see below):
+`CRW1-A` **recorded** the Architecture Conformance Gate; it did not resolve
+any of the following. Current state: `A-1` **open**, `A-2` `CLOSED_ON_MAIN`,
+`A-3` `CLOSED_ON_MAIN`, `D-2` **open**. `A-2` (a Conformance Remediation
+Wave 2 finding) and `A-3` (the first Gate-owned finding to close, via
+`ACG-A3`) are retained here for historical continuity — see below:
 
 - **`A-1`** — the exact public/installable product surface for #22/#23 is
   not yet decided. The current package public surface remains exactly what
@@ -1565,7 +1646,7 @@ has since closed** (retained here for historical continuity — see below):
   that surface.
 - **`A-2` — `CLOSED_ON_MAIN`** — evaluation/regression merge-blocking policy
   is formally specified by
-  [`docs/evaluation-execution-policy-v1.md`](../docs/evaluation-execution-policy-v1.md)
+  [`docs/evaluation-execution-policy-v1.md`](docs/evaluation-execution-policy-v1.md)
   and enforced by a single runtime authority
   (`scripts/ai/evaluation/execution-policy.js`): `v1`-`v5` are `INFORMATIONAL`
   (report `REGRESSED` truthfully, never block — a deliberate, evidenced
@@ -1574,16 +1655,22 @@ has since closed** (retained here for historical continuity — see below):
   post-merge certified — see [§8](#8-current-critical-path)'s
   [closure evidence](#crw2-a2-closure-evidence) for the authoritative
   record. This bullet is retained here only because this section
-  historically enumerated `A-2` alongside the genuinely still-open
+  historically enumerated `A-2` alongside the then-still-open
   architecture-level decisions (`A-1`, `A-3`, `D-2`) below — it is not
   itself an open architecture gate.
-- **`A-3`** — the relationship between the #22/#23 generative pipeline's own
-  `RequirementModel`/`TestCaseModel` and RTI's deterministic
-  `RequirementArtifact`/`TestDesignArtifact` is not yet decided (unify,
-  adapt, or explicitly keep as separate bounded contexts). Any existing
-  "one generic core" language elsewhere should be read as describing RTI's
-  own internal core only, not as a resolved claim about #22/#23's
-  relationship to it.
+- **`A-3` — `CLOSED_ON_MAIN`** — the relationship between the #22/#23
+  generative pipeline's own `RequirementModel`/`TestCaseModel` and RTI's
+  deterministic `RequirementArtifact`/`TestDesignArtifact` is now
+  explicitly decided as `SEPARATE_BOUNDED_CONTEXTS`, with one explicit,
+  opt-in, one-directional seam: `RequirementArtifact[]` → `#22` evidence.
+  `RequirementArtifact`/`RequirementModel` and `TestDesignArtifact`/
+  `TestCaseModel` are not implicitly interchangeable. Normative contract:
+  [`docs/architecture-model-boundary-v1.md`](docs/architecture-model-boundary-v1.md);
+  `ACG-A3` (PR #171) is merged and post-merge certified — see [§8](#8-current-critical-path)'s
+  [closure evidence](#acg-a3-closure-evidence) for the authoritative
+  record. Any earlier "one generic core" language elsewhere describes
+  RTI's own internal core only, not a claim that the two model families
+  are unified.
 - **`D-2`** — the `scripts/ai/test-design.js` vs. `scripts/ai/test-design/`
   naming collision between the RTI and #22/#23 pipelines is not yet resolved
   or explicitly documented as intentional.
