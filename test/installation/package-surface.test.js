@@ -53,6 +53,14 @@ const EXPECTED_EXPORT_MAP_KEYS = [".", "./destinations/azure-devops", "./package
 
 const PRIVATE_TREES = ["scripts/ai/generation/", "scripts/ai/test-design/", "scripts/ai/test-automation/"];
 
+// ACG-A1-R01: no supported entrypoint and no shipped module requires these;
+// their only consumers are this repository's own tests and GitHub Actions
+// workflow (REPOSITORY_ONLY_CI_HELPER in docs/package-surface-v1.md).
+const REPOSITORY_ONLY_CI_HELPERS = ["scripts/ai/format-pr-comment.js", "scripts/ai/normalized-failure.js", "scripts/ai/pr-comment-client.js"];
+
+// Non-JS files a tarball may contain besides runtime-discovered knowledge data.
+const PACKAGE_METADATA_FILES = ["package.json", "README.md"];
+
 // Representative private files: the frozen #22 validators, the #22 evidence
 // layer (including the ACG-A3 adapter), a #22 generator, and a #23 module.
 const PRIVATE_DEEP_IMPORTS = [
@@ -99,6 +107,13 @@ test("A-1 manifest: no file from the private #22/#23 trees is shipped", () => {
   assert.equal(manifestSet.has("scripts/ai/test-design/evidence-ingestion.js"), false, "the ACG-A3 adapter is private");
 });
 
+test("A-1 manifest: the three repository-only CI helpers are not shipped (they remain in the repository)", () => {
+  for (const helper of REPOSITORY_ONLY_CI_HELPERS) {
+    assert.equal(manifestSet.has(helper), false, `${helper} must not be in the tarball`);
+    assert.equal(fs.existsSync(path.join(REPO_ROOT, helper)), true, `${helper} must still exist in the repository`);
+  }
+});
+
 test("A-1 manifest: tests, fixtures, evaluation, targets, workflows and E2E suites remain excluded", () => {
   assert.deepEqual(manifest.filter((f) => f.endsWith(".test.js")), []);
   assert.deepEqual(manifest.filter((f) => f.includes("__fixtures__")), []);
@@ -134,24 +149,69 @@ function resolveRelative(fromRel, spec) {
   return null;
 }
 
+// Every `require(...)` in one file: the literal relative specifiers plus any
+// non-literal require or dynamic import (which the closure test forbids).
+function scanRequires(file) {
+  const src = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
+  const relative = [];
+  const problems = [];
+  for (const m of src.matchAll(/\brequire\s*\(\s*([^)]*?)\s*\)/g)) {
+    const literal = m[1].match(/^(["'])(.*)\1$/);
+    if (!literal) {
+      problems.push(`${file}: non-literal require(${m[1]})`);
+      continue;
+    }
+    if (literal[2].startsWith(".")) relative.push(literal[2]);
+  }
+  if (/\bimport\s*\(/.test(src)) problems.push(`${file}: dynamic import()`);
+  return { relative, problems };
+}
+
 test("A-1 closure: every local require of every shipped .js file resolves to a shipped file (no dynamic requires)", () => {
   const problems = [];
   for (const file of manifest.filter((f) => f.endsWith(".js"))) {
-    const src = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
-    for (const m of src.matchAll(/\brequire\s*\(\s*([^)]*?)\s*\)/g)) {
-      const literal = m[1].match(/^(["'])(.*)\1$/);
-      if (!literal) {
-        problems.push(`${file}: non-literal require(${m[1]})`);
-        continue;
-      }
-      if (!literal[2].startsWith(".")) continue;
-      const resolved = resolveRelative(file, literal[2]);
-      if (!resolved) problems.push(`${file}: ${literal[2]} does not resolve`);
+    const scan = scanRequires(file);
+    problems.push(...scan.problems);
+    for (const spec of scan.relative) {
+      const resolved = resolveRelative(file, spec);
+      if (!resolved) problems.push(`${file}: ${spec} does not resolve`);
       else if (!manifestSet.has(resolved)) problems.push(`${file}: requires ${resolved}, which is NOT shipped`);
     }
-    if (/\bimport\s*\(/.test(src)) problems.push(`${file}: dynamic import()`);
   }
   assert.deepEqual(problems, []);
+});
+
+// The reverse direction of the closure test (ACG-A1-R01): nothing EXTRA ships.
+// Every shipped .js file must be reachable by `require` from a supported
+// entrypoint (an `exports` target), and every shipped non-JS file must be
+// package metadata or documented runtime-discovered knowledge data.
+test("A-1 minimality: every shipped .js file is reachable from a supported entrypoint; every other file is metadata or documented data", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+  const reachable = new Set();
+  const queue = Object.values(pkg.exports)
+    .map((target) => target.replace(/^\.\//, ""))
+    .filter((target) => target.endsWith(".js"));
+  while (queue.length > 0) {
+    const file = queue.pop();
+    if (reachable.has(file)) continue;
+    reachable.add(file);
+    if (!file.endsWith(".js")) continue;
+    for (const spec of scanRequires(file).relative) {
+      const resolved = resolveRelative(file, spec);
+      if (resolved) queue.push(resolved);
+    }
+  }
+  const extra = [];
+  for (const file of manifest) {
+    if (file.endsWith(".js")) {
+      if (!reachable.has(file)) extra.push(`${file}: shipped .js not reachable from any supported entrypoint`);
+    } else if (!reachable.has(file)) {
+      const isMetadata = PACKAGE_METADATA_FILES.includes(file) || /^LICENSE/i.test(file);
+      const isKnowledgeData = /^scripts\/ai\/knowledge\/units\/[^/]+\.json$/.test(file);
+      if (!isMetadata && !isKnowledgeData) extra.push(`${file}: shipped non-JS file is neither package metadata nor documented data`);
+    }
+  }
+  assert.deepEqual(extra, []);
 });
 
 // --- Public surface snapshots -----------------------------------------------
@@ -189,11 +249,21 @@ step("generateTestDesigns", () => api.generateTestDesigns([artifact]).length);
 const designs = (() => { try { return api.generateTestDesigns([artifact]); } catch (e) { return []; } })();
 step("buildRequirementTraceability", () => api.buildRequirementTraceability([artifact], designs).length);
 step("analyzeRequirementsCoverage", () => api.analyzeRequirementsCoverage([artifact], designs).length);
-for (const name of ["publishTestDesigns", "loadRequirementsFromProvider"]) {
-  try { const r = api[name](); out.calls[name] = { threw: false, async: !!(r && typeof r.then === "function") }; if (r && typeof r.catch === "function") r.catch(() => {}); }
-  catch (e) { out.calls[name] = { threw: true, code: e.code, message: String(e.message).slice(0, 200) }; }
-}
-process.stdout.write(JSON.stringify(out));
+// Both executors are async: every call is AWAITED and its outcome recorded, so a
+// rejection is captured (never fired and forgotten) and can be asserted exactly.
+(async () => {
+  for (const name of ["publishTestDesigns", "loadRequirementsFromProvider"]) {
+    try { await api[name](); out.calls[name] = { resolved: true }; }
+    catch (e) { out.calls[name] = { resolved: false, code: e && e.code, message: String((e && e.message) || "").slice(0, 300) }; }
+  }
+  // Deterministic, network-free deeper path: an inline consumer-authored provider.
+  try {
+    const provider = { id: "surface-provider", async read() { return [artifact]; } };
+    const loaded = await api.loadRequirementsFromProvider(provider);
+    out.provider = { ok: true, count: Array.isArray(loaded) ? loaded.length : -1 };
+  } catch (e) { out.provider = { ok: false, message: String((e && e.message) || "").slice(0, 300) }; }
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { process.stderr.write(String((e && e.stack) || e)); process.exit(1); });
 `;
 
 function listFiles(dir) {
@@ -239,6 +309,14 @@ before(() => {
   execSync("git init -q", { cwd: gitSrc });
   execSync("git add -A", { cwd: gitSrc });
   execSync("git -c user.name=surface-test -c user.email=surface-test@example.invalid -c commit.gpgsign=false commit -q -m surface", { cwd: gitSrc });
+
+  // Non-vacuity: the absence proofs below only mean something if these files
+  // were genuinely in the COMMITTED Git source before npm installed it, so it
+  // is npm's packaging - not a filtered source - that creates the boundary.
+  const committed = new Set(execSync("git ls-files", { cwd: gitSrc, encoding: "utf8" }).split(/\r?\n/).filter(Boolean));
+  for (const probe of [...PRIVATE_DEEP_IMPORTS.map((s) => s.replace("qa-ai-agent/", "")), ...REPOSITORY_ONLY_CI_HELPERS]) {
+    assert.ok(committed.has(probe), `Git source must contain ${probe} before install`);
+  }
   consumers.git = bootstrapConsumer("git", `git+${pathToFileURL(gitSrc).href}`);
 });
 
@@ -279,6 +357,12 @@ for (const kind of ["tarball", "git"]) {
     assert.equal(fs.existsSync(path.join(consumers[kind].installed, "scripts/ai/test-design.js")), true, "the RTI module must be installed");
   });
 
+  test(`A-1 ${label}: the repository-only CI helpers are physically absent from the installed package`, () => {
+    for (const helper of REPOSITORY_ONLY_CI_HELPERS) {
+      assert.equal(fs.existsSync(path.join(consumers[kind].installed, helper)), false, `${helper} must not be installed`);
+    }
+  });
+
   test(`A-1 ${label}: the installed file set equals the npm pack manifest exactly`, () => {
     assert.deepEqual(listFiles(consumers[kind].installed), manifest);
   });
@@ -293,11 +377,30 @@ for (const kind of ["tarball", "git"]) {
     assert.equal(rti.generateTestDesigns.value, 1);
   });
 
-  test(`A-1 ${label}: provider/publishing executors load their package-local dependencies (an argument error, never a missing module)`, () => {
-    for (const [name, r] of Object.entries(consumers[kind].result.calls)) {
-      assert.notEqual(r.code, "MODULE_NOT_FOUND", `${name}: ${JSON.stringify(r)}`);
-      assert.doesNotMatch(String(r.message || ""), /Cannot find module/, name);
+  // Scope of this proof: the exported async executors can be INVOKED from the
+  // installed artifact and reach their expected fail-closed API validation.
+  // It does not by itself prove every hypothetical lazy dependency - the
+  // package-local module graph is proven by the static closure and minimality
+  // tests above (which also forbid non-literal requires), plus the installed
+  // file set equalling the manifest.
+  test(`A-1 ${label}: the exported async executors are awaited and fail closed with their exact API-validation error`, () => {
+    const { calls } = consumers[kind].result;
+    const expected = {
+      publishTestDesigns: "TEST_DESIGN_DESTINATION_REQUIRED",
+      loadRequirementsFromProvider: "REQUIREMENTS_SOURCE_PROVIDER_REQUIRED",
+    };
+    assert.deepEqual(Object.keys(calls).sort(), Object.keys(expected).sort());
+    for (const [name, domainCode] of Object.entries(expected)) {
+      const r = calls[name];
+      assert.equal(r.resolved, false, `${name} with no arguments must reject: ${JSON.stringify(r)}`);
+      assert.ok(String(r.message).startsWith(`${domainCode}:`), `${name} must reject with ${domainCode}, got ${JSON.stringify(r)}`);
+      assert.notEqual(r.code, "MODULE_NOT_FOUND", name);
+      assert.doesNotMatch(r.message, /Cannot find module|MODULE_NOT_FOUND/, name);
     }
+  });
+
+  test(`A-1 ${label}: loadRequirementsFromProvider loads a deterministic inline provider's artifact from the installed package`, () => {
+    assert.deepEqual(consumers[kind].result.provider, { ok: true, count: 1 });
   });
 }
 

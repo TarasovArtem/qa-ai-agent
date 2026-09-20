@@ -76,11 +76,12 @@ supported import.
 | the three provider/destination modules above | `PUBLIC_SUBPATH` | yes |
 | `package.json` | `PUBLIC_METADATA_SUBPATH` | yes |
 | `scripts/ai/test-design.js` (deterministic RTI-4) | `SHIPPED_PRIVATE_RUNTIME_IMPLEMENTATION` behind the root API | yes |
-| other modules transitively required by a public entrypoint (adapters, providers, knowledge loader/schema, validators, RTI modules, helpers) | `SHIPPED_PRIVATE_RUNTIME_DEPENDENCY` | yes |
+| other modules transitively required by a public entrypoint (adapters, providers, knowledge loader/schema, validators, RTI modules, and the internal helper modules they require) | `SHIPPED_PRIVATE_RUNTIME_DEPENDENCY` | yes |
 | `scripts/ai/knowledge/units/*.json` (loaded by directory at runtime, so not visible to a static require graph) | `SHIPPED_PRIVATE_RUNTIME_DEPENDENCY` (data) | yes |
 | `scripts/ai/generation/**` | `REPOSITORY_ONLY_PRIVATE` | **no** |
 | `scripts/ai/test-design/**` (directory) | `REPOSITORY_ONLY_PRIVATE` | **no** |
 | `scripts/ai/test-automation/**` | `REPOSITORY_ONLY_PRIVATE` | **no** |
+| `scripts/ai/format-pr-comment.js`, `scripts/ai/normalized-failure.js`, `scripts/ai/pr-comment-client.js` | `REPOSITORY_ONLY_CI_HELPER` | **no** |
 | `*.test.js`, `__fixtures__`, `scripts/ai/evaluation/**` | `TEST_ONLY` / `EVALUATION_ONLY` | no |
 | `scripts/targets/**`, `.github/**`, `cypress/**` | `TARGET_OWNED` / repository-only | no |
 
@@ -89,9 +90,14 @@ Two rules follow:
 1. **`exports` decides what is supported; `files` decides what is
    distributed.** A shipped file is not thereby public API. Private modules
    ship only because a supported module needs them.
-2. **A private module ships if and only if a supported entrypoint requires it
-   (transitively).** The distribution list is derived from the real
-   `require` graph, never from folder names alone.
+2. **A JavaScript implementation file that is not a supported entrypoint or
+   explicit subpath ships if and only if it is required by the transitive
+   runtime closure of a supported entrypoint.** Runtime-discovered non-JS
+   data ships when a supported runtime path needs it *and* the dependency is
+   documented here — currently exactly `scripts/ai/knowledge/units/*.json`.
+   The distribution list is derived from the real `require` graph, never
+   from folder names alone, and a file's mere historical presence in the
+   package is not a reason to keep shipping it.
 
 `scripts/ai/test-design.js` (the deterministic RTI module, required by the
 root entrypoint) and `scripts/ai/test-design/` (the private `#22` directory)
@@ -100,10 +106,13 @@ are different paths that happen to share a base name. Node resolves
 unaffected by the directory being excluded. Renaming either is Gate finding
 `D-2` and is **not** decided here.
 
-Three root-level CI-triage helpers (`format-pr-comment.js`,
-`normalized-failure.js`, `pr-comment-client.js`) are shipped but not required
-by any supported entrypoint. They are not `#22`/`#23` code and A-1 does not
-change them; they remain shipped, unexported internals.
+Three root-level CI helpers (`format-pr-comment.js`, `normalized-failure.js`,
+`pr-comment-client.js`) are `REPOSITORY_ONLY_CI_HELPER`: no supported
+entrypoint and no shipped module requires them, `package.json` declares no
+`bin` that uses them, and their only consumers are this repository's own
+tests and GitHub Actions workflow, which run from a repository checkout. They
+remain in the repository and are not distributed. They are not `#22`/`#23`
+code; they are excluded because rule 2 above does not admit them.
 
 ## Physical distribution policy
 
@@ -117,22 +126,35 @@ scripts/ai
 !scripts/ai/generation
 !scripts/ai/test-design
 !scripts/ai/test-automation
+!scripts/ai/format-pr-comment.js
+!scripts/ai/normalized-failure.js
+!scripts/ai/pr-comment-client.js
 ```
 
-At the time of this decision the tarball is 48 files (previously 80): the 32
+At the time of this decision the tarball is 45 files (previously 80): the 35
 removed files are exactly the private `generation` (8), `test-design/` (10)
-and `test-automation` (14) trees. The removals were verified against the
-dependency graph — none is required by any supported entrypoint.
+and `test-automation` (14) trees plus the three repository-only CI helpers
+(3). The removals were verified against the dependency graph — none is
+required by any supported entrypoint.
 
-### Fail-closed invariant
+### Fail-closed invariants
 
-For every `.js` file in the tarball, every relative `require` must resolve to a
-file that is also in the tarball, and no shipped file may use a non-literal
-`require(...)` or `import()`. `test/installation/package-surface.test.js`
-asserts this on the **actual `npm pack` manifest**, so a future change that
-makes a public module depend on a private tree fails in CI instead of shipping
-a package that cannot start. A dynamic local load found by review must be
-listed explicitly rather than assumed excludable.
+**Closure (nothing missing).** For every `.js` file in the tarball, every
+relative `require` must resolve to a file that is also in the tarball, and no
+shipped file may use a non-literal `require(...)` or `import()`.
+
+**Minimality (nothing extra).** Every `.js` file in the tarball must be a
+supported entrypoint or be reachable through `require` from one, and every
+non-JS file must be package metadata (`package.json`, `README.md`, `LICENSE`)
+or a documented runtime-discovered data file.
+
+Both are asserted by
+`test/installation/package-surface.test.js` on the **actual `npm pack`
+manifest**, so a future change that makes a public module depend on a private
+tree fails in CI instead of shipping a package that cannot start, and a future
+unreachable file fails in CI instead of quietly widening the package. A
+dynamic local load found by review must be listed explicitly rather than
+assumed excludable.
 
 ## The ACG-A3 adapter
 
@@ -189,8 +211,6 @@ review. It must never happen through accidental shipping or deep imports.
   collision).
 - It does not decide npm-registry publication, versioning or release policy
   (`ID-3`).
-- It does not narrow the shipped-but-unexported root CI-triage helpers named
-  above.
 - It does not close Architecture Conformance Gate finding `A-1` on the
   canonical `ROADMAP.md` — that is a separate closure-sync mission after
   independent review, merge and post-merge certification.
