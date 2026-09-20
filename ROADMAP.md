@@ -175,9 +175,11 @@ findings to close (see [closure evidence](#crw2-b6-closure-evidence) in
 not activation). Gate **execution** has since **started**: the
 Architecture Conformance Gate is now **`ACTIVE`** / `IN_EXECUTION` (see
 "Gate-level status" in [§8](#8-current-critical-path)). Its first owned
-finding, `A-3`, is now `CLOSED_ON_MAIN` (`ACG-A3`, PR #171 — see [closure
-evidence](#acg-a3-closure-evidence) in §8); its remaining findings `A-1`
-and `D-2` remain **open**, and the Gate itself is **not** closed. `D-1`
+finding, `A-3`, is `CLOSED_ON_MAIN` (`ACG-A3`, PR #171 — see [closure
+evidence](#acg-a3-closure-evidence) in §8), and its second, `A-1`, is now
+also `CLOSED_ON_MAIN` (`ACG-A1`, PR #173 — see [closure
+evidence](#acg-a1-closure-evidence) in §8); its remaining finding `D-2`
+remains **open**, and the Gate itself is **not** closed. `D-1`
 and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
 not itself a slice-status line subject to the ACTIVE-lifecycle exemption
@@ -203,7 +205,7 @@ ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORM
                                +-- CRW2-B6 / B-6 -(CLOSED_ON_MAIN)--+                v
                                                               Architecture Conformance Gate
                                                                 (ACTIVE / IN_EXECUTION)
-                                                              [A-3 CLOSED_ON_MAIN; A-1 + D-2 OPEN]
+                                                              [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 OPEN]
 ```
 
 `CRW1-D` (`B-3`) is the first of the five originally-authorized parallel
@@ -614,16 +616,20 @@ only under these conditions:
   models. It may **not** be treated as accepted architecture.
 - Every early AISEC/MEM research PR/document must include an explicit
   **Assumptions** section stating at minimum, as of the `main` state it was
-  written against: `A-1` unresolved, `D-2` unresolved, `A-3`
+  written against: `A-1` `CLOSED_ON_MAIN` (decided as
+  `PRIVATE_GENERATIVE_SURFACE` — see
+  [`docs/package-surface-v1.md`](docs/package-surface-v1.md) and
+  [`ACG-A1` closure evidence](#acg-a1-closure-evidence)), `A-3`
   `CLOSED_ON_MAIN` (decided as `SEPARATE_BOUNDED_CONTEXTS` — see
   [`docs/architecture-model-boundary-v1.md`](docs/architecture-model-boundary-v1.md)
-  and [`ACG-A3` closure evidence](#acg-a3-closure-evidence)), Architecture
-  Conformance Gate not closed — plus its own provisional conclusions, and
-  an explicit statement that those conclusions "must be revalidated after
-  Architecture Gate: YES". (This bullet originally required `A-3` to be
-  stated as unresolved, which was accurate until `A-3` closed on `main`;
-  research written earlier may retain that historical assumption state
-  until its mandatory post-Gate revalidation.)
+  and [`ACG-A3` closure evidence](#acg-a3-closure-evidence)), `D-2`
+  unresolved, Architecture Conformance Gate not closed — plus its own
+  provisional conclusions, and an explicit statement that those
+  conclusions "must be revalidated after Architecture Gate: YES". (This
+  bullet originally required `A-1` and `A-3` to be stated as unresolved,
+  each accurate until that finding closed on `main`; research written
+  earlier may retain that historical assumption state until its mandatory
+  post-Gate revalidation.)
 - Before Architecture Gate closure, early research may **not** finalize the
   public product surface, public API contract, runtime authority contract,
   persistence schema, final threat-model scope, an accepted security ADR, or
@@ -656,7 +662,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          CRW2-B6 / B-6 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN)  }  (PARALLEL ORIGINAL SET)
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
   →  Architecture Conformance Gate (ACTIVE / IN_EXECUTION)
-       [A-3 CLOSED_ON_MAIN; A-1 OPEN; D-2 OPEN]
+       [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 OPEN]
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
@@ -807,7 +813,9 @@ parallel-authorized tracks (§6) to close.
 [closure evidence](#crw2-b6-closure-evidence) below); per the lifecycle
 definition above, this slice exited `ACTIVE` when that proof completed.
 `CRW2-B6` closed `B-6` — a durable, versioned governance/process
-knowledge catalog (`docs/governance-process-v1.md`) now exists: it
+knowledge catalog (`docs/governance-process-v1.md` at B-6 closure — since
+superseded by `v2`, then `v3`; current authority:
+[`docs/governance-process-v3.md`](docs/governance-process-v3.md)) now exists: it
 indexes the existing versioned contracts by subject/version/authority,
 states an explicit subject-scoped authority hierarchy, and records — for
 the first time durably — the independent-review requirement and the
@@ -831,8 +839,12 @@ activation) — and Gate **execution** has since **started**.
 **Architecture Conformance Gate — `ACTIVE` / `IN_EXECUTION`.** Its first
 owned finding, `A-3`, is `CLOSED_ON_MAIN` via `ACG-A3` (PR #171; see
 [ACG-A3 closure evidence](#acg-a3-closure-evidence) below) — the first
-Gate-owned finding to close. `A-1` and `D-2` remain `OPEN`, so the Gate is
-**not** closed. `D-1` and `D-3` remain `DEFERRED`. Nothing from
+Gate-owned finding to close — and its second, `A-1`, is `CLOSED_ON_MAIN`
+via `ACG-A1` (PR #173; see [ACG-A1 closure
+evidence](#acg-a1-closure-evidence) below). `D-2` remains `OPEN` (the
+repository still intentionally contains both `scripts/ai/test-design.js`
+and `scripts/ai/test-design/`; excluding the directory from the npm
+package does not resolve that collision), so the Gate is **not** closed. `D-1` and `D-3` remain `DEFERRED`. Nothing from
 `AISEC`/`MEM`/`RAG`/`LEARN` is started or activated by this state.
 
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
@@ -1079,7 +1091,9 @@ merge method:   standard two-parent (parent1 2505cd21272b899cef5658d7a1e2035e4ac
 post-merge CI:  run 35429454890 — PASS (7/7, attempt 1, exact merge SHA, event push)
 
 Versioned governance/process knowledge: a durable catalog
-                (`docs/governance-process-v1.md`) now indexes this
+                (`docs/governance-process-v1.md` at B-6 closure — since
+                superseded by v2, then v3; current authority:
+                `docs/governance-process-v3.md`) now indexes this
                 repository's existing versioned contracts
                 (`docs/branch-inventory-v1.md`, `docs/evaluation-
                 execution-policy-v1.md`, `docs/qa-generation-contracts-
@@ -1162,6 +1176,10 @@ activated by this evidence.
 
 ### ACG-A3 closure evidence
 
+Point-in-time evidence as of ACG-A3 certification; later changes are
+annotated inline and recorded in [ACG-A1 closure
+evidence](#acg-a1-closure-evidence).
+
 ```text
 ACG-A3:          COMPLETE_ON_MAIN
 A-3:             CLOSED_ON_MAIN
@@ -1182,15 +1200,20 @@ allowed adapter:         RequirementArtifact[] -> #22 evidence
 artifact evidence profile: 4000 per projected artifact / 20000 aggregate;
                          direct-text #22B contract preserved
 EvidenceRef ownership:   `buildCanonicalEvidenceBundle` (single builder)
-governance process:      docs/governance-process-v2.md CURRENT
-                         (v1 SUPERSEDED; ARCHITECTURE_MODEL_BOUNDARY registered)
-public API / package:    PRESERVED (19 root exports; 80 files; shasum
-                         `3cf3ceda0f5e51f172177e71b99143b2b825aedf`)
+governance process:      docs/governance-process-v2.md CURRENT at ACG-A3
+                         certification (v1 SUPERSEDED;
+                         ARCHITECTURE_MODEL_BOUNDARY registered); v2 has
+                         since been superseded by v3 via ACG-A1
+public API / package:    PRESERVED at ACG-A3 certification (19 root
+                         exports; 80 files; shasum
+                         `3cf3ceda0f5e51f172177e71b99143b2b825aedf`); the
+                         package surface was later narrowed to 45 files by
+                         ACG-A1
 
 ACG-A3-R01: CLOSED   ACG-A3-R02: CLOSED   ACG-A3-R03: CLOSED
 zero-open-new-defect: PASS
 
-A-1: UNCHANGED / OPEN   D-2: UNCHANGED / OPEN
+A-1: UNCHANGED / OPEN   D-2: UNCHANGED / OPEN   (as of ACG-A3 certification)
 A-3: CLOSED_ON_MAIN
 ```
 
@@ -1199,10 +1222,63 @@ A-3: CLOSED_ON_MAIN
 interchangeable; the one explicit, opt-in, one-directional seam is
 `RequirementArtifact[]` → `#22` evidence. `docs/architecture-model-boundary-v1.md`
 is the normative contract — this evidence block is a proof summary, not a
-duplicate of it. `A-3` is the first Gate-owned finding to close; the
-Architecture Conformance Gate is `ACTIVE` / `IN_EXECUTION` and **not**
-closed (`A-1`, `D-2` open). Nothing downstream is activated by this
-evidence.
+duplicate of it. `A-3` is the first Gate-owned finding to close; as of this
+certification the Architecture Conformance Gate was `ACTIVE` /
+`IN_EXECUTION` and **not** closed (`A-1`, `D-2` open — `A-1` has since
+closed; see [ACG-A1 closure evidence](#acg-a1-closure-evidence) for the
+current state). Nothing downstream is activated by this evidence.
+
+### ACG-A1 closure evidence
+
+```text
+ACG-A1:          COMPLETE_ON_MAIN
+A-1:             CLOSED_ON_MAIN
+
+implementation PR: #173
+reviewed HEAD:   53821768bad21a4a4a90006e7f18b4dab223051b
+reviewed TREE:   3917802c17b19755ae1c1c4e76835e68e86c5da2
+merge SHA:       6490ebd50549320e651fe5f61a03d9df6ad7076b
+merge method:    standard two-parent (parent1 4e3b8e5cac6426907ed1c65e28f2bb2ef2ccfded,
+                 parent2 53821768bad21a4a4a90006e7f18b4dab223051b;
+                 merge TREE == reviewed TREE)
+post-merge CI:   run 35523396947 — PASS (7/7, attempt 1, exact merge SHA, event push)
+post-merge supply-chain:
+                 run 35523396982 — PASS (attempt 1, exact merge SHA, event push)
+dependency review:
+                 run 35513315088 attempt 3 — PASS (pull_request-only
+                 control; Dependency Graph enabled)
+
+architecture decision:   PRIVATE_GENERATIVE_SURFACE
+normative contract:      docs/package-surface-v1.md (v1, CURRENT)
+package:                 1.0.0; 45 files; 19 root exports; 5 exports keys;
+                         shasum `cbbea05237a25d35df5cd026b9e58441bbcc1060`
+private #22/#23:         NOT_SHIPPED
+repository-only CI helpers: NOT_SHIPPED
+governance process:      docs/governance-process-v3.md CURRENT
+                         (v1, v2 SUPERSEDED; PACKAGE_GOVERNANCE versioned)
+
+ACG-A1-R01: CLOSED   ACG-A1-R02: CLOSED   CRW1-D-R05: CLOSED
+ACG-A1-M01: CLOSED   ACG-A1-M02: CLOSED
+zero-open-new-defect: PASS
+
+A-1: CLOSED_ON_MAIN   A-3: CLOSED_ON_MAIN   D-2: OPEN
+```
+
+The #22/#23 generative implementation is repository-private: it is not a
+supported package API and is physically excluded from the npm package,
+while the supported public surface remains exactly the 19 root exports and
+the explicit `package.json` `exports` subpaths.
+`docs/package-surface-v1.md` is the normative contract — this evidence block
+is a proof summary, not a duplicate of it. `R01` removed three unreachable
+repository-only CI helpers from the package, `R02` made the installed-artifact
+async executor proof non-vacuous, and `CRW1-D-R05` restored the Dependency
+Graph so the `B-3` Dependency Review control is operational again (`B-3`
+remains `CLOSED_ON_MAIN`). `A-1` is the second Gate-owned finding to close;
+`D-2` remains open — the repository still intentionally contains both
+`scripts/ai/test-design.js` and `scripts/ai/test-design/`, and excluding the
+directory from the package does not resolve that collision. The Architecture
+Conformance Gate is `ACTIVE` / `IN_EXECUTION` and **not** closed. Nothing
+downstream is activated by this evidence.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
@@ -1634,16 +1710,25 @@ activated:
 ## 14. Conformance architecture findings
 
 `CRW1-A` **recorded** the Architecture Conformance Gate; it did not resolve
-any of the following. Current state: `A-1` **open**, `A-2` `CLOSED_ON_MAIN`,
-`A-3` `CLOSED_ON_MAIN`, `D-2` **open**. `A-2` (a Conformance Remediation
-Wave 2 finding) and `A-3` (the first Gate-owned finding to close, via
-`ACG-A3`) are retained here for historical continuity — see below:
+any of the following. Current state: `A-1` `CLOSED_ON_MAIN`, `A-2`
+`CLOSED_ON_MAIN`, `A-3` `CLOSED_ON_MAIN`, `D-2` **open**. `A-2` (a
+Conformance Remediation Wave 2 finding), `A-3` (the first Gate-owned
+finding to close, via `ACG-A3`) and `A-1` (the second, via `ACG-A1`) are
+retained here for historical continuity — see below:
 
-- **`A-1`** — the exact public/installable product surface for #22/#23 is
-  not yet decided. The current package public surface remains exactly what
-  `package.json`'s `exports`/`files` actually expose today (19 root exports;
-  see README) — this file does not imply #22/#23 are, or are not, part of
-  that surface.
+- **`A-1` — `CLOSED_ON_MAIN`** — the exact public/installable product
+  surface for #22/#23 is now explicitly decided as
+  `PRIVATE_GENERATIVE_SURFACE`: the #22/#23 generative implementation is
+  repository-private, is not a supported package API, and is physically
+  excluded from the npm package (`scripts/ai/generation/`,
+  `scripts/ai/test-design/`, `scripts/ai/test-automation/`, plus three
+  unreachable repository-only CI helpers). The supported public surface
+  remains exactly the existing 19 root exports and the explicit
+  `package.json` `exports` subpaths. Normative contract:
+  [`docs/package-surface-v1.md`](docs/package-surface-v1.md); `ACG-A1`
+  (PR #173) is merged and post-merge certified — see
+  [§8](#8-current-critical-path)'s [closure
+  evidence](#acg-a1-closure-evidence) for the authoritative record.
 - **`A-2` — `CLOSED_ON_MAIN`** — evaluation/regression merge-blocking policy
   is formally specified by
   [`docs/evaluation-execution-policy-v1.md`](docs/evaluation-execution-policy-v1.md)
@@ -1673,7 +1758,9 @@ Wave 2 finding) and `A-3` (the first Gate-owned finding to close, via
   are unified.
 - **`D-2`** — the `scripts/ai/test-design.js` vs. `scripts/ai/test-design/`
   naming collision between the RTI and #22/#23 pipelines is not yet resolved
-  or explicitly documented as intentional.
+  or explicitly documented as intentional. Excluding `scripts/ai/test-design/`
+  from the npm package (`ACG-A1`) does not resolve this repository-level
+  collision.
 
 ## 15. Final target state
 
