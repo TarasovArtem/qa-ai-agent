@@ -14,15 +14,26 @@ semantic rule below are carried forward unchanged. Only the repository path
 of the private `#22` directory changed: ACG-D2 renamed it from
 `scripts/ai/test-design/` to `scripts/ai/generative-test-design/`, while the
 deterministic RTI module `scripts/ai/test-design.js` keeps its identity.
-The distribution file set is unchanged (45 files); because `package.json`
-itself ships and its `files` field changed, the tarball bytes and shasum
-changed: 45 files / `cbbea05237a25d35df5cd026b9e58441bbcc1060` at A-1 (historical),
-45 files / `565929833de426674e90616630cc204d277267a7` after D-2 (illustrative
-verification evidence measured at ACG-D2 certification, not the governed
-surface). The manifest path set is identical to A-1; only shipped file bytes
-differ (`package.json`, and `README.md` after the ACG-D2-C1 pointer correction).
-The tarball shasum changes whenever any shipped file changes; the governed
-surface is the path set, `exports` and `files`.
+The distribution file set is unchanged (45 files): ACG-D2 preserves the exact
+manifest path set. Changes to shipped files (`package.json`, and `README.md`
+during ACG-D2 review) alter the produced tarball bytes without changing that
+path set.
+
+The tarball shasum is **illustrative evidence, not part of the governed
+surface**, and is **not a cross-platform canonical identifier** in this
+repository: `npm pack` hashes the checked-out file bytes, and the repository
+defines no tracked line-ending policy, so clean checkouts with different EOL
+normalization legitimately produce different shasums for identical commits.
+`PACKAGE_GOVERNANCE` is defined by the manifest path set, `exports`, `files`
+and the supported public behavior. Measurements, for context only:
+
+- A-1, historical: 45 files / `cbbea05237a25d35df5cd026b9e58441bbcc1060`,
+  recorded in the ACG-A1 certification environment (not a cross-platform
+  identifier).
+- ACG-D2 pull-request head, pre-merge verification on PR #175 (illustrative,
+  non-canonical, basis-labeled): clean LF checkout
+  `6054bb15550edd98629921494306c916b326d79e`; clean CRLF checkout
+  (`core.autocrlf=true`) `b0c71f4c37851606a845bdbef2d0746e373e7d5e`.
 
 Subject: the installable product surface of the `qa-ai-agent` npm package —
 which modules are supported public API, and which files are physically
