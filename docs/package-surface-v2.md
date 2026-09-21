@@ -17,8 +17,12 @@ deterministic RTI module `scripts/ai/test-design.js` keeps its identity.
 The distribution file set is unchanged (45 files); because `package.json`
 itself ships and its `files` field changed, the tarball bytes and shasum
 changed: 45 files / `cbbea05237a25d35df5cd026b9e58441bbcc1060` at A-1 (historical),
-45 files / `bdf502ab65327532da238a7d76312cb14b89a7b6` after D-2. The
-manifest path set is identical; only the shipped `package.json` bytes differ.
+45 files / `565929833de426674e90616630cc204d277267a7` after D-2 (illustrative
+verification evidence measured at ACG-D2 certification, not the governed
+surface). The manifest path set is identical to A-1; only shipped file bytes
+differ (`package.json`, and `README.md` after the ACG-D2-C1 pointer correction).
+The tarball shasum changes whenever any shipped file changes; the governed
+surface is the path set, `exports` and `files`.
 
 Subject: the installable product surface of the `qa-ai-agent` npm package —
 which modules are supported public API, and which files are physically
