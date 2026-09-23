@@ -112,7 +112,7 @@ own stated confidence or the model's own account of what it did.
 
 | AISEC-1 item | AISEC-2 treatment | Result | Remaining gap | Owner |
 |---|---|---|---|---|
-| AT-01: RTI/`#22` prompt DATA boundary confirmed present (5/5 modules); enforcement depth not verified | §9/§10/§16 — enforcement-depth audit performed per prompt-builder, traced to the actual post-response validator for each | **CONFIRMED + REFINED**: DATA boundary present in all 5 (plus a 6th, `qa-agent-prompt.js`, plus 2 more in `#23`, `automation-plan-prompt.js`/`generate-change-set-prompt.js`); deterministic enforcement independently confirmed downstream of every generative call (§16) | Field-by-field necessity audit (below) | AISEC-2 (this doc) |
+| AT-01: RTI/`#22` prompt DATA boundary confirmed present (5/5 modules, including `automation-plan-prompt.js` and `generate-change-set-prompt.js`); enforcement depth not verified | §9/§10/§16 — enforcement-depth audit performed per prompt-builder, traced to the actual post-response validator for each | **CONFIRMED + REFINED**: DATA boundary present in all 5 of AISEC-1's own scoped RTI/`#22`/`#23` population, plus `qa-agent-prompt.js` (the separately-scoped triage-pipeline builder) — 6/6 across this study's full current population; deterministic enforcement independently confirmed downstream of every generative call (§16) | Field-by-field necessity audit (below) | AISEC-2 (this doc) |
 | AT-12: no bulk spread confirmed (0/5); field-by-field necessity audit open | §11 field-minimization audit, all builders | **CONFIRMED + REFINED**: builders map named fields explicitly; one structural note on `automation-candidate-prompt.js` passing a pre-projected object through rather than re-projecting (§11) | None blocking; note is informational | AISEC-2 (this doc) |
 | AT-03: generated content re-entering a later stage — does it get re-treated as untrusted? | §14/§15 cross-stage propagation and generated-content re-entry analysis | **CONFIRMED**: every downstream prompt builder re-applies its own explicit DATA-boundary sentence to inbound content regardless of whether that content is external or generated (§14) | Cross-model structural validation (F1-F7) checks IDs/references, not semantic content — a structurally valid but semantically-influenced field is not caught by that layer | AISEC-2/AISEC-6 |
 | §18 open question: does deterministic code independently validate/reject an actual injection attempt, or only the prompt framing? | §16 deterministic-enforcement-depth table | **REFINED**: enforcement targets *structure, reference, and scope* (schema, cross-model IDs, path/protected-area, digest binding), not the *semantic content* of free-text fields (`rationale`, `summary`, `purpose`, review `comment`) — see §16 residual column | Free-text field semantic content is not independently re-validated anywhere in the pipeline | AISEC-5/AISEC-6 |
@@ -354,7 +354,7 @@ reach a human reader as **displayed proposal content**, not as review
 UI/system chrome — this repository's review tooling does not currently
 document a structural, code-enforced distinction between "system-stated
 fact" and "model-authored rationale" in what a reviewer sees (an
-**OPEN QUESTION**, OQ-4 below, not resolved by source inspection alone —
+**OPEN QUESTION**, OQ-1 below, not resolved by source inspection alone —
 it is a UI/process property this document cannot verify from
 `scripts/ai/` source). Reviewer identity/provenance itself remains
 AT-07's unresolved gap (§19) — this document treats reviewer
