@@ -55,7 +55,7 @@
 "use strict";
 
 const { DECISIONS } = require("../generation/automation-candidate");
-const { STATUSES: REVIEW_STATUSES, DECISIONS: REVIEW_DECISIONS } = require("../test-design/test-design-review-record");
+const { STATUSES: REVIEW_STATUSES, DECISIONS: REVIEW_DECISIONS } = require("../generative-test-design/test-design-review-record");
 const { DIMENSIONS, CRITICAL_DIMENSIONS } = require("./scoring-v6");
 
 // Maps each critical dimension to the gold field whose emptiness its

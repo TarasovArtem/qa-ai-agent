@@ -339,7 +339,7 @@ test("the returned bundle is deeply frozen", () => {
 // =========================================================================
 // ACG-A3: ingestRequirementArtifactsAsEvidence() - the RequirementArtifact
 // evidence adapter (Architecture Conformance Gate finding A-3). See
-// docs/architecture-model-boundary-v1.md for the normative contract this
+// docs/architecture-model-boundary-v2.md for the normative contract this
 // adapter implements.
 // =========================================================================
 

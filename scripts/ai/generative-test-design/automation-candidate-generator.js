@@ -179,7 +179,7 @@ const MAX_CORRECTION_DIAGNOSTIC_CHARS = 8192;
 
 // --- snapshot (Roadmap #22E; reuses the #22D-C1 hardened mechanism
 // verbatim, never a casually reimplemented weaker clone - see
-// scripts/ai/test-design/test-case-model-generator.js's own, more detailed
+// scripts/ai/generative-test-design/test-case-model-generator.js's own, more detailed
 // comment for the exact prototype-pollution/caller-array-method exploits
 // this closes) -----------------------------------------------------------
 

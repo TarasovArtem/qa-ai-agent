@@ -618,10 +618,10 @@ only under these conditions:
   **Assumptions** section stating at minimum, as of the `main` state it was
   written against: `A-1` `CLOSED_ON_MAIN` (decided as
   `PRIVATE_GENERATIVE_SURFACE` — see
-  [`docs/package-surface-v1.md`](docs/package-surface-v1.md) and
+  [`docs/package-surface-v2.md`](docs/package-surface-v2.md) and
   [`ACG-A1` closure evidence](#acg-a1-closure-evidence)), `A-3`
   `CLOSED_ON_MAIN` (decided as `SEPARATE_BOUNDED_CONTEXTS` — see
-  [`docs/architecture-model-boundary-v1.md`](docs/architecture-model-boundary-v1.md)
+  [`docs/architecture-model-boundary-v2.md`](docs/architecture-model-boundary-v2.md)
   and [`ACG-A3` closure evidence](#acg-a3-closure-evidence)), `D-2`
   unresolved, Architecture Conformance Gate not closed — plus its own
   provisional conclusions, and an explicit statement that those
@@ -1194,7 +1194,10 @@ merge method:    standard two-parent (parent1 3376de650844b841393cbfa516ae0f5313
 post-merge CI:   run 35453122605 — PASS (7/7, attempt 1, exact merge SHA, event push)
 
 architecture decision:   SEPARATE_BOUNDED_CONTEXTS
-normative contract:      docs/architecture-model-boundary-v1.md (v1, CURRENT)
+normative contract at ACG-A3 certification:
+                         docs/architecture-model-boundary-v1.md (v1, CURRENT at
+                         that certification; ACG-D2 proposes v2 as its Case-A
+                         successor, same decision)
 allowed adapter:         RequirementArtifact[] -> #22 evidence
                          (`ingestRequirementArtifactsAsEvidence`, internal)
 artifact evidence profile: 4000 per projected artifact / 20000 aggregate;
@@ -1221,8 +1224,9 @@ A-3: CLOSED_ON_MAIN
 `TestCaseModel` are separate bounded contexts and are not implicitly
 interchangeable; the one explicit, opt-in, one-directional seam is
 `RequirementArtifact[]` → `#22` evidence. `docs/architecture-model-boundary-v1.md`
-is the normative contract — this evidence block is a proof summary, not a
-duplicate of it. `A-3` is the first Gate-owned finding to close; as of this
+was the normative contract at `ACG-A3` certification; `ACG-D2` carries that
+unchanged decision forward in `docs/architecture-model-boundary-v2.md`. This
+evidence block is a proof summary, not a duplicate of either. `A-3` is the first Gate-owned finding to close; as of this
 certification the Architecture Conformance Gate was `ACTIVE` /
 `IN_EXECUTION` and **not** closed (`A-1`, `D-2` open — `A-1` has since
 closed; see [ACG-A1 closure evidence](#acg-a1-closure-evidence) for the
@@ -1249,7 +1253,10 @@ dependency review:
                  control; Dependency Graph enabled)
 
 architecture decision:   PRIVATE_GENERATIVE_SURFACE
-normative contract:      docs/package-surface-v1.md (v1, CURRENT)
+normative contract at ACG-A1 certification:
+                         docs/package-surface-v1.md (v1, CURRENT at that
+                         certification; ACG-D2 proposes v2 as its Case-A
+                         successor, same decision)
 package:                 1.0.0; 45 files; 19 root exports; 5 exports keys;
                          shasum `cbbea05237a25d35df5cd026b9e58441bbcc1060`
 private #22/#23:         NOT_SHIPPED
@@ -1268,8 +1275,10 @@ The #22/#23 generative implementation is repository-private: it is not a
 supported package API and is physically excluded from the npm package,
 while the supported public surface remains exactly the 19 root exports and
 the explicit `package.json` `exports` subpaths.
-`docs/package-surface-v1.md` is the normative contract — this evidence block
-is a proof summary, not a duplicate of it. `R01` removed three unreachable
+`docs/package-surface-v1.md` was the normative contract at `ACG-A1`
+certification; `ACG-D2` carries the same `PRIVATE_GENERATIVE_SURFACE` decision
+forward in `docs/package-surface-v2.md`. This evidence block is a proof summary,
+not a duplicate of either. `R01` removed three unreachable
 repository-only CI helpers from the package, `R02` made the installed-artifact
 async executor proof non-vacuous, and `CRW1-D-R05` restored the Dependency
 Graph so the `B-3` Dependency Review control is operational again (`B-3`
@@ -1725,7 +1734,7 @@ retained here for historical continuity — see below:
   unreachable repository-only CI helpers). The supported public surface
   remains exactly the existing 19 root exports and the explicit
   `package.json` `exports` subpaths. Normative contract:
-  [`docs/package-surface-v1.md`](docs/package-surface-v1.md); `ACG-A1`
+  [`docs/package-surface-v2.md`](docs/package-surface-v2.md); `ACG-A1`
   (PR #173) is merged and post-merge certified — see
   [§8](#8-current-critical-path)'s [closure
   evidence](#acg-a1-closure-evidence) for the authoritative record.
@@ -1750,7 +1759,7 @@ retained here for historical continuity — see below:
   opt-in, one-directional seam: `RequirementArtifact[]` → `#22` evidence.
   `RequirementArtifact`/`RequirementModel` and `TestDesignArtifact`/
   `TestCaseModel` are not implicitly interchangeable. Normative contract:
-  [`docs/architecture-model-boundary-v1.md`](docs/architecture-model-boundary-v1.md);
+  [`docs/architecture-model-boundary-v2.md`](docs/architecture-model-boundary-v2.md);
   `ACG-A3` (PR #171) is merged and post-merge certified — see [§8](#8-current-critical-path)'s
   [closure evidence](#acg-a3-closure-evidence) for the authoritative
   record. Any earlier "one generic core" language elsewhere describes

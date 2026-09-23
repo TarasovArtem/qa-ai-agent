@@ -50,8 +50,8 @@
 "use strict";
 
 const { DECISIONS } = require("../generation/automation-candidate");
-const { buildTestDesignReviewPackage } = require("../test-design/test-design-review-package");
-const { buildTestDesignReviewRecord } = require("../test-design/test-design-review-record");
+const { buildTestDesignReviewPackage } = require("../generative-test-design/test-design-review-package");
+const { buildTestDesignReviewRecord } = require("../generative-test-design/test-design-review-record");
 
 // The complete v6 quality-dimension vocabulary, in stable report order.
 // `reviewAlignment` is intentionally last and intentionally excluded from

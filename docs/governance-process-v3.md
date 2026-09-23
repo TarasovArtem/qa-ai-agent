@@ -85,10 +85,10 @@ do" below for the explicit boundary.
 | `BRANCH_GOVERNANCE` | Branch classes, protection expectations | v1 | [`docs/branch-inventory-v1.md`](branch-inventory-v1.md) | [`scripts/diagnostics/branch-inventory.js`](../scripts/diagnostics/branch-inventory.js) | CURRENT | — | Reviewed PR updating both doc and `MANIFEST` together |
 | `EVALUATION_EXECUTION` | Evaluation/regression merge-blocking policy (v1-v6) | v1 | [`docs/evaluation-execution-policy-v1.md`](evaluation-execution-policy-v1.md) | [`scripts/ai/evaluation/execution-policy.js`](../scripts/ai/evaluation/execution-policy.js) | CURRENT | — | Reviewed PR satisfying that document's own four-point promotion criteria |
 | `QA_GENERATION_CONTRACTS` | `RequirementModel`→`TestCaseModel`→`AutomationCandidate`→`AutomationPlan` data contracts | v1 | [`docs/qa-generation-contracts-v1.md`](qa-generation-contracts-v1.md) | `scripts/ai/generation/*` | CURRENT | — | Reviewed PR updating doc and validators together |
-| `ARCHITECTURE_MODEL_BOUNDARY` | Relationship between deterministic RTI artifacts (`RequirementArtifact`, `TestDesignArtifact`) and `#22`/`#23` generative models (`RequirementModel`, `TestCaseModel`); allowed cross-context adapter boundary | v1 | [`docs/architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md) | RequirementArtifact validator: [`scripts/ai/requirement-artifact.js`](../scripts/ai/requirement-artifact.js); `#22` generative validators: `scripts/ai/generation/*`; allowed evidence adapter: [`scripts/ai/test-design/evidence-ingestion.js`](../scripts/ai/test-design/evidence-ingestion.js) | CURRENT | — | Reviewed PR changing the normative boundary contract and any executable adapter/validators affected by that contract together |
+| `ARCHITECTURE_MODEL_BOUNDARY` | Relationship between deterministic RTI artifacts (`RequirementArtifact`, `TestDesignArtifact`) and `#22`/`#23` generative models (`RequirementModel`, `TestCaseModel`); allowed cross-context adapter boundary | v2 | [`docs/architecture-model-boundary-v2.md`](architecture-model-boundary-v2.md) | RequirementArtifact validator: [`scripts/ai/requirement-artifact.js`](../scripts/ai/requirement-artifact.js); `#22` generative validators: `scripts/ai/generation/*`; allowed evidence adapter: [`scripts/ai/generative-test-design/evidence-ingestion.js`](../scripts/ai/generative-test-design/evidence-ingestion.js) | CURRENT | v1 | Reviewed PR changing the normative boundary contract and any executable adapter/validators affected by that contract together |
 | `REVIEW_MERGE_GOVERNANCE` | Independent-review requirement, self-approval/self-merge/self-closure prohibition, merge method, post-merge certification, zero-open-new-defect policy | v3 | **this document**, §"Review, merge, and lifecycle process" | none (human/process rule, not automated) | CURRENT | v2 | Reviewed PR to this document |
 | `LIFECYCLE_STATUS_AUTHORITY` | Current sequence, active gate, per-finding lifecycle state | continuously updated in place (not per-edit versioned) | [`ROADMAP.md`](../ROADMAP.md) §2/§6/§8 | none — ROADMAP.md itself is the authority | CURRENT | — | Reviewed PR per this project's own standing merge-gate process |
-| `PACKAGE_GOVERNANCE` | What ships in the published npm package, and which modules are the supported public surface (`exports` vs. `files`; private generative surface) | v1 | [`docs/package-surface-v1.md`](package-surface-v1.md) | [`package.json`](../package.json) `exports`/`files` (declaration); `npm pack` (actual artifact); enforced by [`test/installation/package-surface.test.js`](../test/installation/package-surface.test.js) | CURRENT | — (previously implicit and unversioned: the `package.json` `files` field alone) | Reviewed PR changing the contract and `package.json` `exports`/`files` together |
+| `PACKAGE_GOVERNANCE` | What ships in the published npm package, and which modules are the supported public surface (`exports` vs. `files`; private generative surface) | v2 | [`docs/package-surface-v2.md`](package-surface-v2.md) | [`package.json`](../package.json) `exports`/`files` (declaration); `npm pack` (actual artifact); enforced by [`test/installation/package-surface.test.js`](../test/installation/package-surface.test.js) | CURRENT | v1 (which superseded the previously implicit, unversioned `package.json` `files` field) | Reviewed PR changing the contract and `package.json` `exports`/`files` together |
 
 This catalog references existing content; it does not duplicate any of
 the above documents' own substance. `BRANCH_GOVERNANCE`, `EVALUATION_EXECUTION`,
@@ -97,6 +97,15 @@ the above documents' own substance. `BRANCH_GOVERNANCE`, `EVALUATION_EXECUTION`,
 `REVIEW_MERGE_GOVERNANCE` (now pointing at `v3`, superseding `v2`) and
 `PACKAGE_GOVERNANCE` (now versioned, pointing at
 `docs/package-surface-v1.md`) changed.
+
+**Catalog update after `v3` (ACG-D2, Case A, no new process version).** The
+`ARCHITECTURE_MODEL_BOUNDARY` and `PACKAGE_GOVERNANCE` rows above now point
+at `architecture-model-boundary-v2.md` and `package-surface-v2.md`
+respectively, each superseding its `v1`, performed atomically in the same
+reviewed PR that renamed the private `#22` directory from
+`scripts/ai/test-design/` to `scripts/ai/generative-test-design/`. Both
+subjects, the authority hierarchy and the review/merge/lifecycle rules are
+unchanged, so this document remains `v3` `CURRENT`.
 
 ## Authority hierarchy
 
@@ -459,10 +468,10 @@ that same independent-review process — no self-modification occurred.
 - **`A-3`'s own architecture-boundary contract substance** — referenced
   by catalog entry above (`ARCHITECTURE_MODEL_BOUNDARY`), never
   duplicated here. Model-relationship rules live in
-  `docs/architecture-model-boundary-v1.md`, not in this document.
+  `docs/architecture-model-boundary-v2.md`, not in this document.
 - **`A-1`'s own package-surface contract substance** — referenced by
   catalog entry above (`PACKAGE_GOVERNANCE`), never duplicated here. The
-  public-vs-physical package rules live in `docs/package-surface-v1.md`,
+  public-vs-physical package rules live in `docs/package-surface-v2.md`,
   not in this document.
 - **Security-reporting redesign** — `SECURITY.md`'s own reporting/trust
   boundaries are unchanged by this document.
