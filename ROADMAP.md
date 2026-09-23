@@ -1429,11 +1429,13 @@ MEM/RAG/LEARN:     NOT_STARTED
 ```
 
 Per the roadmap's own [§15](#15-final-target-state) sequencing, `AISEC-1`
-becomes the next active gate -- a roadmap-level designation only. This
-closure sync performs the canonical `ROADMAP.md` state transition for a
-Gate-level review already independently certified as `APPROVED` (a
-review-only pass, no repository diff); it does not itself re-perform that
-review, and it does not start any `AISEC`/`MEM`/`RAG`/`LEARN`
+became the next active gate at that point. `AISEC-1` has since closed too
+(see [AISEC-1 closure evidence](#aisec-1-closure-evidence) below), and
+`AISEC-2` is now the roadmap-designated next active gate -- a roadmap-level
+designation only. This closure sync performs the canonical `ROADMAP.md`
+state transition for a Gate-level review already independently certified
+as `APPROVED` (a review-only pass, no repository diff); it does not itself
+re-perform that review, and it does not start any `AISEC`/`MEM`/`RAG`/`LEARN`
 implementation. `A-1`, `A-3` and `D-2` are unchanged by this evidence.
 Nothing downstream is activated by this evidence.
 
