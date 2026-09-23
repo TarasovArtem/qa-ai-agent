@@ -516,7 +516,7 @@ model, cross-project memory isolation — see [§15](#15-memory-security-constra
 |---|---|---|---|---|---|---|---|---|
 | AT-07 | Approval provenance not authenticated | Current | Medium | High | High | **CRITICAL** | Reviewer/human-decision identity unverified | AISEC-3, AISEC-6 |
 | AT-03 | Generated content re-enters as trusted | Current | Medium | High | Medium | **HIGH** | No stage-boundary distrust for generated input | AISEC-2 |
-| AT-01 | Indirect prompt injection via requirement | Current | Medium | High | Low-Med | MEDIUM (recalibrated from HIGH — see rationale below) | Prompt-level data-boundary control exists (5/5 modules, credited); no proof of deterministic enforcement beyond it | AISEC-2 |
+| AT-01 | Indirect prompt injection via requirement | Current | Low-Med | High | Medium | MEDIUM (recalibrated from HIGH — see rationale below) | Prompt-level data-boundary control exists (5/5 modules, credited); no proof of deterministic enforcement beyond it | AISEC-2 |
 | AT-12 | Excess project data in model context (RTI/#22) | Current | Low-Med | Medium | Low | MEDIUM | No-spread construction confirmed (0/5); field-by-field necessity audit still open | AISEC-2 |
 | AT-04 | Publish-destination misroute | Current | Low | Medium | Medium | MEDIUM | No source/destination identity cross-check | AISEC-4 |
 | AT-06 | Compromised provider response | Current | Low | Medium | Medium | MEDIUM | Real control exists; residual model risk | AISEC-2/6 |
@@ -532,20 +532,24 @@ model, cross-project memory isolation — see [§15](#15-memory-security-constra
 | AT-11 | Cross-project memory contamination | **Future** | N/A | High | High | **HIGH (design-time)** | Not implemented | MEM-* |
 
 **AT-01 recalibration rationale.** The original rating treated the
-RTI/`#22` prompt data-boundary as an unverified gap and scored Authority
-Impact as Medium on that basis. Independent source inspection (this
-corrective) found the boundary present and well-formed in all five
-relevant prompt-construction modules, matching the triage pipeline's own
-credited control (§11). Likelihood and Impact are unchanged — the entry
-point (external, attacker-controllable requirement content) and the
-consequence (feeding generation that eventually reaches filesystem
-mutation) are the same regardless of this one control's presence.
-Authority Impact drops to Low-Med because a real, explicit, concrete
-mitigation now measurably stands between the untrusted content and any
-authority grant, even though it is prompt-level rather than
-deterministically enforced. Net risk: MEDIUM, matching the treatment
-already given to AT-06 ("real control exists; residual model risk") —
-the same reasoning pattern, applied consistently.
+RTI/`#22` prompt data-boundary as an unverified gap and scored
+Likelihood as Medium on that basis. Independent source inspection found
+the boundary present and well-formed in all five relevant
+prompt-construction modules, matching the triage pipeline's own credited
+control (§11). This is a real mitigation that reduces the *probability*
+untrusted embedded content successfully influences the model — a
+Likelihood effect — so Likelihood moves from Medium to Low-Med. It does
+not change what happens *if* an injection nonetheless succeeds: this
+scenario's own text still says successful influence can reach
+generation and, from there, filesystem mutation, exactly as before, so
+Authority Impact remains Medium, unchanged. Impact is likewise unchanged.
+This mirrors the repository's own established pattern for a real but
+imperfect control: `AT-06` ("Compromised provider response") rates a
+comparable real, deterministic, code-level mitigation as lowering
+Likelihood (Low) while leaving Authority Impact at Medium, not the
+reverse. Net risk: MEDIUM, the same label as before this correction, now
+reached through the dimension the document's own methodology actually
+supports.
 
 ## 15. Memory-Security Constraints
 
