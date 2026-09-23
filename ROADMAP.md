@@ -676,7 +676,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
   →  Architecture Conformance Gate (COMPLETE_ON_MAIN)
        [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
-  →  AISEC-1 .. AISEC-7
+  →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
   →  MEM-7 .. MEM-9
@@ -869,8 +869,10 @@ certification step, addressed by a separate mission -- an independent
 Gate-level closure certification (review-only, no repository diff)
 approved closure, and this canonical sync records the result: the
 Architecture Conformance Gate is `COMPLETE_ON_MAIN` (see [Gate closure
-evidence](#architecture-conformance-gate-closure-evidence) below). Per
-[§15](#15-final-target-state), `AISEC-1` is now the roadmap-designated
+evidence](#architecture-conformance-gate-closure-evidence) below).
+`AISEC-1` has since closed too (see [AISEC-1 closure
+evidence](#aisec-1-closure-evidence) below); per
+[§15](#15-final-target-state), `AISEC-2` is now the roadmap-designated
 next active gate -- an authorization-level designation only. `D-1` and
 `D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
 execution is started or activated by this state.
@@ -1435,6 +1437,57 @@ review, and it does not start any `AISEC`/`MEM`/`RAG`/`LEARN`
 implementation. `A-1`, `A-3` and `D-2` are unchanged by this evidence.
 Nothing downstream is activated by this evidence.
 
+### AISEC-1 closure evidence
+
+```text
+AISEC-1:          COMPLETE_ON_MAIN
+Artifact:         docs/agentic-threat-model-v1.md
+
+research PR:       #178
+original HEAD:     664d85607bc310ffe92ad1bd0b18f3384b6a8d08
+                   (independent review: NOT APPROVED -- MEDIUM-1)
+corrective C1:     0678e20ddb74077c91a6b9382159169a273f0915
+                   (independent review: NOT APPROVED -- MEDIUM-2)
+corrective C2:     6cf8ae57bb38ee06edc650059cd1b9ce6d1444c8
+                   (independent review: APPROVED)
+merge SHA:         fcb7fb54220a186c9bba0f883a8ba993624d9fb4
+merge method:      standard two-parent (parent1 1c43b0b176af7d1ab2a1452be2e5e5328992d45f,
+                   parent2 6cf8ae57bb38ee06edc650059cd1b9ce6d1444c8;
+                   merge TREE == reviewed TREE)
+post-merge CI:     run 35866042990 -- PASS (7/7, attempt 1, exact merge SHA, event push)
+
+MEDIUM-1:          CLOSED_ON_MAIN (RTI/#22 prompt data-boundary control was
+                   under-credited; corrected -- 5/5 prompt modules verified)
+MEDIUM-2:          CLOSED_ON_MAIN (AT-01 risk recalibration used the wrong
+                   dimension; corrected to match the AT-06 precedent)
+zero-open-new-defect: PASS
+
+AT-01 (indirect prompt injection):  MEDIUM (Likelihood Low-Med, Impact High,
+                   Authority Impact Medium) -- prompt-level DATA-boundary
+                   control credited; deterministic enforcement not claimed
+AT-07 (approval provenance not authenticated): CRITICAL -- open system risk,
+                   owned by AISEC-3/AISEC-6, not remediated by this research
+AT-16 (confused deputy): MEDIUM -- open system risk, owned by AISEC-3
+SEC-I1..SEC-I10:   10 security invariants defined
+
+AISEC-2:           NOT_STARTED
+AISEC-3..AISEC-7:  NOT_STARTED
+MEM/RAG/LEARN:     NOT_STARTED
+```
+
+`AISEC-1` is the first stage of the Agentic Trust & Security Foundation to
+close: a repository-grounded agentic threat model now exists on `main`,
+independently reviewed through two corrective rounds and post-merge
+certified. This is a **research and architecture-input artifact, not a
+security-control implementation** -- `AISEC-1` `COMPLETE_ON_MAIN` means the
+threat-model research lifecycle completed, not that any identified threat
+is remediated. `AT-07` remains the highest-priority open system risk,
+unchanged by this closure, owned by `AISEC-3` and `AISEC-6`. Per
+[§15](#15-final-target-state), `AISEC-2` is now the roadmap-designated
+next active gate -- a sequencing designation only; `AISEC-2` execution has
+not begun. No runtime, public API, or package surface change accompanies
+this evidence.
+
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
 ```text
@@ -1442,11 +1495,13 @@ AISEC technical entry: APPROVED
   (the RTI Integrated Audit found no BLOCKER/HIGH/unresolved-MEDIUM
   finding that would block AISEC; RTI is no longer a technical blocker)
 
-AISEC execution: NOT_STARTED
+AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2..AISEC-7 NOT_STARTED
   (was intentionally delayed by governance sequencing until Conformance
   Remediation and the Architecture Conformance Gate ran first, per §7's
-  owner decision -- both have since completed, and `AISEC-1` is now the
-  roadmap-designated next active gate per §15; AISEC execution itself has
+  owner decision -- both have since completed. `AISEC-1` -- Agentic Threat
+  Model Research -- is now closed on `main`; see [AISEC-1 closure
+  evidence](#aisec-1-closure-evidence) in §8. Per §15, `AISEC-2` is now
+  the roadmap-designated next active gate; AISEC-2 execution itself has
   not yet begun)
 ```
 
@@ -1456,16 +1511,18 @@ blocked by RTI after `ca9bfa0`" — it was not; the project chose to run
 conformance remediation first.
 
 ```text
-AISEC-1  Agentic Threat Model Research
-AISEC-2  Prompt / Indirect Injection Study
-AISEC-3  Tool / Privilege / Credential Boundary Analysis
-AISEC-4  Data Exfiltration & Cross-Project Isolation
-AISEC-5  Agentic Security Verification Strategy
-AISEC-6  Security Architecture Decision Record
-AISEC-7  Adversarial Security Test Harness
+AISEC-1  Agentic Threat Model Research                    COMPLETE_ON_MAIN
+AISEC-2  Prompt / Indirect Injection Study                NOT_STARTED
+AISEC-3  Tool / Privilege / Credential Boundary Analysis   NOT_STARTED
+AISEC-4  Data Exfiltration & Cross-Project Isolation       NOT_STARTED
+AISEC-5  Agentic Security Verification Strategy            NOT_STARTED
+AISEC-6  Security Architecture Decision Record             NOT_STARTED
+AISEC-7  Adversarial Security Test Harness                 NOT_STARTED
 ```
 
-All: `NOT_STARTED`.
+`AISEC-1` closed via `docs/agentic-threat-model-v1.md`; see [AISEC-1
+closure evidence](#aisec-1-closure-evidence) in §8. `AISEC-2` through
+`AISEC-7` remain `NOT_STARTED`.
 
 **Research lane (early-start exception).** Per the [subsequent owner
 decision — Early AISEC/MEM Research
@@ -1928,9 +1985,11 @@ retained here for historical continuity — see below:
 
 `CRW1` → `CRW2` → the Architecture Conformance Gate have all now closed
 (see [Gate closure evidence](#architecture-conformance-gate-closure-evidence)
-in §8); `AISEC-1` is now the next active gate -- a roadmap-level
-designation, not a claim that `AISEC` execution has begun (it remains
-`NOT_STARTED`; see [§9](#9-aisec--agentic-trust--ai-security-foundation)).
+in §8); `AISEC-1` has since closed too (see [AISEC-1 closure
+evidence](#aisec-1-closure-evidence) in §8), and `AISEC-2` is now the
+next active gate -- a roadmap-level designation, not a claim that
+`AISEC-2` execution has begun (it remains `NOT_STARTED`; see
+[§9](#9-aisec--agentic-trust--ai-security-foundation)).
 This file will be updated at each transition;
 `README.md`'s own roadmap section will continue to carry the detailed
 technical evidence for whatever completes.
