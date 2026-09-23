@@ -198,8 +198,12 @@ Execution mode:             PARALLEL AUTHORIZED (owner decision — see §7's
 Architecture Gate barrier:  waited for all five findings CLOSED_ON_MAIN
                              AND a passing CONFORMANCE-INTEGRATION-CHECK —
                              both held, making the Gate READY; Gate
-                             execution has since started (ACG-A3), so
-                             Gate state now: ACTIVE / IN_EXECUTION
+                             execution started (ACG-A3), so
+                             Gate state then: ACTIVE / IN_EXECUTION —
+                             the Gate has since completed; see
+                             [Architecture Conformance Gate closure
+                             evidence](#architecture-conformance-gate-closure-evidence)
+                             for the current state
 ```
 
 ```text
@@ -630,13 +634,15 @@ only under these conditions:
   and [`ACG-A3` closure evidence](#acg-a3-closure-evidence)), `D-2`
   `CLOSED_ON_MAIN` (decided as `RENAME_PRIVATE_GENERATIVE_DIRECTORY` — see
   [`ACG-D2` closure evidence](#acg-d2-closure-evidence)), Architecture
-  Conformance Gate not closed — plus its own
+  Conformance Gate `COMPLETE_ON_MAIN` (see [Gate closure
+  evidence](#architecture-conformance-gate-closure-evidence)) — plus its own
   provisional conclusions, and an explicit statement that those
   conclusions "must be revalidated after Architecture Gate: YES". (This
   bullet originally required `A-1`, `A-3` and `D-2` to be stated as
-  unresolved, each accurate until that finding closed on `main`; research
-  written earlier may retain that historical assumption state until its
-  mandatory post-Gate revalidation.)
+  unresolved and the Architecture Conformance Gate to be stated as not
+  closed, each accurate until that finding or the Gate itself closed on
+  `main`; research written earlier may retain that historical assumption
+  state until its mandatory post-Gate revalidation.)
 - Before Architecture Gate closure, early research may **not** finalize the
   public product surface, public API contract, runtime authority contract,
   persistence schema, final threat-model scope, an accepted security ADR, or
