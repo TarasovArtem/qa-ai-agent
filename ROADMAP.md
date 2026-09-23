@@ -178,8 +178,11 @@ Architecture Conformance Gate is now **`ACTIVE`** / `IN_EXECUTION` (see
 finding, `A-3`, is `CLOSED_ON_MAIN` (`ACG-A3`, PR #171 — see [closure
 evidence](#acg-a3-closure-evidence) in §8), and its second, `A-1`, is now
 also `CLOSED_ON_MAIN` (`ACG-A1`, PR #173 — see [closure
-evidence](#acg-a1-closure-evidence) in §8); its remaining finding `D-2`
-remains **open**, and the Gate itself is **not** closed. `D-1`
+evidence](#acg-a1-closure-evidence) in §8), and its third, `D-2`, is now
+also `CLOSED_ON_MAIN` (`ACG-D2`, PR #175 — see [closure
+evidence](#acg-d2-closure-evidence) in §8); all three Gate-owned findings
+are closed, but the Gate itself is **not** closed — Gate closure is a
+separate certification step, not performed by this state. `D-1`
 and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
 not itself a slice-status line subject to the ACTIVE-lifecycle exemption
@@ -205,7 +208,7 @@ ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORM
                                +-- CRW2-B6 / B-6 -(CLOSED_ON_MAIN)--+                v
                                                               Architecture Conformance Gate
                                                                 (ACTIVE / IN_EXECUTION)
-                                                              [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 OPEN]
+                                                              [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
 ```
 
 `CRW1-D` (`B-3`) is the first of the five originally-authorized parallel
@@ -623,13 +626,15 @@ only under these conditions:
   `CLOSED_ON_MAIN` (decided as `SEPARATE_BOUNDED_CONTEXTS` — see
   [`docs/architecture-model-boundary-v2.md`](docs/architecture-model-boundary-v2.md)
   and [`ACG-A3` closure evidence](#acg-a3-closure-evidence)), `D-2`
-  unresolved, Architecture Conformance Gate not closed — plus its own
+  `CLOSED_ON_MAIN` (decided as `RENAME_PRIVATE_GENERATIVE_DIRECTORY` — see
+  [`ACG-D2` closure evidence](#acg-d2-closure-evidence)), Architecture
+  Conformance Gate not closed — plus its own
   provisional conclusions, and an explicit statement that those
   conclusions "must be revalidated after Architecture Gate: YES". (This
-  bullet originally required `A-1` and `A-3` to be stated as unresolved,
-  each accurate until that finding closed on `main`; research written
-  earlier may retain that historical assumption state until its mandatory
-  post-Gate revalidation.)
+  bullet originally required `A-1`, `A-3` and `D-2` to be stated as
+  unresolved, each accurate until that finding closed on `main`; research
+  written earlier may retain that historical assumption state until its
+  mandatory post-Gate revalidation.)
 - Before Architecture Gate closure, early research may **not** finalize the
   public product surface, public API contract, runtime authority contract,
   persistence schema, final threat-model scope, an accepted security ADR, or
@@ -662,7 +667,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          CRW2-B6 / B-6 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN)  }  (PARALLEL ORIGINAL SET)
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
   →  Architecture Conformance Gate (ACTIVE / IN_EXECUTION)
-       [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 OPEN]
+       [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
@@ -839,12 +844,17 @@ activation) — and Gate **execution** has since **started**.
 **Architecture Conformance Gate — `ACTIVE` / `IN_EXECUTION`.** Its first
 owned finding, `A-3`, is `CLOSED_ON_MAIN` via `ACG-A3` (PR #171; see
 [ACG-A3 closure evidence](#acg-a3-closure-evidence) below) — the first
-Gate-owned finding to close — and its second, `A-1`, is `CLOSED_ON_MAIN`
+Gate-owned finding to close — its second, `A-1`, is `CLOSED_ON_MAIN`
 via `ACG-A1` (PR #173; see [ACG-A1 closure
-evidence](#acg-a1-closure-evidence) below). `D-2` remains `OPEN` (the
-repository still intentionally contains both `scripts/ai/test-design.js`
-and `scripts/ai/test-design/`; excluding the directory from the npm
-package does not resolve that collision), so the Gate is **not** closed. `D-1` and `D-3` remain `DEFERRED`. Nothing from
+evidence](#acg-a1-closure-evidence) below), and its third, `D-2`, is now
+also `CLOSED_ON_MAIN` via `ACG-D2` (PR #175; see [ACG-D2 closure
+evidence](#acg-d2-closure-evidence) below): the repository no longer
+contains `scripts/ai/test-design/` — it was renamed to
+`scripts/ai/generative-test-design/`, removing the namespace collision
+with the deterministic `scripts/ai/test-design.js`. All three Gate-owned
+findings are now `CLOSED_ON_MAIN`; the Gate itself is **not yet** closed —
+Gate closure is a distinct certification step, addressed by a future,
+separate mission, not automatically implied by its owned findings closing. `D-1` and `D-3` remain `DEFERRED`. Nothing from
 `AISEC`/`MEM`/`RAG`/`LEARN` is started or activated by this state.
 
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
@@ -1228,9 +1238,10 @@ was the normative contract at `ACG-A3` certification; `ACG-D2` carries that
 unchanged decision forward in `docs/architecture-model-boundary-v2.md`. This
 evidence block is a proof summary, not a duplicate of either. `A-3` is the first Gate-owned finding to close; as of this
 certification the Architecture Conformance Gate was `ACTIVE` /
-`IN_EXECUTION` and **not** closed (`A-1`, `D-2` open — `A-1` has since
-closed; see [ACG-A1 closure evidence](#acg-a1-closure-evidence) for the
-current state). Nothing downstream is activated by this evidence.
+`IN_EXECUTION` and **not** closed (`A-1`, `D-2` open — both have since
+closed; see [ACG-A1 closure evidence](#acg-a1-closure-evidence) and
+[ACG-D2 closure evidence](#acg-d2-closure-evidence) for the current state).
+Nothing downstream is activated by this evidence.
 
 ### ACG-A1 closure evidence
 
@@ -1283,11 +1294,82 @@ repository-only CI helpers from the package, `R02` made the installed-artifact
 async executor proof non-vacuous, and `CRW1-D-R05` restored the Dependency
 Graph so the `B-3` Dependency Review control is operational again (`B-3`
 remains `CLOSED_ON_MAIN`). `A-1` is the second Gate-owned finding to close;
-`D-2` remains open — the repository still intentionally contains both
-`scripts/ai/test-design.js` and `scripts/ai/test-design/`, and excluding the
-directory from the package does not resolve that collision. The Architecture
+`D-2` was open at this certification — the repository still intentionally
+contained both `scripts/ai/test-design.js` and `scripts/ai/test-design/`,
+and excluding the directory from the package did not resolve that
+collision. `D-2` has since closed via `ACG-D2`; see [ACG-D2 closure
+evidence](#acg-d2-closure-evidence) for the current state. The Architecture
 Conformance Gate is `ACTIVE` / `IN_EXECUTION` and **not** closed. Nothing
 downstream is activated by this evidence.
+
+### ACG-D2 closure evidence
+
+```text
+ACG-D2:          COMPLETE_ON_MAIN
+D-2:             CLOSED_ON_MAIN
+
+implementation PR: #175
+reviewed HEAD:   03597c1a0aa7e54506d3c1ebef91bc038126d07c
+reviewed TREE:   9ccc87e22e369c706f787c988d6bf9c13a75c17a
+merge SHA:       b4602291320f5ddb7583eb5ca1dc4ff3a5031f83
+merge method:    standard two-parent (parent1 7201f8b1b6b32befe945d95daea06e1c65abae57,
+                 parent2 03597c1a0aa7e54506d3c1ebef91bc038126d07c;
+                 merge TREE == reviewed TREE)
+post-merge CI:   run 35827154067 — PASS (7/7, attempt 1, exact merge SHA, event push)
+post-merge supply-chain:
+                 run 35827154066 — PASS (attempt 1, exact merge SHA, event push;
+                 triggered by this workflow's own package.json push path filter)
+dependency review:
+                 run 35618721002 attempt 1 — PASS (pull_request-only
+                 control, exact pre-merge HEAD)
+
+decision:                RENAME_PRIVATE_GENERATIVE_DIRECTORY
+old private path:        scripts/ai/test-design/
+new private path:        scripts/ai/generative-test-design/
+deterministic RTI:       scripts/ai/test-design.js (path/identity unchanged)
+ACG-A3 adapter:          scripts/ai/generative-test-design/evidence-ingestion.js
+                         (`ingestRequirementArtifactsAsEvidence`; `A-3`
+                         decision `SEPARATE_BOUNDED_CONTEXTS` unaffected)
+package:                 1.0.0; 45 files; 19 root exports; 5 exports keys;
+                         manifest path set unchanged by the rename
+tarball shasum:          NON-CANONICAL / checkout-EOL-dependent (not part of
+                         `PACKAGE_GOVERNANCE`) — clean-checkout examples:
+                         LF `6054bb15550edd98629921494306c916b326d79e`,
+                         CRLF `b0c71f4c37851606a845bdbef2d0746e373e7d5e`
+package-surface:         docs/package-surface-v2.md CURRENT
+                         (v1 SUPERSEDED; A1_DECISION unchanged)
+architecture boundary:   docs/architecture-model-boundary-v2.md CURRENT
+                         (v1 SUPERSEDED; A-3 decision unchanged)
+governance process:      docs/governance-process-v3.md CURRENT
+                         (PACKAGE_GOVERNANCE -> v2, ARCHITECTURE_MODEL_BOUNDARY -> v2;
+                         no governance-v4)
+
+ACG-D2-F1: CLOSED   ACG-D2-F2: CLOSED   ACG-D2-F3: CLOSED   ACG-D2-F4: CLOSED
+ACG-D2-M01: CLOSED  ACG-D2-M02: CLOSED
+zero-open-new-defect: PASS
+
+A-1: CLOSED_ON_MAIN   A-3: CLOSED_ON_MAIN   D-2: CLOSED_ON_MAIN
+```
+
+The repository-level namespace collision between the deterministic RTI
+module `scripts/ai/test-design.js` and the private `#22` generative
+directory is resolved: the directory was renamed to
+`scripts/ai/generative-test-design/`, and `require("./test-design")`
+resolves unambiguously to the file. No public export, root API count,
+exports-map key, or package file-membership changed; the tarball shasum
+changed only because `package.json`'s `files` exclusion and, transiently
+during review, `README.md`'s bytes changed — it is illustrative evidence,
+not part of the governed surface. `docs/package-surface-v1.md` and
+`docs/architecture-model-boundary-v1.md` are both `SUPERSEDED` by their
+`v2` successors under governance-process-v3's Case A; both underlying
+architectural decisions (`PRIVATE_GENERATIVE_SURFACE`, and
+`SEPARATE_BOUNDED_CONTEXTS`) are unchanged — only the executable path of
+the private directory moved. `D-2` is the third and final Gate-owned
+finding to close; all three (`A-1`, `A-3`, `D-2`) are now
+`CLOSED_ON_MAIN`. The Architecture Conformance Gate remains `ACTIVE` /
+`IN_EXECUTION` and is **not** closed by this evidence — Gate closure is a
+separate certification step. Nothing downstream is activated by this
+evidence.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
@@ -1720,7 +1802,7 @@ activated:
 
 `CRW1-A` **recorded** the Architecture Conformance Gate; it did not resolve
 any of the following. Current state: `A-1` `CLOSED_ON_MAIN`, `A-2`
-`CLOSED_ON_MAIN`, `A-3` `CLOSED_ON_MAIN`, `D-2` **open**. `A-2` (a
+`CLOSED_ON_MAIN`, `A-3` `CLOSED_ON_MAIN`, `D-2` `CLOSED_ON_MAIN`. `A-2` (a
 Conformance Remediation Wave 2 finding), `A-3` (the first Gate-owned
 finding to close, via `ACG-A3`) and `A-1` (the second, via `ACG-A1`) are
 retained here for historical continuity — see below:
@@ -1765,11 +1847,15 @@ retained here for historical continuity — see below:
   record. Any earlier "one generic core" language elsewhere describes
   RTI's own internal core only, not a claim that the two model families
   are unified.
-- **`D-2`** — the `scripts/ai/test-design.js` vs. `scripts/ai/test-design/`
-  naming collision between the RTI and #22/#23 pipelines is not yet resolved
-  or explicitly documented as intentional. Excluding `scripts/ai/test-design/`
-  from the npm package (`ACG-A1`) does not resolve this repository-level
-  collision.
+- **`D-2` — `CLOSED_ON_MAIN`** — the `scripts/ai/test-design.js` vs.
+  `scripts/ai/test-design/` naming collision between the RTI and #22/#23
+  pipelines is resolved by renaming the private generative directory to
+  `scripts/ai/generative-test-design/`, which no longer shares a base name
+  with the deterministic `scripts/ai/test-design.js`. Normative contract:
+  [`docs/package-surface-v2.md`](docs/package-surface-v2.md); `ACG-D2`
+  (PR #175) is merged and post-merge certified — see
+  [§8](#8-current-critical-path)'s [closure
+  evidence](#acg-d2-closure-evidence) for the authoritative record.
 
 ## 15. Final target state
 
