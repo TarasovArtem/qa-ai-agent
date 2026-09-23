@@ -172,17 +172,19 @@ findings to close (see [closure evidence](#crw2-b6-closure-evidence) in
 `CLOSED_ON_MAIN`, and `CONFORMANCE-INTEGRATION-CHECK` passed (see
 [integration evidence](#conformance-integration-check-evidence) in
 §8) — which made the Architecture Conformance Gate `READY` (eligibility,
-not activation). Gate **execution** has since **started**: the
-Architecture Conformance Gate is now **`ACTIVE`** / `IN_EXECUTION` (see
+not activation). Gate **execution** has since **started and completed**:
+the Architecture Conformance Gate is now **`COMPLETE_ON_MAIN`** (see
 "Gate-level status" in [§8](#8-current-critical-path)). Its first owned
 finding, `A-3`, is `CLOSED_ON_MAIN` (`ACG-A3`, PR #171 — see [closure
 evidence](#acg-a3-closure-evidence) in §8), and its second, `A-1`, is now
 also `CLOSED_ON_MAIN` (`ACG-A1`, PR #173 — see [closure
 evidence](#acg-a1-closure-evidence) in §8), and its third, `D-2`, is now
 also `CLOSED_ON_MAIN` (`ACG-D2`, PR #175 — see [closure
-evidence](#acg-d2-closure-evidence) in §8); all three Gate-owned findings
-are closed, but the Gate itself is **not** closed — Gate closure is a
-separate certification step, not performed by this state. `D-1`
+evidence](#acg-d2-closure-evidence) in §8); with all three Gate-owned
+findings closed, an independent Gate-level closure certification approved
+Gate closure, and the Architecture Conformance Gate is now
+`COMPLETE_ON_MAIN` (see [Gate closure
+evidence](#architecture-conformance-gate-closure-evidence) in §8). `D-1`
 and `D-3` remain explicitly **DEFERRED**. This
 paragraph is updated as each finding's own closure evidence lands — it is
 not itself a slice-status line subject to the ACTIVE-lifecycle exemption
@@ -207,7 +209,7 @@ ROADMAP-V3.3-SYNC certified ---+-- CRW2-B1 / B-1 -(CLOSED_ON_MAIN)--+--> CONFORM
                                +-- CRW2-B4 / B-4 -(CLOSED_ON_MAIN)--+                (PASS)
                                +-- CRW2-B6 / B-6 -(CLOSED_ON_MAIN)--+                v
                                                               Architecture Conformance Gate
-                                                                (ACTIVE / IN_EXECUTION)
+                                                                (COMPLETE_ON_MAIN)
                                                               [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
 ```
 
@@ -666,7 +668,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          CRW2-B4 / B-4 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN),
          CRW2-B6 / B-6 (COMPLETE_ON_MAIN / CLOSED_ON_MAIN)  }  (PARALLEL ORIGINAL SET)
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
-  →  Architecture Conformance Gate (ACTIVE / IN_EXECUTION)
+  →  Architecture Conformance Gate (COMPLETE_ON_MAIN)
        [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
   →  AISEC-1 .. AISEC-7
   →  MEM-1 .. MEM-6
@@ -735,7 +737,11 @@ Conformance Gate as a whole: it became **`ACTIVE`** when its first owned
 implementation slice (`ACG-A3`) began, and remains `ACTIVE` until every
 finding it owns (`A-1`, `A-3`, `D-2`) is closed and certified. `IN_EXECUTION`
 is used alongside `ACTIVE` for the Gate only as a plain descriptor that
-Gate execution has started; it is not a separate lifecycle status.
+Gate execution has started; it is not a separate lifecycle status. All
+three owned findings are now closed and certified, and an independent
+Gate-level closure certification approved closure; per this same
+definition the Gate has exited `ACTIVE` — see [Gate closure
+evidence](#architecture-conformance-gate-closure-evidence) below.
 
 **`CRW1-A` — `COMPLETE_ON_MAIN`.** Its post-merge truth proof passed (see
 [closure evidence](#crw1-a-closure-evidence) below); per the lifecycle
@@ -841,7 +847,7 @@ above for what it checked and its durable result. The Architecture
 Conformance Gate therefore became **`READY`** (eligibility, not
 activation) — and Gate **execution** has since **started**.
 
-**Architecture Conformance Gate — `ACTIVE` / `IN_EXECUTION`.** Its first
+**Architecture Conformance Gate — `COMPLETE_ON_MAIN`.** Its first
 owned finding, `A-3`, is `CLOSED_ON_MAIN` via `ACG-A3` (PR #171; see
 [ACG-A3 closure evidence](#acg-a3-closure-evidence) below) — the first
 Gate-owned finding to close — its second, `A-1`, is `CLOSED_ON_MAIN`
@@ -852,10 +858,16 @@ evidence](#acg-d2-closure-evidence) below): the repository no longer
 contains `scripts/ai/test-design/` — it was renamed to
 `scripts/ai/generative-test-design/`, removing the namespace collision
 with the deterministic `scripts/ai/test-design.js`. All three Gate-owned
-findings are now `CLOSED_ON_MAIN`; the Gate itself is **not yet** closed —
-Gate closure is a distinct certification step, addressed by a future,
-separate mission, not automatically implied by its owned findings closing. `D-1` and `D-3` remain `DEFERRED`. Nothing from
-`AISEC`/`MEM`/`RAG`/`LEARN` is started or activated by this state.
+findings are now `CLOSED_ON_MAIN`. Gate closure was a distinct
+certification step, addressed by a separate mission -- an independent
+Gate-level closure certification (review-only, no repository diff)
+approved closure, and this canonical sync records the result: the
+Architecture Conformance Gate is `COMPLETE_ON_MAIN` (see [Gate closure
+evidence](#architecture-conformance-gate-closure-evidence) below). Per
+[§15](#15-final-target-state), `AISEC-1` is now the roadmap-designated
+next active gate -- an authorization-level designation only. `D-1` and
+`D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
+execution is started or activated by this state.
 
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
 "RTI Integrated Audit READY") describe *past* states of this project and
@@ -1299,8 +1311,10 @@ contained both `scripts/ai/test-design.js` and `scripts/ai/test-design/`,
 and excluding the directory from the package did not resolve that
 collision. `D-2` has since closed via `ACG-D2`; see [ACG-D2 closure
 evidence](#acg-d2-closure-evidence) for the current state. The Architecture
-Conformance Gate is `ACTIVE` / `IN_EXECUTION` and **not** closed. Nothing
-downstream is activated by this evidence.
+Conformance Gate was `ACTIVE` / `IN_EXECUTION` and not closed at this
+certification; it has since closed -- see [Gate closure
+evidence](#architecture-conformance-gate-closure-evidence) for the current
+state. Nothing downstream is activated by this evidence.
 
 ### ACG-D2 closure evidence
 
@@ -1366,10 +1380,54 @@ architectural decisions (`PRIVATE_GENERATIVE_SURFACE`, and
 `SEPARATE_BOUNDED_CONTEXTS`) are unchanged — only the executable path of
 the private directory moved. `D-2` is the third and final Gate-owned
 finding to close; all three (`A-1`, `A-3`, `D-2`) are now
-`CLOSED_ON_MAIN`. The Architecture Conformance Gate remains `ACTIVE` /
-`IN_EXECUTION` and is **not** closed by this evidence — Gate closure is a
-separate certification step. Nothing downstream is activated by this
-evidence.
+`CLOSED_ON_MAIN`. The Architecture Conformance Gate was `ACTIVE` /
+`IN_EXECUTION` and not closed at this certification -- Gate closure was a
+separate certification step; it has since closed -- see [Gate closure
+evidence](#architecture-conformance-gate-closure-evidence) for the current
+state. Nothing downstream is activated by this evidence.
+
+### Architecture Conformance Gate closure evidence
+
+```text
+ARCHITECTURE CONFORMANCE GATE:   COMPLETE_ON_MAIN
+
+closure certification:  APPROVED (independent Gate-level review; a
+                         review-only pass against exact main
+                         a5ca7ae5b1f4aee9803ed535cf5b3d180d2e25ff --
+                         no repository diff)
+closure authorization:  YES
+
+Gate-owned findings:
+  A-1: CLOSED_ON_MAIN  (`ACG-A1`, PR #173; see closure evidence above)
+  A-3: CLOSED_ON_MAIN  (`ACG-A3`, PR #171; see closure evidence above)
+  D-2: CLOSED_ON_MAIN  (`ACG-D2`, PR #175; see closure evidence above)
+additional Gate-owned findings:  0
+blocking architecture debt:      0
+
+governance coherence (re-verified at Gate closure, not re-decided):
+  package-surface:              v2 CURRENT (v1 SUPERSEDED)
+  architecture-model-boundary:  v2 CURRENT (v1 SUPERSEDED)
+  governance-process:           v3 CURRENT
+  public API:                   19 root exports / 5 exports keys -- unchanged
+  package:                      45 files -- unchanged
+  namespace (`D-2`):             scripts/ai/test-design.js FILE;
+                                 scripts/ai/test-design/ ABSENT;
+                                 scripts/ai/generative-test-design/ DIRECTORY
+
+zero-open-new-defect:  PASS
+
+AISEC execution:   NOT_STARTED
+MEM/RAG/LEARN:     NOT_STARTED
+```
+
+Per the roadmap's own [§15](#15-final-target-state) sequencing, `AISEC-1`
+becomes the next active gate -- a roadmap-level designation only. This
+closure sync performs the canonical `ROADMAP.md` state transition for a
+Gate-level review already independently certified as `APPROVED` (a
+review-only pass, no repository diff); it does not itself re-perform that
+review, and it does not start any `AISEC`/`MEM`/`RAG`/`LEARN`
+implementation. `A-1`, `A-3` and `D-2` are unchanged by this evidence.
+Nothing downstream is activated by this evidence.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
@@ -1379,8 +1437,11 @@ AISEC technical entry: APPROVED
   finding that would block AISEC; RTI is no longer a technical blocker)
 
 AISEC execution: NOT_STARTED
-  (intentionally delayed by governance sequencing — Conformance Remediation
-  and the Architecture Conformance Gate run first, per §7's owner decision)
+  (was intentionally delayed by governance sequencing until Conformance
+  Remediation and the Architecture Conformance Gate ran first, per §7's
+  owner decision -- both have since completed, and `AISEC-1` is now the
+  roadmap-designated next active gate per §15; AISEC execution itself has
+  not yet begun)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -1859,8 +1920,12 @@ retained here for historical continuity — see below:
 
 ## 15. Final target state
 
-Once `CRW1` → `CRW2` → the Architecture Conformance Gate all close, `AISEC-1`
-becomes the next active gate. This file will be updated at each transition;
+`CRW1` → `CRW2` → the Architecture Conformance Gate have all now closed
+(see [Gate closure evidence](#architecture-conformance-gate-closure-evidence)
+in §8); `AISEC-1` is now the next active gate -- a roadmap-level
+designation, not a claim that `AISEC` execution has begun (it remains
+`NOT_STARTED`; see [§9](#9-aisec--agentic-trust--ai-security-foundation)).
+This file will be updated at each transition;
 `README.md`'s own roadmap section will continue to carry the detailed
 technical evidence for whatever completes.
 
