@@ -133,7 +133,7 @@ layer.** The four candidate models were evaluated against repository facts.
    sync required after design merge: YES.** It must capture the selected Model A
    relationship, the ownership split, the `GOV-VERIFY-1` pause/release trigger
    above, and the design-completion state as far as the lifecycle vocabulary
-   supports it. This design does not edit `ROADMAP.md`.
+   supports it, and must align the wording that ties a pre-review pass to eligibility for independent human review so that a pre-review pass is not read as a universal prerequisite for human review in bootstrap and capability-lag cases. This design does not edit `ROADMAP.md`.
 5. **Compatibility requirement:** the shared discrete field names and value
    sets ([§7](#7-shared-evidence-contract)) are a superset-compatible
    contract: `GOV-VERIFY-1`'s field names appear unchanged and are never
@@ -221,9 +221,9 @@ means "ready, but see the flags".
 
 | `readiness.state` | Derived when | Meaning |
 |---|---|---|
-| `NOT_READY` | the run's overall status ([§22](#22-error-model-and-exit-codes)) is `CONFIGURATION_ERROR`, `FAIL` or `INCOMPLETE` | A deterministic defect, an invalid configuration, or a fact the tool could not establish; the head is not yet eligible for independent review |
+| `NOT_READY` | the run's overall status ([§22](#22-error-model-and-exit-codes)) is `CONFIGURATION_ERROR`, `FAIL` or `INCOMPLETE` | A deterministic defect, an invalid configuration, or a fact the tool could not establish; the framework cannot attest readiness (evidence is failing, incomplete, unsupported, stale or unavailable); this never bars human review |
 | `HUMAN_REVIEW_REQUIRED` | overall status is `HUMAN_REVIEW_REQUIRED` (no `CONFIGURATION_ERROR`, `FAIL` or `INCOMPLETE` record) | The deterministic checks found no defect, but at least one mandatory human determination is pending; this is **not** a green state |
-| `READY` | every record is `PASS` (or `PASS` with an `exceptionApplied` record, or `NOT_APPLICABLE` with recorded proof) and no record is `HUMAN_REVIEW_REQUIRED` | Deterministic checks are complete and no mandatory human determination is pending |
+| `READY` | every record is `PASS` (or `PASS` with an `exceptionApplied` record, or `NOT_APPLICABLE` with recorded proof) and no record is `HUMAN_REVIEW_REQUIRED` | The framework has enough trusted evidence to attest that the deterministic pre-review requirements are satisfied and no mandatory human determination is pending |
 
 Precedence (highest first), identical to the overall status:
 `CONFIGURATION_ERROR` = `FAIL` = `INCOMPLETE` (all `NOT_READY`) >
@@ -238,6 +238,34 @@ so a consumer reading only `readiness.state` cannot miss a required human
 determination. The detailed records remain the canonical evidence and the
 aggregate can never contradict them; the side lists (`humanReviewRequired`,
 counts) are convenience views, and correctness never depends on them.
+
+**Readiness is framework attestation, not an authority plane (C5).**
+`readiness.state` describes only what the framework itself can attest. It never
+decides whether a human may review or merge a change: human review eligibility
+and merge authority belong to the lifecycle and governance rules, a separate
+authority plane. The meanings are:
+
+- `READY`: the framework has enough trusted evidence to attest that the
+  deterministic pre-review requirements are satisfied and no mandatory human
+  determination is pending; normal independent review proceeds with complete
+  deterministic pre-review evidence.
+- `HUMAN_REVIEW_REQUIRED`: the framework identified a condition requiring human
+  judgment; independent review may proceed and must address the named
+  judgments.
+- `NOT_READY`: the framework cannot attest readiness because deterministic
+  evidence is failing, incomplete, unsupported, stale or unavailable. It does
+  **not** mean that human review is forbidden: independent review may still
+  proceed where governance allows it, but the reviewer must treat the missing,
+  failing, unsupported or stale framework evidence as unresolved.
+
+In particular `FIRST_INTRODUCTION` (`NO_TARGET_FRAMEWORK`) and `CAPABILITY_LAG`
+(`CAPABILITY_UNAVAILABLE_ON_TARGET`) are `NOT_READY` and mean only that the
+framework cannot yet attest the change; they do not block `HEAVY` independent
+human review, explicit human merge authorization, `STANDARD_TWO_PARENT` merge or
+post-merge certification. `readiness.state` is never merge authorization:
+`READY` does not authorize a merge, and `NOT_READY` does not by itself forbid a
+human-authorized merge where canonical governance explicitly permits a bootstrap
+or capability transition. The enum is never a review-access control.
 
 The aggregator has no input except the records; the state is reproducible
 byte-for-byte from `records[]` alone. It is not approval, risk acceptance,
@@ -461,7 +489,7 @@ stored in either artifact as authority; a generated manifest is rejected.
 
 **Trust model.** Both artifacts are repository input and therefore untrusted
 until validated: schema-validated, size-bounded, path-checked, and rejected on
-any unknown field or incompatible `schemaVersion` before any check runs. A
+any unknown field or invalid `schemaVersion` (per the `schemaVersion` rule below) before any check runs. A
 repository file is not authoritative merely by existing there
 (`docs/governance-process-v3.md`, "Authority hierarchy").
 
@@ -523,12 +551,10 @@ absorbed here.
      are `CONFIGURATION_ERROR`); no case folding and no Unicode normalization,
      following Git's byte-exact, case-sensitive path identity, so normalization
      can never create an alias (two paths differing only by case or
-     normalization form stay distinct and cause a mismatch); duplicates are
-     removed by set semantics; comparison uses a bytewise ordering.
+     normalization form stay distinct and cause a mismatch); the computed set has no duplicates by construction, a duplicate in the platform list is never normalized away but is a provider anomaly (below); comparison uses a bytewise ordering.
    - *Completeness first:* the platform list is compared only after it is proven
      complete: pagination is exhausted, the number of paths received equals the
-     platform-reported changed-file count, and the platform's documented list
-     limit has not been reached. A truncated, partial or unresolved-pagination
+     platform-reported changed-file count, the platform's documented list limit has not been reached, and no path appears twice in the received list: a duplicate path entry, checked before conversion to a set, is a provider anomaly and is `INCOMPLETE` (`PLATFORM_FILE_LIST_ANOMALY`). A truncated, partial or unresolved-pagination
      list is `INCOMPLETE` (`PLATFORM_FILE_LIST_INCOMPLETE`); a partial list is
      never compared and passed.
    - *Result:* equal sets are agreement; unequal sets are `INCOMPLETE`
@@ -577,7 +603,7 @@ absorbed here.
 
 *`PR_REVIEW` target protection.* `targetRefName` must be both
 provider-authenticated **and** an element of `protectedTargetRefs` from the root
-policy. An authenticated target that is not protected yields
+policy. An authenticated target that is not protected (under the built-in minimum, any target other than the platform-authenticated default branch) yields
 `HUMAN_REVIEW_REQUIRED` (`TARGET_NOT_PROTECTED`) and never `READY`. That state
 is chosen over `INCOMPLETE` because review of a PR targeting a non-protected
 branch (for example a stacked branch) is legitimate and the deterministic
@@ -597,11 +623,27 @@ tool.
 3. `base` = the first parent, and it must lie on the target's first-parent
    history (`git rev-list --first-parent` from the resolved tip); otherwise
    `FAIL` (`BASE_NOT_ON_TARGET_HISTORY`).
-4. The second parent must equal the platform-recorded merged PR head; otherwise
-   `FAIL`.
+4. The second parent must equal the platform-recorded merged PR head; otherwise `FAIL`.
+5. **Policy source.** Post-merge verification applies the governance policy at
+   the **first parent** (the pre-merge protected-target state, consistent with
+   pre-merge anchoring), with `protectedTargetRefs` read from the governance root
+   tip. The `POLICY_OUTDATED` rule does not apply post-merge, because the root
+   policy may legitimately have advanced after the merge.
 
 `FAIL` applies where the artifact contradicts an asserted fact; `INCOMPLETE`
 where a fact could not be established.
+
+*Bootstrap protected target (C5).* When no governance-root policy exists yet,
+the built-in minimum policy's `protectedTargetRefs` is the platform-authenticated
+default branch name, taken from platform repository metadata and never
+hard-coded (the branch is `main` here only because the platform reports it as
+the default) and never from local Git config, the manifest, a workflow input or
+a command-line argument. A target equal to that default branch satisfies the
+target-protection requirement under the built-in minimum; any other target is
+`HUMAN_REVIEW_REQUIRED` (`TARGET_NOT_PROTECTED`). Once a governance-root policy
+exists, its base-anchored `protectedTargetRefs` governs and the built-in
+default-branch rule is a bootstrap fallback only; it never overrides an existing
+root policy. The head cannot control the default branch or this fallback.
 
 *Policy locations and manual mode.* The base policy path is a **framework
 constant** (for example `governance/base.json`) and the gate manifest path is
@@ -655,9 +697,9 @@ because a gate manifest is absent.
    head, the run is `CONFIGURATION_ERROR` (`GATE_MANIFEST_MISSING`).
 3. *No policy at the governance root tip or at `base` (first introduction; see `FIRST_INTRODUCTION` below):* the framework's built-in
    minimum policy applies (hard-coded, tighten-only, fail-closed: review class
-   `HEAVY`; no domain eligible for `PRESERVATION_CHECK_ONLY`; no exception or
-   suppression honored) and `GOVERNANCE_CONFIG` is `HUMAN_REVIEW_REQUIRED`
-   (`NO_BASE_TRUST_ANCHOR`); readiness is at best `HUMAN_REVIEW_REQUIRED`.
+   `HEAVY`; no domain eligible for `PRESERVATION_CHECK_ONLY`; no exception or suppression honored; `protectedTargetRefs` defaults to the
+platform-authenticated default branch only) and `GOVERNANCE_CONFIG` is
+`HUMAN_REVIEW_REQUIRED` (`NO_BASE_TRUST_ANCHOR`); readiness is at best `HUMAN_REVIEW_REQUIRED`.
 
 In every case the initial trust is established by the human reviewer and by
 merge, not by the manifest.
@@ -665,12 +707,36 @@ merge, not by the manifest.
 **Framework availability: `FIRST_INTRODUCTION` and `CAPABILITY_LAG` (C4).** The
 bootstrap transition is stated explicitly, not left to inference.
 
-- *Capability declaration.* The framework at the target tip declares
-  `frameworkVersion` and an explicit `supportedCapabilities[]` (feature
-  identifiers). The gate manifest and base policy declare `schemaVersion` and
-  `requiredCapabilities[]`. Capability detection compares these explicit
-  identifiers; it never relies on heuristic behavior. A head may add required
-  capabilities (tightening) but may not remove base-required ones.
+- *Capability declaration and versioning (C5).* The framework at the target tip
+  declares `frameworkVersion`, an explicit `supportedCapabilities[]` and an
+  explicit `supportedSchemaVersions` range. The gate manifest and base policy
+  declare `schemaVersion` and `requiredCapabilities[]`. A capability identity
+  includes its semantic version: `capability-id@major` (for example
+  `dependency-aware-delta@1`), matching `^[a-z][a-z0-9-]{1,63}@[1-9][0-9]{0,3}$`.
+  A requirement `X@n` is satisfied only by the exact identity `X@n` listed in
+  `supportedCapabilities[]`: a name-only match never satisfies a requirement,
+  `X@1` does not satisfy `X@2`, and a target that supports several majors lists
+  each. A **breaking semantic change mints a new major**; compatible changes
+  (bug fixes, performance work, internal refactors, backward-compatible
+  additions) keep the same major, so no minor or patch component is part of the
+  identity. A malformed capability identity or version (including a value such as
+  `X@unknown`) in any declaration is `CONFIGURATION_ERROR`, because it is invalid
+  metadata rather than a capability the target lacks. Detection compares these
+  explicit identifiers and never relies on heuristic behavior. The supported
+  capability set and schema range come only from target-tip framework metadata;
+  the reviewed head cannot claim what the target supports. A head may add
+  required capabilities (tightening) but may not remove base-required ones.
+- *`schemaVersion` rule (one rule for every section).* A syntactically invalid
+  or unknown-format `schemaVersion` is `CONFIGURATION_ERROR`. A valid
+  `schemaVersion` **newer** than the target framework supports is
+  `CAPABILITY_UNAVAILABLE_ON_TARGET` (`INCOMPLETE`), which is legitimate
+  capability lag. A valid version within the supported range is accepted as is
+  and is never silently upgraded. A valid version **older** than the minimum
+  supported is `CONFIGURATION_ERROR`, because the manifest then violates the
+  current repository contract rather than requiring a capability the target
+  lacks. (The report schema version in
+  [§23](#23-minimum-pre-reviewjson-schema-and-versioning) is a separate,
+  consumer-side rule: a consumer rejects a report version it does not list.)
 - **`FIRST_INTRODUCTION`.** The target tip (governance root) contains no
   runnable, compatible framework (no `frameworkVersion`), as for the PR that
   introduces `GOV-AUTO-1` itself. Phase 2 is unavailable:
@@ -678,8 +744,7 @@ bootstrap transition is stated explicitly, not left to inference.
   NOT_READY`.
 - **`CAPABILITY_LAG`.** The target framework has version N and the PR requires a
   capability, schema version or feature identifier that is not in the target's
-  `supportedCapabilities[]`, or introduces a manifest `schemaVersion` the target
-  framework does not support. The result is `INCOMPLETE`
+  `supportedCapabilities[]`, or introduces a valid manifest `schemaVersion` newer than the target framework supports. The result is `INCOMPLETE`
   (`CAPABILITY_UNAVAILABLE_ON_TARGET`), never `READY`. `INCOMPLETE` is chosen
   over `HUMAN_REVIEW_REQUIRED` because the trusted framework cannot evaluate the
   capability at all (the fact cannot be established), and over
@@ -698,8 +763,7 @@ bootstrap transition is stated explicitly, not left to inference.
   merge prerequisite. A first-introduction or capability-lag PR proceeds through
   the existing governance path: implementation, independent `HEAVY` review,
   explicit human merge authorization, `STANDARD_TWO_PARENT` merge, post-merge
-  certification. `GOV-AUTO-1` therefore never needs to be `READY` before
-  `GOV-AUTO-1` itself can first be merged.
+  certification. `GOV-AUTO-1` therefore never needs to be `READY` before `GOV-AUTO-1` itself can first be merged. `NOT_READY` here means only that the framework cannot yet attest the change, and never that human review or a human-authorized merge is forbidden ([§7](#7-shared-evidence-contract)).
 - **Required-check adoption rule.** `GOV-AUTO-1` must not become a mandatory
   required check for PRs whose target branch does not yet contain the required
   compatible framework capability. Any future required-check rollout (OQ-GA-4)
@@ -716,7 +780,7 @@ is no "both define X" ambiguity):
 
 | Category | Rule | On conflict |
 |---|---|---|
-| `schemaVersion` | Must be in the framework's supported set for each artifact | `CONFIGURATION_ERROR` |
+| `schemaVersion` | The single `schemaVersion` rule of the framework-availability section below: malformed or too-old is `CONFIGURATION_ERROR`; valid and newer than the target supports is `CAPABILITY_UNAVAILABLE_ON_TARGET` (`INCOMPLETE`); within range is accepted without upgrade | see rule |
 | ID families | Extend: the gate may add families | Redefining or removing a base family is a forbidden override: `CONFIGURATION_ERROR` |
 | Secret rules | Union: the gate may add rules | Removing or relaxing a base rule: `CONFIGURATION_ERROR` |
 | Domain definition | A domain exists only if the gate manifest defines it; base names `mandatoryDomains` that the gate must define | A missing mandatory domain: `CONFIGURATION_ERROR`; for a domain defined at both levels: `dependsOn` is merged by edge identity ([§9](#9-dependency-graph-validation)), `protectedInputs` are monotone (base selectors retained, the head may only add), `reviewModes` the intersection, `enabled` and `ownerStage` are the base values (differing `ownerStage`: `CONFIGURATION_ERROR`) |
@@ -985,7 +1049,7 @@ Audit.
 
 | Input | Validation |
 |---|---|
-| Manifest and base | JSON parse with size cap; exact schema; unknown field rejected; `schemaVersion` supported; string patterns; array/depth/length bounds; path and selector validation |
+| Manifest and base | JSON parse with size cap; exact schema; unknown field rejected; `schemaVersion` per the [§14](#14-manifest-ownership-trust-anchor-and-authority) rule; string patterns; array/depth/length bounds; path and selector validation |
 | CLI/config arguments | Allow-listed flags; values validated; no environment-variable overrides of safety settings |
 | CI metadata (GitHub API) | Schema check of every field used; SHA is 40-hex; run/attempt numeric; unexpected shape is `INCOMPLETE`, never coerced |
 | Git-derived data | SHAs 40-hex; parent count 1 or 2 as expected; refs matched exactly; empty output treated as a failure to establish, not as "no changes" |
@@ -1053,7 +1117,7 @@ fails.**
 | `schemaVersion` | integer | Required; consumers reject any value they do not list as supported (`FAIL` for a verifier, never a best-effort read) |
 | `tool` | object: `name`, `version` | Required |
 | `generatedFor` | object: `head`, `tree`, `base`, `parents[]`, `branch` | Full 40-hex identity; must equal the `1A` identity |
-| `trustedContext` | object: `mode`, `invocationTrust` (`PLATFORM_AUTHENTICATED`/`OPERATOR_SUPPLIED`), `repositoryId`, `provider`, `eventType`, `targetRefName`, `resolvedTargetTip`, `suppliedTargetSha` (or `null`), `headSha`, `base`, `baseDerivation`, `workflowIdentity`, `workflowBlobSha`, `baseWorkflowBlobSha`, `defaultBranch`, `rootTip`, `rootPolicyDigest`, `basePolicyDigest`, `executedFrom` (`TARGET_TIP`/`HEAD`), `frameworkVersion`, `targetSupportedCapabilities[]`, `requiredCapabilities[]` | The trusted invocation values the base was derived from and the independently resolved tip ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
+| `trustedContext` | object: `mode`, `invocationTrust` (`PLATFORM_AUTHENTICATED`/`OPERATOR_SUPPLIED`), `repositoryId`, `provider`, `eventType`, `targetRefName`, `resolvedTargetTip`, `suppliedTargetSha` (or `null`), `headSha`, `base`, `baseDerivation`, `workflowIdentity`, `workflowBlobSha`, `baseWorkflowBlobSha`, `defaultBranch`, `rootTip`, `rootPolicyDigest`, `basePolicyDigest`, `executedFrom` (`TARGET_TIP`/`HEAD`), `frameworkVersion`, `targetSupportedCapabilities[]` (`id@major`), `targetSupportedSchemaVersions`, `requiredCapabilities[]` (`id@major`), `phase` (`1`/`2`), `collectorRunId`, `executedCommit` | The trusted invocation values the base was derived from and the independently resolved tip ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
 | `externalEvidence` | array of `{sourceObjectId, sourceVersion, contentDigest, collectedAt, immutability}` (`MUTABLE` by default; `VERIFIED_PROVIDER` or `VERIFIED_CRYPTO` only with recorded verification) | Every externally mutable source the report relied on ([§25a](#25a-decision-time-evidence-freshness)) |
 | `requiresRevalidation` | literal `true` | The report is not usable for a decision until revalidated |
 | `manifest` | object: `gatePath`, `schemaVersions`, `headSha256`, `baseGateSha256`, `basePolicySha256`, `baseAnchor` (`PRESENT`/`ABSENT`), `protectedProposals[]` | Identity of the artifacts actually used and the loosening proposals that were **not** applied ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
@@ -1147,6 +1211,17 @@ is always re-fetched, and the report-level `requiresRevalidation` stays `true`.
 Revalidation also re-resolves the governance root tip and compares
 `rootPolicyDigest`; a difference is `STALE_EVIDENCE`. CI run data is re-fetched
 because reruns add attempts.
+**Report finalization is externally verified (C5).** A `finalized` marker or a
+`phase` field inside a report is not authoritative by itself. Before treating a
+report as authoritative pre-review evidence, a consumer establishes from
+provider-authenticated run metadata that the report came from the correct
+phase-2 execution: the collector run ID (`collectorRunId`), the workflow
+identity, the workflow version (blob) compared with the blob at the resolved
+target tip, the executed commit or ref (`executedCommit`, which must equal the
+resolved target tip at collection), and `phase = 2`. A report whose own fields
+cannot be matched to that external evidence is not authoritative and is treated
+as `NOT_READY`.
+
 **No indefinite authority.** Every finalized report carries the literal
 `requiresRevalidation: true`; a consumer that has not revalidated at the time of
 the decision must treat the report as `NOT_READY`. Freshness is checked at least
@@ -1180,18 +1255,18 @@ certification wherever pre-merge evidence is reused.
 |---|---|---|---|---|
 | D1 | Model A: composition; `GOV-AUTO-1` owns shared Git identity, diff-scope and CI evidence; `GOV-VERIFY-1` composes them and owns `PACK_DIFF`, `BRANCH_PROTECTION_STATUS`, merge-gate conformance | Single owner per fact; roadmap keeps `GOV-VERIFY-1` alive and non-blocking | B (creates a prerequisite on a non-blocking task), C (contradicts roadmap; different lifecycle moment), D (scopes not disjoint) | `GOV-VERIFY-1` overlapping work stays paused until `1A`/`1F` interfaces merge |
 | D2 | JSON result records are the canonical evidence; discrete fields preserved | Roadmap requires discrete evidence never replaced | A single verdict field; Markdown-primary reports | Renderers cannot introduce facts |
-| D3 | `readiness.state` is a derived three-value enum (`READY`, `NOT_READY`, `HUMAN_REVIEW_REQUIRED`) over one aggregation input, `records[]`, which includes one domain result record per enabled domain; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE` | Roadmap: aggregate convenience, not a verdict; no green value may coexist with mandatory human judgment, including domain-level judgment | Two-value YES/NO plus side flags; readiness over `records[]` while domain levels live only in `domains[]` (drift) | `READY` with any unresolved human-required state is impossible; `domains[]` is a projection |
+| D3 | `readiness.state` is a derived three-value enum (`READY`, `NOT_READY`, `HUMAN_REVIEW_REQUIRED`) over one aggregation input, `records[]`, which includes one domain result record per enabled domain; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE` | Roadmap: aggregate convenience, not a verdict; no green value may coexist with mandatory human judgment, including domain-level judgment | Two-value YES/NO plus side flags; readiness over `records[]` while domain levels live only in `domains[]` (drift) | `READY` with any unresolved human-required state is impossible; `domains[]` is a projection; readiness is framework attestation only, not a review-access control or merge authorization: `NOT_READY` never bars human review or a human-authorized merge, and `READY` never authorizes a merge |
 | D4 | Every domain declares dependencies including `[]`; missing declaration is `CONFIGURATION_ERROR` | Missing declaration is a deterministic configuration fault; `HUMAN_REVIEW_REQUIRED` reserved for undecidable cases | Defaulting to `[]`; `HUMAN_REVIEW_REQUIRED` for missing keys (lets a run continue on an untrustworthy graph) | Manifest authors must be explicit |
 | D5 | Validated DAG; unknown/self/duplicate/missing/disabled/cycle all `CONFIGURATION_ERROR`; cycles rejected, merged into one domain; edge identity is `toDomain` and overlay merge is deterministic (identical edges deduplicated; kind changes follow the tighten-only table) | Fail closed; keeps invalidation terminating; no silent union of edges | Justified cycles with fixpoint; unspecified union of overlay edges | Mutually dependent regions are one domain; an overlay can never introduce a duplicate edge |
 | D6 | Topological transitive invalidation with worst-of join; `MEANING` edges yield `HUMAN_REVIEW_REQUIRED`, others `DEEP_REVIEW_REQUIRED` | A machine can re-derive counts and references but not judge meaning | Direct-dependency-only invalidation; all-changes-to-human | No silent preservation downstream of a change |
 | D7 | Change is per domain using seven conditions, not per file | A domain can change through an unmodified file's derived value | File-diff-only change detection | Manifest declaration changes also count |
 | D8 | SHA-256 over Git-object content, LF-normalized, versioned, framed; fingerprint means unchanged only | Cross-platform stability without semantic normalization | Working-tree bytes; whitespace collapsing; unversioned hashes | Fingerprint version bump forces re-review |
-| D9 | Committed, human-authored base policy plus per-gate manifest; the trust anchor is the governance root (the platform-authenticated default branch tip, resolved by the tool) whose policy defines the base-anchored `protectedTargetRefs`; the PR target must be authenticated **and** protected (`HUMAN_REVIEW_REQUIRED` otherwise), and a `POST_MERGE` target must be protected (`FAIL` otherwise); the base commit is a tool-resolved merge base (guarded against `base == head`) or, post-merge, the first parent of a two-parent merge reachable from the protected target; the diff is validated by a normalized, complete changed-path-set comparison, never a count; the base policy must equal the root policy in its protected fields (`POLICY_OUTDATED` is `INCOMPLETE`, rebase required), so an old branch point cannot weaken governance; workflow anchoring is independent of the diff; policy paths are framework constants; `expectedBase` is an assertion (`FAIL` on mismatch); the head may only tighten; manual runs are capped at `HUMAN_REVIEW_REQUIRED`; live branch protection stays `GOV-VERIFY-1`'s | A repository file is not authoritative merely by existing there; a head or its workflow must not choose its own base, target or policy | Head-supplied base, target list or policy path; trusting a supplied target SHA; count-only diff confirmation; stricter-policy composition without a defined ordering; a partial platform file list; workflow-change detection based on the same diff | A protected change is reviewed under the old configuration by a human and becomes the anchor only after merge; only a phase-2 run executed from the target tip can be `READY` |
+| D9 | Committed, human-authored base policy plus per-gate manifest; the trust anchor is the governance root (the platform-authenticated default branch tip, resolved by the tool) whose policy defines the base-anchored `protectedTargetRefs`; the PR target must be authenticated **and** protected (`HUMAN_REVIEW_REQUIRED` otherwise), and a `POST_MERGE` target must be protected (`FAIL` otherwise); the base commit is a tool-resolved merge base (guarded against `base == head`) or, post-merge, the first parent of a two-parent merge reachable from the protected target; the diff is validated by a normalized, complete changed-path-set comparison, never a count; the base policy must equal the root policy in its protected fields (`POLICY_OUTDATED` is `INCOMPLETE`, rebase required), so an old branch point cannot weaken governance; workflow anchoring is independent of the diff; policy paths are framework constants; `expectedBase` is an assertion (`FAIL` on mismatch); the head may only tighten; manual runs are capped at `HUMAN_REVIEW_REQUIRED`; live branch protection stays `GOV-VERIFY-1`'s | A repository file is not authoritative merely by existing there; a head or its workflow must not choose its own base, target or policy | Head-supplied base, target list or policy path; trusting a supplied target SHA; count-only diff confirmation; stricter-policy composition without a defined ordering; a partial platform file list; workflow-change detection based on the same diff | A protected change is reviewed under the old configuration by a human and becomes the anchor only after merge; only a phase-2 run executed from the target tip can be `READY`; the bootstrap protected target is the platform-authenticated default branch; `schemaVersion` separates malformed or too-old (`CONFIGURATION_ERROR`) from valid-newer-than-target (`CAPABILITY_UNAVAILABLE_ON_TARGET`); a finalized report is authoritative only after external run-identity verification |
 | D10 | `1F` owns CI evidence, collected by an external post-run collector; a "justified" rerun needs an external, SHA/run-bound human determination issued by an authenticated actor in the base-anchored `authorizedDeterminers` set, tamper-evident and re-verified at decision time, never a manifest exception; a classification name never exceeds its provenance strength, so only `SEPARATE_PERSON` can emit `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` and `OWNER_ATTESTED` stays `HUMAN_REVIEW_REQUIRED`; unexplained failure is `HUMAN_REVIEW_REQUIRED` | Roadmap machine/human boundary; Git identities and self-declared fields are not authentication; a record inside the reviewed head lets the author self-justify; no rerun-until-green | Justification as manifest exception; self-declared reviewer field; Git author/committer as authorization; strict reviewer != commit author (unusable in a single-owner repository); reporting a justified classification the machine cannot prove; in-run CI observation; automatic flake classification | Provider choice remains open (OQ-GA-10) but must satisfy the section 17 rules; `OWNER_ATTESTED` never reaches `READY` |
 | D11 | Five statuses with fixed aggregation precedence; exit codes optional and non-authoritative | Distinguish "artifact wrong" from "tool could not tell" (precedent: `audit-drift-check.js`) | Boolean pass/fail; exit-code-only contract | `INCOMPLETE` never becomes `PASS` |
 | D12 | JSON canonical, Markdown derived, `schemaVersion` mandatory, unknown version fails | Precedent: `branch-inventory.js` schema versioning | Best-effort reading of newer schemas | Schema changes are reviewed versions |
 | D13 | Evidence bound to (`head`,`tree`,`base`) from Git and to the trusted invocation and root policy digest; existing reports and cached CI never trusted; externally mutable evidence carries object ID, version, digest, `collectedAt` and `immutability` (mutable by default; only provider- or cryptographically verified immutability skips re-fetch) and is re-verified at review consumption, merge authorization and reuse in certification (`STALE_EVIDENCE` is `INCOMPLETE`) | Stale/borrowed CI is a recorded failure mode in this repository's history; comments can be edited after collection; a configured immutability flag proves nothing | Trusting a committed report; treating a report as indefinitely authoritative; assuming comments or configured flags are immutable | Reports are regenerated per head; every finalized report carries `requiresRevalidation: true` |
-| D14 | Public interface limited to ownership-matrix APIs plus kernel; waves 0-5; the framework's readiness is informational and never a merge gate; bootstrap is explicit (`FIRST_INTRODUCTION`, `CAPABILITY_LAG`), capability detection uses explicit identifiers, the head never validates itself, and the framework's effectiveness expands monotonically with certified merges; Type & Schema Audit and `AISEC-4` remain separate | Prevents a second source of truth; avoids a bootstrap deadlock | Exposing internals; folding the audit into `1G`; requiring `READY` to merge the first implementation | Interface additions need a reviewed matrix change; a required-check rollout needs a bootstrap exemption |
+| D14 | Public interface limited to ownership-matrix APIs plus kernel; waves 0-5; the framework's readiness is informational and never a merge gate; bootstrap is explicit (`FIRST_INTRODUCTION`, `CAPABILITY_LAG`), capability detection uses explicit identifiers, the head never validates itself, and the framework's effectiveness expands monotonically with certified merges; Type & Schema Audit and `AISEC-4` remain separate | Prevents a second source of truth; avoids a bootstrap deadlock | Exposing internals; folding the audit into `1G`; requiring `READY` to merge the first implementation | Interface additions need a reviewed matrix change; a required-check rollout needs a bootstrap exemption; capabilities are semantically versioned (`id@major`) and a name-only match never satisfies a requirement |
 
 ## 28. Non-goals and status boundaries
 
@@ -1232,11 +1307,14 @@ independent Security review, correctives, exact-head merge authorization,
 | GT-16 | Readiness green-signal ambiguity: a consumer reads only readiness and misses required human judgment, or a domain-level judgment lives outside the aggregation input | Three-value `readiness.state`; one aggregation input `records[]` that includes one domain result record per enabled domain; kernel validates domain-result completeness (missing is `INCOMPLETE`, duplicate is `CONFIGURATION_ERROR`); `domains[]` is a derived projection checked against the records; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE` | Fixtures: a domain at `HUMAN_REVIEW_REQUIRED` with every other record `PASS` yields `HUMAN_REVIEW_REQUIRED`; a dependency-level `HUMAN_REVIEW_REQUIRED`; a missing or duplicate domain result; a differing `domains[]` projection |
 | GT-17 | Stale determination or CI evidence: a determination is edited or deleted after collection, or an old report is reused for a decision | `externalEvidence[]` (object ID, version, digest, `collectedAt`) in every report; `revalidateEvidence()` at review consumption, merge authorization and reuse in certification; a difference or unavailable source is `STALE_EVIDENCE` (`INCOMPLETE`, `NOT_READY`) and a changed determination is not accepted; `requiresRevalidation: true`; comments never assumed immutable | Fixtures: determination edited after report creation, stale version reused for authorization, unavailable source, report reused without revalidation |
 | GT-18 | `OWNER_ATTESTED` overclassification: an owner-attested rerun reported as an independently justified pass | Provenance invariant: only `SEPARATE_PERSON` can emit `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN`; under `OWNER_ATTESTED` the final classification is `HUMAN_REVIEW_REQUIRED` with `candidateClassification` recorded as evidence and readiness capped at `HUMAN_REVIEW_REQUIRED` | Fixtures: `OWNER_ATTESTED` never emits the justified classification or `READY`; unresolved contributor makes `SEPARATE_PERSON` unavailable |
-| GT-19 | Unprotected or attacker-chosen target: a PR or post-merge run against a branch the attacker controls | `protectedTargetRefs` from the root policy (default branch tip), never from the head; unprotected PR target is `HUMAN_REVIEW_REQUIRED` (never `READY`); unprotected `POST_MERGE` target is `FAIL`; live branch protection status stays `GOV-VERIFY-1`'s | Fixtures: authenticated but unprotected PR target, head adds its branch to the list, post-merge on an unprotected branch with a fabricated two-parent commit |
+| GT-19 | Unprotected or attacker-chosen target: a PR or post-merge run against a branch the attacker controls | `protectedTargetRefs` from the root policy (default branch tip), never from the head; unprotected PR target is `HUMAN_REVIEW_REQUIRED` (never `READY`); unprotected `POST_MERGE` target is `FAIL`; under the built-in minimum the only protected target is the platform-authenticated default branch; live branch protection status stays `GOV-VERIFY-1`'s | Fixtures: authenticated but unprotected PR target, head adds its branch to the list, post-merge on an unprotected branch with a fabricated two-parent commit |
 | GT-20 | Bootstrap deadlock or capability-lag self-validation: the first implementation cannot merge, or the head's own code validates the head | `FIRST_INTRODUCTION` is `NO_TARGET_FRAMEWORK` (`INCOMPLETE`); `CAPABILITY_LAG` is `CAPABILITY_UNAVAILABLE_ON_TARGET` (`INCOMPLETE`) by explicit version and capability identifiers; head-executed output is advisory, labeled `executedFrom = HEAD` and capped at `NOT_READY`; readiness is never a merge prerequisite; required-check rollout needs a bootstrap exemption; effectiveness expands only through certified merges | Fixtures: target without a framework, target lacking a required capability or manifest schema version, head-executed phase 1 never `READY`, a required check on a target without the framework |
 | GT-21 | Old-branch weak-policy selection: branching from an old commit to be reviewed under weaker policy | Base policy protected fields must equal the root-tip policy or the run is `INCOMPLETE` (`POLICY_OUTDATED`, rebase required); `rootPolicyDigest` bound to the report and rechecked at revalidation, so a policy advance makes earlier evidence `STALE_EVIDENCE` | Fixtures: branch point with an older policy, root policy advancing after evidence collection |
 | GT-22 | Partial platform diff metadata used to confirm a forged base | Complete-list proof (pagination exhausted, received count equals platform count, limit not reached) before comparison, else `INCOMPLETE`; comparison is of normalized path sets with no aliasing (byte-exact, no case folding, renames contribute both paths); equal counts with different paths are never agreement | Fixtures: truncated list, unresolved pagination, equal counts with different paths, case-differing paths |
 | GT-23 | Fake immutable evidence: a config flag or author assertion claims a source is immutable so revalidation is skipped | Mutable by default; only provider-verified or cryptographically verified immutability, recorded with its verification evidence, may skip re-fetch; manifest booleans, configuration flags, author assertions and comment text never qualify | Fixtures: configured immutability flag, unverifiable source, verified source, comment claiming immutability |
+| GT-24 | Readiness misread as an authority: `NOT_READY` treated as "human review forbidden" (recreating a bootstrap deadlock) or `READY` treated as merge authorization | `readiness.state` is defined as framework attestation only; `NOT_READY` never bars human review or a human-authorized merge; `READY` never authorizes a merge; bootstrap states are `NOT_READY` yet proceed through `HEAVY` review; the ROADMAP sync must align the pre-review-pass wording | Fixtures and review checks: a first-introduction PR at `NOT_READY` still enters review and merge; `READY` never appears as an authorization field |
+| GT-25 | Capability semantic drift or schema-version ambiguity: a target claims a capability name with older semantics, or a newer schema is treated as corruption | Capability identity is `id@major` with exact matching and a new major for breaking changes; malformed identity is `CONFIGURATION_ERROR`; one `schemaVersion` rule (malformed or too-old `CONFIGURATION_ERROR`, valid-newer `CAPABILITY_UNAVAILABLE_ON_TARGET`); supported sets come only from target-tip metadata | Fixtures: `X@1` against a `X@2` requirement, `X@unknown`, malformed and newer and older schema versions, head-claimed target support |
+| GT-26 | Forged finalized report or anomalous provider file metadata | A `finalized` marker is never authoritative: the consumer verifies `phase = 2`, collector run ID, workflow identity and blob, and executed commit against provider-authenticated run metadata; a duplicate path in the platform file list is an anomaly (`INCOMPLETE`), never silently deduplicated | Fixtures: report claiming phase 2 without matching run evidence, report from a head-executed run, duplicate platform path entries |
 
 Injection through Markdown content (prompt-style text in evidence files) is not
 executed or interpreted: the framework only parses structure and never follows
@@ -1304,7 +1382,7 @@ implementation; there are none.
 ## 32. Status summary
 
 ```text
-GOV-AUTO-1 design:                       AUTHORED (C1 to C4 applied; pending independent re-review)
+GOV-AUTO-1 design:                       AUTHORED (C1 to C5 applied; pending independent re-review)
 GOV-AUTO-1 implementation:               NOT_STARTED
 GOV-AUTO-1 COMPLETE_ON_MAIN:             NO
 Relationship model:                      A -- composition (GOV-AUTO-1 owns shared facts)
@@ -1313,10 +1391,10 @@ AISEC-4:                                 NOT_STARTED
 Type & Schema Boundary Audit:            separate; not satisfied by this design
 BLOCKING_DESIGN open questions:          0
 Merge authorization:                     NO
-Next step:                               independent GOV-AUTO-1 design C4 re-review (HEAVY)
+Next step:                               independent GOV-AUTO-1 design C5 re-review (HEAVY)
 ```
 
-## 33. Corrective traceability (C1, C2, C3, C4)
+## 33. Corrective traceability (C1, C2, C3, C4, C5)
 
 Status vocabulary: `CLOSED` only where an independent re-review has recorded
 it; otherwise `ADDRESSED -- closure pending independent review`. The author does
@@ -1329,12 +1407,10 @@ not self-declare closure.
 | F-6 (LOW) pause trigger vs ROADMAP | CLOSED by the C1 independent re-review | Trigger aligned with ROADMAP; Wave 4 is a technical dependency only | [§5](#5-relationship-model-decision) |
 | F-1 (HIGH), F-7, F-2, F-9, L-1, L-2 | CLOSED by the C2 independent re-review | External authenticated determination; domain result records; edge merge; monotone `protectedInputs` | [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary), [§7](#7-shared-evidence-contract), [§9](#9-dependency-graph-validation), [§14](#14-manifest-ownership-trust-anchor-and-authority) |
 | G-2 (LOW) `OWNER_ATTESTED` classification, G-3 (LOW) stale determination evidence | CLOSED by the C3 independent re-review | Provenance invariant; decision-time re-verification | [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary), [§25a](#25a-decision-time-evidence-freshness) |
-| H-2 (MEDIUM) protected target undefined | ADDRESSED by C4 -- closure pending independent review | Base-anchored `protectedTargetRefs` from the root policy; PR target must be protected (`HUMAN_REVIEW_REQUIRED`), `POST_MERGE` target must be protected (`FAIL`); live branch protection stays `GOV-VERIFY-1` | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| H-1 (MEDIUM) bootstrap and capability lag unstated | ADDRESSED by C4 -- closure pending independent review | `FIRST_INTRODUCTION`, `NO_TARGET_FRAMEWORK`, `CAPABILITY_LAG`, no self-validation, readiness not a merge gate, required-check exemption, monotone expansion | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| L-3 (LOW) count-only diff cross-check | ADDRESSED by C4 -- closure pending independent review | Normalized complete path-set comparison; truncated platform list is `INCOMPLETE` | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| L-4 (LOW) old branch point weakens policy | ADDRESSED by C4 -- closure pending independent review | Rebase required (`POLICY_OUTDATED`); effective policy is the root-tip policy; policy advance makes evidence stale | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§25a](#25a-decision-time-evidence-freshness) |
-| L-5 (LOW) immutability wording | ADDRESSED by C4 -- closure pending independent review | Mutable by default; only provider- or cryptographically verified immutability | [§25a](#25a-decision-time-evidence-freshness) |
-| G-1 (MEDIUM) invocation and base forgery path | ADDRESSED by C3 and C4 -- closure pending independent review (open in the C3 re-review through H-2, L-3, L-4) | Platform-authenticated target, tool-resolved tip, guards, path-set cross-check, protected targets, policy monotonicity | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| F-8 (MEDIUM) base selection influenceable by the head | ADDRESSED by C2, C3 and C4 -- closure pending independent review | See G-1 | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| F-3 (MEDIUM) manifest authority | ADDRESSED by C1 to C4 -- closure pending independent review | Base commit trust anchor, tighten-only head, root policy, trusted invocation | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| INFO items from all re-reviews | ADDRESSED or RESOLVED | Workflow blob check scope and non-executing parse rule documented; earlier INFO items as recorded above | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| H-2, L-3, L-4, L-5, G-1, F-8, F-3 | CLOSED by the C4 independent re-review | Protected targets; path-set comparison; rebase-required policy monotonicity; verified immutability; trusted invocation and base | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§25a](#25a-decision-time-evidence-freshness) |
+| M-1 (MEDIUM) `NOT_READY` contradicts the bootstrap model; H-1 (MEDIUM) bootstrap | ADDRESSED by C5 -- closure pending independent review | Readiness is framework attestation, never a review-access control or merge authorization; bootstrap states are `NOT_READY` yet do not bar `HEAVY` human review or human-authorized merge; ROADMAP sync must align the pre-review-pass wording | [§7](#7-shared-evidence-contract), [§14](#14-manifest-ownership-trust-anchor-and-authority), [§5](#5-relationship-model-decision) |
+| L-6 (LOW) unversioned capability identifiers | ADDRESSED by C5 -- closure pending independent review | `capability-id@major`; exact-identity match; breaking change mints a new major; malformed identity is `CONFIGURATION_ERROR` | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| L-7 (LOW) `schemaVersion` status inconsistency | ADDRESSED by C5 -- closure pending independent review | Malformed or too-old is `CONFIGURATION_ERROR`; valid newer than the target supports is `CAPABILITY_UNAVAILABLE_ON_TARGET`; supported range from target-tip metadata only | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| L-8 (LOW) bootstrap `protectedTargetRefs` | ADDRESSED by C5 -- closure pending independent review | Built-in default is the platform-authenticated default branch; root policy overrides once it exists | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| INFO-1..3 (C4 re-review) | ADDRESSED by C5 | Duplicate platform path is an anomaly (`INCOMPLETE`); post-merge policy source is the first parent; report finalization is externally verified | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§25a](#25a-decision-time-evidence-freshness) |
+| INFO items from earlier re-reviews | ADDRESSED or RESOLVED | See earlier rows | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
