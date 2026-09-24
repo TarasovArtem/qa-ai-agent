@@ -23,9 +23,15 @@ into unauthorized action?*
 It is primarily static, source-grounded analysis, supplemented by explicitly
 identified read-only observations of live GitHub repository settings and Actions
 run history (point-in-time, section 28). It does not implement controls, change
-any code, actively test or mutate anything on a live external system (no
-write-side platform experiment and no destructive testing), read or record any
-credential value, or start AISEC-4 through AISEC-7.
+any code, read or record any credential value, or start AISEC-4 through AISEC-7.
+It performed no write-side or destructive action against an external system as
+a research experiment to establish its security claims, and no security
+conclusion here relies on such an experiment: the evidence is source inspection,
+official documentation and the read-only observations above. Ordinary
+repository delivery and process operations -- commits, pull-request updates, CI
+execution and CI reruns -- are lifecycle operations, not research experiments,
+and are outside that exclusion; the runs performed to deliver this study are not
+used as security evidence.
 
 ## 2. Scope
 
@@ -1233,10 +1239,11 @@ principal, freshness); retrieval must never carry authority from storage.
 ## 38. Non-goals and assumptions
 
 This document does not: implement any control; change any prompt, provider,
-credential, review, write or execution code; actively test or mutate a live
-system (its only live reads are the read-only, point-in-time GitHub settings and
-Actions-history observations of sections 2 and 28); read or record any
-credential value; design authentication, isolation, or the
+credential, review, write or execution code; use a write-side or destructive
+action against a live system as a research experiment (its only live reads are
+the read-only, point-in-time GitHub settings and Actions-history observations of
+sections 2 and 28; ordinary delivery and process operations are outside this
+non-goal, see section 1); read or record any credential value; design authentication, isolation, or the
 adversarial harness; implement `MEM`/`RAG`/`LEARN`.
 
 ```text
