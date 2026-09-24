@@ -417,6 +417,217 @@ among docs; `npm pack` file-count/surface drift; an unavailable or partial
 branch-protection/GitHub-API read; a HEAD/TREE mismatch; and a stale cached
 CI result.
 
+**Sequencing note:** implementation of any `GOV-VERIFY-1` capability that
+overlaps `GOV-AUTO-1` (see [`GOV-AUTO-1`](#gov-auto-1--governance-pre-review-framework-next-active-gate) below) is paused until the
+`GOV-AUTO-1` design phase records the canonical reconciliation; this entry's
+constraints and tracked status are otherwise unchanged.
+
+### GOV-AUTO-1 — Governance Pre-Review Framework (next active gate)
+
+```text
+GOV-AUTO-1:      NOT_STARTED  (roadmap-designated next active gate)
+Classification:  HEAVY
+Position:        after AISEC-3 (COMPLETE_ON_MAIN), before AISEC-4 (see §7, §8)
+Principle:       Machine checks facts. Humans review meaning.
+```
+
+`GOV-AUTO-1` is a deterministic governance pre-review framework: it validates
+machine-checkable repository, artifact, provenance, scope, structural and
+CI-evidence invariants **before** independent human review, so that avoidable
+corrective and re-review cycles are reduced **without weakening** any human
+semantic, architectural, security, authorization, merge or lifecycle gate. This
+entry defines the stage; it does not implement it.
+
+**Why now (facts only).** `AISEC-3` required ten correctives (C1..C10), each
+followed by an independent re-review (see [AISEC-3 closure
+evidence](#aisec-3-closure-evidence)). Several late findings were of a
+deterministic or partly deterministic kind: a malformed Markdown table row,
+evidence-row cardinality and one-class-per-row violations, inference-dependent
+statements worded as documented fact, research-method wording that contradicted
+itself across sections, stale terminology, and register/count consistency. This
+does not mean automation would have prevented every corrective, and it does not
+mean semantic or security review can be automated. The aim is to reduce
+deterministic review noise, preserve or improve review quality, and keep human
+attention for semantic and security judgment.
+
+**Authority boundary (explicit).** Automation may verify deterministic facts:
+Git identity, changed files, schema validity, reference and table integrity,
+evidence counts, known provenance constraints, secret patterns, CI run identity
+and protected-section fingerprints. Automation must **not** decide whether a
+threat model is semantically correct, a risk is acceptable, an architecture is
+safe, a mitigation is sufficient, an inference is substantively justified, a
+finding may be waived, a PR receives merge authorization, or a stage becomes
+`COMPLETE_ON_MAIN`. An ambiguous case is `HUMAN_REVIEW_REQUIRED`, never an
+automated pass.
+
+**Existing governance stays authoritative.** `GOV-AUTO-1` supports and never
+replaces exact-head review, independent review, Senior Software Developer
+review, Security review where required, ZERO-OPEN-NEW-DEFECT, exact-head merge
+authorization, STANDARD_TWO_PARENT merge, post-merge certification and
+canonical closure. A pre-review pass means only `READY_FOR_INDEPENDENT_REVIEW:
+YES` -- eligibility for independent human review -- and is never merge
+authorization and never `COMPLETE_ON_MAIN`. The framework cannot approve itself:
+governance tooling may provide evidence about its own deterministic checks, but
+its implementation and every later change still require independent human
+review and normal merge authorization.
+
+**Required capability areas.**
+
+1. *Git identity / preflight:* branch, HEAD, TREE, parent, base/main, clean
+   worktree and expected ancestry; HEAD/TREE are derived from Git at execution
+   time rather than hand-configured for a new review head.
+2. *Diff scope:* explicit allowed-file and allowed-domain scopes; anything
+   outside the authorized scope is a deterministic failure where appropriate.
+3. *Markdown structure:* tables, code fences, headings, anchors and internal
+   links, with parser-aware handling (inline code spans, escaped pipes, fences)
+   -- not a naive `split('|')`.
+4. *Reference integrity:* configurable identifier families (for example
+   `TB-xx`, `GH-xx`, `RO-xx`, `VR-xx`, `OQx-x`, `AT-xx`, `PI-xx`): dangling
+   references, duplicate definitions and malformed IDs.
+5. *Evidence model:* source evidence class kept separate from conclusion
+   evidence strength (for example source classes `DIRECT_DOC`, `DOC_REUSABLE`,
+   `REPO_OBSERVED` versus conclusion strengths `DIRECTLY_SUPPORTED`,
+   `DERIVED_INFERENCE`, `UNKNOWN`); one class per evidence row. **Provenance
+   propagation invariant:** a conclusion is never represented with a stronger
+   evidence status than its weakest required premise unless independent stronger
+   evidence exists; promotion wording (documented, confirmed, settled, proven,
+   established, resolved) attached to derived or unknown premises is flagged
+   for human review.
+6. *Risk / source consistency:* risk-register totals, source-taxonomy totals,
+   scenario counts and evidence counts validated or derived from canonical
+   structured data where feasible, avoiding duplicated derivable values.
+7. *Research-method consistency:* machine-readable distinctions between
+   static/source-grounded analysis, official-documentation review, read-only and
+   point-in-time observations, research experiments, write-side experiments,
+   destructive testing and delivery/process actions. Obvious contradictions are
+   caught; nuanced cases are `HUMAN_REVIEW_REQUIRED`.
+8. *Delta review and protected fingerprints:* `DEEP_REVIEW_REQUIRED` versus
+   `PRESERVATION_CHECK_ONLY` per domain. Delta analysis may reduce repeated
+   reviewer work but never automatically lowers the governing review class
+   (§6's escalation rule stays one-directional). A matching fingerprint means
+   only that a logical section is unchanged -- never that it is correct,
+   security-approved or risk-accepted -- and it does not prove that the
+   section's *inputs* are unchanged. **Dependency-aware preservation:** the
+   framework models a dependency graph between review domains (for example a
+   risk summary depends on the threat rows it counts; a generated count,
+   reference map, generated table or summary section depends on its upstream
+   records). `PRESERVATION_CHECK_ONLY` is valid for a domain only when (1) its
+   own protected content is unchanged **and** (2) no declared upstream
+   dependency changed in a way that may alter its meaning, derived values,
+   references, authority or validity. A dependency change invalidates
+   preservation-only status and makes the dependent domain
+   `DEEP_REVIEW_REQUIRED` or `HUMAN_REVIEW_REQUIRED` as appropriate, and the
+   invalidation propagates transitively (if A changes, B depends on A and C
+   depends on B, then both B and C are invalidated). A fingerprint alone can
+   never authorize preservation-only status. Missing, ambiguous or unresolved
+   dependency relationships are never assumed independent: they are
+   `HUMAN_REVIEW_REQUIRED` (or fail-closed).
+9. *Secret scanning:* known credential prefixes, private-key material,
+   token-like strings and provider credentials; output is masked and never
+   prints a complete value. **False-positive suppression:** a secret-scan hit
+   fails or requires human review unless an explicit, approved suppression
+   covers it. A suppression must be explicit, narrowly scoped (a specific file,
+   pattern or known test fixture -- never global, and never "ignore all
+   high-entropy strings"), reviewed, traceable, reasoned and free of secret
+   material (it records a rule identifier, a masked fingerprint, a fixture
+   classification, a reason and a review reference, never the value). A
+   suppression is itself subject to review, never weakens fail-closed
+   behavior, and an unknown secret-like value never passes silently.
+10. *CI evidence:* run ID, event, SHA, attempt, required jobs and conclusions,
+    classified as `CLEAN_FIRST_PASS`, `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN`,
+    `FAIL`, `INCOMPLETE` or `HUMAN_REVIEW_REQUIRED`. "Justified" in
+    `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` is a human governance/reliability
+    determination: automation may collect the failure signature, same-SHA proof,
+    changed files, rerun history and job results, but must not independently
+    classify an unexplained failure as a benign flake or a justified rerun. An
+    unknown or unexplained failure is `HUMAN_REVIEW_REQUIRED`, never an
+    automatic pass. This entry introduces no numeric automatic-retry policy;
+    rerun-until-green remains prohibited and is never scored as a pass.
+
+**Manifest, output and fail-closed behavior.** A machine-readable governance
+manifest carries stage/gate ID, review class, expected parent/base, allowed
+tracked files, protected domains, expected invariants, review-domain mappings
+and explicit exceptions. The framework emits machine-readable and
+human-readable reports (conceptually `pre-review.json` / `pre-review.md`) with
+exact Git identity, changed files, check results, invariant counts, review
+domains, human-review-required flags and the `READY_FOR_INDEPENDENT_REVIEW`
+state. `READY_FOR_INDEPENDENT_REVIEW` is a derived readiness summary only: it
+must be reproducible from explicit underlying evidence fields and must never
+replace, hide, flatten or overwrite them; the discrete evidence fields remain
+the canonical record and the aggregate is a computed view. It is not merge
+authorization, approval, security acceptance or lifecycle completion. The
+framework is fail-closed: an invalid manifest, malformed schema, unexpected file
+or unresolved mandatory reference fails; ambiguous CI evidence or an
+unrecognized critical state fails or becomes `HUMAN_REVIEW_REQUIRED`; nothing
+passes silently.
+
+**Repository safety.** A future implementation must respect `repositoryRoot`
+and must not allow arbitrary path escape, unsafe shell command construction,
+unvalidated process arguments, secret disclosure or uncontrolled external
+mutation.
+
+**Sub-stages (compact; not separate roadmap gates).** `1A` deterministic
+repository preflight; `1B` Markdown and reference integrity; `1C` evidence and
+provenance validation; `1D` risk / source consistency; `1E` delta review and
+protected fingerprints; `1F` CI evidence and machine-readable reporting; `1G`
+independent framework validation.
+
+**Relationship to `GOV-VERIFY-1`.** `GOV-VERIFY-1` (above) already tracks a
+narrower evidence producer for exact base/HEAD/TREE, diff scope and exact-SHA CI
+lookup. `GOV-AUTO-1` sub-stages `1A` and `1F` overlap that scope.
+`GOV-VERIFY-1` remains tracked, and every one of its constraints (evidence
+producer, never a merge authority; fail-closed; discrete evidence fields; the
+listed negative fixtures) remains authoritative; it is not cancelled, obsolete
+or automatically absorbed. **Implementation-ordering rule:** `GOV-VERIFY-1` must
+not be independently implemented, expanded or completed in capability areas that
+overlap `GOV-AUTO-1` (shared Git identity, diff-scope, CI-evidence or merge-gate
+facts) before the `GOV-AUTO-1` design phase records the canonical reconciliation
+described here; overlapping `GOV-VERIFY-1` implementation is paused until then,
+and no work may create a second independent source of truth for those facts.
+**Invariant:** one canonical implementation owner per overlapping capability.
+**Reconciliation record:** before any overlapping implementation proceeds, the
+design phase must produce a durable, reviewable decision containing at least the
+chosen relationship model (for example composition, orchestration, formal
+absorption or explicit non-overlapping scopes -- this roadmap does not
+pre-select one), a capability ownership map, the shared data/evidence contract,
+verdict and readiness semantics, migration or supersession status where
+applicable, and compatibility requirements. **Verdict-model compatibility:**
+`GOV-VERIFY-1`'s discrete evidence fields (for example `BASE_MATCH`,
+`HEAD_MATCH`, `TREE_MATCH`, `CI_EXACT_SHA`) stay the canonical evidence record;
+`READY_FOR_INDEPENDENT_REVIEW` is only an aggregate convenience state derived
+from such fields -- not a merge-style verdict and not a replacement for them.
+
+**Type & Schema Boundary Audit stays distinct.** A separately required future
+governance gate -- a whole-project, non-sampling Type & Schema Boundary Audit --
+is **not** part of `GOV-AUTO-1` and is **not** satisfied, certified or
+canonicalized by it. `GOV-AUTO-1` tooling may later help that audit, but tooling
+is not certification.
+
+**Implementation surface and CI.** A future implementation may add
+`scripts/governance/**`, `governance/**` manifests, tests and adversarial
+fixtures, package scripts and a dedicated "Governance Pre-Review" workflow or
+job. Doing so is an executable change (`HEAVY`). A dedicated workflow does not
+automatically become a branch-protection-required check; changing branch
+protection requires separate authorization.
+
+**Completion lifecycle.** governance design -> implementation ->
+deterministic test suite -> adversarial fixtures -> independent Senior Software
+Developer review **and** independent Security review (neither substitutes for
+the other; the framework processes paths, Git and CI metadata, configuration,
+evidence files, process arguments and possibly secret-like data) -> correctives
+if needed -> exact-head merge authorization -> STANDARD_TWO_PARENT merge ->
+post-merge certification -> canonical closure. No implementation may
+self-certify.
+
+**What this entry does not do.** It implements nothing, starts no `AISEC-4`
+work, does not reopen `AISEC-3`, and changes no existing review, merge or
+closure rule. The `MEM`, `RAG` and `LEARN` sequence is not otherwise reordered;
+because `GOV-AUTO-1` precedes `AISEC-4` in the mainline critical path, it is a
+mainline prerequisite for the later governed implementation stages (security,
+memory, retrieval, learning and autonomy) that follow it there, without
+invalidating the already-defined early-start research lanes (§7; for example
+`AISEC-6`, `MEM-1`, `MEM-2`), which remain governed as recorded.
+
 ## 7. Owner phase-order decision
 
 ```text
@@ -664,6 +875,34 @@ only under these conditions:
   The research exception does **not** move `RAG`/`LEARN` earlier in the
   canonical sequence.
 
+### Subsequent owner decision — Governance Pre-Review Framework Before AISEC-4
+
+```text
+Previous order:   AISEC-3 (COMPLETE_ON_MAIN)  →  AISEC-4 .. AISEC-7
+
+New order:        AISEC-3 (COMPLETE_ON_MAIN)  →  GOV-AUTO-1  →  AISEC-4 .. AISEC-7
+                  GOV-AUTO-1 is defined in §6; it is NOT_STARTED and is the
+                  roadmap-designated next active gate.
+
+Decision owner:   Project owner.
+```
+
+This entry records ordering only. `AISEC-3` remains `COMPLETE_ON_MAIN` and is
+not reopened; `AISEC-4` remains `NOT_STARTED` with its own scope unchanged; the
+`MEM`/`RAG`/`LEARN` order is unchanged. `GOV-AUTO-1` is placed before
+`AISEC-4` because a deterministic pre-review framework supports every later
+security, memory and autonomy gate.
+
+**Provenance — what must never be claimed about this decision:**
+
+- ❌ "`GOV-AUTO-1` is an `AISEC-3` corrective or reopens `AISEC-3`." -- false;
+  `AISEC-3` stays `COMPLETE_ON_MAIN`.
+- ❌ "`GOV-AUTO-1` replaces human review, security review, merge authorization or
+  canonical closure." -- false; it only produces deterministic pre-review
+  evidence (§6).
+- ✅ The owner decided a deterministic pre-review framework is sequenced before
+  `AISEC-4`; this reduces deterministic review noise, not verification.
+
 ## 8. Current critical path
 
 ```text
@@ -676,7 +915,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
   →  Architecture Conformance Gate (COMPLETE_ON_MAIN)
        [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
-  →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)  →  AISEC-4 .. AISEC-7
+  →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)  →  GOV-AUTO-1 (NOT_STARTED; NEXT ACTIVE GATE)  →  AISEC-4 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
   →  MEM-7 .. MEM-9
@@ -874,8 +1113,10 @@ evidence](#architecture-conformance-gate-closure-evidence) below).
 evidence](#aisec-1-closure-evidence) below), and so have `AISEC-2` (see
 [AISEC-2 closure evidence](#aisec-2-closure-evidence) below) and `AISEC-3`
 (see [AISEC-3 closure evidence](#aisec-3-closure-evidence) below); per
-[§15](#15-final-target-state), `AISEC-4` is now the roadmap-designated
-next active gate -- an authorization-level designation only. `D-1` and
+[§15](#15-final-target-state), `GOV-AUTO-1` (inserted before `AISEC-4`; see
+[§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and [§7](#7-owner-phase-order-decision)) is now the
+roadmap-designated next active gate, with `AISEC-4` following it -- an
+authorization-level designation only. `D-1` and
 `D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
 execution is started or activated by this state.
 
@@ -1437,8 +1678,10 @@ became the next active gate at that point. `AISEC-1` has since closed too
 `AISEC-2` has since closed too (see [AISEC-2 closure
 evidence](#aisec-2-closure-evidence) below); `AISEC-3` had since become the
 roadmap-designated next active gate and has since closed too (see [AISEC-3
-closure evidence](#aisec-3-closure-evidence) below), and `AISEC-4` is now the
-roadmap-designated next active gate -- a roadmap-level designation only.
+closure evidence](#aisec-3-closure-evidence) below); `AISEC-4` was then designated
+the next active gate, and a later owner decision inserted `GOV-AUTO-1` before it
+(see [§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and [§7](#7-owner-phase-order-decision)), so `GOV-AUTO-1` is
+now the roadmap-designated next active gate -- a roadmap-level designation only.
 This closure sync performs the canonical `ROADMAP.md` state transition
 for a Gate-level review already independently certified as `APPROVED` (a
 review-only pass, no repository diff); it does not itself re-perform that
@@ -1496,10 +1739,11 @@ had since become the roadmap-designated next active gate; `AISEC-2` has
 since closed too (see [AISEC-2 closure evidence](#aisec-2-closure-evidence)
 below). `AISEC-3` had since become the roadmap-designated next active gate
 and has since closed too (see [AISEC-3 closure
-evidence](#aisec-3-closure-evidence) below). Per
-[§15](#15-final-target-state), `AISEC-4` is now the roadmap-designated next
-active gate -- a sequencing designation only; `AISEC-4` execution has not
-begun. No runtime, public API, or package surface change accompanies this
+evidence](#aisec-3-closure-evidence) below). `AISEC-4` was then designated the next active gate, and a later owner
+decision inserted `GOV-AUTO-1` before it (see [§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and
+[§7](#7-owner-phase-order-decision)), so per [§15](#15-final-target-state)
+`GOV-AUTO-1` is now the roadmap-designated next active gate -- a sequencing
+designation only; neither `GOV-AUTO-1` nor `AISEC-4` execution has begun. No runtime, public API, or package surface change accompanies this
 evidence.
 
 ### AISEC-2 closure evidence
@@ -1555,10 +1799,11 @@ highest-rated current system risk, unchanged by this closure. AT-07 and
 AT-16 remain open system risks, unaffected by this closure, still owned by
 `AISEC-3`/`AISEC-6`. `AISEC-3` had since become the roadmap-designated next
 active gate and has since closed too (see [AISEC-3 closure
-evidence](#aisec-3-closure-evidence) below). Per
-[§15](#15-final-target-state), `AISEC-4` is now the roadmap-designated next
-active gate -- a sequencing designation only; `AISEC-4` execution has not
-begun. No runtime, public API, or package surface change accompanies this
+evidence](#aisec-3-closure-evidence) below). `AISEC-4` was then designated the next active gate, and a later owner
+decision inserted `GOV-AUTO-1` before it (see [§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and
+[§7](#7-owner-phase-order-decision)), so per [§15](#15-final-target-state)
+`GOV-AUTO-1` is now the roadmap-designated next active gate -- a sequencing
+designation only; neither `GOV-AUTO-1` nor `AISEC-4` execution has begun. No runtime, public API, or package surface change accompanies this
 evidence.
 
 ### AISEC-3 closure evidence
@@ -1616,10 +1861,12 @@ risk is remediated. TB-01 (refining AT-07) remains the highest-rated current
 system risk, unchanged by this closure. The study's TB-20 High Authority
 Impact rests on a documented derived inference (TB20-WF-INFERENCE) with a
 stated Medium fallback; live GitHub repository settings it records are
-point-in-time observations, not repository invariants. Per
-[§15](#15-final-target-state), `AISEC-4` is now the roadmap-designated next
-active gate -- a sequencing designation only; `AISEC-4` execution has not
-begun. No runtime, public API, or package surface change accompanies this
+point-in-time observations, not repository invariants. At closure time
+`AISEC-4` was designated the next active gate; a later owner decision inserted
+`GOV-AUTO-1` before it (see [§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and
+[§7](#7-owner-phase-order-decision)), so per [§15](#15-final-target-state)
+`GOV-AUTO-1` is now the roadmap-designated next active gate -- a sequencing
+designation only; neither `GOV-AUTO-1` nor `AISEC-4` execution has begun. No runtime, public API, or package surface change accompanies this
 evidence.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
@@ -1639,8 +1886,9 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   closure evidence](#aisec-2-closure-evidence) in §8. `AISEC-3` -- Tool /
   Privilege / Credential Boundary Analysis -- is now also closed on `main`;
   see [AISEC-3 closure evidence](#aisec-3-closure-evidence) in §8. Per §15,
-  `AISEC-4` is now the roadmap-designated next active gate; AISEC-4
-  execution itself has not yet begun)
+  `GOV-AUTO-1` (inserted before `AISEC-4` by a later owner decision, §7) is
+  now the roadmap-designated next active gate, followed by `AISEC-4`;
+  neither execution has yet begun)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -1665,6 +1913,10 @@ evidence](#aisec-2-closure-evidence) in §8. `AISEC-3` closed via
 `docs/tool-privilege-credential-boundary-analysis-v1.md`; see [AISEC-3
 closure evidence](#aisec-3-closure-evidence) in §8. `AISEC-4` through
 `AISEC-7` remain `NOT_STARTED`.
+
+`GOV-AUTO-1` ([§6](#gov-auto-1--governance-pre-review-framework-next-active-gate)) is not an AISEC stage: by owner decision (§7) it is
+sequenced after `AISEC-3` and before `AISEC-4`, and `AISEC-4`'s own scope is
+unchanged.
 
 **Research lane (early-start exception).** Per the [subsequent owner
 decision — Early AISEC/MEM Research
@@ -2130,9 +2382,10 @@ retained here for historical continuity — see below:
 in §8); `AISEC-1` has since closed too (see [AISEC-1 closure
 evidence](#aisec-1-closure-evidence) in §8), and so have `AISEC-2` (see
 [AISEC-2 closure evidence](#aisec-2-closure-evidence) in §8) and `AISEC-3`
-(see [AISEC-3 closure evidence](#aisec-3-closure-evidence) in §8); `AISEC-4`
-is now the next active gate -- a roadmap-level designation, not a claim that
-`AISEC-4` execution has begun (it remains `NOT_STARTED`; see
+(see [AISEC-3 closure evidence](#aisec-3-closure-evidence) in §8); `GOV-AUTO-1`
+is now the next active gate (inserted before `AISEC-4`; see [§7](#7-owner-phase-order-decision)) -- a roadmap-level designation, not a claim that
+`GOV-AUTO-1` or `AISEC-4` execution has begun (both remain `NOT_STARTED`; see
+[§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
 This file will be updated at each transition;
 `README.md`'s own roadmap section will continue to carry the detailed
