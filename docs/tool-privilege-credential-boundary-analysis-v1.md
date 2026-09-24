@@ -105,12 +105,14 @@ this repository was identified that calls `applyApprovedGeneratedChangeSet`
 (#23F), `executeAppliedChangeSet` (#23G), `regenerateAfterExecutionFailure` or
 the #23E `buildGeneratedChangeSetReviewRecord` outside tests (a `git grep` of
 tracked files found only their definitions, and the workflows invoke only npm
-scripts that do not reach them). The one non-test caller of any review builder
-is `buildTestDesignReviewRecord` (#22F) in
-`scripts/ai/evaluation/scoring-v6.js:292`, reached by `npm run eval:ai:v6`; it
-builds a record from fixed evaluation fixtures and is an evaluation helper, not
-a production orchestrator, reviewer-facing interface, or approval-collection
-path. None of the entry points or review-record builders is exported from the
+scripts that do not reach them). The only non-test review-builder usage
+identified is the #22F evaluation path in `scripts/ai/evaluation/scoring-v6.js`:
+1 caller file with 2 call sites -- `buildTestDesignReviewPackage` (`:320`) and
+`buildTestDesignReviewRecord` (`:292`) -- reached by `npm run eval:ai:v6` and
+`npm run eval:regression:v6` (both call `evaluateDatasetV6`). It builds
+fixture records and is an evaluation helper, not a production orchestrator,
+reviewer-facing interface, or approval-collection path; no #23E review-builder
+usage was identified. None of the entry points or review-record builders is exported from the
 package entry point `scripts/ai/index.js`, and `package.json`'s `files` field
 excludes `scripts/ai/generative-test-design` and `scripts/ai/test-automation`
 from the distributed package. The `#22F`/`#23E` review records are data
@@ -137,7 +139,7 @@ read of every workflow file.
 | S5 | AI provider clients | `providers/groq-provider.js`, `gemini-provider.js` | System/user prompt strings built by prompt builders | `AI_API_KEY` (env) | POST prompt to provider | Hard-coded provider host; `analyze()` returns a string only | None | READ ONLY (remote inference; egress of prompt data is AISEC-4's) | Missing key: constructor `CONFIGURATION` error, no fallback |
 | S6 | Requirement source providers | `providers/jira-requirements-provider.js`, `azure-devops-requirements-provider.js` | Caller-supplied config (JQL / query, base URL or org/project) | Caller-supplied Jira email+token / Azure PAT or bearer | HTTP GET of requirements | Jira: `https` only, no embedded credentials, no query/fragment; Azure: host pinned to `dev.azure.com`; both `redirect: "manual"` | None | READ ONLY | Any redirect is a hard failure |
 | S7 | Test-case publishing destination | `destinations/azure-devops-test-case-destination.js` via `test-design-publishing.js` | Deterministic `TestDesignArtifact` (RTI-4, no AI) and caller config | Caller-supplied PAT/bearer | Create Azure DevOps Test Case work items | Host pinned; org/project validated; `CREATE_ONLY`; sequential; no retry; `redirect: "manual"` | None in the module | REMOTE CREATE | Ambiguous outcome stops further items; no retry |
-| S8 | Review-record builders | `generative-test-design/test-design-review-record.js`, `test-automation/generated-change-set-review-record.js` (sole non-test caller: `scoring-v6.js:292`, #22F, evaluation fixtures) | Caller-supplied `reviewerId`, `reviewedAt`, `decisions`, `comment` | None | Construct approval artifact (no direct side effect) | Digest binding, completeness rules, derived `status` | Declared human decision | PROPOSAL (but the artifact *authorizes* S9) | Invalid input returns `ok:false` |
+| S8 | Review-record builders | `generative-test-design/test-design-review-record.js`, `test-automation/generated-change-set-review-record.js` (only non-test usage: `scoring-v6.js`, #22F, evaluation fixtures -- 1 caller file, 2 call sites) | Caller-supplied `reviewerId`, `reviewedAt`, `decisions`, `comment` | None | Construct approval artifact (no direct side effect) | Digest binding, completeness rules, derived `status` | Declared human decision | PROPOSAL (but the artifact *authorizes* S9) | Invalid input returns `ok:false` |
 | S9 | Change-set application (`#23F`) | `test-automation/change-set-application.js` `applyApprovedGeneratedChangeSet` | Generated change set + review package/record + caller `repositoryRoot`, `expectedProjectId` | None | Create / modify files under `repositoryRoot` | Approval validation; change-set re-validation; digest match; containment + symlink/hardlink checks; base-digest optimistic concurrency; rollback | `#23E` record (identity unauthenticated) | LOCAL WRITE | Approval or validation failure: `ok:false`, zero writes; partial failure: rollback, status may be `ROLLBACK_INCOMPLETE` |
 | S10 | Controlled execution (`#23G`) | `test-automation/controlled-execution.js` `executeAppliedChangeSet` | `AppliedChangeSetRecord` + plan + change set + caller `repositoryRoot` | None (env allowlist) | Spawn `node_modules/.bin/{cypress,playwright}` on derived targets | Applied-record digest + fresh byte revalidation; closed target classifier; `shell:false`; argv array; env allowlist; timeout and output bounds | None at this stage (approval consumed at S9) | CODE EXECUTION | Unknown framework / no target / unsafe target: refuse with zero spawn |
 | S11 | Bounded regeneration | `test-automation/regenerate-change-set.js` | Execution record (stdout/stderr redacted) + plan + context | `AI_API_KEY` via provider | One provider call, returns a proposal | Eligibility classifier; CREATE-origin refusal; freshness gate; `buildGeneratedChangeSet` | New `#23E` review required | PROPOSAL | Ineligible: zero provider calls |
@@ -294,10 +296,10 @@ Refines AT-07 (CRITICAL, unchanged) with source-level answers:
 | What proves the decision was made by a human? | **Nothing** (`FUTURE_HUMAN_DECISION_PROVENANCE_GUARD` open) | Module docstring; SECURITY.md §23/§28 |
 | What binds reviewer identity to the content digest? | `recordDigest` covers the record's fields including `reviewerId` -- integrity only | Record digest construction (`:365-374`) |
 | Is the digest keyed? | **No.** "PLAIN, UNKEYED SHA-256 -- not an HMAC, not a digital signature" | Module docstring lines 48-51 |
-| Can a local process fabricate a #23E approval? | **Yes**, by direct inspection of the #23E code: the builder accepts a caller-supplied `reviewerId` (bounded string only); `recordDigest` is plain `crypto.createHash("sha256")` over canonicalized fields, with `computeDigest` and `DIGEST_LABEL_RECORD` exported; the validator only recomputes that same digest and compares; no key, MAC or signature is used anywhere in this path | `generated-change-set-review-record.js:227-229, 365-374, 420-428, 458-470`; `generated-change-set-review-canonical.js:203-219, 226-234` |
+| Can a local process fabricate a #23E approval? | **Yes**, by direct inspection of the #23E code: the builder accepts a caller-supplied `reviewerId` (bounded string only); `recordDigest` is plain `crypto.createHash("sha256")` over canonicalized fields, with `computeDigest` and `DIGEST_LABEL_RECORD` exported; the validator checks record/package kind and schema, recomputes both unkeyed digests, requires the record's `packageDigest` to match the package, checks project identity (record, package and `expectedProjectId`), and requires `status` APPROVED -- ordinary field and integrity checks that perform no cryptographic authentication of reviewer identity or of the approval decision; no key, MAC or signature is used anywhere in this path | `generated-change-set-review-record.js:227-229, 365-374, 420-428, 458-470`; `generated-change-set-review-canonical.js:203-219, 226-234` |
 | Does any repository evidence show reviewer-identity constructability? | **Yes, for #22F only.** Evaluation code builds a #22F `TestDesignReviewRecord` through the legitimate builder with a fixed fixture `reviewerId` (`v6-evaluation-fixture-reviewer`). This shows the identity field accepts an arbitrary string with no identity proof. It is **not** proof of #23E forgery or of production exploitability; the #23E conclusion rests on the direct code evidence in the row above | `scoring-v6.js:292` (#22F constructability only) |
 | Can model-generated text set approval fields? | No path exists **in this repository** (fields are caller-supplied; no code routes model output into them). An external orchestrator is outside this study (OQ3-1) | Source |
-| Does any interface show the reviewer the proposal? | **No reviewer-facing interface was identified**: no `bin` entry, no interactive CLI, no HTML/UI files, no renderer. The only non-test review-builder caller is the #22F evaluation helper `scoring-v6.js:292` (reached by `npm run eval:ai:v6`), which builds a fixture record and displays nothing to a reviewer | §6 search; `package.json` |
+| Does any interface show the reviewer the proposal? | **No reviewer-facing interface was identified**: no `bin` entry, no interactive CLI, no HTML/UI files, no renderer. The only non-test review-builder usage identified is the #22F evaluation path in `scoring-v6.js` (1 caller file; call sites `:320` package builder and `:292` record builder; reached by `npm run eval:ai:v6` and `npm run eval:regression:v6`), which builds fixture records and displays nothing to a reviewer | §6 search; `package.json` |
 
 **Refinement of AISEC-2 OQ-1** (review-display provenance): the question
 assumed review-display tooling might exist outside the modules AISEC-2 read.
@@ -542,9 +544,9 @@ Authority Impact use the AISEC-1 methodology and the Authority Impact rule in
 | TB-06 | Attacker text laundered through trusted publisher | S7 (with S6 source) | Requirement content authored by a low-privilege user | Ability to author a requirement in the queried source | Operator's Azure credential | Requirement text -> deterministic artifact -> created work item | Structural validation; create-only | Content unfiltered; no review gate | None | REMOTE CREATE | Low-Med | Medium | Medium | MEDIUM | NEW | §23, §25 | AISEC-4 |
 | TB-07 | Attacker-influenced text posted with the job token (platform-derived bot identity, INFERRED) | S1 | Failure output / repository text reaching the AI report | Ability to influence test failure text | Job token | Text -> model report -> comment body (markdown, links, mentions) | Length truncation; report validation | No markdown/mention neutralization | None | REMOTE CREATE (comment) | Medium | Low | Low | LOW-MED | NEW | `format-pr-comment.js` (only `truncate`) | AISEC-7 |
 | TB-08 | Comment-marker hijack of the upsert target | S1 | Any PR commenter | Ability to comment on the PR | Job token | Comment containing the marker becomes the "existing" comment | First 100 comments only; marker string match | Author not checked; only the first 100 comments scanned; platform update permission behavior UNKNOWN | None | REMOTE CREATE (update) | Low-Med | Low | Low | LOW | NEW | `pr-comment-client.js:10-27` | AISEC-7 |
-| TB-09 | `repositoryRoot` manipulation | S9, S10 | A future orchestrator deriving the root from untrusted input | Orchestrator flaw | None | Supply a different existing directory | Root is caller input; module rule forbids untrusted derivation; validation is shape-only | No in-repository call site exists to verify the rule is followed | Original review | LOCAL WRITE / EXECUTION in another tree | Low | High | High | MEDIUM | NEW | `repository-root.js`; §6 search | AISEC-6 |
-| TB-10 | Protected-path denylist normalization bypass | S9 | Path text with unusual normalization | Approval + a crafted path | None | Windows short names / alternate streams / trailing characters vs pattern | Case-insensitive patterns; prefix layer; canonical path checks | Normalization behavior not empirically tested | Original review | LOCAL WRITE (protected area) | Low | High | Medium | MEDIUM | NEW (unverified) | §20; `generated-change-set.js:125-134` | AISEC-7 |
-| TB-11 | Symlink / TOCTOU on write | S9 | Concurrent local actor | Local access | None | Swap path component between check and write | `lstat` walk, topology identity binding, rollback | Documented unclosed TOCTOU window | Original review | LOCAL WRITE | Low | High | Medium | MEDIUM | SECURITY_MD_DERIVED (SECURITY.md §24) | `change-set-application.js:254-283` | AISEC-6 |
+| TB-09 | `repositoryRoot` manipulation | S9, S10 | A future orchestrator deriving the root from untrusted input | Orchestrator flaw | None | Supply a different existing directory | Root is caller input; module rule forbids untrusted derivation; validation is shape-only | No tracked call site was identified through which the rule could be observed to be followed | Original review | LOCAL WRITE / EXECUTION in another tree | Low | High | High | MEDIUM | NEW | `repository-root.js`; §6 search | AISEC-6 |
+| TB-10 | Protected-path denylist normalization bypass | S9 | Path text with unusual normalization | Approval + a crafted path | None | Windows short names / alternate streams / trailing characters vs pattern | Case-insensitive patterns; prefix layer; canonical path checks | Normalization behavior not empirically tested | Original review | LOCAL WRITE (protected-name paths inside `cypress/` or `playwright/`) | Low | High | Medium | MEDIUM | NEW (unverified) | §20; `generated-change-set.js:125-134` | AISEC-7 |
+| TB-11 | Symlink / TOCTOU on write | S9 | Concurrent local actor | Local access | None | Swap path component between check and write | `lstat` walk, topology identity binding, rollback | Documented unclosed TOCTOU window | Original review | LOCAL WRITE (outside containment if the race succeeds) | Low | High | High | MEDIUM | SECURITY_MD_DERIVED (SECURITY.md §24) | `change-set-application.js:254-283` | AISEC-6 |
 | TB-12 | Safe command, malicious approved code | S10 | Approved test file with malicious semantics | Approval (forged or persuaded) | Host OS identity | Approved spec runs arbitrary code in the runner | Closed classifier, `shell:false`, env allowlist, timeout | Not a sandbox; network and filesystem unrestricted | `#23E` (semantics visible, identity unauthenticated) | CODE EXECUTION | Low-Med | High | High | HIGH | SECURITY_MD_DERIVED (SECURITY.md §25) | AISEC-6 / AISEC-7 |
 | TB-13 | Argument injection into the runner CLI | S10 | Applied path text | Approval | None | Path text interpreted as a runner flag/pattern | Closed classifier; Cypress safe-character allowlist (whole-run reject); Playwright anchored escaped regex; argv array | Depends on classifier correctness per runner | Original review | CODE EXECUTION | Low | Medium | High | MEDIUM | NEW | `controlled-execution.js:293-322, 395-420` | AISEC-7 |
 | TB-14 | Ambient credential files reachable from the child | S10 | Malicious approved code | TB-12 succeeded | Host user's files | Read user-profile credential material | Env-variable secrets excluded | `HOME`/`APPDATA` passed; full FS and network | Original review | CODE EXECUTION -> credential exfiltration | Low | High | High | MEDIUM | NEW | §22; `ENV_ALLOWLIST` | AISEC-4 / AISEC-6 |
@@ -553,7 +555,7 @@ Authority Impact use the AISEC-1 methodology and the Authority Impact rule in
 | TB-17 | Allowed file -> CI execution | S13 | Merged spec under `cypress/` or `playwright/` | Human commit + PR review | Job token (read-only scopes); no secrets in test jobs | Spec code runs in test jobs | Per-job `permissions`; no secrets in test jobs; fork PRs get read-only | Persisted checkout credential; arbitrary code in runner | Repository PR review | CODE EXECUTION (CI) | Low-Med | Medium | Medium | MEDIUM | NEW | `cypress.yml` (6 checkout uses; 8 across the three inspected workflows; none sets `persist-credentials: false`) | AISEC-6 |
 | TB-18 | Reviewer persuasion + unauthenticated identity (compound) | S8, S9, S10 | Injected content (AISEC-2) reaching a reviewer | As TB-01 / PI-08 | None | Persuasive rationale -> approval by an unverified principal -> TB-12 | As TB-01 and AISEC-2 §17 | No provenance labeling in any display (no display was identified in this repository) | Human | LOCAL WRITE -> CODE EXECUTION | Low-Med | High | High | HIGH | COMPOUND_PRIOR (AT-07 + PI-08; AISEC-3 scenario rating, not an inherited canonical rating; not additive to TB-01/TB-12) | §16; AISEC-2 §17 | AISEC-6 |
 | TB-19 | Publish replay / duplicate creation | S7 | Re-invocation | Caller | Caller PAT | Same request creates duplicates | Create-only, no retry | No idempotency key | None | REMOTE CREATE | Low | Medium | Medium | MEDIUM | AT_REFINED (AT-08; canonical severity preserved -- AISEC-3 adds mechanism detail: no idempotency key, no approval object) | §23 | AISEC-4 / AISEC-7 |
-| TB-20 | CI secret reachable by same-repo PR code | S13 | Same-repository PR author | Push access | `AI_API_KEY` in one step | PR-head scripts run in the secret-holding job | Step-scoped env; fork PRs receive no secrets; no `pull_request_target` | Platform trust model: same-repo contributors are trusted | PR review | Credential use | Low | Medium | Low | LOW | NEW (platform trust) | `cypress.yml:904-911` | AISEC-4 |
+| TB-20 | CI secret reachable by same-repo PR code | S13 | Same-repository PR author | Push access | `AI_API_KEY` in one step | PR-head scripts run in the secret-holding job | Step-scoped env; fork PRs receive no secrets; no `pull_request_target` | Platform trust model: same-repo contributors are trusted | PR review | CODE EXECUTION (ephemeral CI triage job; one provider-inference key and a job token with `pull-requests: write`) | Low | Medium | Medium | MEDIUM | NEW (platform trust) | `cypress.yml:853-858, 904-911` | AISEC-4 |
 
 ## 28. Risk register
 
@@ -564,35 +566,101 @@ Likelihood, not Authority Impact.**
 
 ### Authority Impact rule
 
-Authority Impact records the highest authority tier a **successful instance of
-that specific scenario** reaches, together with the credential/OS context in
-which it is exercised -- not the highest tier available elsewhere in the
-pipeline, and **not lowered by preventive controls** (controls act on
-Likelihood).
+One rule, applied to every scenario in the same two steps.
 
-- **High:** arbitrary code execution, or unscoped write, in a context that holds
-  durable or ambient authority (the host user's OS identity, its files and
-  network).
-- **Medium:** scoped local write; remote create/update of objects; arbitrary
-  code execution confined to an ephemeral, credential-limited context (a CI
-  test job).
-- **Low:** content-only outcomes (a comment body, a report, a proposal) or
-  bounded use of a single credential for a non-mutating purpose.
+**Step 1 -- successful endpoint.** State what an attacker holds when the
+scenario succeeds, **including the authority already exercised by any
+attacker-controlled code the scenario requires.** A precondition is not
+subtracted: if success requires attacker-controlled code already running in a
+context, the scenario's Authority Impact accounts for what that code can do in
+that context (the repository's method does not exclude precondition
+authority, so it is included uniformly). Preventive controls are not part of
+this step; they act on Likelihood.
 
-Information disclosure is severity (**Impact**), not authority, unless it is
-achieved by code that already reaches the tier above.
+**Step 2 -- classify by reach and context.**
 
-### Code-execution endpoints: rationale
+- **High:** (a) arbitrary code execution in a host-ambient context (the
+  operator's OS identity with its files, network and cached credentials) or in
+  a context whose credentials permit durable repository-content or deployment
+  mutation (for example `contents: write` or deployment secrets); (b) a write
+  outside the repository containment boundary; (c) a redirect of the root or
+  execution target of a privileged operation.
+- **Medium:** (a) a write inside the repository root (scoped mutation),
+  including inside the intended scope with attacker-influenced content; (b) a
+  bounded remote create/update of a durable domain object under a trusted
+  credential; (c) arbitrary code execution in an ephemeral CI context whose
+  declared credentials are narrow -- read scopes, a provider-inference key, or
+  write scopes limited to PR message/metadata -- and grant no durable
+  repository-content or deployment mutation.
+- **Low:** (a) content-only influence (proposal, report or message text); (b) a
+  non-mutating, bounded read or use of a credential of known narrow scope; (c)
+  a rendering or notification effect with no stronger privilege.
 
-| Scenario | Successful endpoint | Authority actually reached | Old AI | New AI | Rationale |
+**Credential disclosure.** Classified by the known scope of the disclosed
+credential from repository evidence; an UNKNOWN scope is recorded as UNKNOWN
+(OQ3-4) and is neither upgraded nor discounted. Disclosure is otherwise
+Impact, not authority, unless it is achieved by code that reaches a tier above
+(Step 1).
+
+**Remote-write rule (Medium vs Low).** A remote write is **Medium** when it
+creates or mutates a durable domain object that other processes or people act
+on -- a work item in a test-management system (TB-05, TB-06, TB-19). It is
+**Low** when it only adds or edits message text in a bounded, already-existing
+conversation thread, mutates no other state, carries no executable semantics,
+and has a fixed workflow-context destination -- a PR comment (TB-07, TB-08). A
+comment is a durable remote object, but its authority is bounded to message
+content and notification/rendering effects.
+
+### Rule applied to every scenario
+
+| Scenario | Successful endpoint | Context | Authority reached | AI | Why (rule clause) |
 |---|---|---|---|---|---|
-| TB-01 | Forged approval accepted; #23F write then #23G run | Arbitrary code execution, host principal | High | High | Unchanged |
-| TB-09 | Root redirected to another tree; write/run there | Arbitrary code execution / write, host principal | High | High | Unchanged |
-| TB-12 | Approved test file runs arbitrary code | Arbitrary code execution, host principal | High | High | Unchanged |
-| TB-13 | Crafted applied-path text alters the runner's arguments so it executes something other than the reviewed content | Arbitrary code execution, host principal, **outside the reviewed scope** | Medium | **High** | The classifier and safe-character rules are preventive controls (Likelihood Low); if bypassed, the reached authority is host-principal code execution of unreviewed code |
-| TB-14 | Approved, executing malicious code reads host-user credential files and sends them out | Arbitrary code execution, host principal (same endpoint as TB-12) | Medium | **High** | Same reached-authority endpoint as TB-12; TB-14 differs in consequence (credential disclosure, Impact High) and conditional Likelihood, so it is **not additive** to TB-12. Downstream use of any disclosed credential has UNKNOWN scope (OQ3-4) and is neither credited nor discounted |
-| TB-17 | A merged spec executes in a CI test job | Arbitrary code execution on an ephemeral runner; job context is a read-only per-run token with no repository secrets in test jobs (§7 S13); the secret-holding triage job does not execute specs | Medium | Medium | Scenario-specific: the reached context is ephemeral and credential-limited by what the job holds, not by a control against the attack; retained Medium per the rule |
-| TB-18 | As TB-01 via reviewer persuasion | Arbitrary code execution, host principal | High | High | Unchanged; compound, not additive |
+| TB-01 | Forged approval accepted; #23F writes, #23G runs test code | Operator host | Code execution (host-ambient) plus scoped write | High | High (a) |
+| TB-02 | Approved change set applied to a second checkout of the same project id | Receiving repository root | Scoped write inside that root | Medium | Medium (a); execution is a separate follow-on (TB-12) |
+| TB-03 | Same approved set re-applied after base content restored | Repository root | Scoped write | Medium | Medium (a) |
+| TB-04 | Artifact for project A applied under project B's id | Repository root | Scoped write | Medium | Medium (a) |
+| TB-05 | Work items created in another org/project under the caller's credential | Azure DevOps, caller PAT/bearer | Bounded remote create of durable domain objects | Medium | Remote rule: domain object |
+| TB-06 | Attacker-authored text created as work items | Azure DevOps, caller PAT/bearer | Bounded remote create of durable domain objects | Medium | Remote rule: domain object |
+| TB-07 | Attacker-influenced text posted in a PR comment | PR thread, job token | Message content; notification/rendering | Low | Remote rule: message-only, fixed destination |
+| TB-08 | A comment containing the marker becomes the upsert target | PR thread, job token | Message edit or failed update | Low | Remote rule: message-only |
+| TB-09 | Root redirected to another tree; write and run there | Operator host, attacker-chosen root | Write and code execution outside the intended repository | High | High (a), (b), (c) |
+| TB-10 | Denylist normalization failure lets a write reach a path aliasing a protected name | Repository root, inside `cypress/` or `playwright/` | Scoped write inside the framework directories | Medium | Medium (a); see note below |
+| TB-11 | Path component swapped so the write lands outside the repository root | Operator host | Write outside containment | High | High (b) |
+| TB-12 | Approved test file runs arbitrary code | Operator host | Code execution (host-ambient) | High | High (a) |
+| TB-13 | Crafted path text alters runner arguments; unreviewed code executes | Operator host | Code execution (host-ambient), outside reviewed scope | High | High (a) |
+| TB-14 | Executing malicious code reads host credential files and sends them out | Operator host (precondition code counted) | Code execution (host-ambient) plus credential files | High | High (a); same endpoint as TB-12, consequence is Impact |
+| TB-15 | Job token or Jira token sent to another host | Job token (read scopes); Jira token scope UNKNOWN | Non-mutating use of a known-narrow credential | Low | Low (b); credential-disclosure rule |
+| TB-16 | A future provider adds side effects | Provider client | Contract is string-in/string-out; read-only today | Low | Low (a) |
+| TB-17 | Merged spec executes in a CI test job | Ephemeral runner; read scopes; no repository secrets | Code execution in a narrow-credential context | Medium | Medium (c) |
+| TB-18 | As TB-01 via reviewer persuasion | Operator host | Code execution (host-ambient) plus scoped write | High | High (a) |
+| TB-19 | Duplicate work items created on re-invocation | Azure DevOps, caller PAT/bearer | Bounded remote create of durable domain objects | Medium | Remote rule: domain object |
+| TB-20 | PR-head code runs in the triage job | Ephemeral runner; job token (`contents: read`, `actions: read`, `pull-requests: write`) reaches `npm run ai:history`; one provider-inference key reaches `npm run ai:analyze` | Code execution in a narrow-credential context | Medium | Medium (c); see note below |
+
+**Comparison notes (auditable distinctions).**
+
+- **TB-20 vs TB-17.** Both are arbitrary code execution in an ephemeral CI job
+  (Medium, clause (c)). TB-20's context is richer -- a provider-inference key
+  and a job token carrying `pull-requests: write` reach steps that run PR-head
+  scripts (`cypress.yml:853-858, 904-911`) -- but grants no durable
+  repository-content or deployment mutation, so it does not reach High. It is
+  not Low because Step 1 counts the code execution the scenario requires.
+- **TB-20 vs TB-14.** TB-14's code runs in the operator-host context
+  (host-ambient files, network and cached credentials) and is High; TB-20's
+  runs in an ephemeral, narrow-credential context and is Medium.
+- **TB-11 vs TB-09.** Both reach a write outside the intended repository
+  containment (High, clause (b)). TB-09 additionally retargets execution;
+  TB-11's endpoint is the write alone. Race dependence lowers TB-11's
+  Likelihood, not its Authority Impact.
+- **TB-10.** The successful endpoint is a write to a path whose name aliases a
+  protected entry but that still lies inside `cypress/` or `playwright/`,
+  because the independent framework-prefix layer is not defeated by this
+  scenario; root-level `.github/`, `package.json` and `.env*` stay
+  unreachable. That is a scoped write (Medium), not High. A joint failure of
+  both layers would be a different scenario and is not modeled here.
+- **Remote writes.** TB-05, TB-06 and TB-19 create durable work items that
+  people and processes act on (Medium); TB-07 and TB-08 change only message
+  text in a fixed, already-existing PR thread (Low). TB-19 keeps its canonical
+  AT-08 rating (Low / Medium / Medium, MEDIUM).
 
 ### Register
 
@@ -607,17 +675,17 @@ achieved by code that already reaches the tier above.
 | TB-06 | Low-Med | Medium | Medium | MEDIUM | NEW |
 | TB-09 | Low | High | High | MEDIUM | NEW |
 | TB-10 | Low | High | Medium | MEDIUM | NEW (unverified) |
-| TB-11 | Low | High | Medium | MEDIUM | SECURITY_MD_DERIVED |
+| TB-11 | Low | High | High | MEDIUM | SECURITY_MD_DERIVED |
 | TB-13 | Low | Medium | High | MEDIUM | NEW |
 | TB-14 | Low | High | High | MEDIUM | NEW |
 | TB-17 | Low-Med | Medium | Medium | MEDIUM | NEW |
 | TB-19 | Low | Medium | Medium | MEDIUM | AT_REFINED (AT-08) |
+| TB-20 | Low | Medium | Medium | MEDIUM | NEW (platform trust) |
 | TB-07 | Medium | Low | Low | LOW-MED | NEW |
 | TB-03 | Low | Low | Medium | LOW | NEW |
 | TB-08 | Low-Med | Low | Low | LOW | NEW |
 | TB-15 | Low | Medium | Low | LOW | NEW |
 | TB-16 | Low | Medium | Low | LOW | NEW (design) |
-| TB-20 | Low | Medium | Low | LOW | NEW (platform trust) |
 
 ### Counts (mechanically derivable from the register)
 
@@ -638,7 +706,7 @@ rows preserve their canonical ratings exactly:
 | TB-05 | AT-04 | Low / Medium / Medium | MEDIUM | identical |
 | TB-19 | AT-08 | Low / Medium / Medium | MEDIUM | identical |
 
-Summary: **CRITICAL 1, HIGH 2, MEDIUM 11, LOW 5, LOW-MED 1 (LOW-class total 6),
+Summary: **CRITICAL 1, HIGH 2, MEDIUM 12, LOW 4, LOW-MED 1 (LOW-class total 5),
 total 20.** AT-16, AT-03 / PI-06 and PI-04 are carried forward below and are
 not re-rated. TB-18's HIGH is an AISEC-3 compound rating, not an inherited
 canonical rating. These are **system security risks**, not artifact defects.
