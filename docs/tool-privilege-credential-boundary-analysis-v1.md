@@ -20,9 +20,12 @@ what credentials or privilege context do they use, and what deterministic
 boundaries prevent an untrusted or model-generated proposal from escalating
 into unauthorized action?*
 
-It is static, source-grounded analysis. It does not implement controls,
-change any code, test anything against a live external system, read or record
-any credential value, or start AISEC-4 through AISEC-7.
+It is primarily static, source-grounded analysis, supplemented by explicitly
+identified read-only observations of live GitHub repository settings and Actions
+run history (point-in-time, section 28). It does not implement controls, change
+any code, actively test or mutate anything on a live external system (no
+write-side platform experiment and no destructive testing), read or record any
+credential value, or start AISEC-4 through AISEC-7.
 
 ## 2. Scope
 
@@ -819,7 +822,7 @@ HTTP 200 without redirect on that date). Model or fetch-tool summaries and
 third-party pages are not used as evidence. One row supports one claim.
 Evidence classes: **DIRECT_DOC** (the page states the claim), **DOC_REUSABLE**
 (the statement lives in a reusable fragment included by the cited page),
-**REPO_OBSERVED** (observed in this repository or its Actions history),
+**REPO_OBSERVED** (read-only observation of this repository or its Actions history, not an experiment),
 **DERIVED_INFERENCE** (follows from documented facts but is not stated
 directly), **UNKNOWN** (the available evidence does not establish it).
 Invariants: each evidence row states one atomic claim and carries exactly one
@@ -894,7 +897,7 @@ the mechanism (and TB-20's High authority) depends on TB20-WF-INFERENCE, while
 the MEDIUM risk label holds whether or not it does; a stable label is not
 evidence for the mechanism.
 
-**Repository settings observed** (point-in-time, 2026-09-24, read through the
+**Repository settings observed** (point-in-time, 2026-09-24, read-only reads through the
 GitHub REST API with the owner's authenticated CLI; not tracked in the
 repository and able to change -- see OQ3-9). No secret value was read.
 
@@ -1230,8 +1233,10 @@ principal, freshness); retrieval must never carry authority from storage.
 ## 38. Non-goals and assumptions
 
 This document does not: implement any control; change any prompt, provider,
-credential, review, write or execution code; test against a live system; read
-or record any credential value; design authentication, isolation, or the
+credential, review, write or execution code; actively test or mutate a live
+system (its only live reads are the read-only, point-in-time GitHub settings and
+Actions-history observations of sections 2 and 28); read or record any
+credential value; design authentication, isolation, or the
 adversarial harness; implement `MEM`/`RAG`/`LEARN`.
 
 ```text
