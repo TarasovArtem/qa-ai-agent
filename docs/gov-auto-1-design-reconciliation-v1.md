@@ -177,7 +177,7 @@ hides one.
 |---|---|---|
 | `checkId` | string, unique within a run | Stable identifier, e.g. `1A.HEAD_MATCH` |
 | `ownerStage` | `1A`..`1F` or `KERNEL` | Canonical owner ([§6](#6-capability-ownership-matrix)) |
-| `status` | `PASS`, `FAIL`, `CONFIGURATION_ERROR`, `HUMAN_REVIEW_REQUIRED`, `INCOMPLETE` | Outcome ([§22](#22-error-model-and-exit-codes)) |
+| `status` | `PASS`, `FAIL`, `CONFIGURATION_ERROR`, `HUMAN_REVIEW_REQUIRED`, `INCOMPLETE`, `NOT_APPLICABLE` | Outcome ([§22](#22-error-model-and-exit-codes)) |
 | `subject` | object: `head`, `tree`, `base`, `range` | The exact identity the fact was established for; `range` is `{mode, from, to}` ([§18](#18-sub-stage-ownership-map)) |
 | `observed` | JSON value or `null` | The observed fact (masked when sensitive) |
 | `expected` | JSON value or `null` | The manifest-declared expectation |
@@ -192,6 +192,26 @@ Value set for each: `PASS`, `FAIL`, `UNKNOWN`, mapped one-way into the status
 set above (`UNKNOWN` is reported as `INCOMPLETE`; it is never rendered as
 `PASS`).
 
+**Domain results are records (C2).** There is exactly one canonical aggregation
+input: `records[]`. Every enabled domain in the validated graph
+([§9](#9-dependency-graph-validation)) produces exactly one **domain result
+record** (`checkId` `1E.DOMAIN.<domainId>`) whose fields are the common record
+fields plus a `domain` object: `{domainId, effectiveLevel, reasons[],
+evidenceRefs[], dependencyState, fingerprint}`. The record `status` is derived
+from `effectiveLevel` by one rule: `HUMAN_REVIEW_REQUIRED` maps to
+`HUMAN_REVIEW_REQUIRED`; `DEEP_REVIEW_REQUIRED` and `PRESERVATION_CHECK_ONLY`
+map to `PASS` (they scope reviewer effort; they are not unresolved human
+judgments, and any covering deterministic check that is not `PASS` has its own
+record). The `domains[]` array in the report is a **derived projection** of
+these records, never an independent structure. **Synchronization invariant:**
+no domain-level effective state may exist outside the aggregation input, and no
+state that affects review authority may live only in a projection. The kernel
+therefore validates, before aggregating, that the set of domain result records
+equals the set of enabled domains in the graph: a missing domain result is
+`INCOMPLETE` (`DOMAIN_RESULT_MISSING`), a duplicate is `CONFIGURATION_ERROR`
+(`DOMAIN_RESULT_DUPLICATE`), and a `domains[]` projection that differs from the
+records fails the report.
+
 **Readiness state (D3, corrected in C1).** `READY_FOR_INDEPENDENT_REVIEW` is
 realized as one enumerated field, `readiness.state`, with exactly three values,
 derived only by the aggregator function from the result records. The roadmap's
@@ -203,12 +223,11 @@ means "ready, but see the flags".
 |---|---|---|
 | `NOT_READY` | the run's overall status ([§22](#22-error-model-and-exit-codes)) is `CONFIGURATION_ERROR`, `FAIL` or `INCOMPLETE` | A deterministic defect, an invalid configuration, or a fact the tool could not establish; the head is not yet eligible for independent review |
 | `HUMAN_REVIEW_REQUIRED` | overall status is `HUMAN_REVIEW_REQUIRED` (no `CONFIGURATION_ERROR`, `FAIL` or `INCOMPLETE` record) | The deterministic checks found no defect, but at least one mandatory human determination is pending; this is **not** a green state |
-| `READY` | every mandatory check is `PASS` (or `PASS` with an `exceptionApplied` record) and no record is `HUMAN_REVIEW_REQUIRED` | Deterministic checks are complete and no mandatory human determination is pending |
+| `READY` | every record is `PASS` (or `PASS` with an `exceptionApplied` record, or `NOT_APPLICABLE` with recorded proof) and no record is `HUMAN_REVIEW_REQUIRED` | Deterministic checks are complete and no mandatory human determination is pending |
 
 Precedence (highest first), identical to the overall status:
 `CONFIGURATION_ERROR` = `FAIL` = `INCOMPLETE` (all `NOT_READY`) >
-`HUMAN_REVIEW_REQUIRED` > `READY`. `READY` is reachable only when **every**
-record is `PASS`; therefore `READY` with an unresolved mandatory
+`HUMAN_REVIEW_REQUIRED` > `READY`. `READY` is reachable only when **every** record, including every domain result record, is `PASS` or a proven `NOT_APPLICABLE`; therefore `READY` with an unresolved mandatory
 `HUMAN_REVIEW_REQUIRED` state is impossible by construction. Human-required
 items do not stop independent review from starting; they are what independent
 review must decide. The report never records their resolution: a human's
@@ -267,7 +286,7 @@ Validation runs once, on the loaded manifest, before any check executes.
 |---|---|
 | Unknown dependency domain | `CONFIGURATION_ERROR` |
 | Self-dependency | `CONFIGURATION_ERROR` |
-| Duplicate `domainId`, or duplicate edge to the same domain | `CONFIGURATION_ERROR` |
+| Duplicate `domainId`, or duplicate edge to the same domain within one artifact | `CONFIGURATION_ERROR` |
 | Missing `dependsOn`, `derivedFrom`, `protectedInputs` or `reviewModes` key | `CONFIGURATION_ERROR` |
 | Dependency on a disabled domain (including disabling a depended-upon domain) | `CONFIGURATION_ERROR` |
 | Cycle of length >= 2 | `CONFIGURATION_ERROR` |
@@ -280,6 +299,27 @@ are genuinely mutually dependent they are declared as **one** domain whose
 unit. Rejected alternative: permitting a cycle with a justification field --
 it invites suppression abuse ([§29](#29-framework-threat-analysis)) and makes
 transitive invalidation non-terminating unless a fixpoint is added.
+
+**Edge identity and overlay merge semantics (C2).** A dependency edge is
+identified by its target domain: within one domain there is at most one edge to
+a given `toDomain`, and `kind` is an attribute of that edge. The duplicate-edge
+rule above applies **within one artifact**. When a base-anchored domain
+definition and a gate-manifest definition are merged ([§14](#14-manifest-ownership-trust-anchor-and-authority)),
+the merged edge set is computed deterministically per `toDomain`:
+
+| Base edge | Overlay edge | Merged result |
+|---|---|---|
+| present, kind `K` | present, kind `K` (identical) | One edge, kind `K` (deduplicated; not an error) |
+| present, kind not `MEANING` | present, kind `MEANING` | `MEANING` (tightening, applied) |
+| present, kind `MEANING` | present, different kind | Base `MEANING` stays effective; the head change is a loosening proposal (`GOVERNANCE_CONFIG` `HUMAN_REVIEW_REQUIRED`) |
+| present, kind `DERIVED_VALUE` or `REFERENCE` | present, the other of the two | `CONFIGURATION_ERROR` (a lateral change is not a tightening and its direction is indeterminate) |
+| present | absent | Base edge retained (an overlay cannot remove a base edge; a removal is a loosening proposal) |
+| absent | present | Overlay edge added (tightening) |
+
+The merged graph is validated once, after merging, by the full
+[§9](#9-dependency-graph-validation) rules; because merging is per `toDomain`,
+it can never introduce a duplicate edge, and the result does not depend on
+iteration order.
 
 ## 10. Transitive invalidation algorithm
 
@@ -325,6 +365,13 @@ domain in full. `HUMAN_REVIEW_REQUIRED` means the machine cannot judge validity
 or the change cannot be established); the domain is flagged for a human
 determination and is never presented as machine-cleared.
 
+**Emission (C2).** After the levels are computed, each domain's effective level
+is emitted as its domain result record ([§7](#7-shared-evidence-contract)):
+a domain whose effective level is `HUMAN_REVIEW_REQUIRED` -- including one that
+reaches it only through a dependency -- yields a `HUMAN_REVIEW_REQUIRED` record,
+so it participates in readiness aggregation. The level is not stored anywhere
+else.
+
 ## 11. Domain change model
 
 **Decision D7: change is evaluated per review domain, not per file.** A domain
@@ -358,8 +405,7 @@ domain can change through an unmodified file's derived value.
    is byte-identical between base and head;
 4. the domain's own fingerprint is identical between base and head;
 5. every transitive dependency is `PRESERVATION_CHECK_ONLY`;
-6. the base identity is verified and equal to the manifest's expected parent/base
-   (`1A`), and head/tree came from Git for the current run;
+6. the base identity was derived from the trusted invocation context and verified (`1A`, [§14](#14-manifest-ownership-trust-anchor-and-authority)), any manifest `expectedBase` assertion matched it, and head/tree came from Git for the current run;
 7. the deterministic `1B`-`1D` checks covering the domain still `PASS` at the head;
 8. no unresolved `INCOMPLETE`, `CONFIGURATION_ERROR` or `FAIL` record concerns the
    domain.
@@ -407,7 +453,7 @@ generated; everything is validated and fail-closed.**
 
 | Artifact | Purpose | Read from |
 |---|---|---|
-| Base policy (for example `governance/base.json`) | Repository-level policy: schema versions, ID families, secret rules, mandatory domains, exception and suppression policy limits, authority rules, minimum review class, allowed and forbidden path domains | The **base commit** (`1A`-verified `base`), never the head |
+| Base policy (for example `governance/base.json`) | Repository-level policy: schema versions, ID families, secret rules, mandatory domains, exception and suppression policy limits, authority rules, minimum review class, allowed and forbidden path domains | The **base commit** (`1A`-verified `base` from the trusted invocation, [below](#14-manifest-ownership-trust-anchor-and-authority)) at the framework-constant path, never the head |
 | Gate manifest (for example `governance/manifests/<gate-id>.json`) | The gated stage: stage identity, domain definitions, dependency declarations, per-review scope, required CI jobs, exceptions, suppressions | Head is the *proposal*; the base version (when it exists) is the anchor |
 
 Run-time facts (HEAD, TREE, changed files, fingerprints, CI data) are never
@@ -419,12 +465,23 @@ any unknown field or incompatible `schemaVersion` before any check runs. A
 repository file is not authoritative merely by existing there
 (`docs/governance-process-v3.md`, "Authority hierarchy").
 
+**Trusted base and policy selection (C2).** The trust anchor is only as
+trustworthy as the way `base` is chosen. `base`, the target ref and the policy
+locations are never read from the reviewed head.
+
+| Item | Rule |
+|---|---|
+| Invocation context | `mode` (`PR_REVIEW` or `POST_MERGE`), target ref and SHA, and head SHA come from the **trusted invocation**: platform event or PR metadata, or an explicit operator argument. They are never read from the manifest, base policy content of the head, or any file the reviewed change can modify. Values are runtime-validated ([§20](#20-runtime-validation-at-every-input)): 40-hex SHAs, allow-listed `mode` |
+| `PR_REVIEW` base | `base` = the unique merge base of the trusted target SHA and the head SHA, computed with `git merge-base --all` (argument array, no shell) over fetched objects. It must be an ancestor of the head. Zero or several merge bases, or objects that cannot be fetched, is `INCOMPLETE` (`BASE_NOT_ESTABLISHED`); the head manifest cannot override it |
+| `POST_MERGE` base | The head is the merge commit; it must have exactly two parents (`STANDARD_TWO_PARENT`), otherwise `FAIL`; `base` = its **first parent**; the reviewed head is recorded as the second parent. No override exists |
+| Policy locations | The base policy path is a **framework constant** (for example `governance/base.json`), and the gate manifest path is derived by a framework rule from the trusted gate ID. The manifest schema has no field that selects either path, so an unknown field is rejected (`CONFIGURATION_ERROR`) |
+| `expectedBase` / `expectedParent` in a manifest | An **assertion, not authority**: it is compared with the derived `base`; a mismatch is `FAIL` (`BASE_MISMATCH`, discrete field `BASE_MATCH`). `FAIL` is chosen over `CONFIGURATION_ERROR` because the manifest asserts a fact that trusted evidence contradicts (the artifact is wrong, as with `GOV-VERIFY-1`'s `BASE_MATCH`), whereas `CONFIGURATION_ERROR` is reserved for an invalid tool configuration. The assertion never changes which base or policy is read |
+| Workflow definition | If the workflow or job that invokes the framework is itself modified by the reviewed change, the invocation is not anchored: `GOVERNANCE_CONFIG` is `HUMAN_REVIEW_REQUIRED` (`INVOCATION_NOT_ANCHORED`). Platform-supplied event metadata, not head-controlled workflow inputs, is the preferred source of the target SHA |
+
 **Protected fields** (taken from the base anchor; the head can only tighten):
 stage identity; review-class minimum; allowed and forbidden path domains;
-mandatory domain IDs together with their dependency declarations, edge kinds and
-review modes; required CI job list; ID families; secret rules; exception and
-suppression policy limits (categories, maximum expiry); authority rules. Fields
-the head controls: additional (added) domains and dependencies, per-review
+mandatory domain IDs together with their dependency declarations, edge kinds, review modes and protected input selectors; required CI job list; ID families; secret rules; exception and
+suppression policy limits (categories, maximum expiry); authority rules; the authorized-determiner set and determination mode ([§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary)). Fields the head controls: additional (added) domains and dependencies, per-review
 allowed files that are a **subset** of the base allowed path domains, and
 proposed exceptions and suppressions (see below).
 
@@ -432,8 +489,7 @@ proposed exceptions and suppressions (see below).
 check stricter (adds a mandatory check, domain, dependency edge or forbidden
 path; narrows scope; shortens expiry; adds a required CI job; raises review
 class). It is *loosening* otherwise (widens scope beyond the base path domains;
-removes or disables a domain or check; removes or relaxes a dependency edge,
-lowers its kind, or drops a review-mode restriction; removes a required CI job;
+removes or disables a domain or check; removes or relaxes a dependency edge, lowers its kind, or drops a review-mode restriction; removes, replaces or narrows a protected input selector of a base-anchored domain (the base selectors always stay effective and the head may only add selectors); changes the authorized-determiner set or determination mode; removes a required CI job;
 extends an expiry; lowers the review class; adds an exception or suppression;
 changes an authority rule).
 
@@ -448,16 +504,27 @@ proposal attached, so a head can never self-authorize a bypass. A protected
 change is therefore reviewed under the *old* configuration by a human, and
 becomes the anchor only after it is merged and becomes the new base.
 
-**New gate or no base anchor (bootstrap).** If the base commit has no base
-policy, or no gate manifest for this gate, there is no trust anchor. The
-framework then (1) validates the head artifacts against the framework's built-in
-minimum policy only, which is hard-coded, tighten-only and fail-closed (review
-class `HEAVY`; no domain eligible for `PRESERVATION_CHECK_ONLY`; no exception or
-suppression honored); (2) records `reasonCode NO_BASE_TRUST_ANCHOR` as a
-`HUMAN_REVIEW_REQUIRED` record for `GOVERNANCE_CONFIG`; and (3) can therefore
-reach at best `readiness.state = HUMAN_REVIEW_REQUIRED`, never `READY`. The
-initial trust is established by the human reviewer and by merge, not by the
-manifest.
+**New gate or missing anchor (bootstrap, C2).** The repository-level base policy
+read from the trusted `base` is the bootstrap anchor and is never discarded
+because a gate manifest is absent.
+
+1. *Base policy and base gate manifest both present:* normal operation.
+2. *Base policy present, gate manifest absent at `base` (a new gate):* the base
+   policy stays fully active (mandatory domains, scope domains, secret rules,
+   exception and suppression limits, authorized determiners). The head gate
+   manifest is validated and treated as a **proposal**: the protected settings
+   it defines cannot self-certify. `GOVERNANCE_CONFIG` is
+   `HUMAN_REVIEW_REQUIRED` (`NO_BASE_GATE_ANCHOR`), so readiness is at best
+   `HUMAN_REVIEW_REQUIRED`. If a gate that requires a manifest has none at the
+   head, the run is `CONFIGURATION_ERROR` (`GATE_MANIFEST_MISSING`).
+3. *No base policy at `base` (first introduction):* the framework's built-in
+   minimum policy applies (hard-coded, tighten-only, fail-closed: review class
+   `HEAVY`; no domain eligible for `PRESERVATION_CHECK_ONLY`; no exception or
+   suppression honored) and `GOVERNANCE_CONFIG` is `HUMAN_REVIEW_REQUIRED`
+   (`NO_BASE_TRUST_ANCHOR`); readiness is at best `HUMAN_REVIEW_REQUIRED`.
+
+In every case the initial trust is established by the human reviewer and by
+merge, not by the manifest.
 
 **Overlay precedence** (base policy versus gate manifest; field by field; there
 is no "both define X" ambiguity):
@@ -467,7 +534,7 @@ is no "both define X" ambiguity):
 | `schemaVersion` | Must be in the framework's supported set for each artifact | `CONFIGURATION_ERROR` |
 | ID families | Extend: the gate may add families | Redefining or removing a base family is a forbidden override: `CONFIGURATION_ERROR` |
 | Secret rules | Union: the gate may add rules | Removing or relaxing a base rule: `CONFIGURATION_ERROR` |
-| Domain definition | A domain exists only if the gate manifest defines it; base names `mandatoryDomains` that the gate must define | A missing mandatory domain: `CONFIGURATION_ERROR`; for a domain defined at both levels: `dependsOn` and `protectedInputs` are the union, `reviewModes` the intersection, `enabled` and `ownerStage` are the base values (differing `ownerStage`: `CONFIGURATION_ERROR`) |
+| Domain definition | A domain exists only if the gate manifest defines it; base names `mandatoryDomains` that the gate must define | A missing mandatory domain: `CONFIGURATION_ERROR`; for a domain defined at both levels: `dependsOn` is merged by edge identity ([§9](#9-dependency-graph-validation)), `protectedInputs` are monotone (base selectors retained, the head may only add), `reviewModes` the intersection, `enabled` and `ownerStage` are the base values (differing `ownerStage`: `CONFIGURATION_ERROR`) |
 | Allowed scope | Intersection: the gate may narrow | Widening beyond the base path domains is loosening (not applied; `FAIL` for any changed file outside the base domains) |
 | Forbidden paths | Union | none |
 | Required CI jobs | Union | Removal is loosening (not applied) |
@@ -611,28 +678,85 @@ justifies. Fields:
 | `attempts` | The failed attempt number(s) and the final attempt number |
 | `failedJobs` | Exact job identifiers that failed |
 | `failureSignature` | The signature the machine collected for those failures (normalized) |
-| `reviewer` | Identity/reference of the human who made the determination |
+| `reviewer` | Display name only; ignored for trust (authority derives from the authenticated channel identity, below) |
 | `decisionRef` | A reference and timestamp of the decision |
 | `category` and `justification` | Enumerated category and bounded, non-secret text |
 
-Trust rules (invariants; the storage channel is left to implementation but must
-satisfy all of them, otherwise the record is not accepted and the result stays
+**Determination authority contract (C2; resolves the trust contract of
+OQ-GA-9).** Who may issue the determination, and how that identity is trusted,
+is fixed here independently of any storage provider. Identities are kept apart:
+
+| Identity | Source | Trust use |
+|---|---|---|
+| Commit author, committer, co-author trailer | Git metadata | **Evidence only.** Unauthenticated; never an authorization source |
+| PR author | Platform metadata (authenticated account ID) | A *contributor* identity, used for the separation rule below |
+| Contributor set | PR author account, plus every commit author, committer and co-author that the platform resolves to an account ID; any identity that cannot be resolved is recorded as `UNRESOLVED` | Input to separation |
+| Authenticated governance actor | Captured by the collector from the channel's authenticated response: `{provider, accountId, accountType}`, where `accountId` is the stable immutable ID, not a display name | The **only** identity that can carry authority. Any `reviewer` or name field in the record body is display-only and ignored for trust; a body value that disagrees with the authenticated actor rejects the record |
+| Authorized determiner | An entry in the base-anchored `authorizedDeterminers` list (explicit `{provider, accountId}` entries) | Only listed accounts can issue a valid determination. Repository permission or role alone confers no authority |
+
+Rules (all must hold, otherwise the record is not accepted and the result stays
 `HUMAN_REVIEW_REQUIRED`):
 
-1. The record originates from a channel the author of the reviewed change
-   cannot write to by pushing to the reviewed branch (for example review
-   metadata of the change, or a separate recorded human review artifact).
-2. `reviewer` is a human identity distinct from every author and committer of the
-   commits under review, wherever those identities are machine-comparable;
-   otherwise the record is not accepted.
-3. Every binding field must equal the actual run data (repository, `headSha`,
-   `runId`, attempts, failed jobs, and a matching `failureSignature`); any
-   mismatch or a record for another SHA or run is rejected. A new commit
-   invalidates the record.
-4. The record is validated against a runtime schema (a repository input rule of
-   [§20](#20-runtime-validation-at-every-input)).
+1. **Authenticated identity.** The determiner identity is derived from the
+   channel, never from a self-declared field.
+2. **Authorized set, anchored outside the head.** `authorizedDeterminers` (and
+   `determinationMode` below) are protected fields read from the trusted `base`.
+   A head edit to them is a loosening proposal that is not applied, so the
+   author cannot add themselves in the reviewed head. An empty set means no
+   record can be accepted. An entry whose `accountType` is a bot, app or service
+   account is `CONFIGURATION_ERROR`; a record from such an actor is rejected.
+3. **Channel the change cannot write.** The record lives in an authenticated
+   external channel and never in the reviewed tree or any object a push to the
+   reviewed branch can create or alter. Because an author can also post in
+   channels under their own account, authority is decided by rule 2 (identity),
+   never by the channel alone: content from an unlisted account is ignored.
+4. **Separation, by explicit mode.** The base policy sets `determinationMode`
+   to one of two values:
+   - `SEPARATE_PERSON`: the determiner's account is not in the contributor set
+     and the contributor set has no `UNRESOLVED` member. If distinctness cannot
+     be proven, the record is not accepted. An accepted record allows
+     `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` and, if everything else passes,
+     `READY`.
+   - `OWNER_ATTESTED` (single-owner repositories): the base policy names the
+     owning account explicitly, and that account may be in the contributor set
+     (the owner directing the authoring automation). This removes the
+     single-owner dead end without pretending independence exists: the record is
+     accepted and the CI classification is reported, but the run also carries an
+     `OWNER_SELF_DETERMINATION` `HUMAN_REVIEW_REQUIRED` record, so readiness is
+     at best `HUMAN_REVIEW_REQUIRED` and never `READY`, and the report labels
+     the independence as limited. It is a recorded human attestation, never a
+     merge authorization.
+5. **Tamper evidence.** A qualifying channel exposes either immutability or an
+   auditable edit history. At collection the collector captures the record's
+   `contentDigest` (SHA-256 of its canonical content), the channel object ID
+   and its version or last-edit marker, and stores them in the finalized
+   report; acceptance is bound to that digest. A record edited or deleted after
+   its decision timestamp, whose current digest differs from the accepted
+   digest, or whose channel offers no verifiable version history, is not
+   accepted. An edit is a new record that needs its own acceptance; no
+   acceptance survives mutation.
+6. **Bindings and timing.** `repository`, `headSha`, `runId`, attempts, failed
+   jobs and a matching `failureSignature` must equal the actual run data, and
+   the decision timestamp must be after the final attempt completed. A new
+   commit invalidates the record.
+7. **Runtime schema.** The record is validated against a runtime schema
+   ([§20](#20-runtime-validation-at-every-input)).
 
-The machine verifies bindings and distinctness and never evaluates whether the
+| Identity case | Handling |
+|---|---|
+| PR author | Contributor. Excluded as determiner under `SEPARATE_PERSON`; allowed only as the named owner under `OWNER_ATTESTED` (readiness capped) |
+| Commit author, committer | Evidence; resolved to accounts they join the contributor set, unresolved they are `UNRESOLVED` |
+| Co-author trailer | Same as commit author |
+| Bot or app identity | Never a determiner; listing one is `CONFIGURATION_ERROR`; its record is rejected |
+| Service account | Same as bot |
+| Repository maintainer | Eligible only if explicitly listed in `authorizedDeterminers` |
+| Repository owner | Eligible if listed; under `OWNER_ATTESTED` the named owner, capped as above |
+
+The concrete provider and storage of the channel remain an implementation
+choice (OQ-GA-10) but must satisfy rules 1-7; a provider that cannot is not
+qualifying.
+
+The machine verifies bindings, authenticated identity, authorization and tamper evidence, and never evaluates whether the
 failure was harmless, whether the rerun was justified, or whether it can be
 waived. An unexplained or unknown failure without a valid record is
 `HUMAN_REVIEW_REQUIRED`, never an automatic pass. No numeric automatic-retry
@@ -644,11 +768,11 @@ implement a second CI lookup.
 
 | Stage | Responsibility | Inputs | Outputs | Depends on | Owner of | Public interface | Non-goals |
 |---|---|---|---|---|---|---|---|
-| `1A` Repository preflight | Git identity, diff scope, secret scan, suppression application | Validated manifest; Git objects; `repositoryRoot` | Identity record (branch, HEAD, TREE, parents, base), changed-file set, scope verdicts, secret findings (masked) | Wave 0 | Git identity, diff scope, secret scan | `getGitIdentity()`, `getChangedFiles({from, to, mode})`, `checkScope()`, `scanSecrets()`; `mode` is an explicit input (`PR_REVIEW`: base..head; `POST_MERGE`: first parent..merge commit) recorded in every record's `subject.range`, never hard-coded to base..head | No merge-gate facts (`PACK_DIFF`, branch protection); no network; no mutation |
+| `1A` Repository preflight | Git identity, diff scope, secret scan, suppression application | Validated manifest; trusted invocation context (mode, target, head); Git objects; `repositoryRoot` | Identity record (branch, HEAD, TREE, parents, base), changed-file set, scope verdicts, secret findings (masked) | Wave 0 | Git identity, diff scope, secret scan | `getGitIdentity()`, `getChangedFiles({from, to, mode})`, `checkScope()`, `scanSecrets()`; `mode` is an explicit input (`PR_REVIEW`: base..head; `POST_MERGE`: first parent..merge commit) recorded in every record's `subject.range`, never hard-coded to base..head | No merge-gate facts (`PACK_DIFF`, branch protection); no network; no mutation |
 | `1B` Markdown and reference integrity | Parser-aware tables, fences, headings, anchors, links; ID-family references | Changed-file set from `1A`; file bytes at head; manifest ID families | Parsed document structure, integrity records | Wave 0, `1A` | Markdown and reference integrity | `parseMarkdown()`, `checkReferences()` | No semantic wording judgment; no auto-fix |
 | `1C` Evidence and provenance | Class vs strength separation, one class per row, promotion-wording flags, weakest-premise check | `1B` structure; manifest evidence-model config | Evidence records, `HUMAN_REVIEW_REQUIRED` flags | `1B` | Evidence/provenance validation | `checkEvidenceModel()` | Never decides whether an inference is substantively justified |
 | `1D` Risk / source / method consistency | Totals, counts, taxonomy, research-method contradiction checks | `1B` structure; `1C` records | Consistency records | `1B`, `1C` | Risk/source and method consistency | `checkConsistency()` | Never decides whether a risk is acceptable; nuanced method cases are `HUMAN_REVIEW_REQUIRED` |
-| `1E` Delta review and fingerprints | Domain change model, fingerprints, transitive invalidation, `PRESERVATION_CHECK_ONLY` eligibility | Graph (Wave 0); `1A` identity and changed files; `1B`-`1D` records; base and head Git content | Per-domain effective review level, fingerprints, reasons | Wave 0, `1A`-`1D` | Delta review, fingerprints | `computeDeltaReview()` | Never lowers review class; never states correctness |
+| `1E` Delta review and fingerprints | Domain change model, fingerprints, transitive invalidation, `PRESERVATION_CHECK_ONLY` eligibility | Graph (Wave 0); `1A` identity and changed files; `1B`-`1D` records; base and head Git content | One domain result record per enabled domain (effective level, reasons, evidence refs, dependency state, fingerprint) | Wave 0, `1A`-`1D` | Delta review, fingerprints | `computeDeltaReview()` | Never lowers review class; never states correctness |
 | `1F` CI evidence and reporting | CI evidence collection/classification; report assembly; CLI; workflow wiring (later) | `1A` identity; GitHub run metadata; all stage records | CI evidence record; `pre-review.json`; derived `pre-review.md` | Wave 0, `1A`-`1E` | CI evidence, reviewer-facing summary | `collectCiEvidence()` (post-run; §17), `buildReport()` | Never computes readiness by any means except the kernel aggregator; never reruns CI; never observes its own run; not a required-check change |
 | `1G` Independent framework validation | Independent Senior Software Developer and Security review, adversarial validation of `1A`-`1F` | The implemented framework, tests, fixtures | Review record | `1A`-`1F` merged | Nothing executable | none | Not code; not self-certification; not the Type & Schema Boundary Audit |
 
@@ -691,7 +815,8 @@ Audit.
 | External command output | Exit status checked; stdout size-capped; parsed with strict formats; stderr never trusted as data |
 | Evidence files | Read as bounded UTF-8; invalid encoding fails the domain; parsed by the `1B` parser only |
 | Exceptions and suppressions | Same as manifest; base-anchored only for `PASS`; expiry evaluated with an injected clock |
-| CI rerun determination record | Runtime schema; every binding field checked against actual run data; reviewer distinctness checked |
+| Trusted invocation context | Mode, target ref/SHA and head SHA: 40-hex, allow-listed mode; taken from platform metadata or operator arguments, never repository files |
+| CI rerun determination record | Runtime schema; every binding field checked against actual run data; identity taken from the authenticated channel and checked against the base-anchored authorized set; content digest and version history checked |
 
 ## 21. Public versus internal API boundary
 
@@ -717,13 +842,22 @@ against `docs/package-surface-v2.md` before changing them.
 | `CONFIGURATION_ERROR` | The tool's configuration is invalid; no check outcome is trustworthy | Bad manifest, cycle, missing dependency declaration, unsupported schema |
 | `HUMAN_REVIEW_REQUIRED` | The machine cannot decide; a human must | `MEANING` dependency change, promotion wording on inference, unexplained CI failure, protected-config change |
 | `INCOMPLETE` | The tool could not establish the fact | API unreachable, base unavailable, timeout, truncated output |
-
+| `NOT_APPLICABLE` | The check or domain result does not apply, and applicability was deterministically established | A mode-specific check outside its mode; a selector absent from the changed-file set |
 Aggregation precedence for the overall run status (highest first):
 `CONFIGURATION_ERROR` > `FAIL` > `INCOMPLETE` > `HUMAN_REVIEW_REQUIRED` >
 `PASS`. Precedence controls only the summary; every underlying record remains
 in the report. The overall status maps to `readiness.state` as in [§7](#7-shared-evidence-contract) (`PASS` to `READY`; `HUMAN_REVIEW_REQUIRED` to `HUMAN_REVIEW_REQUIRED`; the other three to `NOT_READY`). A fact that cannot be established is `INCOMPLETE`, never `PASS`,
 and never silently `FAIL` for the wrong reason (`FAIL` means the artifact is
 wrong; `INCOMPLETE` means the tool could not tell).
+
+`NOT_APPLICABLE` is neutral and is **never** a `PASS`. It is valid only when a
+manifest-declared, base-anchored applicability predicate evaluates
+deterministically true, and the proof is recorded in `observed`; if
+applicability cannot be established the record is `INCOMPLETE`. It does not
+raise the overall status and does not block `READY`, but a mandatory check may
+not be `NOT_APPLICABLE` without that proof. An unchanged domain is not
+`NOT_APPLICABLE`: it has a domain result at level `PRESERVATION_CHECK_ONLY` with
+status `PASS`.
 
 Optional CLI exit codes (a future implementation may adopt them as an option;
 the report, not the exit code, is authoritative): `0` `PASS`; `1` `FAIL`; `2`
@@ -742,12 +876,13 @@ fails.**
 | `schemaVersion` | integer | Required; consumers reject any value they do not list as supported (`FAIL` for a verifier, never a best-effort read) |
 | `tool` | object: `name`, `version` | Required |
 | `generatedFor` | object: `head`, `tree`, `base`, `parents[]`, `branch` | Full 40-hex identity; must equal the `1A` identity |
-| `manifest` | object: `gatePath`, `basePolicyPath`, `schemaVersions`, `headSha256`, `baseAnchor` (`PRESENT`/`ABSENT`), `protectedProposals[]` | Identity of the artifacts actually used and the loosening proposals that were **not** applied ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
+| `trustedContext` | object: `mode`, `targetRef`, `targetSha`, `base`, `baseDerivation` | The trusted invocation values the base was derived from ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
+| `manifest` | object: `gatePath`, `schemaVersions`, `headSha256`, `baseGateSha256`, `basePolicySha256`, `baseAnchor` (`PRESENT`/`ABSENT`), `protectedProposals[]` | Identity of the artifacts actually used and the loosening proposals that were **not** applied ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
 | `reviewClass` | string | Effective class (base minimum or higher); the framework never assigns or lowers it |
 | `changedFiles` | array of strings | From `1A`, with the `range` used |
 | `records` | array of result records ([§7](#7-shared-evidence-contract)) | Canonical evidence |
-| `domains` | array of `{domainId, effectiveLevel, reasons[], fingerprint}` | From `1E` |
-| `ci` | object, never `null` | `{state: NOT_COLLECTED}` or the `1F` record with classification and any accepted determination-record reference |
+| `domains` | array of `{domainId, effectiveLevel, reasons[], fingerprint}` | **Derived projection** of the domain result records in `records[]`; a difference from the records fails the report |
+| `ci` | object, never `null` | `{state: NOT_COLLECTED}` or the `1F` record with classification and, when a determination was accepted, `{authenticatedActor, determinationMode, contentDigest, channelObjectId, version}` |
 | `humanReviewRequired` | array of record IDs | Convenience list; never empty when any record is `HUMAN_REVIEW_REQUIRED`; correctness never depends on it |
 | `counts` | object: status -> integer | Derived from `records` |
 | `overallStatus` | status | Derived ([§22](#22-error-model-and-exit-codes)) |
@@ -787,8 +922,7 @@ by `1A` at run start.
 
 1. Every result record carries `subject`; the aggregator rejects a record whose
    `subject` differs from the run identity (`FAIL`).
-2. HEAD and TREE are derived from Git at run time; a manifest may declare an
-   `expectedParent`/`base` but never a HEAD or TREE for a new review head.
+2. HEAD and TREE are derived from Git at run time and `base` from the trusted invocation context ([§14](#14-manifest-ownership-trust-anchor-and-authority)); a manifest may carry an `expectedBase` assertion (compared, never authoritative) but never a HEAD or TREE for a new review head.
 3. CI evidence must carry a head SHA equal to the run's head, an event that
    matches the claim being proved (`pull_request` for pre-merge review,
    `push` for post-merge certification), and an attempt; a cached, borrowed or
@@ -825,14 +959,14 @@ by `1A` at run start.
 |---|---|---|---|---|
 | D1 | Model A: composition; `GOV-AUTO-1` owns shared Git identity, diff-scope and CI evidence; `GOV-VERIFY-1` composes them and owns `PACK_DIFF`, `BRANCH_PROTECTION_STATUS`, merge-gate conformance | Single owner per fact; roadmap keeps `GOV-VERIFY-1` alive and non-blocking | B (creates a prerequisite on a non-blocking task), C (contradicts roadmap; different lifecycle moment), D (scopes not disjoint) | `GOV-VERIFY-1` overlapping work stays paused until `1A`/`1F` interfaces merge |
 | D2 | JSON result records are the canonical evidence; discrete fields preserved | Roadmap requires discrete evidence never replaced | A single verdict field; Markdown-primary reports | Renderers cannot introduce facts |
-| D3 | `readiness.state` is a derived three-value enum (`READY`, `NOT_READY`, `HUMAN_REVIEW_REQUIRED`); `READY` only when every record is `PASS` | Roadmap: aggregate convenience, not a verdict; a green value must not coexist with mandatory human judgment | Two-value YES/NO plus side flags (a consumer can ignore flags); stored readiness | `READY` with unresolved human-required state is impossible; correctness never depends on side lists |
+| D3 | `readiness.state` is a derived three-value enum (`READY`, `NOT_READY`, `HUMAN_REVIEW_REQUIRED`) over one aggregation input, `records[]`, which includes one domain result record per enabled domain; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE` | Roadmap: aggregate convenience, not a verdict; no green value may coexist with mandatory human judgment, including domain-level judgment | Two-value YES/NO plus side flags; readiness over `records[]` while domain levels live only in `domains[]` (drift) | `READY` with any unresolved human-required state is impossible; `domains[]` is a projection |
 | D4 | Every domain declares dependencies including `[]`; missing declaration is `CONFIGURATION_ERROR` | Missing declaration is a deterministic configuration fault; `HUMAN_REVIEW_REQUIRED` reserved for undecidable cases | Defaulting to `[]`; `HUMAN_REVIEW_REQUIRED` for missing keys (lets a run continue on an untrustworthy graph) | Manifest authors must be explicit |
-| D5 | Validated DAG; unknown/self/duplicate/missing/disabled/cycle all `CONFIGURATION_ERROR`; cycles rejected, merged into one domain | Fail closed; keeps invalidation terminating | Justified cycles with fixpoint | Mutually dependent regions are one domain |
+| D5 | Validated DAG; unknown/self/duplicate/missing/disabled/cycle all `CONFIGURATION_ERROR`; cycles rejected, merged into one domain; edge identity is `toDomain` and overlay merge is deterministic (identical edges deduplicated; kind changes follow the tighten-only table) | Fail closed; keeps invalidation terminating; no silent union of edges | Justified cycles with fixpoint; unspecified union of overlay edges | Mutually dependent regions are one domain; an overlay can never introduce a duplicate edge |
 | D6 | Topological transitive invalidation with worst-of join; `MEANING` edges yield `HUMAN_REVIEW_REQUIRED`, others `DEEP_REVIEW_REQUIRED` | A machine can re-derive counts and references but not judge meaning | Direct-dependency-only invalidation; all-changes-to-human | No silent preservation downstream of a change |
 | D7 | Change is per domain using seven conditions, not per file | A domain can change through an unmodified file's derived value | File-diff-only change detection | Manifest declaration changes also count |
 | D8 | SHA-256 over Git-object content, LF-normalized, versioned, framed; fingerprint means unchanged only | Cross-platform stability without semantic normalization | Working-tree bytes; whitespace collapsing; unversioned hashes | Fingerprint version bump forces re-review |
-| D9 | Committed, human-authored base policy plus per-gate manifest; the base commit is the trust anchor; the head may only tighten, loosening and head-added exceptions are proposals; bootstrap yields at best `HUMAN_REVIEW_REQUIRED`; field-by-field overlay precedence | A repository file is not authoritative merely by existing there; a head must not weaken its own review | One global manifest; generated manifest; head-authoritative config; overlay that can remove checks | A protected change is reviewed under the old configuration by a human and becomes the anchor only after merge |
-| D10 | `1F` owns CI evidence, collected by an external post-run collector; "justified" rerun needs an external, SHA/run-bound human determination record that is not a manifest exception; unexplained failure is `HUMAN_REVIEW_REQUIRED` | Roadmap machine/human boundary; a record inside the reviewed head changes the head and lets the author self-justify; no rerun-until-green | Justification as manifest exception; in-run CI observation; automatic flake classification; retry policy | Record channel must satisfy the section 17 invariants; absent or invalid record stays `HUMAN_REVIEW_REQUIRED` |
+| D9 | Committed, human-authored base policy plus per-gate manifest; the trust anchor is the base commit derived from the **trusted invocation** (merge base for `PR_REVIEW`, first parent for `POST_MERGE`), never from the head manifest; policy paths are framework constants; `expectedBase` is an assertion (`FAIL` on mismatch); the head may only tighten (`protectedInputs` are monotone); a present base policy stays active for a new gate; overlay precedence is field by field | A repository file is not authoritative merely by existing there; a head must not choose its own base or weaken its own review | One global manifest; generated manifest; head-supplied base or policy path; head-authoritative config; overlay that can remove checks or selectors | A protected change is reviewed under the old configuration by a human and becomes the anchor only after merge; an invocation modified by the reviewed change is `HUMAN_REVIEW_REQUIRED` |
+| D10 | `1F` owns CI evidence, collected by an external post-run collector; a "justified" rerun needs an external, SHA/run-bound human determination issued by an authenticated actor in the base-anchored `authorizedDeterminers` set, under an explicit `determinationMode` (`SEPARATE_PERSON` or capped `OWNER_ATTESTED`), tamper-evident, and never a manifest exception; unexplained failure is `HUMAN_REVIEW_REQUIRED` | Roadmap machine/human boundary; Git identities and self-declared fields are not authentication; a record inside the reviewed head lets the author self-justify; no rerun-until-green | Justification as manifest exception; self-declared reviewer field; Git author/committer as authorization; strict reviewer != commit author (unusable in a single-owner repository); in-run CI observation; automatic flake classification | Provider choice remains open (OQ-GA-10) but must satisfy the section 17 rules; `OWNER_ATTESTED` never reaches `READY` |
 | D11 | Five statuses with fixed aggregation precedence; exit codes optional and non-authoritative | Distinguish "artifact wrong" from "tool could not tell" (precedent: `audit-drift-check.js`) | Boolean pass/fail; exit-code-only contract | `INCOMPLETE` never becomes `PASS` |
 | D12 | JSON canonical, Markdown derived, `schemaVersion` mandatory, unknown version fails | Precedent: `branch-inventory.js` schema versioning | Best-effort reading of newer schemas | Schema changes are reviewed versions |
 | D13 | Evidence bound to (`head`,`tree`,`base`) from Git; existing reports and cached CI never trusted | Stale/borrowed CI is a recorded failure mode in this repository's history | Trusting a committed report | Reports are regenerated per head |
@@ -871,10 +1005,10 @@ independent Security review, correctives, exact-head merge authorization,
 | GT-10 | Stale or wrong-head evidence reused | Triple binding; subject equality enforced in the aggregator; base verified | Fixture: record with a different head fails aggregation |
 | GT-11 | The framework passes a change to itself (self-certification) | Framework/config changes always human-reviewed; `1G` independent; report says `notAuthorization` | Review requirement, not a code test |
 | GT-12 | Resource exhaustion (huge files, output, deep manifests) | Size, depth and time caps on every input and command | Fixtures: oversized manifest/file/command output fail closed |
-| GT-13 | Self-justification: the author supplies the human determination for their own CI rerun | External SHA/run-bound record from a channel the author cannot write by pushing; reviewer distinct from author/committers; not a manifest exception; never inside the reviewed head | Fixtures: record inside the head, record by the author, record for another SHA/run, manifest-exception-as-justification are all rejected |
-| GT-14 | Self-modifying manifest authority: the head rewrites its own scope, dependencies or exceptions | Base commit is the trust anchor; head can only tighten; loosening not applied and `GOVERNANCE_CONFIG` is `HUMAN_REVIEW_REQUIRED`; bootstrap yields at best `HUMAN_REVIEW_REQUIRED` | Fixtures: head widens scope, drops an edge, adds an exception or suppression, new gate without a base anchor |
+| GT-13 | Self-justification: the author supplies the human determination for their own CI rerun, by push, by posting in a channel under their own account, by a self-declared reviewer field, by editing the accepted record, or by adding themselves to the authorized set | Authority derives only from the channel's authenticated `{provider, accountId, accountType}`; the base-anchored `authorizedDeterminers` set (head edits are ignored proposals); explicit `determinationMode` (`SEPARATE_PERSON`, or capped `OWNER_ATTESTED` that never reaches `READY`); bots and service accounts excluded; content digest, channel object ID and version bound at acceptance so a later edit invalidates it | Fixtures: record in the head, author's own unlisted-account comment, self-declared reviewer field, record edited after acceptance, author-added determiner, bot record, single-owner repository under each mode |
+| GT-14 | Self-modifying manifest authority: the head rewrites its own scope, dependencies, exceptions, base, or policy path | `base` derived from the trusted invocation (merge base or first parent), never from the head manifest; policy paths are framework constants with no manifest field; `expectedBase` is a compared assertion (`FAIL` on mismatch); head can only tighten; loosening (including `protectedInputs` removal) is not applied and `GOVERNANCE_CONFIG` is `HUMAN_REVIEW_REQUIRED`; a present base policy stays active for a new gate; a modified invoking workflow is `HUMAN_REVIEW_REQUIRED` | Fixtures: head names an older base, head names another policy path, `expectedBase` mismatch, head widens scope, drops an edge or selector, adds an exception, new gate with a base policy, modified workflow |
 | GT-15 | CI timing circularity or a silently missing CI record | External post-run collector; `ci` is never `null`; `NOT_COLLECTED`, in-progress or partial evidence is `INCOMPLETE` and `NOT_READY` | Fixtures: phase-1-only report, in-progress run, missing required job, `ci: null` schema violation |
-| GT-16 | Readiness green-signal ambiguity: a consumer reads only readiness and misses required human judgment | Three-value `readiness.state`; `READY` only when every record is `PASS` | Fixture: any `HUMAN_REVIEW_REQUIRED` record yields a non-`READY` state |
+| GT-16 | Readiness green-signal ambiguity: a consumer reads only readiness and misses required human judgment, or a domain-level judgment lives outside the aggregation input | Three-value `readiness.state`; one aggregation input `records[]` that includes one domain result record per enabled domain; kernel validates domain-result completeness (missing is `INCOMPLETE`, duplicate is `CONFIGURATION_ERROR`); `domains[]` is a derived projection checked against the records; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE` | Fixtures: a domain at `HUMAN_REVIEW_REQUIRED` with every other record `PASS` yields `HUMAN_REVIEW_REQUIRED`; a dependency-level `HUMAN_REVIEW_REQUIRED`; a missing or duplicate domain result; a differing `domains[]` projection |
 
 Injection through Markdown content (prompt-style text in evidence files) is not
 executed or interpreted: the framework only parses structure and never follows
@@ -929,8 +1063,9 @@ implementation; there are none.
 | OQ-GA-2 | Concrete secret rule set and masking length | `NON_BLOCKING_IMPLEMENTATION` | Constrained by [§16](#16-secret-suppression-model); tuned in `1A` |
 | OQ-GA-3 | Whether `governance/` or `scripts/governance/` hosts manifests versus code | `NON_BLOCKING_IMPLEMENTATION` | Roadmap already permits both; final layout fixed in Wave 0 review |
 | OQ-GA-4 | Whether a dedicated "Governance Pre-Review" workflow is added and whether it later becomes a required check | `NON_BLOCKING_IMPLEMENTATION` | Branch-protection change needs separate authorization |
-| OQ-GA-5 | Where the CI rerun justification lives and what binds it | `RESOLVED` in C1 | External, SHA/run-bound, human-authored, distinct from author; not a manifest exception ([§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary)) |
-| OQ-GA-9 | Concrete storage channel for the determination record | `NON_BLOCKING_IMPLEMENTATION` | Must satisfy the four §17 trust invariants; a channel that cannot is not accepted |
+| OQ-GA-5 | Where the CI rerun justification lives and what binds it | `RESOLVED` in C1 | External, SHA/run-bound, issued by an authenticated authorized determiner (section 17); not a manifest exception ([§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary)) |
+| OQ-GA-9 | Trust contract for the CI rerun determination record | `RESOLVED` as a design trust contract in C2 | Authenticated identity, authorized set, separation modes, tamper evidence and bindings fixed in [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary) independent of storage |
+| OQ-GA-10 | Provider-specific channel and storage choice for the determination record | `NON_BLOCKING_IMPLEMENTATION` | All trust properties are fixed by section 17 rules 1-7; a provider that cannot satisfy them is not qualifying, so the choice cannot weaken them |
 | OQ-GA-6 | Extractor strategy for Markdown domain regions (heading-based versus marker-based) | `NON_BLOCKING_IMPLEMENTATION` | Must yield the region selectors of [§13](#13-fingerprint-model) |
 | OQ-GA-7 | Reuse of the framework for the Type & Schema Boundary Audit | `FUTURE_ENHANCEMENT` | Tooling may help; certification stays separate |
 | OQ-GA-8 | Non-Markdown artifact domains (JSON, code) | `FUTURE_ENHANCEMENT` | Design is region-selector based and format-agnostic |
@@ -940,7 +1075,7 @@ implementation; there are none.
 ## 32. Status summary
 
 ```text
-GOV-AUTO-1 design:                       AUTHORED (C1 applied; pending independent re-review)
+GOV-AUTO-1 design:                       AUTHORED (C1, C2 applied; pending independent re-review)
 GOV-AUTO-1 implementation:               NOT_STARTED
 GOV-AUTO-1 COMPLETE_ON_MAIN:             NO
 Relationship model:                      A -- composition (GOV-AUTO-1 owns shared facts)
@@ -949,19 +1084,28 @@ AISEC-4:                                 NOT_STARTED
 Type & Schema Boundary Audit:            separate; not satisfied by this design
 BLOCKING_DESIGN open questions:          0
 Merge authorization:                     NO
-Next step:                               independent GOV-AUTO-1 design C1 re-review (HEAVY)
+Next step:                               independent GOV-AUTO-1 design C2 re-review (HEAVY)
 ```
 
-## 33. Corrective C1 traceability
+## 33. Corrective traceability (C1, C2)
 
-| Review finding | Resolution | Where |
-|---|---|---|
-| F-1 (HIGH) CI justification self-approval path | External, SHA/run-bound human determination record; not a manifest exception; never in the reviewed head; OQ-GA-5 resolved | [§15](#15-governed-exception-model), [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary), D10 |
-| F-2 (MEDIUM) readiness may be green with pending human judgment | Three-value `readiness.state`; `READY` only when every record is `PASS` | [§7](#7-shared-evidence-contract), D3 |
-| F-3 (MEDIUM) manifest authority undefined | Base commit is the trust anchor; head can only tighten; bootstrap and overlay precedence defined | [§14](#14-manifest-ownership-trust-anchor-and-authority), D9 |
-| F-4 (MEDIUM) CI timing circular, missing CI undefined | External post-run collector; absent/partial CI is `INCOMPLETE`; `ci: null` is a schema violation | [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary) |
-| F-5 (LOW) algorithm vs preservation preconditions | Section 12 is an explicit pre-gate inside the section 10 algorithm | [§10](#10-transitive-invalidation-algorithm), [§12](#12-preservation_check_only-eligibility) |
-| F-6 (LOW) pause trigger stricter than ROADMAP | Trigger aligned with ROADMAP wording; Wave 4 is a technical dependency only; ROADMAP sync handoff defined | [§5](#5-relationship-model-decision) |
-| I-1 post-merge diff range | Explicit range mode carried as input and in `subject` | [§18](#18-sub-stage-ownership-map) |
-| I-2 masked fingerprint entropy | Fingerprint is not a secrecy control; only non-secret fixtures are suppressed | [§16](#16-secret-suppression-model) |
-| I-3 `Status: CURRENT` | Unchanged; follows AISEC study precedent | header |
+Status vocabulary: `CLOSED` only where an independent re-review has recorded
+it; otherwise `ADDRESSED -- closure pending independent review`. The author does
+not self-declare closure.
+
+| Review finding | State | Resolution | Where |
+|---|---|---|---|
+| F-4 (MEDIUM) CI timing circular | CLOSED by the C1 independent re-review | External post-run collector; missing/partial CI is `INCOMPLETE` | [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary) |
+| F-5 (LOW) algorithm vs preservation preconditions | CLOSED by the C1 independent re-review | Section 12 is an explicit pre-gate in the section 10 algorithm | [§10](#10-transitive-invalidation-algorithm), [§12](#12-preservation_check_only-eligibility) |
+| F-6 (LOW) pause trigger vs ROADMAP | CLOSED by the C1 independent re-review | Trigger aligned with ROADMAP; Wave 4 is a technical dependency only | [§5](#5-relationship-model-decision) |
+| F-1 (HIGH) CI justification self-approval | OPEN in the C1 re-review through F-7; ADDRESSED by C1 and C2 -- closure pending independent review | External, SHA/run-bound record, not a manifest exception; authenticated determiner, authorized set, tamper evidence | [§15](#15-governed-exception-model), [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary) |
+| F-7 (MEDIUM) authenticated determination authority | ADDRESSED by C2 -- closure pending independent review | Determination authority contract, rules 1-7 | [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary) |
+| F-2 (MEDIUM) readiness green signal | OPEN in the C1 re-review through F-9; ADDRESSED by C1 and C2 -- closure pending independent review | Three-value `readiness.state` over one aggregation input | [§7](#7-shared-evidence-contract) |
+| F-9 (MEDIUM) domain-level `HUMAN_REVIEW_REQUIRED` not in readiness input | ADDRESSED by C2 -- closure pending independent review | Domain result records in `records[]`; `domains[]` is a derived projection | [§7](#7-shared-evidence-contract), [§10](#10-transitive-invalidation-algorithm) |
+| F-3 (MEDIUM) manifest authority | OPEN in the C1 re-review through F-8; ADDRESSED by C1 and C2 -- closure pending independent review | Base commit trust anchor, tighten-only head, bootstrap, overlay precedence | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| F-8 (MEDIUM) base selection influenceable by the head | ADDRESSED by C2 -- closure pending independent review | Base from trusted invocation and Git context; first parent post-merge; `expectedBase` is an assertion | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| L-1 (LOW) overlay edge semantics | ADDRESSED by C2 -- closure pending independent review | Edge identity `toDomain`; deterministic merge table | [§9](#9-dependency-graph-validation) |
+| L-2 (LOW) `protectedInputs` and policy path | ADDRESSED by C2 -- closure pending independent review | Monotone `protectedInputs`; framework-constant policy path | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| INFO-2 base policy without gate manifest | ADDRESSED by C2 | Base policy stays active; head gate manifest is a proposal | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| INFO-3 not-applicable state | ADDRESSED by C2 | `NOT_APPLICABLE` with recorded proof, never `PASS` | [§22](#22-error-model-and-exit-codes) |
+| I-1 post-merge diff range, I-2 masked fingerprints | RESOLVED in C1 | Explicit range mode; fingerprint is not a secrecy control | [§18](#18-sub-stage-ownership-map), [§16](#16-secret-suppression-model) |
