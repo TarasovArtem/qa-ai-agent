@@ -37,9 +37,11 @@ Out of scope: implementing any control; AISEC-4's exfiltration and
 cross-project isolation design; AISEC-5's verification strategy and AISEC-7's
 harness (verification requirements are defined here, not implemented);
 `MEM`/`RAG`/`LEARN` (all `NOT_STARTED`, treated only as future constraints);
-any live call against a real external system; GitHub's or any provider's own
-platform behavior beyond what this repository's source and workflow
-declarations state.
+any live call against a real external system other than the read-only GitHub
+settings and Actions-history reads recorded as point-in-time observations
+(section 28); GitHub's or any provider's own platform behavior beyond what this
+repository's source and workflow declarations, the cited official GitHub
+documentation (GH-01 to GH-21) and those observations state.
 
 ## 3. Relationship to AISEC-1 / AISEC-2
 
@@ -653,7 +655,7 @@ platform/repository ceiling instead, and an UNKNOWN ceiling falls under the
 unknown-scope rule. A malicious workflow cannot necessarily grant itself
 arbitrary authority, so the ceiling is analyzed separately from the request and
 is neither assumed maximal nor assumed absent. For this repository the
-same-repository ceiling is resolved in the CI workflow assumptions section: it
+same-repository ceiling is derived in the CI workflow assumptions section: it
 includes `contents: write` under TB20-WF-INFERENCE (a derived inference, see the workflow-definition provenance).
 
 **Multi-context scenarios.** Aggregation applies only when a scenario's
@@ -1180,7 +1182,7 @@ here). "Expected today" states the behavior the current source would show.
 | OQ3-8 | Should `#23G` re-validate the review record, not only the applied record? | §21 | Design decision | AISEC-6 | No |
 | OQ3-9 | Are the observed repository Actions settings (default workflow permission `write`, Actions PR approval enabled, first-time-contributor fork approval, classic `main` protection with 0 required approving reviews, the disabled `main` ruleset) intended and under change control? | Settings read through the GitHub REST API on 2026-09-24 (point-in-time); `cypress.yml` | Settings are not versioned in the repository and can change | Repository administrator + AISEC-6 | No -- ratings use the observed values and state them as point-in-time |
 
-**OQ3-9 sub-questions.** Platform behavior already settled by GitHub documentation (same-repository token ceiling, fork read-only token and secret exclusion, `workflow_dispatch` semantics, private-only fork options) is not an open question and is recorded in the CI workflow assumptions section.
+**OQ3-9 scope and evidence strength.** OQ3-9 asks only about configuration governance (whether the observed settings are intended, under change control and revalidated); it does not re-open documented GitHub behavior. The cited official documentation directly establishes how `GITHUB_TOKEN` permissions are calculated and restricted (GH-06, GH-18), the fork read-only token and secret exclusion (GH-03, GH-04), that the fork-workflow options are private-repository-only (GH-08), that `workflow_dispatch` needs the workflow on the default branch, requires write access and accepts a branch or tag ref (GH-10, GH-11, GH-12, GH-13), and that a pull request can propose workflow changes (GH-16); the absence of an organization cap comes from the observed owner type of a personal account, not from documentation. It does **not** directly establish that a proposed or dispatched-ref workflow definition governs a given run. That premise (TB20-WF-INFERENCE), and with it the same-repository `contents: write` reach and the workflow-definition revision of a dispatched run, remain DERIVED_INFERENCE with the stated fallback (Authority Impact Medium, risk MEDIUM) and are not treated as settled by GitHub documentation. The study carries this as an inference with a sensitivity statement rather than as a separate open question.
 
 | Sub-question | Repository source can answer? | GitHub docs can answer? | Needs admin evidence? | Owner | Blocking? |
 |---|---|---|---|---|---|
