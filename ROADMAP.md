@@ -417,6 +417,11 @@ among docs; `npm pack` file-count/surface drift; an unavailable or partial
 branch-protection/GitHub-API read; a HEAD/TREE mismatch; and a stale cached
 CI result.
 
+**Sequencing note:** implementation of any `GOV-VERIFY-1` capability that
+overlaps `GOV-AUTO-1` (see [`GOV-AUTO-1`](#gov-auto-1--governance-pre-review-framework-next-active-gate) below) is paused until the
+`GOV-AUTO-1` design phase records the canonical reconciliation; this entry's
+constraints and tracked status are otherwise unchanged.
+
 ### GOV-AUTO-1 — Governance Pre-Review Framework (next active gate)
 
 ```text
@@ -501,14 +506,43 @@ review and normal merge authorization.
    reviewer work but never automatically lowers the governing review class
    (§6's escalation rule stays one-directional). A matching fingerprint means
    only that a logical section is unchanged -- never that it is correct,
-   security-approved or risk-accepted.
+   security-approved or risk-accepted -- and it does not prove that the
+   section's *inputs* are unchanged. **Dependency-aware preservation:** the
+   framework models a dependency graph between review domains (for example a
+   risk summary depends on the threat rows it counts; a generated count,
+   reference map, generated table or summary section depends on its upstream
+   records). `PRESERVATION_CHECK_ONLY` is valid for a domain only when (1) its
+   own protected content is unchanged **and** (2) no declared upstream
+   dependency changed in a way that may alter its meaning, derived values,
+   references, authority or validity. A dependency change invalidates
+   preservation-only status and makes the dependent domain
+   `DEEP_REVIEW_REQUIRED` or `HUMAN_REVIEW_REQUIRED` as appropriate, and the
+   invalidation propagates transitively (if A changes, B depends on A and C
+   depends on B, then both B and C are invalidated). A fingerprint alone can
+   never authorize preservation-only status. Missing, ambiguous or unresolved
+   dependency relationships are never assumed independent: they are
+   `HUMAN_REVIEW_REQUIRED` (or fail-closed).
 9. *Secret scanning:* known credential prefixes, private-key material,
    token-like strings and provider credentials; output is masked and never
-   prints a complete value.
+   prints a complete value. **False-positive suppression:** a secret-scan hit
+   fails or requires human review unless an explicit, approved suppression
+   covers it. A suppression must be explicit, narrowly scoped (a specific file,
+   pattern or known test fixture -- never global, and never "ignore all
+   high-entropy strings"), reviewed, traceable, reasoned and free of secret
+   material (it records a rule identifier, a masked fingerprint, a fixture
+   classification, a reason and a review reference, never the value). A
+   suppression is itself subject to review, never weakens fail-closed
+   behavior, and an unknown secret-like value never passes silently.
 10. *CI evidence:* run ID, event, SHA, attempt, required jobs and conclusions,
     classified as `CLEAN_FIRST_PASS`, `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN`,
-    `FAIL`, `INCOMPLETE` or `HUMAN_REVIEW_REQUIRED`. Rerun-until-green is
-    prohibited and is never scored as a pass.
+    `FAIL`, `INCOMPLETE` or `HUMAN_REVIEW_REQUIRED`. "Justified" in
+    `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` is a human governance/reliability
+    determination: automation may collect the failure signature, same-SHA proof,
+    changed files, rerun history and job results, but must not independently
+    classify an unexplained failure as a benign flake or a justified rerun. An
+    unknown or unexplained failure is `HUMAN_REVIEW_REQUIRED`, never an
+    automatic pass. This entry introduces no numeric automatic-retry policy;
+    rerun-until-green remains prohibited and is never scored as a pass.
 
 **Manifest, output and fail-closed behavior.** A machine-readable governance
 manifest carries stage/gate ID, review class, expected parent/base, allowed
@@ -517,7 +551,12 @@ and explicit exceptions. The framework emits machine-readable and
 human-readable reports (conceptually `pre-review.json` / `pre-review.md`) with
 exact Git identity, changed files, check results, invariant counts, review
 domains, human-review-required flags and the `READY_FOR_INDEPENDENT_REVIEW`
-state. It is fail-closed: an invalid manifest, malformed schema, unexpected file
+state. `READY_FOR_INDEPENDENT_REVIEW` is a derived readiness summary only: it
+must be reproducible from explicit underlying evidence fields and must never
+replace, hide, flatten or overwrite them; the discrete evidence fields remain
+the canonical record and the aggregate is a computed view. It is not merge
+authorization, approval, security acceptance or lifecycle completion. The
+framework is fail-closed: an invalid manifest, malformed schema, unexpected file
 or unresolved mandatory reference fails; ambiguous CI evidence or an
 unrecognized critical state fails or becomes `HUMAN_REVIEW_REQUIRED`; nothing
 passes silently.
@@ -535,12 +574,28 @@ independent framework validation.
 
 **Relationship to `GOV-VERIFY-1`.** `GOV-VERIFY-1` (above) already tracks a
 narrower evidence producer for exact base/HEAD/TREE, diff scope and exact-SHA CI
-lookup. `GOV-AUTO-1` sub-stages `1A` and `1F` overlap that scope. The design
-phase must reconcile the two so overlapping capability is implemented once, and
-every `GOV-VERIFY-1` constraint (evidence producer, never a merge authority;
-fail-closed; the listed negative fixtures) applies unchanged to it. Until that
-reconciliation is recorded, `GOV-VERIFY-1` stays tracked and non-blocking
-exactly as written above.
+lookup. `GOV-AUTO-1` sub-stages `1A` and `1F` overlap that scope.
+`GOV-VERIFY-1` remains tracked, and every one of its constraints (evidence
+producer, never a merge authority; fail-closed; discrete evidence fields; the
+listed negative fixtures) remains authoritative; it is not cancelled, obsolete
+or automatically absorbed. **Implementation-ordering rule:** `GOV-VERIFY-1` must
+not be independently implemented, expanded or completed in capability areas that
+overlap `GOV-AUTO-1` (shared Git identity, diff-scope, CI-evidence or merge-gate
+facts) before the `GOV-AUTO-1` design phase records the canonical reconciliation
+described here; overlapping `GOV-VERIFY-1` implementation is paused until then,
+and no work may create a second independent source of truth for those facts.
+**Invariant:** one canonical implementation owner per overlapping capability.
+**Reconciliation record:** before any overlapping implementation proceeds, the
+design phase must produce a durable, reviewable decision containing at least the
+chosen relationship model (for example composition, orchestration, formal
+absorption or explicit non-overlapping scopes -- this roadmap does not
+pre-select one), a capability ownership map, the shared data/evidence contract,
+verdict and readiness semantics, migration or supersession status where
+applicable, and compatibility requirements. **Verdict-model compatibility:**
+`GOV-VERIFY-1`'s discrete evidence fields (for example `BASE_MATCH`,
+`HEAD_MATCH`, `TREE_MATCH`, `CI_EXACT_SHA`) stay the canonical evidence record;
+`READY_FOR_INDEPENDENT_REVIEW` is only an aggregate convenience state derived
+from such fields -- not a merge-style verdict and not a replacement for them.
 
 **Type & Schema Boundary Audit stays distinct.** A separately required future
 governance gate -- a whole-project, non-sampling Type & Schema Boundary Audit --
@@ -567,8 +622,11 @@ self-certify.
 **What this entry does not do.** It implements nothing, starts no `AISEC-4`
 work, does not reopen `AISEC-3`, and changes no existing review, merge or
 closure rule. The `MEM`, `RAG` and `LEARN` sequence is not otherwise reordered;
-because `GOV-AUTO-1` precedes `AISEC-4`, it also precedes all later security,
-memory, retrieval, learning and autonomy work.
+because `GOV-AUTO-1` precedes `AISEC-4` in the mainline critical path, it is a
+mainline prerequisite for the later governed implementation stages (security,
+memory, retrieval, learning and autonomy) that follow it there, without
+invalidating the already-defined early-start research lanes (§7; for example
+`AISEC-6`, `MEM-1`, `MEM-2`), which remain governed as recorded.
 
 ## 7. Owner phase-order decision
 
