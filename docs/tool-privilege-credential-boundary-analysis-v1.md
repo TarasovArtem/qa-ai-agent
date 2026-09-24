@@ -555,7 +555,7 @@ Authority Impact use the AISEC-1 methodology and the Authority Impact rule in
 | TB-17 | Allowed file -> CI execution | S13 | Spec content under `cypress/` or `playwright/` executed by CI on two paths: (fork) unreviewed fork-PR code on `pull_request`, before any review; (post-merge) a spec merged to `main` through a PR, run on `push`. The same-repository pre-merge workflow-edit path is TB-20 | Fork: any GitHub user who can open a PR; post-merge: a contributor whose PR is merged | Declared job token (`contents: read`, `actions: read`) and no `secrets.*` reference in test jobs (CURRENT CONFIGURATION; fork runs are platform-capped to a read-only token without secrets) | Spec code runs in test jobs | Per-job `permissions`; no secrets in test jobs; fork PRs get read-only | Persisted checkout credential; arbitrary code in runner | Fork: Actions workflow approval (`first_time_contributors` policy, observed) -- not PR review; post-merge: PR required on `main` with required status checks; human approval not technically required (0 observed) | CODE EXECUTION (CI) | Low-Med | Medium | Medium | MEDIUM | NEW | `cypress.yml` (6 checkout uses; 8 across the three inspected workflows; none sets `persist-credentials: false`) | AISEC-6 |
 | TB-18 | Reviewer persuasion + unauthenticated identity (compound) | S8, S9, S10 | Injected content (AISEC-2) reaching a reviewer | As TB-01 / PI-08 | None | Persuasive rationale -> approval by an unverified principal -> TB-12 | As TB-01 and AISEC-2 §17 | No provenance labeling in any display (no display was identified in this repository) | Human | LOCAL WRITE -> CODE EXECUTION | Low-Med | High | High | HIGH | COMPOUND_PRIOR (AT-07 + PI-08; AISEC-3 scenario rating, not an inherited canonical rating; not additive to TB-01/TB-12) | §16; AISEC-2 §17 | AISEC-6 |
 | TB-19 | Publish replay / duplicate creation | S7 | Re-invocation | Caller | Caller PAT | Same request creates duplicates | Create-only, no retry | No idempotency key | None | REMOTE CREATE | Low | Medium | Medium | MEDIUM | AT_REFINED (AT-08; canonical severity preserved -- AISEC-3 adds mechanism detail: no idempotency key, no approval object) | §23 | AISEC-4 / AISEC-7 |
-| TB-20 | CI secret reachable by same-repo PR code | S13 | Same-repository actor with write access: a branch PR author, or a `workflow_dispatch` invoker selecting their branch; the workflow YAML on that ref is taken to be the workflow the run uses (DERIVED_INFERENCE, see the workflow-definition provenance in section 28) | Write access | `AI_API_KEY` (`secrets.GROQ_API_KEY`) in one step; declared job token with `pull-requests: write`; the token's requested scopes are actor-editable and `contents: write` is reachable (personal-account repository, no organization/enterprise cap); `GROQ_API_KEY` is the repository's only Actions secret (count observed 1, no environments) | PR-head scripts run in the secret-holding job | Step-scoped env; fork PRs receive no secrets; no `pull_request_target`; the declared job configuration is editable by this actor, so it is a current configuration fact, not a boundary (§28) | Platform trust model: same-repo contributors are trusted | None as a technical gate: `pull_request` and `workflow_dispatch` runs start before and independent of human review (review is a process expectation; 0 required approvals observed) | CODE EXECUTION (ephemeral CI triage job; the actor can request `contents: write`, so the credentials permit repository-content mutation) | Low | Medium | High | MEDIUM | NEW (platform trust) | `cypress.yml:3-10, 850-858, 904-911` | AISEC-4 |
+| TB-20 | CI secret reachable by same-repo PR code | S13 | Same-repository actor with write access: a branch PR author, or a `workflow_dispatch` invoker selecting their branch; the workflow YAML on that ref is taken to be the workflow the run uses (DERIVED_INFERENCE, see the workflow-definition provenance in section 28) | Write access | `AI_API_KEY` (`secrets.GROQ_API_KEY`) in one step; declared job token with `pull-requests: write`; under TB20-WF-INFERENCE the token's requested scopes are actor-editable and `contents: write` is reachable (personal-account repository, no organization/enterprise cap, GH-06); `GROQ_API_KEY` is the repository's only Actions secret (count observed 1, no environments) | PR-head scripts run in the secret-holding job | Step-scoped env; fork PRs receive no secrets; no `pull_request_target`; under TB20-WF-INFERENCE the declared job configuration is editable by this actor, so it is a current configuration fact, not a boundary (§28) | Platform trust model: same-repo contributors are trusted | None as a technical gate: `pull_request` and `workflow_dispatch` runs start before and independent of human review (review is a process expectation; 0 required approvals observed) | CODE EXECUTION (ephemeral CI triage job; under TB20-WF-INFERENCE the actor can request `contents: write`, so the credentials would permit repository-content mutation; if the inference fails the fallback is Medium authority with unchanged MEDIUM risk) | Low | Medium | High | MEDIUM | NEW (platform trust) | `cypress.yml:3-10, 850-858, 904-911` | AISEC-4 |
 
 ## 28. Risk register
 
@@ -654,7 +654,7 @@ unknown-scope rule. A malicious workflow cannot necessarily grant itself
 arbitrary authority, so the ceiling is analyzed separately from the request and
 is neither assumed maximal nor assumed absent. For this repository the
 same-repository ceiling is resolved in the CI workflow assumptions section: it
-includes `contents: write`.
+includes `contents: write` under TB20-WF-INFERENCE (a derived inference, see the workflow-definition provenance).
 
 **Multi-context scenarios.** Aggregation applies only when a scenario's
 execution surface itself spans more than one context and each is a path by
@@ -725,7 +725,7 @@ part of the scenario definition. It does not apply to TB-17: operator-host spec
 execution is not part of its CI-oriented definition, so it is not imported into
 TB-17's Authority Impact (it is OUT_OF_SCOPE_FOR_THIS_TB, not accepted as safe), and TB-17 stays Medium. **TB-20** aggregates
 `pull_request` and `workflow_dispatch` because both are paths by which the
-same write-access actor, through the same edited-workflow mechanism, reaches the
+same write-access actor, through the same inferred edited-workflow mechanism (TB20-WF-INFERENCE), reaches the
 same triage job; the actor requirement (write access) is identical for both.
 
 ### Rule applied to every scenario
@@ -751,7 +751,7 @@ same triage job; the actor requirement (write access) is identical for both.
 | TB-17 | Spec content executes in a CI test job (unreviewed fork-PR run, or `push` to `main` after merge) | Ephemeral runner; declared read scopes and no `secrets.*` reference; fork runs platform-capped (read-only token, no secrets) | Code execution in a KNOWN_NARROW-ceiling context | Medium | Medium (c) on both paths (one rating covers both: each path's ceiling is Medium (c)); the fork path is capped by the platform, and a spec-only change on the post-merge path cannot alter the merged `main` workflow. Surface: fork `pull_request` CI and `push`-to-`main` CI; operator-local spec execution is outside it (see Scenario execution surfaces) |
 | TB-18 | As TB-01 via reviewer persuasion | Operator host | Code execution (host-ambient) plus scoped write | High | High (a) |
 | TB-19 | Duplicate work items created on re-invocation | Azure DevOps, caller PAT/bearer | Bounded remote create of durable domain objects | Medium | Remote rule: domain object |
-| TB-20 | Same-repository actor's code and workflow run in the triage job (`pull_request` or `workflow_dispatch`) | Ephemeral runner; the actor edits the workflow, so the token is what GitHub honors for a same-repository run: `contents: write` reachable (personal-account repository, no organization/enterprise cap); repository default `write` and Actions PR approval enabled (observed) | Code execution in a context whose credentials permit repository-content mutation (branches, tags, releases; `main` is protected by required checks and a required PR) | High | High (a); risk stays MEDIUM (Low / Medium / High, same triple as TB-13) |
+| TB-20 | Same-repository actor's code and workflow run in the triage job (`pull_request` or `workflow_dispatch`) | Ephemeral runner; under TB20-WF-INFERENCE the actor can alter the effective workflow, so the token is what GitHub honors for a same-repository run: `contents: write` reachable (personal-account repository, no organization/enterprise cap); repository default `write` and Actions PR approval enabled (observed) | Code execution in a context whose credentials, under TB20-WF-INFERENCE, permit repository-content mutation (branches, tags, releases; `main` is protected by required checks and a required PR) | High | High (a); risk stays MEDIUM (Low / Medium / High, same triple as TB-13). High rests on TB20-WF-INFERENCE; the fallback is Medium (c)/(d) with MEDIUM risk |
 
 **Comparison notes (auditable distinctions).**
 
@@ -762,8 +762,8 @@ same triage job; the actor requirement (write access) is identical for both.
   spec-only change on the post-merge `push` path cannot alter the merged
   `main` workflow -- Medium (c). TB-20's actor is a same-repository actor whose
   ref's workflow is taken to be the workflow the run uses (a derived inference, see the workflow-definition provenance), so the declared credentials are a
-  current configuration fact, not a boundary: `contents: write` is reachable,
-  which is High (a). Risk stays MEDIUM (Low likelihood, Medium impact, High
+  current configuration fact, not a boundary: under TB20-WF-INFERENCE
+  `contents: write` is reachable, which is High (a). Risk stays MEDIUM (Low likelihood, Medium impact, High
   authority impact -- the same triple as TB-13).
 - **TB-15.** Two separately rated paths. The job-token path holds Medium (b):
   metadata mutation (GH-17) is not message-only, and review creation including
@@ -783,8 +783,9 @@ same triage job; the actor requirement (write access) is identical for both.
   MEDIUM.
 - **TB-20 vs TB-14.** TB-14's code runs in the operator-host context
   (host-ambient files, network and cached credentials) and is High; TB-20's
-  runs in an ephemeral CI context whose token the actor can raise to
-  `contents: write` and is also High, for that different reason.
+  runs in an ephemeral CI context whose token the actor can, under
+  TB20-WF-INFERENCE, raise to `contents: write` and is also High, for that
+  different reason.
 - **TB-11 vs TB-09.** Both reach a write outside the intended repository
   containment (High, clause (b)). TB-09 additionally retargets execution;
   TB-11's endpoint is the write alone. Race dependence lowers TB-11's
@@ -819,28 +820,40 @@ Evidence classes: **DIRECT_DOC** (the page states the claim), **DOC_REUSABLE**
 **REPO_OBSERVED** (observed in this repository or its Actions history),
 **DERIVED_INFERENCE** (follows from documented facts but is not stated
 directly), **UNKNOWN** (the available evidence does not establish it).
+Invariants: each evidence row states one atomic claim and carries exactly one
+evidence class; a claim that needs several classes is split into premise rows
+and a DERIVED_INFERENCE conclusion. **Evidence propagation rule:** a downstream
+conclusion cannot carry a stronger evidence status than the weakest premise it
+requires (DIRECT_DOC + DIRECT_DOC + DERIVED_INFERENCE gives DERIVED_INFERENCE);
+prose, tables and ratings that depend on a derived inference say so or cite its
+identifier.
 
 | ID | Claim | Source page (title) | Section | Path under `docs.github.com/en` | Evidence class | Retrieved | Conclusion |
 |---|---|---|---|---|---|---|---|
-| GH-01 | A `pull_request` run has `GITHUB_SHA` = the last merge commit and `GITHUB_REF` = `refs/pull/N/merge` | Events that trigger workflows | `pull_request` | `/actions/reference/workflows-and-actions/events-that-trigger-workflows` | DIRECT_DOC | 2026-09-24 | Event context is the PR merge ref |
+| GH-01 | For `pull_request`, `GITHUB_SHA` is the last merge commit on `GITHUB_REF`, which is `refs/pull/N/merge` | Events that trigger workflows | `pull_request` | `/actions/reference/workflows-and-actions/events-that-trigger-workflows` | DIRECT_DOC | 2026-09-24 | Event context is the PR merge ref |
 | GH-02 | By default a `pull_request` workflow runs on `opened`, `synchronize` and `reopened` | Events that trigger workflows | `pull_request` (note) | same as GH-01 | DIRECT_DOC | 2026-09-24 | Runs start on PR open and update, before any review |
 | GH-03 | Except for `GITHUB_TOKEN`, secrets are not passed to the runner for a workflow triggered from a forked repository | Using secrets in GitHub Actions | "Using secrets in a workflow" (note) | `/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets` | DOC_REUSABLE | 2026-09-24 | Fork runs get no repository secrets |
 | GH-04 | For a fork `pull_request` run, write permissions of the `GITHUB_TOKEN` are changed to read-only unless the private-repository option "Send write tokens to workflows from pull requests" is selected | Workflow syntax for GitHub Actions | "How permissions are calculated for a workflow job"; "Using the `permissions` key for forked repositories" | `/actions/reference/workflows-and-actions/workflow-syntax` | DIRECT_DOC | 2026-09-24 | Fork token is read-only on this public repository |
-| GH-05 | The `permissions` key modifies the default `GITHUB_TOKEN` permissions, adding or removing access, at workflow then job level | Workflow syntax for GitHub Actions; Use GITHUB_TOKEN for authentication in workflows | `permissions` (introduction, reusable) and "How permissions are calculated for a workflow job"; "Modifying the permissions for the `GITHUB_TOKEN`" | `/actions/reference/workflows-and-actions/workflow-syntax`; `/actions/tutorials/authenticate-with-github_token` | DOC_REUSABLE (introduction) and DIRECT_DOC (calculation, tutorial) | 2026-09-24 | A workflow edit can change the token's requested scopes |
-| GH-06 | Enterprise and organization owners can restrict the default `GITHUB_TOKEN` permissions; the default is inherited from the enterprise, organization or repository | Workflow syntax for GitHub Actions | "How permissions are calculated for a workflow job" | same as GH-04 | DIRECT_DOC | 2026-09-24 | No organization cap: the repository is owned by a personal account |
-| GH-07 | For pull requests to public repositories, runs from some outside contributors need approval under a repository policy; by default first-time contributors require it, and a contributor with a merged commit or pull request does not under the first-time policies | Managing GitHub Actions settings for a repository | "Controlling changes from forks to workflows in public repositories" | `/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository` | DOC_REUSABLE | 2026-09-24 | Actions workflow approval is a fork execution gate, not PR review |
+| GH-05 | The `permissions` key modifies the default `GITHUB_TOKEN` permissions, adding or removing access | Workflow syntax for GitHub Actions | `permissions` (introduction; included reusable `data/reusables/actions/jobs/section-assigning-permissions-to-jobs.md`) | `/actions/reference/workflows-and-actions/workflow-syntax` | DOC_REUSABLE | 2026-09-24 | A workflow edit can change the token's requested scopes |
+| GH-06 | A restricted `GITHUB_TOKEN` default set at the enterprise, organization or repository level applies to the relevant repositories | Workflow syntax for GitHub Actions | "How permissions are calculated for a workflow job" | `/actions/reference/workflows-and-actions/workflow-syntax` | DIRECT_DOC | 2026-09-24 | No organization cap applies here: the repository is owned by a personal account (owner type observed) |
+| GH-07 | Workflow runs on pull requests to public repositories from some outside contributors need approval according to a repository policy; by default first-time contributors require approval | Managing GitHub Actions settings for a repository | "Controlling changes from forks to workflows in public repositories" | `/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository` | DOC_REUSABLE | 2026-09-24 | Actions workflow approval is a fork execution gate, not PR review |
 | GH-08 | The fork-workflow options (read-only token with no secrets, send write tokens, send secrets) are configurable for private (and internal) repositories only | Managing GitHub Actions settings for a repository | "Enabling workflows for forks of private repositories" | same as GH-07 | DOC_REUSABLE | 2026-09-24 | Not applicable to this public repository |
-| GH-09 | Whether Actions may create or approve pull requests is a repository setting; new personal-account repositories default to not allowed | Managing GitHub Actions settings for a repository | "Preventing GitHub Actions from creating or approving pull requests" | same as GH-07 | DIRECT_DOC | 2026-09-24 | Observed enabled (point-in-time), so a setting, not an invariant |
+| GH-09 | Whether Actions may create or approve pull requests is a repository setting | Managing GitHub Actions settings for a repository | "Preventing GitHub Actions from creating or approving pull requests" | `/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository` | DIRECT_DOC | 2026-09-24 | Observed enabled (point-in-time), so a setting, not an invariant |
 | GH-10 | `workflow_dispatch` triggers a run only if the workflow file exists on the default branch | Manually running a workflow | Introduction | `/actions/how-tos/manage-workflow-runs/manually-run-a-workflow` | DIRECT_DOC | 2026-09-24 | `cypress.yml` exists on `main` |
 | GH-11 | Manually running a workflow requires write access to the repository | Manually running a workflow | Introduction (permissions statement, reusable) | same as GH-10 | DOC_REUSABLE | 2026-09-24 | Actor requirement for the dispatch route |
 | GH-12 | A dispatch can select a branch or tag (UI branch dropdown; `gh workflow run --ref`; REST `ref`) | Manually running a workflow | "Running a workflow"; "Running a workflow using the REST API" | same as GH-10 | DIRECT_DOC | 2026-09-24 | The actor can choose the ref that runs |
-| GH-13 | For `workflow_dispatch`, `GITHUB_SHA` is the last commit on the dispatched ref and `GITHUB_REF` is the branch or tag that received the dispatch | Events that trigger workflows | `workflow_dispatch` | same as GH-01 | DIRECT_DOC | 2026-09-24 | Code revision is the selected ref's last commit |
+| GH-13 | For `workflow_dispatch`, `GITHUB_SHA` is the last commit on `GITHUB_REF`, the branch or tag that received the dispatch | Events that trigger workflows | `workflow_dispatch` | `/actions/reference/workflows-and-actions/events-that-trigger-workflows` | DIRECT_DOC | 2026-09-24 | Code revision is the selected ref's last commit |
 | GH-14 | A `branches` filter on `push` restricts the workflow to pushes to the listed branches | Events that trigger workflows | "Running your workflow only when a push to specific branches occurs" | same as GH-01 | DIRECT_DOC | 2026-09-24 | Pushes to other branches do not start this workflow |
 | GH-15 | `pull_request_target` runs in the context of the default branch of the base repository "rather than in the context of the merge commit, as the `pull_request` event does" | Events that trigger workflows | `pull_request_target` | same as GH-01 | DIRECT_DOC | 2026-09-24 | `pull_request` runs in the PR merge-commit context |
-| GH-16 | A pull request can propose changes to the repository's workflows; for public-fork pull requests such workflows do not get secrets, and modified workflows can be abusive, which is why approval exists | Managing GitHub Actions settings for a repository | "Controlling changes from forks to workflows in public repositories" | same as GH-07 | DOC_REUSABLE | 2026-09-24 | PR-proposed workflow changes take effect subject to the fork gate |
-| GH-17 | `pull-requests: write` permits an action to add a label to a pull request (an example of the permission's scope) | Workflow syntax for GitHub Actions | "Defining access for the `GITHUB_TOKEN` scopes" (scope table, reusable) | same as GH-04 | DOC_REUSABLE | 2026-09-24 | The token can mutate PR metadata, which is not message-only |
-| RO-01 | This repository's Actions history contains `workflow_dispatch` runs on non-default branches (runs 31123260611, 31125713055, 34230565551); in those runs the branch workflow's step list matched `main`'s, so they do not show which definition a dispatch uses | GitHub Actions run records (REST API, read-only) | -- | -- | REPO_OBSERVED | 2026-09-24 | Ref selection is used in practice; the workflow-definition revision is not demonstrated |
-| RO-02 | `cypress.yml` (`:926-937`) comments that `pull_request_target` would run workflow code from the base branch against fork content, which the authors chose not to use | `.github/workflows/cypress.yml` | comment | -- | REPO_OBSERVED (author comment, not authoritative) | 2026-09-24 | Consistent with GH-15 |
+| GH-16 | A pull request can propose changes to the repository's GitHub Actions workflows | Managing GitHub Actions settings for a repository | "Controlling changes from forks to workflows in public repositories" | `/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository` | DOC_REUSABLE | 2026-09-24 | Establishes only that workflow changes can be proposed; that a proposed definition governs the run is DERIVED_INFERENCE (TB20-WF-INFERENCE) |
+| GH-17 | `pull-requests: write` permits an action to add a label to a pull request | Workflow syntax for GitHub Actions | `permissions` (introduction; scope-description reusable `data/reusables/actions/github-token-scope-descriptions.md`, included through `data/reusables/actions/jobs/section-assigning-permissions-to-jobs.md`) | `/actions/reference/workflows-and-actions/workflow-syntax` | DOC_REUSABLE | 2026-09-24 | Label mutation is a documented non-comment pull-request state change under the scope; it does not by itself establish other metadata operations |
+| GH-18 | The `GITHUB_TOKEN` permissions start from the enterprise, organization or repository default and are then adjusted by the workflow-level and job-level `permissions` configuration | Workflow syntax for GitHub Actions | "How permissions are calculated for a workflow job" | `/actions/reference/workflows-and-actions/workflow-syntax` | DIRECT_DOC | 2026-09-24 | Workflow-file `permissions` govern the token after the default |
+| GH-19 | The `permissions` key can modify `GITHUB_TOKEN` permissions for an entire workflow or for individual jobs | Use GITHUB_TOKEN for authentication in workflows | "Modifying the permissions for the `GITHUB_TOKEN`" | `/actions/tutorials/authenticate-with-github_token` | DIRECT_DOC | 2026-09-24 | Independent source for the same modification mechanism as GH-05 |
+| GH-20 | Under the first-time-contributor approval policies, a user who has had a commit or pull request merged into the repository does not require approval | Managing GitHub Actions settings for a repository | "Controlling changes from forks to workflows in public repositories" | `/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository` | DOC_REUSABLE | 2026-09-24 | Approval is not a durable gate for returning contributors |
+| GH-21 | New personal-account repositories default to not allowing Actions to create or approve pull requests | Managing GitHub Actions settings for a repository | "Preventing GitHub Actions from creating or approving pull requests" | `/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository` | DIRECT_DOC | 2026-09-24 | The observed enabled value differs from the default, so it is a changed setting |
+| RO-01 | This repository's Actions history contains `workflow_dispatch` runs on non-default branches (runs 31123260611, 31125713055, 34230565551) | GitHub Actions run records (REST API, read-only) | -- | -- | REPO_OBSERVED | 2026-09-24 | Ref selection is used in practice |
+| RO-02 | `cypress.yml` (`:926-937`) comments that `pull_request_target` would run workflow code from the base branch against fork content, which the authors chose not to use | `.github/workflows/cypress.yml` | comment | -- | REPO_OBSERVED | 2026-09-24 | Consistent with GH-15; an author comment, not authoritative evidence |
+| RO-03 | In those three runs the branch workflow's step list matched `main`'s at the time | Actions run records and git history (read-only) | -- | -- | REPO_OBSERVED | 2026-09-24 | Non-discriminating: it does not show which workflow definition a dispatch uses |
 
 **Workflow-definition provenance (TB-20).** The threat reasoning needs four
 separate answers per event, each with its own evidence class.
@@ -850,8 +863,19 @@ separate answers per event, each with its own evidence class.
 | Event context / `GITHUB_SHA` and `GITHUB_REF` | The PR merge ref and last merge commit (GH-01, DIRECT_DOC) | The dispatched ref and its last commit (GH-13, DIRECT_DOC) |
 | Which ref the actor can select or influence | The PR branch content (an ordinary PR) | Any branch or tag, with write access (GH-11, GH-12, DIRECT_DOC and DOC_REUSABLE) |
 | Checked-out code revision | The merge commit (DERIVED_INFERENCE from GH-01, GH-15) | The dispatched ref's commit (DERIVED_INFERENCE from GH-13) |
-| Workflow-definition (YAML) revision | The merge revision: DERIVED_INFERENCE from GH-01, GH-15 and GH-16 (documented facts: the event runs in the merge-commit context, and PR-proposed workflow changes take effect); not stated as one sentence | The selected ref's file: DERIVED_INFERENCE from GH-13; no cited page states it directly, and RO-01 does not demonstrate it (UNKNOWN as a direct statement) |
-| Attacker can modify the effective workflow / `permissions` | DERIVED_INFERENCE (the four rows above plus GH-05) | DERIVED_INFERENCE, weaker (depends on the row above) |
+| Workflow-definition (YAML) revision | The merge revision: DERIVED_INFERENCE. Documented premises: the event runs in the merge-commit context (GH-01, GH-15) and a pull request can propose workflow-file changes (GH-16). Not documented: that the proposed workflow definition governs the run (this is TB20-WF-INFERENCE) | The selected ref's file: DERIVED_INFERENCE from GH-13; no cited page states it directly, and RO-01 with RO-03 does not demonstrate it (UNKNOWN as a direct statement) |
+| Attacker can modify the effective workflow / `permissions` | DERIVED_INFERENCE (TB20-WF-INFERENCE: the rows above plus GH-05, GH-18 and GH-19) | DERIVED_INFERENCE, weaker (TB20-WF-INFERENCE; depends on the row above) |
+
+**TB20-WF-INFERENCE.** The effective workflow definition of a same-repository
+`pull_request` run (Path A) or `workflow_dispatch` run (Path B) is treated as
+attacker-modifiable, including its `permissions:` block and step predicates.
+Path A is a DERIVED_INFERENCE from GH-01 and GH-15 (event context) and GH-16
+(a PR can propose workflow-file changes), with GH-05, GH-18 and GH-19 for the
+permission mechanism. Path B is a weaker DERIVED_INFERENCE from GH-12 and GH-13:
+no cited page says the selected ref's file is the definition used. Under the
+propagation rule, every statement that depends on attacker-modifiable workflow
+YAML inherits this status; the identifier TB20-WF-INFERENCE marks those
+statements.
 
 **TB-20 paths and evidence strength.** *Path A, same-repository
 `pull_request`*: the effective-workflow premise is a transparent inference from
@@ -863,7 +887,10 @@ permissions (`contents: read`, `actions: read`, `pull-requests: write`, one AI
 key), which is Medium (c)/(d), and the risk would remain MEDIUM. The register
 therefore keeps High as the current, inference-supported rating and records this
 sensitivity; a direct-doc or empirical confirmation would remove the
-qualification.
+qualification. Mechanism confidence and risk-label robustness are separate:
+the mechanism (and TB-20's High authority) depends on TB20-WF-INFERENCE, while
+the MEDIUM risk label holds whether or not it does; a stable label is not
+evidence for the mechanism.
 
 **Repository settings observed** (point-in-time, 2026-09-24, read through the
 GitHub REST API with the owner's authenticated CLI; not tracked in the
@@ -884,7 +911,7 @@ repository and able to change -- see OQ3-9). No secret value was read.
 
 | Event | Actor requirements | Code source | Workflow source | Workflow mutable by the actor? | Token maximum | Secrets | Pre-execution gate | Reachable by the modeled attacker? | Included in TB-20? | Reason |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `pull_request`, same repository | Write access; open or update a PR | PR merge commit | PR merge revision (DERIVED_INFERENCE, see workflow-definition provenance) | Yes (inferred) | `contents: write` and `pull-requests: write` requestable; no organization cap | `GROQ_API_KEY` | None: the run starts on open, synchronize and reopen, before any review; review is a process expectation and 0 approvals are required | Yes | Yes (primary path) | Actor edits `permissions:` and steps |
+| `pull_request`, same repository | Write access; open or update a PR | PR merge commit | PR merge revision (DERIVED_INFERENCE, see workflow-definition provenance) | Yes (inferred) | Under TB20-WF-INFERENCE, `contents: write` and `pull-requests: write` requestable; no organization cap | `GROQ_API_KEY` | None: the run starts on open, synchronize and reopen, before any review; review is a process expectation and 0 approvals are required | Yes | Yes (primary path) | Under TB20-WF-INFERENCE the actor edits `permissions:` and steps |
 | `pull_request`, fork | Any GitHub user | PR merge commit | PR merge commit | Yes as content, capped by the platform | Read-only token | None | Actions workflow approval for first-time contributors (`first_time_contributors`, observed); not PR review | Yes | No (TB-17 fork path) | The platform cap removes secrets and write scopes; the private-repository fork options do not apply to this public repository |
 | `workflow_dispatch` | Write access; the workflow exists on `main` | Selected ref | Selected ref's workflow file (DERIVED_INFERENCE; no direct statement) | Yes (inferred; pick the actor's branch) | As above | `GROQ_API_KEY` | Write access only; no PR and no review | Yes | Yes (second path; no PR record, same precondition) | The triage job's `if: always()` (`:702`) does not depend on the event; the PR-comment steps are gated on `github.event_name == 'pull_request'` (`:939`) |
 | `push` to `main` | Merge a PR into protected `main` | `main` | `main` | Only through the merged change | As declared on `main` | `GROQ_API_KEY` for the triage job | PR required, required status checks, admins enforced; human approval not required (0) | Only via a merge | No (TB-17 post-merge path) | Not a direct actor route; a spec-only change cannot alter the workflow |
@@ -919,7 +946,7 @@ Playwright job failed (`if: needs.playwright-tests.result == 'failure'`,
 (`:875-883`): it is `true` exactly when `reports/ai/context.json` exists
 after running `node scripts/targets/targomo/aggregate-browser-context.js` from
 the run's checkout, so the actor's own code, not only a failing test, can
-satisfy it, and a same-repository actor can also edit the predicates. The
+satisfy it, and, under TB20-WF-INFERENCE, a same-repository actor can also edit the predicates. The
 conditions reduce how often the credential-bearing steps run in normal
 operation (Likelihood in the unmodified workflow); they give no protection
 against this actor and do not lower Authority Impact. TB-20's Likelihood stays
@@ -949,11 +976,11 @@ current rating changes because a setting might drift later.
 | Setting (observed) | Affected TB | If changed | Authority / risk sensitivity | Revalidation owner |
 |---|---|---|---|---|
 | Actions may create/approve PRs: enabled | TB-15 (job-token path), TB-20 | If disabled: the review-creation (approval) operation disappears from the job token | TB-15: the job-token path keeps Medium (b) because metadata mutation remains (GH-17), so the aggregate is unchanged (matrix below). TB-20: none (High comes from the inferred `contents: write` reach) | Repository administrator + AISEC-6 |
-| Default workflow permission: `write` | TB-20, TB-17 | If changed to read | Limited sensitivity: the workflow declares its own `permissions` and a same-repository actor can edit them (GH-05), so TB-20 stays High and TB-17 is unaffected | Repository administrator + AISEC-6 |
+| Default workflow permission: `write` | TB-20, TB-17 | If changed to read | Limited sensitivity: the workflow declares its own `permissions` and, under TB20-WF-INFERENCE, a same-repository actor can edit them (GH-05, GH-18), so TB-20 stays High (with that qualification) and TB-17 is unaffected | Repository administrator + AISEC-6 |
 | Fork PR approval policy: `first_time_contributors` | TB-17 (fork path) | If tightened or loosened | Changes Likelihood (whether a fork run starts without approval); Authority Impact stays Medium because the platform cap (read-only token, no secrets) is unchanged | Repository administrator |
 | `main` required approving reviews: 0 | TB-17 (main-push path), TB-20 | If raised to 1 or more | The merge path to `main` gains a technical human-approval requirement; `pull_request` and `workflow_dispatch` runs still start before review, so TB-20 and the fork path are not made "reviewed" | Repository administrator + AISEC-6 |
 | `main` required status checks: 5 | TB-17 (main-push path) | If changed | Automated merge conditions only; not a review substitute; no Authority Impact effect | Repository administrator |
-| Ruleset `main`: enforcement disabled | TB-20 | If enabled | It can only add restrictions on protected refs; TB-20 stays High because `contents: write` still reaches other branches and tags | Repository administrator |
+| Ruleset `main`: enforcement disabled | TB-20 | If enabled | It can only add restrictions on protected refs; TB-20 stays High (under TB20-WF-INFERENCE) because `contents: write` still reaches other branches and tags | Repository administrator |
 | Actions secrets: 1 (`GROQ_API_KEY`); environments: 0 | TB-20, TB-16 | If secrets or protected environments are added | More secrets raise Impact, not the authority tier; an environment protection could gate the secret-holding path and would need TB-20's surface re-derived | Repository administrator + AISEC-6 |
 | Repository visibility: public | TB-17 (fork path) | If made private | The private-repository fork options (GH-08) would apply and could raise the fork ceiling; TB-17's fork path would need re-rating | Repository administrator |
 
