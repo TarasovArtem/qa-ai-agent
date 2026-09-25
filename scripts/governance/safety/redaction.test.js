@@ -260,7 +260,9 @@ test("C2 C1-SEC-L2: unquoted values are consumed to whitespace, commas semicolon
     for (const open of [`${key}=`, `${key}: `, `${key} = `]) {
       const out = g.redactString(`x ${open}QQ1,QQ2;QQ3:QQ4 tail`);
       NO_QQ(out, open);
-      assert.equal(out.endsWith(" tail"), true, "text after the value is preserved");
+      // An authorization value is opaque and runs to the end of the line (C3), so only
+      // other keys keep the text that follows the value on the same line.
+      if (key !== "authorization") assert.equal(out.endsWith(" tail"), true, "text after the value is preserved");
     }
   }
 });
@@ -386,4 +388,199 @@ test("C2: redaction stays linear and bounded on pathological input (timings reco
     assert.ok(elapsed < 1500, `${name} took ${elapsed} ms`);
   }
   console.log(`# redaction timings: ${timings.join(", ")}`);
+});
+
+// ---- Corrective C3: C1-SEC-L2 (structured JSON values) and C2-SEC-L1 (Authorization) ----
+
+// Every leaf carries "QQ" so any surviving fragment is detectable.
+const structured = (label, text, publicTail) => {
+  const out = g.redactString(text);
+  NO_QQ(out, label);
+  if (publicTail) assert.ok(out.includes(publicTail), `${label}: sibling field kept: ${out}`);
+  return out;
+};
+
+test("C3 C1-SEC-L2: arrays under sensitive keys are redacted as one unit", () => {
+  structured("tokens", '{"tokens":["QQ1","QQ2","QQ3"],"n":1}', '"n":1');
+  structured("api_keys", '{"api_keys":["QQ1","QQ2"]}');
+  structured("api_keys spaced", '{"api_keys": [ "QQ1", "QQ2" ]}');
+  const numeric = g.redactString('{"passwords":[1,2,3],"ok":true}');
+  assert.equal(numeric, '{"passwords":[REDACTED:SENSITIVE_VALUE],"ok":true}',"the whole numeric array is one redacted value");
+});
+
+test("C3 C1-SEC-L2: objects under sensitive keys are redacted as one unit", () => {
+  structured("credentials", '{"credentials":{"user":"QQ1","pass":"QQ2"},"n":1}', '"n":1');
+  structured("token object", '{"token":{"access":"QQ1","refresh":"QQ2"},"public":"ok"}', '"public":"ok"');
+});
+
+test("C3 C1-SEC-L2: nested structures, mixed brackets and structures inside structures", () => {
+  structured("nested users", '{"credentials":{"users":[{"u":"QQ1"},{"u":"QQ2"}]},"public":"ok"}', '"public":"ok"');
+  structured("nested arrays", '{"tokens":[["QQ1"],["QQ2"]],"public":"ok"}', '"public":"ok"');
+  structured("object in array in object", '{"secrets":[{"a":{"b":["QQ1",{"c":"QQ2"}]}}],"public":"ok"}', '"public":"ok"');
+  structured("unquoted key", "tokens=[QQ1,[QQ2,{a:QQ3}]] tail", " tail");
+  structured("single-quoted python-style", "{'credentials': {'user': 'QQ1', 'pass': 'QQ2'}, 'public': 'ok'}", "'public': 'ok'");
+});
+
+test("C3 C1-SEC-L2: brackets and braces inside quoted strings do not end the structure", () => {
+  structured("] inside string", '{"tokens":["QQ]1","QQ2"],"public":"ok"}', '"public":"ok"');
+  structured("} inside string", '{"credentials":{"x":"QQ}1","y":"QQ2"},"public":"ok"}', '"public":"ok"');
+  structured("[ inside string", '{"tokens":["QQ[1","QQ{2"],"public":"ok"}', '"public":"ok"');
+});
+
+test("C3 C1-SEC-L2: escaped quotes inside a structure do not end its strings early", () => {
+  structured("escaped quote", '{"tokens":["QQ1\\"]","QQ2"],"public":"ok"}', '"public":"ok"');
+  structured("escaped backslash", '{"tokens":["QQ1\\\\","QQ2"],"public":"ok"}', '"public":"ok"');
+});
+
+test("C3 C1-SEC-L2: an unbalanced, mismatched or too deeply nested structure fails closed to the end of the text", () => {
+  for (const text of [
+    '{"tokens":["QQ1","QQ2"',
+    '{"credentials":{"user":"QQ1"',
+    '{"tokens":["QQ1","QQ2"} tail QQ3',
+    '{"tokens":{"a":["QQ1"}}',
+    '{"tokens":["QQ1","unterminated QQ2',
+    "tokens: [QQ1, QQ2",
+  ]) {
+    const out = structured(text, text);
+    assert.equal(out.includes("QQ"), false);
+  }
+  const deep = `{"tokens":${"[".repeat(200)}"QQ1"${"]".repeat(200)},"public":"QQ2"}`;
+  const out = g.redactString(deep);
+  NO_QQ(out, "depth limit");
+  assert.equal(out.includes("public"), false, "beyond the depth limit everything to the end is redacted");
+  const within = `{"tokens":${"[".repeat(30)}"QQ1"${"]".repeat(30)},"public":"ok"}`;
+  assert.ok(g.redactString(within).includes('"public":"ok"'), "a structure within the depth limit resumes normally");
+});
+
+test("C3 C1-SEC-L2: after a balanced structure closes, scanning resumes and later sensitive fields are redacted too", () => {
+  const out = g.redactString('{"tokens":["QQ1"],"public":"ok","password":"QQ2","note":"fine"}');
+  NO_QQ(out, "resume");
+  assert.match(out, /"public":"ok"/);
+  assert.match(out, /"note":"fine"/);
+});
+
+test("C3 C1-SEC-L2: sensitive-key matching stays substring based (plural and compound names)", () => {
+  for (const key of ["token", "tokens", "api_key", "api_keys", "api-keys", "credential", "credentials", "secret", "secrets", "passwords", "githubToken", "clientSecret"]) {
+    structured(key, `{"${key}":["QQ1","QQ2"],"public":"ok"}`, '"public":"ok"');
+  }
+});
+
+test("C3 C1-SEC-L2: a structure crossing the input bound never leaks a fragment", () => {
+  const shapes = [
+    (k) => `{"${k}":["QQ1","QQ2","QQ3","QQ4","QQ5","QQ6"]}`,
+    (k) => `{"${k}":{"a":"QQ1","b":["QQ2",{"c":"QQ3"}],"d":"QQ4"}}`,
+    (k) => `${k}=[QQ1,QQ2,[QQ3,QQ4]]`,
+    // Whitespace-separated shapes: the trailing whitespace-free run is only the last
+    // element, so the structure itself must fail closed rather than be dropped whole.
+    (k) => `{"${k}": ["QQ1", "QQ2", "QQ3", "QQ4", "QQ5", "QQ6", "QQ7"]}`,
+    (k) => `{ "${k}": { "a": "QQ1", "b": [ "QQ2", { "c": "QQ3" } ], "d": "QQ4" } }`,
+  ];
+  for (const key of ["tokens", "api_keys", "credentials", "secret"]) {
+    for (const shape of shapes) {
+      for (const before of [1, 8, 16, 30, 48]) {
+        for (const earlier of ["", SHRINKERS]) {
+          const out = g.redactString(straddle(shape(key), before, earlier), OPTIONS);
+          NO_QQ(out, `${key} before=${before} ${earlier ? "shrunk" : ""}`);
+        }
+      }
+    }
+  }
+});
+
+const AUTH_LINES = [
+  "Bearer QQabc",
+  "Basic QQabc",
+  "Token QQabc",
+  "token QQ0123456789abcdef0123456789abcdef01234567",
+  'Digest username="QQu", response="QQr"',
+  "NTLM QQabc",
+  "Negotiate QQabc",
+  "AWS4-HMAC-SHA256 Credential=QQA, SignedHeaders=QQB, Signature=QQC",
+  "CustomScheme QQabc QQdef QQghi",
+  "QQ-scheme-less-credential",
+];
+
+test("C3 C2-SEC-L1: an Authorization value is redacted whole whatever the scheme", () => {
+  for (const key of ["Authorization", "authorization", "AUTHORIZATION", "Proxy-Authorization", "x_authorization"]) {
+    for (const value of AUTH_LINES) {
+      for (const sep of [": ", ":", "=", " : "]) {
+        const out = g.redactString(`GET /x\n${key}${sep}${value}\nHost: example.test`);
+        NO_QQ(out, `${key}${sep}${value}`);
+        assert.ok(out.startsWith("GET /x\n"), "earlier lines are kept");
+        assert.ok(out.endsWith("\nHost: example.test"), "the next line is kept");
+      }
+    }
+  }
+});
+
+test("C3 C2-SEC-L1: CRLF and end-of-text terminate the Authorization line; quoted forms are consumed whole", () => {
+  assert.equal(g.redactString("Authorization: Digest QQa, QQb\r\nHost: h"), "Authorization: [REDACTED:SENSITIVE_VALUE]\r\nHost: h");
+  assert.equal(g.redactString("Authorization: Token QQabc"), "Authorization: [REDACTED:SENSITIVE_VALUE]");
+  NO_QQ(g.redactString('{"authorization":"Bearer QQabc","n":1}'), "quoted value");
+  assert.match(g.redactString('{"authorization":"Bearer QQabc","n":1}'), /"n":1/);
+  NO_QQ(g.redactString("{'authorization': 'Token QQa QQb', 'n': 1}"), "single quoted");
+  NO_QQ(g.redactString('{"authorization":{"scheme":"QQ1","cred":"QQ2"},"n":1}'), "structured authorization");
+  assert.match(g.redactString('{"authorization":{"scheme":"QQ1","cred":"QQ2"},"n":1}'), /"n":1/);
+});
+
+test("C3 C2-SEC-L1: an Authorization line crossing the input bound leaks nothing", () => {
+  for (const value of AUTH_LINES) {
+    for (const before of [1, 8, 16, 30, 48]) {
+      for (const earlier of ["", SHRINKERS]) {
+        const out = g.redactString(straddle(`Authorization: ${value}`, before, earlier), OPTIONS);
+        NO_QQ(out, `${value} before=${before} ${earlier ? "shrunk" : ""}`);
+      }
+    }
+  }
+});
+
+test("C3 C2-SEC-L1: an Authorization credential already masked by a token rule does not expose the rest of the line", () => {
+  const out = g.redactString(`Authorization: Bearer ${"Z".repeat(30)} QQextra`);
+  NO_QQ(out, "after token rule");
+  assert.equal(out.includes("ZZZZ"), false);
+});
+
+test("C3: prose and unrelated uses of scheme words are preserved", () => {
+  for (const text of [
+    "This is a basic usage example",
+    "digest the log lines",
+    "ntlm support is planned",
+    "the token bucket algorithm is documented",
+    "Authorization is checked by the gateway",
+    "use bearer auth for the API",
+  ]) {
+    assert.equal(g.redactString(text), text, text);
+  }
+});
+
+test("C3: standalone Bearer detection (glued, boundary, case) still works", () => {
+  for (const prefix of ["", "x", "prefix", "(", "\n"]) {
+    assert.equal(g.redactString(`${prefix}Bearer ${"Z".repeat(30)}`).includes("ZZZZ"), false, prefix);
+    assert.equal(g.redactString(`${prefix}bearer ${"Z".repeat(30)}`).includes("ZZZZ"), false, prefix);
+  }
+});
+
+test("C3: redaction of structured and authorization input stays linear and bounded (timings recorded)", () => {
+  const cases = {
+    "deeply nested structured value": `{"tokens":${"[".repeat(60000)}`,
+    "many nested arrays and objects": `{"credentials":${'{"a":['.repeat(4000)}${"]}".repeat(4000)}}`,
+    "many braces inside strings": `{"tokens":["${"}]{[".repeat(15000)}"]}`,
+    "many escaped quotes": `{"secret":["${'\\"'.repeat(30000)}"]}`,
+    "64k structured input": `{"tokens":[${'"QQ",'.repeat(11000)}"QQ"]}`,
+    "64k authorization line": `Authorization: ${"QQ ".repeat(22000)}`,
+    "many authorization lines": "Authorization: Token QQ\n".repeat(2700),
+    "many structured pairs": '{"tokens":["a"]}'.repeat(4000),
+    "many sensitive pairs": "password=a ".repeat(6000),
+    "unbalanced closers": `tokens: ${"]}".repeat(30000)}`,
+  };
+  const timings = [];
+  for (const [name, input] of Object.entries(cases)) {
+    const started = Date.now();
+    const out = g.redactString(input, OPTIONS);
+    const elapsed = Date.now() - started;
+    timings.push(`${name}=${elapsed}ms`);
+    assert.ok(out.length <= 60100, `${name}: output bounded (${out.length})`);
+    assert.ok(elapsed < 1500, `${name} took ${elapsed} ms`);
+  }
+  console.log(`# redaction C3 timings: ${timings.join(", ")}`);
 });

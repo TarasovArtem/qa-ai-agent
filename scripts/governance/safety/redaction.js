@@ -54,6 +54,37 @@ function marker(id) {
 }
 
 const isSpace = (ch) => /\s/.test(ch);
+const isLineBreak = (ch) => ch === "\n" || ch === "\r";
+const MARKER_PREFIX = "[REDACTED:";
+
+/**
+ * End (exclusive) of the balanced {...}/[...] structure that starts at `start`.
+ * Quote-aware (both quote kinds) and escape-aware, iterative, O(n), with a bounded
+ * nesting depth (LIMITS.maxJsonDepth). Fails closed: an unbalanced structure, a
+ * mismatched closer, an unterminated string or excessive depth all return the end
+ * of the text, so nothing inside an unfinished structure can be emitted.
+ */
+function structureEnd(text, start) {
+  const n = text.length;
+  const closers = [];
+  let i = start;
+  while (i < n) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      i += 1;
+      while (i < n && text[i] !== ch) i += text[i] === "\\" ? 2 : 1;
+      if (i >= n) return n;
+    } else if (ch === "{" || ch === "[") {
+      if (closers.length >= LIMITS.maxJsonDepth) return n;
+      closers.push(ch === "{" ? "}" : "]");
+    } else if (ch === "}" || ch === "]") {
+      if (closers.pop() !== ch) return n;
+      if (closers.length === 0) return i + 1;
+    }
+    i += 1;
+  }
+  return n;
+}
 
 /**
  * Replace the VALUE of every sensitive key=value / key: value pair (the key text is
@@ -65,10 +96,18 @@ const isSpace = (ch) => /\s/.test(ch);
  *   - "..." or '...': consumed whole, spaces, punctuation and newlines included,
  *     honouring backslash escapes; with no closing quote it runs to the END of the
  *     text (fail closed);
- *   - unquoted: consumed to the next whitespace, so commas, semicolons and colons
- *     belong to the value; when the key itself was quoted (JSON) the value is a
- *     scalar and also stops at , } ]. A Bearer/Basic scheme word also takes the
+ *   - structured: a value starting with { or [ is consumed as one balanced,
+ *     quote-aware structure (see structureEnd); an unbalanced or too deeply nested
+ *     structure is redacted to the END of the text (fail closed); after a balanced
+ *     close, scanning resumes so sibling fields stay visible;
+ *   - Authorization: the value of any key containing "authorization" is opaque
+ *     credential material whatever the scheme (Bearer, Basic, Token, Digest, NTLM,
+ *     Negotiate, AWS4-..., custom): unquoted, it runs to the end of the line;
+ *   - unquoted otherwise: consumed to the next whitespace, so commas, semicolons and
+ *     colons belong to the value; when the key itself was quoted (JSON) the value is
+ *     a scalar and also stops at , } ]. A Bearer/Basic scheme word also takes the
  *     credential that follows it.
+ * Key matching is by substring (tokens, api_keys, credentials, githubToken, ...).
  */
 function redactSensitivePairs(text) {
   const n = text.length;
@@ -101,6 +140,11 @@ function redactSensitivePairs(text) {
       end = start + 1;
       while (end < n && text[end] !== quote) end += text[end] === "\\" ? 2 : 1;
       end = end < n ? end + 1 : n;
+    } else if ((quote === "{" || quote === "[") && !text.startsWith(MARKER_PREFIX, start)) {
+      end = structureEnd(text, start);
+    } else if (/authorization/i.test(text.slice(match.index, j))) {
+      end = start;
+      while (end < n && !isLineBreak(text[end])) end += 1;
     } else {
       end = start;
       while (end < n && !isSpace(text[end]) && !(quotedKey && (text[end] === "," || text[end] === "}" || text[end] === "]"))) end += 1;
