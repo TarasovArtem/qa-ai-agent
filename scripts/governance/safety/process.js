@@ -44,7 +44,7 @@ const { redactString } = require("./redaction");
 const { resolveWithinRoot } = require("./path");
 
 const POLICY_KEYS = ["repositoryRoot", "allowedExecutables"];
-const REQUEST_KEYS = ["file", "args", "cwd", "timeoutMs", "maxStdoutBytes", "maxStderrBytes", "envAllowlist"];
+const REQUEST_KEYS = ["file", "args", "cwd", "timeoutMs", "maxStdoutBytes", "maxStderrBytes", "envAllowlist", "stdoutEncoding"];
 const MAX_PATH_LENGTH = 4096;
 const MAX_ALLOWED_EXECUTABLES = 64;
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -142,6 +142,10 @@ function validateRequest(policy, request, fs) {
   if (!Array.isArray(args) || args.length > MAX_ARGS || !args.every((a) => typeof a === "string" && a.length <= MAX_ARG_LENGTH && !a.includes("\0"))) {
     throw invalid("args must be a bounded array of strings without NUL");
   }
+  // "utf8" (default) decodes stdout as text; "base64" returns the exact bytes so a caller can
+  // validate the encoding itself (a text decode would silently replace invalid sequences).
+  const encoding = request.stdoutEncoding === undefined ? "utf8" : request.stdoutEncoding;
+  if (encoding !== "utf8" && encoding !== "base64") throw invalid("stdoutEncoding must be utf8 or base64");
   const cwd = resolveCwd(policy, request.cwd, fs);
   const envAllowlist = request.envAllowlist === undefined ? DEFAULT_ENV_ALLOWLIST : request.envAllowlist;
   if (!Array.isArray(envAllowlist) || !envAllowlist.every((n) => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n))) {
@@ -155,6 +159,7 @@ function validateRequest(policy, request, fs) {
     maxStdoutBytes: boundedInt(request.maxStdoutBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES, "maxStdoutBytes"),
     maxStderrBytes: boundedInt(request.maxStderrBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES, "maxStderrBytes"),
     envAllowlist,
+    stdoutEncoding: encoding,
   };
 }
 
@@ -229,7 +234,7 @@ function execute(req) {
           reasonCode,
           exitCode: exitCode === undefined ? null : exitCode,
           signal: signal || null,
-          stdout: Buffer.concat(stdout).toString("utf8"),
+          stdout: Buffer.concat(stdout).toString(req.stdoutEncoding),
           stderr: Buffer.concat(stderr).toString("utf8"),
           stdoutTruncated,
           stderrTruncated,

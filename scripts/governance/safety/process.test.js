@@ -356,3 +356,32 @@ test("a timed-out child whose grandchild inherited stdout/stderr still settles i
     assert.equal(r.reasonCode, "PROCESS_TIMEOUT");
     assert.ok(elapsed < 5000, `settled after ${elapsed} ms`);
   }));
+
+// ------------------------------------------------------- Wave 1: optional exact-bytes stdout
+
+test("W1 process: stdoutEncoding base64 returns the exact bytes (invalid UTF-8 is not silently replaced)", () =>
+  withRepo(async ({ run }) => {
+    const script = "process.stdout.write(Buffer.from([0x66, 0xff, 0xfe, 0x00, 0x41, 0xe2, 0x82]))";
+    const text = await run({ args: ["-e", script] });
+    assert.notDeepEqual([...Buffer.from(text.stdout, "utf8")], [0x66, 0xff, 0xfe, 0x00, 0x41, 0xe2, 0x82], "the default text decode is lossy for invalid sequences");
+    const raw = await run({ args: ["-e", script], stdoutEncoding: "base64" });
+    assert.equal(raw.reasonCode, "OK");
+    assert.deepEqual([...Buffer.from(raw.stdout, "base64")], [0x66, 0xff, 0xfe, 0x00, 0x41, 0xe2, 0x82]);
+    assert.equal(raw.stderr, "", "stderr stays text");
+  }));
+
+test("W1 process: the default encoding and stderr behavior are unchanged; unknown encodings are rejected", () =>
+  withRepo(async ({ runner, run }) => {
+    const r = await run({ args: ["-e", "process.stdout.write('héllo'); process.stderr.write('err')"] });
+    assert.equal(r.stdout, "héllo");
+    assert.equal(r.stderr, "err");
+    for (const bad of ["hex", "latin1", "UTF8", "ascii", "", null, 5, {}]) rejectsRequest(runner, { file: NODE, stdoutEncoding: bad });
+  }));
+
+test("W1 process: output bounds count raw bytes for base64 output too", () =>
+  withRepo(async ({ run }) => {
+    const r = await run({ args: ["-e", "process.stdout.write(Buffer.alloc(5000, 0xff))"], stdoutEncoding: "base64", maxStdoutBytes: 1000 });
+    assert.equal(r.outcome, "OUTPUT_LIMIT");
+    assert.equal(r.stdoutTruncated, true);
+    assert.equal(Buffer.from(r.stdout, "base64").length, 1000);
+  }));
