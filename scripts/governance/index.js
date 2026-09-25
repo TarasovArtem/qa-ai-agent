@@ -33,6 +33,8 @@ const { getGitIdentity } = require("./stages/1a/identity");
 const { getChangedFiles } = require("./stages/1a/changed-files");
 const { checkScope } = require("./stages/1a/scope");
 const { scanSecrets } = require("./stages/1a/secrets");
+const { parseMarkdown } = require("./stages/1b/markdown");
+const { checkReferences } = require("./stages/1b/check");
 
 module.exports = Object.freeze({
   // shared frozen contracts
@@ -71,4 +73,7 @@ module.exports = Object.freeze({
   getChangedFiles,
   checkScope,
   scanSecrets,
+  // Wave 1 / 1B Markdown and reference integrity (single parser; consumes 1A's changed-file set)
+  parseMarkdown,
+  checkReferences,
 });
