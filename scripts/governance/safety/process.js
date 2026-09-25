@@ -18,6 +18,11 @@
  * and exec is outside this primitive's threat model (allowlisted paths must be
  * trusted, non-writable locations).
  *
+ * Timeouts and output-limit overflows kill the child (POSIX: its whole process
+ * group, since the child is spawned detached) and settle within a bounded grace
+ * period even if a grandchild still holds the output pipes. Windows has no process
+ * groups here, so a grandchild there is not terminated (only the pipes are closed).
+ *
  * Argument-array execution only: `shell` is always false and there is no option
  * to enable it, so untrusted text can never become shell syntax. Output, runtime
  * and the child's environment are bounded, and the safety policy is taken solely
@@ -48,6 +53,7 @@ const DEFAULT_MAX_BYTES = 1024 * 1024;
 const MAX_MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ARGS = 256;
 const MAX_ARG_LENGTH = 8192;
+const KILL_GRACE_MS = 1000;
 const DEFAULT_ENV_ALLOWLIST = Object.freeze(["PATH", "SystemRoot", "TMPDIR", "TEMP", "TMP"]);
 
 function invalid(detail) {
@@ -198,6 +204,8 @@ function execute(req) {
         env: buildEnv(req.envAllowlist),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        // POSIX: own process group, so a kill reaches grandchildren too (see kill()).
+        detached: process.platform !== "win32",
       });
     } catch (error) {
       resolve(spawnErrorResult(String(error && error.code)));
@@ -208,6 +216,7 @@ function execute(req) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (graceTimer !== null) clearTimeout(graceTimer);
       let reasonCode;
       let finalOutcome = outcome || "EXITED";
       if (finalOutcome === "TIMEOUT") reasonCode = REASON.PROCESS_TIMEOUT;
@@ -229,14 +238,33 @@ function execute(req) {
       );
     };
 
+    // Stop the child and, on POSIX, its whole process group. A grandchild that
+    // inherited stdout/stderr would otherwise keep the pipes open, and 'close' (which
+    // waits for them) could be delayed until that grandchild exits on its own. As a
+    // portable backstop the pipes are destroyed after a bounded grace period and the
+    // run settles with what was captured, so a timeout always settles promptly.
     const kill = (why) => {
       if (outcome === null) outcome = why;
       try {
-        child.kill("SIGKILL");
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
       } catch {
-        /* already gone */
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      if (graceTimer === null) {
+        graceTimer = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+          finish(null, "SIGKILL");
+        }, KILL_GRACE_MS);
+        graceTimer.unref();
       }
     };
+    let graceTimer = null;
 
     const timer = setTimeout(() => kill("TIMEOUT"), req.timeoutMs);
 

@@ -344,7 +344,7 @@ test("SEC-L5: the same invalid input always produces the same message", () =>
 test("a timed-out child whose grandchild inherited stdout/stderr still settles in bounded time", { timeout: 30000 }, () =>
   withRepo(async ({ run }) => {
     // The grandchild keeps the pipes open for 10 s and then exits on its own so no
-    // process is left behind. `runProcess` must not wait for it.
+    // process is left behind. the runner must not wait for it.
     const grandchild = "setTimeout(() => process.exit(0), 10000)";
     const parent =
       `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'inherit' });` +
