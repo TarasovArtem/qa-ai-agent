@@ -6,22 +6,34 @@
  * files are refused, and reading is capped so an oversized file is never fully
  * read. The manifest is never executed, imported or sourced.
  *
- * Open hardening (a path-level lstat alone is a check-then-open race):
- *   1. the leaf is opened with O_NOFOLLOW where the platform has it (POSIX), so a
- *      symlink swapped in after the check fails to open instead of being followed;
- *      O_NONBLOCK keeps a FIFO swapped in after the check from hanging the open;
- *   2. the OPENED descriptor is fstat-ed: it must be a regular file within the
- *      size bound, and (where the platform reports a meaningful inode) it must be
- *      the same object the pre-open lstat inspected;
- *   3. the read is a bounded loop, so a file that grows after fstat still cannot
- *      produce more than maxBytes + 1 bytes;
- *   4. after the read the path is lstat-ed again and must still be that object.
- * Residual limits (documented, tested where possible): Node has no openat, so a
- * swap of an INTERMEDIATE directory into a symlink between the path check and the
- * open cannot be excluded atomically; steps 2 and 4 narrow that window to an
- * attacker who restores the tree before step 4. Windows has no O_NOFOLLOW, so a
- * swapped leaf link there is caught only by the fstat identity and post-read
- * checks, never by the open itself.
+ * What is enforced, in order (a path-level lstat alone is a check-then-open race):
+ *   1. the path is checked with resolveWithinRoot (no symlink/junction component)
+ *      and lstat-ed as a regular, bounded file;
+ *   2. the leaf is opened with O_NOFOLLOW where the platform has it (POSIX), and
+ *      O_NONBLOCK keeps a swapped-in FIFO from hanging the open;
+ *   3. the OPENED descriptor is fstat-ed: regular file, within the size bound, and
+ *      (where the platform reports an inode) the same object the lstat inspected;
+ *   4. the LOCATION of the opened file is verified to be inside the canonical real
+ *      repository root, so a directory component swapped for a link and left in
+ *      place cannot make the loader read outside the root:
+ *        - Linux: the descriptor's own path is read from /proc/self/fd/<fd>. This
+ *          is anchored to the descriptor, not to a path that can change again;
+ *        - elsewhere (or when procfs is unavailable): the realpath of the path is
+ *          computed after the open and must be inside the real root AND identify
+ *          the same file as the descriptor (dev/ino equal, inode non-zero). A swap
+ *          that is reverted before this check leaves the descriptor on a different
+ *          file than the restored path, which the identity comparison rejects;
+ *   5. the read is a bounded loop, so growth after the fstat cannot produce more
+ *      than maxBytes + 1 bytes;
+ *   6. after the read the path is lstat-ed again and must still be that object.
+ * Not guaranteed (residual limits): Node has no openat, so the walk to the leaf is
+ * not atomic. On platforms without procfs the location proof is realpath-plus-
+ * identity, which cannot distinguish a file that is hard-linked into the root from
+ * the original; a hard link inside the root is treated as inside the root. Windows
+ * has no O_NOFOLLOW, so there the leaf link protection is steps 3-4 and 6 only, and
+ * a filesystem that reports inode 0 has no identity proof and fails closed. The same
+ * file being modified in place while it is read (same inode) is not detected here;
+ * the parser validates whatever bytes were read.
  *
  * The returned payload is a read-only handle: the bytes live in a closure and
  * every read() returns a fresh copy, so no consumer can mutate another consumer's
@@ -32,7 +44,7 @@
 
 const nodeFs = require("node:fs");
 const { REASON, LIMITS, STATUS, deepFreeze } = require("../kernel/contracts");
-const { resolveWithinRoot } = require("../safety/path");
+const { resolveWithinRoot, isWithin } = require("../safety/path");
 const { parseManifestBytes } = require("../kernel/manifest");
 
 function failure(reasonCode, detail) {
@@ -43,6 +55,32 @@ function failure(reasonCode, detail) {
 function sameObject(a, b) {
   if (a.ino === 0n || b.ino === 0n) return true;
   return a.ino === b.ino && a.dev === b.dev;
+}
+
+/**
+ * Prove that the opened descriptor refers to a file inside the real root.
+ * Returns true only with positive evidence; every failure to prove is false.
+ */
+function openedFileIsInsideRoot(fs, fd, opened, absolutePath, realRoot) {
+  if (process.platform === "linux" && typeof fs.readlinkSync === "function") {
+    let target = null;
+    try {
+      target = fs.readlinkSync(`/proc/self/fd/${fd}`);
+    } catch {
+      target = null; // no procfs: use the generic proof below
+    }
+    if (target !== null) return isWithin(realRoot, target);
+  }
+  if (opened.ino === 0n) return false;
+  let real;
+  let atPath;
+  try {
+    real = fs.realpathSync(absolutePath);
+    atPath = fs.statSync(real, { bigint: true });
+  } catch {
+    return false;
+  }
+  return isWithin(realRoot, real) && atPath.ino === opened.ino && atPath.dev === opened.dev;
 }
 
 /** Wrap loaded bytes as an immutable, copy-on-read handle. */
@@ -60,8 +98,10 @@ function loadManifestBytes(repositoryRoot, relativePath, options = {}) {
   const fs = options.fs || nodeFs;
   const maxBytes = Number.isInteger(options.maxBytes) && options.maxBytes > 0 ? options.maxBytes : LIMITS.maxManifestBytes;
   let resolved;
+  let realRoot;
   try {
     resolved = resolveWithinRoot(repositoryRoot, relativePath, { fs });
+    realRoot = fs.realpathSync(repositoryRoot);
   } catch (error) {
     return failure(error.reasonCode || REASON.UNSAFE_PATH, "manifest path rejected");
   }
@@ -86,6 +126,9 @@ function loadManifestBytes(repositoryRoot, relativePath, options = {}) {
     if (!opened.isFile()) return failure(REASON.UNSAFE_PATH, "opened manifest is not a regular file");
     if (opened.size > BigInt(maxBytes)) return failure(REASON.MANIFEST_TOO_LARGE, "manifest exceeds the size limit");
     if (!sameObject(before, opened)) return failure(REASON.UNSAFE_PATH, "manifest changed between check and open");
+    if (!openedFileIsInsideRoot(fs, fd, opened, resolved.absolute, realRoot)) {
+      return failure(REASON.UNSAFE_PATH, "opened manifest is not inside the repository root");
+    }
 
     const buffer = Buffer.alloc(maxBytes + 1);
     let total = 0;
