@@ -22,7 +22,13 @@ const { isPlainObject } = require("../../kernel/validation");
 const { parsePathPattern, matchPathPattern, patternCovers } = require("../../safety/path-patterns");
 const { validateRepoRelativePath } = require("../../safety/repo-path");
 const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
-const { BUILTIN_PROTECTED_PATHS, validateBasePolicy } = require("./policy");
+const { BUILTIN_PROTECTED_PATHS, validateBasePolicy, resolveFrameworkMetadata } = require("./policy");
+
+/** Metadata deciding schema/capability support: the caller-supplied target-tip metadata when valid. */
+const metadataOf = (input) => {
+  const r = resolveFrameworkMetadata(input.targetFrameworkMetadata);
+  return r.ok ? r.metadata : { supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 0 } };
+};
 
 const MAX_PROPOSED = 64;
 
@@ -67,7 +73,7 @@ function checkScope(input) {
       const wellFormed = [...forbiddenList, ...protectedList].every((p) => typeof p === "string" && parsePathPattern(p).ok);
       if (wellFormed) policy = { scope: { allowedPathDomains: [], forbiddenPathDomains: [...forbiddenList], protectedPaths: [...new Set([...BUILTIN_PROTECTED_PATHS, ...protectedList])] } };
     } else {
-      const validated = validateBasePolicy(supplied);
+      const validated = validateBasePolicy(supplied, metadataOf(input));
       if (validated.ok) policy = { scope: validated.policy.scope };
     }
   }

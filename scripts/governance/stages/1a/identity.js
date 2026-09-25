@@ -28,7 +28,7 @@ const { canonicalJson } = require("../../kernel/results");
 const { safe, createRecordFactory } = require("../common");
 const { validateTrustedContext } = require("./trusted-context");
 const { resolveGitAdapter } = require("./git-adapter");
-const { BASE_POLICY_PATH, BUILTIN_MINIMUM_POLICY, gateManifestPath, parseBasePolicyBytes, policyDigest } = require("./policy");
+const { BASE_POLICY_PATH, BUILTIN_MINIMUM_POLICY, gateManifestPath, parseBasePolicyBytes, policyDigest, resolveFrameworkMetadata } = require("./policy");
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const MAX_POLICY_BYTES = 256 * 1024;
@@ -36,13 +36,13 @@ const MAX_POLICY_BYTES = 256 * 1024;
 const outcome = (status, reasonCode, detail) => deepFreeze({ established: false, mode: null, identity: null, subject: null, policy: null, records: [], outcome: { status, reasonCode, detail: safe(detail) } });
 
 /** Read and classify the base policy at a commit. */
-async function readPolicyAt(git, commit) {
+async function readPolicyAt(git, commit, metadata) {
   const blob = await git.readBlob(commit, BASE_POLICY_PATH, MAX_POLICY_BYTES);
   if (!blob.ok) return { state: "unavailable", detail: blob.detail };
   const kind = blob.value.kind;
   if (kind === "absent") return { state: "absent" };
   if (kind !== "blob") return { state: "invalid", status: STATUS.CONFIGURATION_ERROR, reasonCode: REASON.POLICY_INVALID, detail: "the policy path is not a regular file" };
-  const parsed = parseBasePolicyBytes(blob.value.bytes);
+  const parsed = parseBasePolicyBytes(blob.value.bytes, metadata);
   if (!parsed.ok) return { state: "invalid", status: parsed.status, reasonCode: parsed.reasonCode, detail: parsed.problems.join("; ") };
   return { state: "valid", policy: parsed.policy, unsupportedCapabilities: parsed.unsupportedCapabilities, digest: policyDigest(parsed.policy) };
 }
@@ -108,6 +108,8 @@ async function getGitIdentity(input) {
   const context = checked.context;
   const adapter = resolveGitAdapter(input);
   if (!adapter.ok) return outcome(STATUS.INCOMPLETE, REASON.TRUSTED_CONTEXT_INVALID, "no usable Git adapter was supplied");
+  const framework = resolveFrameworkMetadata(input.targetFrameworkMetadata);
+  if (!framework.ok) return outcome(STATUS.INCOMPLETE, framework.reasonCode, "the supplied target framework metadata is not usable");
   const git = adapter.git;
 
   const local = await git.localHead();
@@ -151,8 +153,8 @@ async function getGitIdentity(input) {
   add("1A.IDENTITY.HEAD", STATUS.PASS, REASON.OK, "head and tree established from Git", { head: subject.head, tree: subject.tree, parents });
 
   // Policies (root tip, then base / first parent).
-  const rootState = await readPolicyAt(git, rootTip);
-  const basePolicyState = await readPolicyAt(git, base);
+  const rootState = await readPolicyAt(git, rootTip, framework.metadata);
+  const basePolicyState = await readPolicyAt(git, base, framework.metadata);
   policyRecords(out, { rootTip, mode: context.mode, basePolicyState, rootState, defaultBranchName: context.defaultBranchName });
 
   // Effective policy and protected targets.
@@ -176,8 +178,8 @@ async function getGitIdentity(input) {
   else if (protectedRefs.includes(context.targetRefName)) add("1A.TARGET.PROTECTED", STATUS.PASS, REASON.OK, "the target is an authenticated, protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
   else add("1A.TARGET.PROTECTED", context.mode === "POST_MERGE" ? STATUS.FAIL : STATUS.HUMAN_REVIEW_REQUIRED, REASON.TARGET_NOT_PROTECTED, "the authenticated target is not a protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
 
-  if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability this framework does not list", { unsupported: policy.unsupportedCapabilities });
-  else if (policy.policy !== null) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "every required capability is supported", { required: policy.policy.requiredCapabilities });
+  if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the framework does not list", { unsupported: policy.unsupportedCapabilities, frameworkMetadataSource: framework.source });
+  else if (policy.policy !== null) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, framework.source === "TARGET_TIP" ? "every required capability is listed by the target-tip framework" : "every required capability is listed by the EXECUTING framework (advisory unless it is the target-tip framework)", { required: policy.policy.requiredCapabilities, frameworkMetadataSource: framework.source });
 
   if (context.mode === "PR_REVIEW") {
     // Target tip: a supplied SHA is an assertion only; the resolved tip is always used.
@@ -224,7 +226,7 @@ async function getGitIdentity(input) {
   return deepFreeze({
     established: true,
     mode: context.mode,
-    identity: { mode: context.mode, head: subject.head, tree: subject.tree, parents: [...parents], base, targetRefName: context.targetRefName, targetTip, rootTip, invocationTrust: context.invocationTrust },
+    identity: { frameworkMetadataSource: framework.source, mode: context.mode, head: subject.head, tree: subject.tree, parents: [...parents], base, targetRefName: context.targetRefName, targetTip, rootTip, invocationTrust: context.invocationTrust },
     subject,
     policy: { source: policy.source, policy: policy.policy, digest: policy.digest },
     records: out.records,

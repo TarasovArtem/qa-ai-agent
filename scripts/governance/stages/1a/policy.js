@@ -19,7 +19,7 @@
 
 const crypto = require("node:crypto");
 const { REASON, STATUS, LIMITS, deepFreeze } = require("../../kernel/contracts");
-const { isPlainObject, parsePositiveInteger, validateCapabilityId, classifySchemaCompatibility, validateSupportedSchemaVersions } = require("../../kernel/validation");
+const { isPlainObject, parsePositiveInteger, validateCapabilityId, classifySchemaCompatibility, validateSupportedSchemaVersions, validateFrameworkMetadata } = require("../../kernel/validation");
 const { parseStrictJson } = require("../../kernel/json-strict");
 const { canonicalJson } = require("../../kernel/results");
 const { FRAMEWORK_METADATA } = require("../../framework-metadata");
@@ -252,7 +252,22 @@ function invalid(problems, reasonCode = REASON.POLICY_INVALID, status = STATUS.C
  * frozen policy). Returns a frozen { ok, policy, unsupportedCapabilities } or
  * { ok:false, status, reasonCode, problems }.
  */
-function validateBasePolicy(tree) {
+/**
+ * Which framework metadata decides schema and capability support. Design section 14:
+ * the supported capability set and schema range come ONLY from the framework at the
+ * TARGET tip; a reviewed head can never claim what the target supports. A caller that
+ * read the target-tip metadata passes it in (validated here, never trusted as shaped);
+ * otherwise the EXECUTING framework's own metadata is used and the source is reported
+ * as EXECUTING_FRAMEWORK, so head-executed (phase-1, advisory) output is labelled.
+ */
+function resolveFrameworkMetadata(raw) {
+  if (raw === undefined || raw === null) return { ok: true, metadata: FRAMEWORK_METADATA, source: "EXECUTING_FRAMEWORK" };
+  const checked = validateFrameworkMetadata(raw);
+  if (!checked.ok) return { ok: false, reasonCode: checked.findings[0].reasonCode };
+  return { ok: true, metadata: checked.metadata, source: "TARGET_TIP" };
+}
+
+function validateBasePolicy(tree, metadata = FRAMEWORK_METADATA) {
   const problems = [];
   if (!isPlainObject(tree)) return invalid(["policy must be an object"]);
   for (const key of Object.keys(tree)) if (!POLICY_KEYS.includes(key)) problems.push("policy has an unknown field");
@@ -261,7 +276,7 @@ function validateBasePolicy(tree) {
 
   const version = parsePositiveInteger(tree.schemaVersion, { allowTypedNumber: true });
   if (!version.ok) return invalid(["schemaVersion is malformed"]);
-  const range = validateSupportedSchemaVersions(FRAMEWORK_METADATA.supportedSchemaVersions);
+  const range = validateSupportedSchemaVersions(metadata.supportedSchemaVersions);
   const compat = classifySchemaCompatibility(range, { ok: true, value: version.value });
   if (compat.status === STATUS.INCOMPLETE) return invalid(["schemaVersion is newer than this framework supports"], compat.reasonCode, STATUS.INCOMPLETE);
   if (compat.status && compat.status !== STATUS.PASS) return invalid(["schemaVersion is below the supported minimum"]);
@@ -276,7 +291,7 @@ function validateBasePolicy(tree) {
       else if (requiredCapabilities.includes(id.id)) problems.push("requiredCapabilities contains a duplicate");
       else {
         requiredCapabilities.push(id.id);
-        if (!FRAMEWORK_METADATA.supportedCapabilities.includes(id.id)) unsupportedCapabilities.push(id.id);
+        if (!metadata.supportedCapabilities.includes(id.id)) unsupportedCapabilities.push(id.id);
       }
     }
   }
@@ -325,7 +340,7 @@ function validateBasePolicy(tree) {
 }
 
 /** Parse + validate policy bytes (bounded, strict UTF-8, strict JSON). */
-function parseBasePolicyBytes(bytes) {
+function parseBasePolicyBytes(bytes, metadata = FRAMEWORK_METADATA) {
   if (!(bytes instanceof Uint8Array)) return invalid(["policy bytes are missing"]);
   if (bytes.length > MAX_POLICY_BYTES) return invalid(["policy exceeds the size limit"]);
   let text;
@@ -337,7 +352,7 @@ function parseBasePolicyBytes(bytes) {
   if (text.charCodeAt(0) === 0xfeff) return invalid(["policy has a byte-order mark"]);
   const parsed = parseStrictJson(text, { maxDepth: LIMITS.maxJsonDepth });
   if (!parsed.ok) return invalid(["policy is not strict JSON"]);
-  return validateBasePolicy(parsed.value);
+  return validateBasePolicy(parsed.value, metadata);
 }
 
 /** SHA-256 of the canonical policy (a public change-detection digest, not a secrecy control). */
@@ -347,5 +362,5 @@ function policyDigest(policy) {
 
 module.exports = {
   BASE_POLICY_PATH, BUILTIN_MINIMUM_POLICY, BUILTIN_PROTECTED_PATHS, BUILTIN_SECRET_RULE_IDS,
-  gateManifestPath, validateBasePolicy, parseBasePolicyBytes, parseSuppression, policyDigest,
+  gateManifestPath, validateBasePolicy, parseBasePolicyBytes, parseSuppression, policyDigest, resolveFrameworkMetadata,
 };

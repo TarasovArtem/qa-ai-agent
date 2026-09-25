@@ -32,7 +32,13 @@ const { redactString, TOKEN_RULES } = require("../../safety/redaction");
 const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
 const { resolveGitAdapter } = require("./git-adapter");
 const { resolveReader } = require("../head-reader");
-const { BUILTIN_SECRET_RULE_IDS, parseSuppression, validateBasePolicy } = require("./policy");
+const { BUILTIN_SECRET_RULE_IDS, parseSuppression, validateBasePolicy, resolveFrameworkMetadata } = require("./policy");
+
+/** Metadata deciding schema/capability support: the caller-supplied target-tip metadata when valid. */
+const metadataOf = (input) => {
+  const r = resolveFrameworkMetadata(input.targetFrameworkMetadata);
+  return r.ok ? r.metadata : { supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 0 } };
+};
 
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -185,7 +191,7 @@ async function scanSecrets(input) {
   let maxExpiryDays = 1;
   const policy = input.policy;
   if (isPlainObject(policy) && !(policy.scope && Array.isArray(policy.scope.allowedPathDomains) && policy.scope.allowedPathDomains.length === 0)) {
-    const validated = validateBasePolicy(policy);
+    const validated = validateBasePolicy(policy, metadataOf(input));
     if (!validated.ok) {
       add("1A.SECRETS.SCAN", STATUS.INCOMPLETE, REASON.POLICY_INVALID, "the effective policy is not valid: secret rules cannot be established", {});
       return done();

@@ -143,3 +143,14 @@ test("W1 1A scope: an empty change set passes; findings are deterministic and bo
   assert.equal(rec(r, "1A.SCOPE.ALLOWED").observed.paths.length, 10, "at most 10 sample paths are reported");
   assert.deepEqual(JSON.stringify(scope(many)), JSON.stringify(r), "same input, same output");
 });
+
+test("W1 1A scope: downstream re-validation honors the same target-tip metadata (a schema the target supports is not re-rejected)", () => {
+  const v2 = { ...JSON.parse(JSON.stringify(policy)), schemaVersion: 2 };
+  const withoutMetadata = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2 });
+  assert.equal(state(withoutMetadata, "1A.SCOPE.ALLOWED"), "INCOMPLETE/SCOPE_POLICY_UNAVAILABLE", "the executing framework supports schema 1 only");
+  const target = { frameworkVersion: "0.2.0", supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 2 } };
+  const withMetadata = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2, targetFrameworkMetadata: target });
+  assert.equal(state(withMetadata, "1A.SCOPE.ALLOWED"), "PASS/OK");
+  const broken = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2, targetFrameworkMetadata: { nonsense: true } });
+  assert.equal(state(broken, "1A.SCOPE.ALLOWED"), "INCOMPLETE/SCOPE_POLICY_UNAVAILABLE", "unusable target metadata never falls back to a permissive default");
+});

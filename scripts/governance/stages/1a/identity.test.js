@@ -641,3 +641,69 @@ test("W1 1A identity: POST_MERGE identity is shared facts only (no merge-gate re
     s.repo.cleanup();
   }
 });
+
+// ------------------------------------------------- target-tip framework metadata (no self-validation)
+
+const TARGET_OLD = { frameworkVersion: "0.1.0", supportedCapabilities: ["kernel-wave0@1"], supportedSchemaVersions: { minSupported: 1, maxSupported: 1 } };
+const TARGET_NEW = { frameworkVersion: "0.2.0", supportedCapabilities: ["repository-preflight@1", "markdown-reference-integrity@1", "future-capability@1"], supportedSchemaVersions: { minSupported: 1, maxSupported: 2 } };
+
+test("W1 1A identity: capability support comes from the TARGET-TIP metadata; the executing (head) framework cannot vouch for itself", async () => {
+  const s = prScenario({ policy: policyJson({ requiredCapabilities: ["repository-preflight@1"] }) });
+  try {
+    const executing = await s.run();
+    assert.equal(state(executing, "1A.POLICY.CAPABILITIES"), "PASS/OK");
+    assert.equal(rec(executing, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
+    assert.equal(executing.identity.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
+    assert.match(rec(executing, "1A.POLICY.CAPABILITIES").detail, /advisory/);
+    // The target tip (the protected branch) does not list the capability yet: CAPABILITY_LAG, even
+    // though the code executing this check (the head) claims to support it.
+    const lag = await s.run({ targetFrameworkMetadata: TARGET_OLD });
+    assert.equal(state(lag, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    assert.equal(rec(lag, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
+    assert.deepEqual([...rec(lag, "1A.POLICY.CAPABILITIES").observed.unsupported], ["repository-preflight@1"]);
+    assert.notEqual(g.aggregate(lag.records).readiness.state, "READY");
+    const supported = await s.run({ targetFrameworkMetadata: TARGET_NEW });
+    assert.equal(state(supported, "1A.POLICY.CAPABILITIES"), "PASS/OK");
+    assert.equal(rec(supported, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
+    assert.match(rec(supported, "1A.POLICY.CAPABILITIES").detail, /target-tip framework/);
+  } finally {
+    s.repo.cleanup();
+  }
+});
+
+test("W1 1A identity: the policy schemaVersion is judged against the TARGET range (newer than the target supports is capability lag)", async () => {
+  const s = prScenario({ policy: JSON.stringify({ ...basePolicy(), schemaVersion: 2 }) });
+  try {
+    const executing = await s.run();
+    assert.equal(state(executing, "1A.POLICY.ROOT"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET", "the executing framework supports only schema 1");
+    const target = await s.run({ targetFrameworkMetadata: TARGET_NEW });
+    assert.equal(state(target, "1A.POLICY.ROOT"), "PASS/OK", "the target range [1,2] accepts schema 2");
+    const old = await s.run({ targetFrameworkMetadata: TARGET_OLD });
+    assert.equal(state(old, "1A.POLICY.ROOT"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    assert.equal(old.policy.policy, null, "no usable policy: nothing is guessed or upgraded");
+  } finally {
+    s.repo.cleanup();
+  }
+});
+
+test("W1 1A identity: invalid or unavailable target metadata is INCOMPLETE and is never replaced by a default", async () => {
+  const s = prScenario();
+  try {
+    const cases = {
+      "range absent": [{ ...TARGET_NEW, supportedSchemaVersions: undefined }, "TARGET_SCHEMA_RANGE_UNAVAILABLE"],
+      "range inverted": [{ ...TARGET_NEW, supportedSchemaVersions: { minSupported: 5, maxSupported: 2 } }, "TARGET_SCHEMA_RANGE_INVALID"],
+      "range malformed": [{ ...TARGET_NEW, supportedSchemaVersions: { minSupported: "1", maxSupported: 2 } }, "TARGET_SCHEMA_RANGE_INVALID"],
+      "capability malformed": [{ ...TARGET_NEW, supportedCapabilities: ["repository-preflight@unknown"] }, "CAPABILITY_ID_INVALID"],
+      "not an object": ["metadata", "FRAMEWORK_METADATA_INVALID"],
+      "unknown field": [{ ...TARGET_NEW, extra: 1 }, "FRAMEWORK_METADATA_INVALID"],
+    };
+    for (const [label, [metadata, reason]] of Object.entries(cases)) {
+      const r = await s.run({ targetFrameworkMetadata: metadata });
+      assert.equal(r.established, false, label);
+      assert.deepEqual({ status: r.outcome.status, reason: r.outcome.reasonCode }, { status: "INCOMPLETE", reason }, label);
+    }
+    assert.equal((await s.run({ targetFrameworkMetadata: null })).established, true, "null means 'use the executing framework', labelled as such");
+  } finally {
+    s.repo.cleanup();
+  }
+});
