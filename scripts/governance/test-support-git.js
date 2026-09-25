@@ -168,3 +168,15 @@ module.exports.gitOptions = gitOptions;
 module.exports.fakeReader = fakeReader;
 module.exports.changedResult = changedResult;
 module.exports.makeSubject = makeSubject;
+
+/** A complete injected Git adapter whose methods all fail closed unless overridden. */
+function fakeAdapter(overrides = {}) {
+  const no = async () => ({ ok: false, detail: "not available in this fixture" });
+  return {
+    localHead: no, commitInfo: no, resolveTargetTip: no, mergeBases: no, isAncestor: no,
+    diffNames: no, treeEntry: no, readBlob: no, listTree: no, firstParentContains: no,
+    ...overrides,
+  };
+}
+
+module.exports.fakeAdapter = fakeAdapter;

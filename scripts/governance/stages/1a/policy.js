@@ -25,7 +25,7 @@ const { canonicalJson } = require("../../kernel/results");
 const { FRAMEWORK_METADATA } = require("../../framework-metadata");
 const { parsePathPattern } = require("../../safety/path-patterns");
 const { validateRepoRelativePath } = require("../../safety/repo-path");
-const { redactString } = require("../../safety/redaction");
+const { redactString, TOKEN_RULES } = require("../../safety/redaction");
 const { isValidBranchName } = require("./trusted-context");
 
 const BASE_POLICY_PATH = "governance/base.json";
@@ -33,9 +33,9 @@ const GATE_ID = /^[a-z][a-z0-9-]{1,63}$/;
 const MAX_POLICY_BYTES = 256 * 1024;
 const POLICY_KEYS = ["schemaVersion", "requiredCapabilities", "protectedTargetRefs", "scope", "secretRules", "suppressionPolicy", "suppressions", "markdown"];
 const SCOPE_KEYS = ["allowedPathDomains", "forbiddenPathDomains", "protectedPaths"];
-const BUILTIN_SECRET_RULE_IDS = deepFreeze([
-  "PRIVATE_KEY_BLOCK", "GITHUB_TOKEN", "AWS_ACCESS_KEY", "SLACK_TOKEN", "API_KEY_SK", "JWT", "BEARER_TOKEN", "SENSITIVE_VALUE",
-]);
+// Derived from the Wave 0 redaction rules (one definition of "secret-shaped") plus the
+// heuristic sensitive-value rule; a custom rule can never reuse one of these IDs.
+const BUILTIN_SECRET_RULE_IDS = deepFreeze([...TOKEN_RULES.map((rule) => rule.id), "SENSITIVE_VALUE"]);
 const CHARSETS = ["ALNUM", "HEX", "BASE64URL"];
 const SUPPRESSION_CLASSES = ["TEST_FIXTURE", "DOCUMENTED_PLACEHOLDER"];
 const DEFINITION_CONTEXTS = ["HEADING", "TABLE_FIRST_CELL"];
