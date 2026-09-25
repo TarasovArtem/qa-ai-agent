@@ -91,15 +91,46 @@ test("W1 1A secrets: base-policy rules add declarative prefixed-token rules (nev
   assert.equal(rec(hex, "1A.SECRETS.SCAN").observed.findings.length, 1);
 });
 
-test("W1 1A secrets: only changed files that have content at the head are scanned (deleted, symlink, binary skipped)", async () => {
+test("W1 1A secrets: only changed files that have content at the head are scanned (deleted, symlink, tree skipped; binary is never clean)", async () => {
   const reader = fakeReader({ "docs/a.md": "clean\n", "docs/link.md": { kind: "symlink" }, "bin/x.dat": Buffer.from([0x00, 0x01, 0x02, 0xff]), "docs/dir": { kind: "tree" } });
   const r = await g.scanSecrets({ subject, changedFiles: changedResult(subject, ["docs/a.md", "docs/deleted.md", "docs/link.md", "bin/x.dat", "docs/dir"]), policy: policyOf(), reader, now: NOW });
-  assert.equal(state(r, "1A.SECRETS.SCAN"), "PASS/OK");
+  // W1-SEC-M1: an unscannable file is INCOMPLETE, never a clean PASS.
+  assert.equal(state(r, "1A.SECRETS.SCAN"), "INCOMPLETE/SECRET_CONTENT_UNSCANNABLE");
   const obs = rec(r, "1A.SECRETS.SCAN").observed;
   assert.equal(obs.filesScanned, 1);
-  assert.equal(obs.binarySkipped, 1);
+  assert.equal(obs.unscannable, 1);
+  assert.deepEqual([...obs.unscannablePaths], ["bin/x.dat"]);
   assert.equal(obs.notFileContent, 3);
   assert.deepEqual(reader.calls.read, ["docs/a.md", "docs/deleted.md", "docs/link.md", "bin/x.dat", "docs/dir"], "only the changed set is read, in order");
+});
+
+test("W1-SEC-M1 regression: NUL, UTF-16 and binary content never produces a clean PASS; an ASCII token inside still FAILs", async () => {
+  const tokenBytes = Buffer.from(GH);
+  const cases = {
+    "NUL-prefixed UTF-8 + token": Buffer.concat([Buffer.from([0]), Buffer.from("\n"), tokenBytes, Buffer.from("\n")]),
+    "NUL after a text token": Buffer.concat([Buffer.from("hello\n"), tokenBytes, Buffer.from("\n"), Buffer.from([0])]),
+  };
+  for (const [name, bytes] of Object.entries(cases)) {
+    const r = await scan({ "docs/a.txt": bytes });
+    assert.equal(state(r, "1A.SECRETS.SCAN"), "FAIL/SECRET_FOUND", name + ": the ASCII token is still found byte-for-byte");
+    assert.equal(JSON.stringify(r).includes(GH.slice(4)), false, "no raw token in the result");
+  }
+  const unscannable = {
+    "UTF-16LE BOM + token": Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(GH, "utf16le")]),
+    "UTF-16BE BOM + token": Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(GH, "utf16le").swap16()]),
+    "UTF-16LE without BOM + token": Buffer.from(GH, "utf16le"),
+    "random binary": Buffer.from([0x00, 0x8f, 0x13, 0xc2, 0xff, 0x00, 0x01, 0x7f]),
+    "DER/PFX-like bytes": Buffer.from("3082010a0282010100c1b2a3", "hex"),
+    "BOM only (no NUL)": Buffer.from([0xff, 0xfe, 0x41, 0x42]),
+  };
+  for (const [name, bytes] of Object.entries(unscannable)) {
+    const r = await scan({ "docs/a.bin": bytes });
+    assert.equal(state(r, "1A.SECRETS.SCAN"), "INCOMPLETE/SECRET_CONTENT_UNSCANNABLE", name);
+    assert.notEqual(g.aggregate(r.records).readiness.state, "READY", name);
+  }
+  // Control: plain UTF-8 with the same token FAILs; clean UTF-8 (including non-ASCII) still PASSes.
+  assert.equal(state(await scan({ "docs/a.txt": `x ${GH}\n` }), "1A.SECRETS.SCAN"), "FAIL/SECRET_FOUND");
+  assert.equal(state(await scan({ "docs/a.txt": "caf\u00e9 \u4e2d\u6587 clean\n" }), "1A.SECRETS.SCAN"), "PASS/OK");
 });
 
 test("W1 1A secrets: bounds fail closed with INCOMPLETE (oversize file, oversize line, too many findings, too many files, read error)", async () => {

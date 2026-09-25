@@ -158,7 +158,9 @@ function createGitAdapter({ repositoryRoot, gitExecutable, remoteResolver = defa
 
   async function diffNames(from, to) {
     if (!sha(from) || !sha(to)) return fail("not a full commit SHA");
-    const r = await git(["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", from, to, "--"], { binary: true, maxStdoutBytes: MAX_LISTING_BYTES });
+    // --ignore-submodules=none is explicit: submodule.<name>.ignore in a head-controlled
+    // .gitmodules (or local config) must never hide a gitlink addition, removal or pointer move.
+    const r = await git(["diff", "--name-only", "-z", "--no-renames", "--ignore-submodules=none", "--no-ext-diff", "--no-textconv", "--no-color", from, to, "--"], { binary: true, maxStdoutBytes: MAX_LISTING_BYTES });
     if (!r.ok) return fail(r.detail);
     return ok(decodePaths(r.stdout));
   }

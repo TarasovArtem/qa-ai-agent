@@ -651,10 +651,12 @@ test("W1 1A identity: capability support comes from the TARGET-TIP metadata; the
   const s = prScenario({ policy: policyJson({ requiredCapabilities: ["repository-preflight@1"] }) });
   try {
     const executing = await s.run();
-    assert.equal(state(executing, "1A.POLICY.CAPABILITIES"), "PASS/OK");
+    // W1-SEC-M3: the executing framework supports the capability, but that is NOT target support.
+    assert.equal(state(executing, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
     assert.equal(rec(executing, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
     assert.equal(executing.identity.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
-    assert.match(rec(executing, "1A.POLICY.CAPABILITIES").detail, /advisory/);
+    assert.match(rec(executing, "1A.POLICY.CAPABILITIES").detail, /executing framework/);
+    assert.notEqual(g.aggregate(executing.records).readiness.state, "READY");
     // The target tip (the protected branch) does not list the capability yet: CAPABILITY_LAG, even
     // though the code executing this check (the head) claims to support it.
     const lag = await s.run({ targetFrameworkMetadata: TARGET_OLD });
@@ -703,6 +705,25 @@ test("W1 1A identity: invalid or unavailable target metadata is INCOMPLETE and i
       assert.deepEqual({ status: r.outcome.status, reason: r.outcome.reasonCode }, { status: "INCOMPLETE", reason }, label);
     }
     assert.equal((await s.run({ targetFrameworkMetadata: null })).established, true, "null means 'use the executing framework', labelled as such");
+  } finally {
+    s.repo.cleanup();
+  }
+});
+
+test("W1-SEC-M3 regression: only TARGET_TIP metadata can satisfy a required capability; head-claimed or absent metadata cannot", async () => {
+  const s = prScenario({ policy: policyJson({ requiredCapabilities: ["repository-preflight@1"] }) });
+  try {
+    // Absent target metadata (the executing head supports the capability): must not PASS.
+    const absent = await s.run();
+    assert.notEqual(rec(absent, "1A.POLICY.CAPABILITIES").status, "PASS");
+    // A "head" claiming extra capability cannot become target support: the target list decides.
+    const headClaim = await s.run({ targetFrameworkMetadata: TARGET_OLD });
+    assert.equal(state(headClaim, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    // Malformed target metadata fails closed with no subject (the existing schema contract).
+    const malformed = await s.run({ targetFrameworkMetadata: { frameworkVersion: "1", supportedCapabilities: "repository-preflight@1" } });
+    assert.equal(malformed.established, false);
+    assert.equal(malformed.outcome.status, "INCOMPLETE", "unusable target metadata fails closed with no subject");
+    assert.equal((await s.run({ targetFrameworkMetadata: TARGET_NEW })).records.find((r) => r.checkId === "1A.POLICY.CAPABILITIES").status, "PASS");
   } finally {
     s.repo.cleanup();
   }

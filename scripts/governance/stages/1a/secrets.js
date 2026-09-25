@@ -9,6 +9,11 @@
  * expression supplied by the repository); it can never remove or weaken a
  * built-in rule, and a head can never disable a rule for its own review.
  *
+ * Unscanned is never PASS: a changed file that cannot be interpreted as UTF-8 text (any NUL
+ * byte, which covers binary files and UTF-16/32, or a UTF-16 byte-order mark) is scanned
+ * byte-for-byte as Latin-1 so a plain-ASCII token inside it still FAILs, but the file can
+ * never be declared clean: it makes the scan INCOMPLETE (SECRET_CONTENT_UNSCANNABLE).
+ *
  * Output secrecy: a finding carries rule ID, path, line and the mask
  * `[REDACTED:<RULE>]` ONLY. The matched text exists solely inside this module to
  * compute a change-detection fingerprint for suppression matching; it is never
@@ -49,6 +54,12 @@ const MAX_REPORTED = 50;
 const MARKER = /\[REDACTED:([A-Z_]+)\]/g;
 const CHARSET_CLASS = { ALNUM: "A-Za-z0-9", HEX: "0-9a-fA-F", BASE64URL: "A-Za-z0-9_-" };
 const HEURISTIC_RULES = new Set(["SENSITIVE_VALUE"]);
+
+/** True when a file cannot be reliably read as UTF-8 text by this scanner. */
+function isUnscannable(bytes) {
+  if (bytes.includes(0)) return true; // binary, UTF-16 without BOM, UTF-32
+  return bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)); // UTF-16 BOM
+}
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const markersOf = (text) => [...text.matchAll(MARKER)].map((m) => m[1]);
@@ -217,7 +228,8 @@ async function scanSecrets(input) {
 
   const hits = [];
   let scanned = 0;
-  let binarySkipped = 0;
+  let unscannable = 0;
+  const unscannablePaths = [];
   let deletedOrLink = 0;
   let totalBytes = 0;
   let bound = null;
@@ -241,12 +253,16 @@ async function scanSecrets(input) {
       bound = "the total scanned bytes exceed the supported bound";
       break;
     }
-    if (got.bytes.subarray(0, 8000).includes(0)) {
-      binarySkipped += 1;
-      continue;
+    let content;
+    if (isUnscannable(got.bytes)) {
+      unscannable += 1;
+      unscannablePaths.push(path);
+      content = Buffer.from(got.bytes.buffer, got.bytes.byteOffset, got.bytes.length).toString("latin1");
+    } else {
+      scanned += 1;
+      content = decoder.decode(got.bytes);
     }
-    scanned += 1;
-    const lines = decoder.decode(got.bytes).split("\n");
+    const lines = content.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i].endsWith("\r") ? lines[i].slice(0, -1) : lines[i];
       if (line.length > MAX_LINE_LENGTH) {
@@ -317,8 +333,9 @@ async function scanSecrets(input) {
   }
   const suppressedCount = findings.filter((f) => f.disposition === "SUPPRESSED").length;
 
-  const observed = { filesScanned: scanned, binarySkipped, notFileContent: deletedOrLink, findingsTotal: findings.length, suppressed: suppressedCount, findings: findings.filter((f) => f.disposition !== "SUPPRESSED").slice(0, MAX_REPORTED) };
+  const observed = { filesScanned: scanned, unscannable, unscannablePaths: sample(unscannablePaths), notFileContent: deletedOrLink, findingsTotal: findings.length, suppressed: suppressedCount, findings: findings.filter((f) => f.disposition !== "SUPPRESSED").slice(0, MAX_REPORTED) };
   if (fail > 0) add("1A.SECRETS.SCAN", STATUS.FAIL, REASON.SECRET_FOUND, "secret-shaped content was found (values are never printed)", observed);
+  else if (unscannable > 0) add("1A.SECRETS.SCAN", STATUS.INCOMPLETE, REASON.SECRET_CONTENT_UNSCANNABLE, "a changed file cannot be scanned as text (binary or UTF-16/32 content): it is never reported clean", observed);
   else if (bound !== null) add("1A.SECRETS.SCAN", STATUS.INCOMPLETE, REASON.SCAN_BOUND_EXCEEDED, bound, observed);
   else if (proposals > 0 && proposedHits.size > 0) add("1A.SECRETS.SCAN", STATUS.HUMAN_REVIEW_REQUIRED, REASON.SUPPRESSION_PROPOSED, "a head-proposed suppression covers a hit: it is a proposal and never PASS", observed);
   else if (review > 0) add("1A.SECRETS.SCAN", STATUS.HUMAN_REVIEW_REQUIRED, REASON.SECRET_HEURISTIC_HIT, "a heuristic sensitive-value hit needs human review (values are never printed)", observed);

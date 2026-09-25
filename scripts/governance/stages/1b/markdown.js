@@ -42,6 +42,16 @@ const FENCE_OPEN = /^( *)(`{3,}|~{3,})(.*)$/;
 const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
 const DELIMITER_ROW = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 const DEFINITION = /^ {0,3}\[([^\]\n]{1,999})\]:[ \t]*(<[^>\n]*>|\S+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/;
+// Block starts that END a table (GFM: "the table is broken at the first empty line, or
+// beginning of another block-level structure"). Anything else, including a plain
+// paragraph line, is still a table row.
+const LIST_ITEM = /^ {0,3}(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]|$)/;
+const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+const HTML_BLOCK_NAMES = "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+const HTML_BLOCK_START = new RegExp("^ {0,3}(?:<(?:script|pre|style|textarea)(?:[ \\t>]|$)|<!--|<\\?|<![A-Za-z]|<!\\[CDATA\\[|</?(?:" + HTML_BLOCK_NAMES + ")(?:[ \\t]|/?>|$))", "i");
+// A complete open or closing tag alone on the line (CommonMark HTML block type 7); bounded so it stays cheap.
+const HTML_LONE_TAG = /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*$/;
+const endsTable = (row) => LIST_ITEM.test(row) || THEMATIC_BREAK.test(row) || HTML_BLOCK_START.test(row) || (row.length <= 500 && HTML_LONE_TAG.test(row));
 const AUTOLINK = /^<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/;
 const HTML_TAG = /^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/;
 const ASCII_PUNCT = /[!-/:-@[-`{-~]/;
@@ -57,36 +67,60 @@ function decodeEntities(text) {
   });
 }
 
-const MAX_SCAN_STEPS = 400_000;
+const BASE_SCAN_STEPS = 1_000_000;
+const STEPS_PER_CHAR = 8;
 
 /**
- * Work bound for ONE inline text (a paragraph). Adversarial input (a megabyte of
- * `[` or of backtick runs of distinct lengths) could otherwise make repeated failed
- * searches quadratic. Two guards keep it linear: a failed code-span search is
- * remembered by run length (the smallest opener position that failed; any later
- * opener of that length must fail too), and bracket matching draws on a fixed step
- * budget. Exhausting the budget makes the document FAIL CLOSED with
- * MARKDOWN_BOUND_EXCEEDED: links are never silently dropped.
+ * ONE work budget for a whole parse operation. Every scanning loop (the inline
+ * scan, bracket matching, code-span searches and table-row splitting) spends from the
+ * SAME budget object, including the recursive scan of link text: nested constructs can
+ * never restart the count, so total work is O(input) whatever the nesting. The budget
+ * is internal (never exposed publicly). Exhausting it makes the document FAIL CLOSED
+ * with MARKDOWN_BOUND_EXCEEDED: links are never silently dropped.
  */
-function newScanState() {
-  return { steps: MAX_SCAN_STEPS, exhausted: false, failedFrom: new Map() };
+function newBudget(length) {
+  return { steps: BASE_SCAN_STEPS + STEPS_PER_CHAR * length, exhausted: false };
+}
+
+/** Spend `n` steps; false (and the budget is marked exhausted) once nothing is left. */
+function spend(budget, n = 1) {
+  budget.steps -= n;
+  if (budget.steps <= 0) {
+    budget.exhausted = true;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Per-text scan state: the shared budget plus a failed-code-span cache. The cache is
+ * positional and therefore local to one text: a failed search is remembered by run
+ * length (the smallest opener position that failed; any later opener of that length
+ * must fail too), which keeps repeated failed searches linear.
+ */
+function newScanState(budget) {
+  return { budget, failedFrom: new Map() };
 }
 
 /** Index just past a code span starting at `i` (a backtick), or null when unmatched. */
 function codeSpanEnd(text, i, state) {
   let run = 0;
   while (text[i + run] === "`") run += 1;
-  if (state && state.failedFrom.has(run) && i >= state.failedFrom.get(run)) return null;
+  if (state.failedFrom.has(run) && i >= state.failedFrom.get(run)) return null;
   let j = i + run;
   while (j < text.length) {
     if (text[j] === "`") {
       let k = 0;
       while (text[j + k] === "`") k += 1;
-      if (k === run) return { end: j + k, contentStart: i + run, contentEnd: j, run };
+      if (k === run) {
+        if (!spend(state.budget, j + k - i)) return null;
+        return { end: j + k, contentStart: i + run, contentEnd: j, run };
+      }
       j += k;
     } else j += 1;
   }
-  if (state) state.failedFrom.set(run, Math.min(i, state.failedFrom.has(run) ? state.failedFrom.get(run) : i));
+  spend(state.budget, j - i);
+  state.failedFrom.set(run, Math.min(i, state.failedFrom.has(run) ? state.failedFrom.get(run) : i));
   return null;
 }
 
@@ -94,11 +128,7 @@ function codeSpanEnd(text, i, state) {
 function matchBracket(text, open, state) {
   let depth = 0;
   for (let i = open; i < text.length && i - open <= MAX_BRACKET_TEXT; i += 1) {
-    state.steps -= 1;
-    if (state.steps <= 0) {
-      state.exhausted = true;
-      return -1;
-    }
+    if (!spend(state.budget)) return -1;
     const c = text[i];
     if (c === "\\") i += 1;
     else if (c === "`") {
@@ -184,9 +214,8 @@ function stripEmphasisUnderscores(text) {
  * One inline pass: code spans, links/images, autolinks, and the RENDERED plain text
  * (used for heading anchors). `depth` bounds the recursion into link text.
  */
-function scanInline(text, depth = 0) {
-  const state = newScanState();
-  let childExhausted = false;
+function scanInline(text, depth = 0, budget = null) {
+  const state = newScanState(budget || newBudget(text.length));
   const links = [];
   const codeSpans = [];
   const parts = []; // { text, literal }
@@ -198,6 +227,7 @@ function scanInline(text, depth = 0) {
   let i = 0;
   const n = text.length;
   while (i < n) {
+    if (!spend(state.budget)) break;
     const c = text[i];
     if (c === "\\" && i + 1 < n && ASCII_PUNCT.test(text[i + 1])) {
       flush();
@@ -225,8 +255,7 @@ function scanInline(text, depth = 0) {
       let consumed = null;
       if (close > 0) {
         const inner = text.slice(open + 1, close);
-        const sub = scanInline(inner, depth + 1);
-        if (sub.exhausted) childExhausted = true;
+        const sub = scanInline(inner, depth + 1, state.budget);
         if (text[close + 1] === "(") {
           const target = parseInlineTarget(text, close + 1);
           if (target) consumed = { end: target.end, kind: isImage ? "image" : "inline", destination: target.destination, label: null, plain: sub.plain };
@@ -272,7 +301,7 @@ function scanInline(text, depth = 0) {
   }
   flush();
   const plain = parts.map((p) => (p.literal ? p.text : stripEmphasisUnderscores(decodeEntities(p.text)))).join("");
-  return { links, codeSpans, plain, exhausted: state.exhausted || childExhausted };
+  return { links, codeSpans, plain, exhausted: state.budget.exhausted };
 }
 
 /** True when `pos` lies inside one of the code spans. */
@@ -281,14 +310,15 @@ function insideCodeSpan(codeSpans, pos) {
 }
 
 /** Split a table row on unescaped pipes outside code spans; trims cells and outer pipes. */
-function splitTableRow(line) {
+function splitTableRow(line, budget = null) {
   let text = line.trim();
   if (text.startsWith("|")) text = text.slice(1);
   const cells = [];
-  const state = newScanState();
+  const state = newScanState(budget || newBudget(text.length));
   let current = "";
   let i = 0;
   while (i < text.length) {
+    if (!spend(state.budget)) break;
     const c = text[i];
     if (c === "\\" && i + 1 < text.length) {
       current += c + text[i + 1];
@@ -315,7 +345,7 @@ function splitTableRow(line) {
   return cells;
 }
 
-const hasTablePipe = (line) => splitTableRow(line).length > 1 || (line.trim().startsWith("|") && line.trim().length > 1);
+const hasTablePipe = (line, budget) => splitTableRow(line, budget).length > 1 || (line.trim().startsWith("|") && line.trim().length > 1);
 
 function failure(reasonCode, detail) {
   return { ok: false, reasonCode, detail };
@@ -353,7 +383,7 @@ function parseDocument(input) {
   const slugger = createSlugger();
   let fence = null;
   let comment = false;
-  let workExhausted = false; // an inline scan hit its work budget: fail closed, never drop links silently
+  const budget = newBudget(text.length); // one work budget for the whole document
   // Inline structure is scanned per PARAGRAPH: link text and code spans may wrap across
   // source lines. A paragraph ends at a blank line or at any other block start.
   let para = [];
@@ -365,8 +395,7 @@ function parseDocument(input) {
       starts.push(total);
       total += item.text.length + 1;
     }
-    const scanned = scanInline(para.map((item) => item.text).join("\n"));
-    if (scanned.exhausted) workExhausted = true;
+    const scanned = scanInline(para.map((item) => item.text).join("\n"), 0, budget);
     for (const l of scanned.links) {
       // Binary search: the last paragraph line that starts at or before the link offset.
       let lo = 0;
@@ -382,12 +411,13 @@ function parseDocument(input) {
   };
 
   const addLinks = (lineNo, lineText, scanned) => {
-    if (scanned.exhausted) workExhausted = true;
     for (const l of scanned.links) links.push({ line: lineNo, kind: l.kind, destination: l.destination, label: l.label });
     return scanned;
   };
 
+  const exhaustedFailure = () => failure(REASON.MARKDOWN_BOUND_EXCEEDED, "the document exceeded its parse work bound");
   for (let i = 0; i < lines.length; i += 1) {
+    if (budget.exhausted || !spend(budget)) return exhaustedFailure();
     const line = lines[i];
     const lineNo = i + 1;
     if (fence) {
@@ -428,7 +458,7 @@ function parseDocument(input) {
     if (atx) {
       flushPara();
       const rawText = (atx[2] || "").trim();
-      const scanned = addLinks(lineNo, rawText, scanInline(rawText));
+      const scanned = addLinks(lineNo, rawText, scanInline(rawText, 0, budget));
       if (headings.length >= MAX_HEADINGS) return failure(REASON.MARKDOWN_BOUND_EXCEEDED, "too many headings");
       headings.push({ line: lineNo, level: atx[1].length, text: scanned.plain, raw: rawText, anchor: slugger.slug(scanned.plain) });
       continue;
@@ -441,23 +471,23 @@ function parseDocument(input) {
       continue;
     }
     // GFM table: a header row followed by a delimiter row.
-    if (i + 1 < lines.length && kinds[i + 1] === "TEXT" && DELIMITER_ROW.test(lines[i + 1]) && lines[i + 1].includes("|") && hasTablePipe(line) && !isBlank(line)) {
+    if (i + 1 < lines.length && kinds[i + 1] === "TEXT" && DELIMITER_ROW.test(lines[i + 1]) && lines[i + 1].includes("|") && hasTablePipe(line, budget) && !isBlank(line)) {
       flushPara();
       if (tables.length >= MAX_TABLES) return failure(REASON.MARKDOWN_BOUND_EXCEEDED, "too many tables");
-      const header = splitTableRow(line);
-      const alignments = splitTableRow(lines[i + 1]);
+      const header = splitTableRow(line, budget);
+      const alignments = splitTableRow(lines[i + 1], budget);
       const columns = header.length;
       const table = { line: lineNo, endLine: lineNo + 1, columns, header, alignments, rows: [], problems: [] };
       if (alignments.length !== columns) table.problems.push({ line: lineNo + 1, kind: "DELIMITER", expected: columns, actual: alignments.length });
-      addLinks(lineNo, line, scanInline(line));
+      addLinks(lineNo, line, scanInline(line, 0, budget));
       let j = i + 2;
       while (j < lines.length) {
         const row = lines[j];
-        if (isBlank(row) || FENCE_OPEN.test(row) || ATX.test(row) || /^ {0,3}>/.test(row)) break;
-        const cells = splitTableRow(row);
+        if (isBlank(row) || FENCE_OPEN.test(row) || ATX.test(row) || /^ {0,3}>/.test(row) || endsTable(row)) break;
+        const cells = splitTableRow(row, budget);
         table.rows.push({ line: j + 1, cells });
         if (cells.length !== columns) table.problems.push({ line: j + 1, kind: "CARDINALITY", expected: columns, actual: cells.length });
-        addLinks(j + 1, row, scanInline(row));
+        addLinks(j + 1, row, scanInline(row, 0, budget));
         table.endLine = j + 1;
         j += 1;
       }
@@ -473,7 +503,7 @@ function parseDocument(input) {
   }
   flushPara();
   if (links.length > MAX_LINKS) return failure(REASON.MARKDOWN_BOUND_EXCEEDED, "too many links");
-  if (workExhausted) return failure(REASON.MARKDOWN_BOUND_EXCEEDED, "an inline scan exceeded its work bound");
+  if (budget.exhausted) return exhaustedFailure();
   if (fence) fences.push(fence); // unclosed: stays closed=false
 
   const structure = {
@@ -497,4 +527,4 @@ function parseMarkdown(input) {
   return deepFreeze(doc.structure);
 }
 
-module.exports = { parseMarkdown, parseDocument, scanInline, splitTableRow, insideCodeSpan, MAX_BYTES };
+module.exports = { parseMarkdown, parseDocument, scanInline, splitTableRow, insideCodeSpan, newBudget, MAX_BYTES };

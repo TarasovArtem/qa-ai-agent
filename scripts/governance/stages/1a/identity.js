@@ -178,8 +178,16 @@ async function getGitIdentity(input) {
   else if (protectedRefs.includes(context.targetRefName)) add("1A.TARGET.PROTECTED", STATUS.PASS, REASON.OK, "the target is an authenticated, protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
   else add("1A.TARGET.PROTECTED", context.mode === "POST_MERGE" ? STATUS.FAIL : STATUS.HUMAN_REVIEW_REQUIRED, REASON.TARGET_NOT_PROTECTED, "the authenticated target is not a protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
 
-  if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the framework does not list", { unsupported: policy.unsupportedCapabilities, frameworkMetadataSource: framework.source });
-  else if (policy.policy !== null) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, framework.source === "TARGET_TIP" ? "every required capability is listed by the target-tip framework" : "every required capability is listed by the EXECUTING framework (advisory unless it is the target-tip framework)", { required: policy.policy.requiredCapabilities, frameworkMetadataSource: framework.source });
+  // Target capability support is decided ONLY by target-tip framework metadata. The executing
+  // framework (which may be the reviewed head's own code) can never establish what the target
+  // supports, so with any other source a required capability is INCOMPLETE, never PASS.
+  if (policy.policy !== null) {
+    const required = policy.policy.requiredCapabilities;
+    if (required.length === 0) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "the policy requires no capability", { required, frameworkMetadataSource: framework.source });
+    else if (framework.source !== "TARGET_TIP") add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "target-tip framework metadata was not supplied: capability support cannot be established from the executing framework", { required, frameworkMetadataSource: framework.source });
+    else if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the target-tip framework does not list", { unsupported: policy.unsupportedCapabilities, frameworkMetadataSource: framework.source });
+    else add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "every required capability is listed by the target-tip framework", { required, frameworkMetadataSource: framework.source });
+  }
 
   if (context.mode === "PR_REVIEW") {
     // Target tip: a supplied SHA is an assertion only; the resolved tip is always used.

@@ -18,7 +18,7 @@
 
 "use strict";
 
-const { insideCodeSpan, scanInline } = require("./markdown");
+const { insideCodeSpan, scanInline, newBudget } = require("./markdown");
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -38,12 +38,32 @@ function compileFamily(family) {
   };
 }
 
+/**
+ * Per-document scan context: ONE work budget shared by every code-span computation for
+ * the document (all families, all lines), and the spans cached per line so they are
+ * computed at most once and only for lines that actually contain a candidate.
+ */
+const contexts = new WeakMap();
+function contextOf(doc) {
+  let ctx = contexts.get(doc);
+  if (!ctx) {
+    ctx = { budget: newBudget(doc.lines.reduce((n, l) => n + l.length + 1, 0)), spans: new Map() };
+    contexts.set(doc, ctx);
+  }
+  return ctx;
+}
+function spansOf(ctx, key, text) {
+  if (!ctx.spans.has(key)) ctx.spans.set(key, scanInline(text, 0, ctx.budget).codeSpans);
+  return ctx.spans.get(key);
+}
+
 /** All candidate occurrences on a line: { id, wellFormed, index, context }. */
-function scanLine(compiled, line, kind) {
-  const spans = scanInline(line).codeSpans;
+function scanLine(compiled, line, kind, ctx, key) {
   const found = [];
+  let spans = null;
   compiled.candidate.lastIndex = 0;
   for (const match of line.matchAll(compiled.candidate)) {
+    if (kind !== "FENCED_CODE" && spans === null) spans = spansOf(ctx, key, line);
     const context = kind === "FENCED_CODE" ? "FENCED_CODE" : insideCodeSpan(spans, match.index) ? "INLINE_CODE" : "TEXT";
     if (compiled.ignoreContexts.has(context)) continue;
     found.push({ token: match[0], wellFormed: compiled.full.test(match[0]), index: match.index, context });
@@ -63,11 +83,12 @@ function extractFamily(compiled, doc, path) {
   const references = [];
   const malformed = [];
   const definedAt = new Set(); // "line:index" of occurrences that ARE definitions
+  const ctx = contextOf(doc);
 
   if (compiled.definitionContexts.has("HEADING")) {
     for (const h of doc.headingsRaw) {
       const text = stripWrappers(h.raw);
-      const found = scanLine(compiled, text, "TEXT").find((f) => f.index === 0);
+      const found = scanLine(compiled, text, "TEXT", ctx, "h" + h.line).find((f) => f.index === 0);
       if (found && found.wellFormed) {
         definitions.push({ path, line: h.line, id: found.token });
         definedAt.add(`${h.line}:heading`);
@@ -94,7 +115,7 @@ function extractFamily(compiled, doc, path) {
     const kind = doc.kinds[i];
     if (kind === "COMMENT") continue;
     const lineNo = i + 1;
-    for (const occurrence of scanLine(compiled, doc.lines[i], kind)) {
+    for (const occurrence of scanLine(compiled, doc.lines[i], kind, ctx, i)) {
       if (!occurrence.wellFormed) {
         malformed.push({ path, line: lineNo, token: occurrence.token.slice(0, 64) });
         continue;
@@ -109,7 +130,7 @@ function extractFamily(compiled, doc, path) {
       references.push({ path, line: lineNo, id: occurrence.token });
     }
   }
-  return { definitions, references, malformed };
+  return { definitions, references, malformed, exhausted: ctx.budget.exhausted };
 }
 
 module.exports = { compileFamily, extractFamily };

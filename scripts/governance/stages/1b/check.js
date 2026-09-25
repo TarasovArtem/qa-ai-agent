@@ -84,7 +84,10 @@ function classifyDestination(docPath, raw) {
   const isDir = pathPart.endsWith("/");
   const joined = pathPart.startsWith("/") ? pathPart.slice(1) : nodePath.posix.join(nodePath.posix.dirname(docPath), pathPart);
   const normalized = nodePath.posix.normalize(joined).replace(/\/$/, "");
-  if (normalized === "" || normalized === "." || normalized === ".." || normalized.startsWith("../") || !validateRepoRelativePath(normalized).ok) {
+  // The repository root itself ("" or ".") is a valid in-repository directory target;
+  // only a path that climbs ABOVE it escapes.
+  if (normalized === "" || normalized === ".") return { kind: "path", target: "", root: true, fragment, expectDir: true };
+  if (normalized === ".." || normalized.startsWith("../") || !validateRepoRelativePath(normalized).ok) {
     return { error: REASON.LINK_ESCAPES_ROOT, message: "link path resolves outside the repository root" };
   }
   return { kind: "path", target: normalized, fragment, expectDir: isDir };
@@ -249,7 +252,9 @@ async function checkReferences(input) {
       }
       let targetDoc = null;
       if (c.kind === "anchor") targetDoc = entry;
-      else {
+      else if (c.root) {
+        // The repository root always exists and is a directory: nothing to stat or to anchor.
+      } else {
         const st = await reader.stat(c.target);
         if (st.kind === "error") {
           problems.unreadable.push(finding(path, t.line, "a link target could not be inspected"));
@@ -296,13 +301,18 @@ async function checkReferences(input) {
         else {
           for (const path of sources) {
             const entry = await load(path, "an ID-definition source");
-            if (entry.kind === "doc") result.definitions.push(...extractFamily(compiled, entry.doc, path).definitions);
+            if (entry.kind === "doc") {
+              const extracted = extractFamily(compiled, entry.doc, path);
+              if (extracted.exhausted) result.incomplete = "an ID-definition source exceeded its scan work bound";
+              result.definitions.push(...extracted.definitions);
+            }
             else if (entry.kind !== "absent") result.incomplete = "an ID-definition source could not be read as Markdown";
           }
         }
       }
       for (const { path, entry } of changedDocs) {
         const found = extractFamily(compiled, entry.doc, path);
+        if (found.exhausted) result.incomplete = "a changed document exceeded its ID scan work bound";
         result.references.push(...found.references);
         result.malformed.push(...found.malformed);
       }
