@@ -1940,7 +1940,8 @@ post-merge CI:     run 36105646213 (event push, exact merge SHA) --
 
 C7 independent re-review:  APPROVED
                    Senior Software Developer PASS; Security PASS; Governance PASS
-review independence:       LIMITED -- same-session role separation
+review-chain independence: LIMITED throughout -- same-session role separation
+                           (the HEAVY review chain, C7 approval included)
 findings at approval:      B0 / H0 / M0 / L0; INFO 3 (non-blocking); L-11 CLOSED
 zero-open-blocking-design-defect: PASS
 
@@ -1965,8 +1966,7 @@ Type & Schema Boundary Audit:  distinct future gate (not satisfied by this desig
 
 `GOV-AUTO-1` design/reconciliation is the first sub-phase of the stage to close:
 a repository-grounded architecture and the canonical `GOV-VERIFY-1`
-reconciliation now exist on `main`, independently `HEAVY`-reviewed through seven
-correctives (C1..C7) and post-merge certified. This is a **design artifact, not an
+reconciliation now exist on `main`, `HEAVY`-reviewed through seven correctives (C1..C7) and post-merge certified. This is a **design artifact, not an
 implementation** -- the stage's own implementation lifecycle (implementation,
 deterministic tests, adversarial fixtures, independent Senior Software Developer
 and Security review, exact-head authorization, standard two-parent merge,
@@ -1978,8 +1978,7 @@ independent human review and `READY` never authorizes a merge. The
 when the ROADMAP synchronization that records this evidence is itself
 independently reviewed, merged and post-merge certified, and even then shared
 Git-identity, diff-scope and CI-evidence facts must come from the `1A`/`1F`
-interfaces. The review's independence was limited (same-session role
-separation) and is recorded as such; the three INFO findings were non-blocking.
+interfaces. Review-chain independence was LIMITED throughout -- the `HEAVY` review chain, including the C7 approval, used same-session role separation -- and is recorded as such; the three INFO findings were non-blocking.
 The future whole-project Type & Schema Boundary Audit remains a separate gate,
 and `AISEC-4` remains `NOT_STARTED`. No runtime, public API or package surface
 change accompanies this evidence.
