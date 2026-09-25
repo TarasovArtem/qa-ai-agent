@@ -423,8 +423,7 @@ CI result.
 which selects Model A -- Composition (see [`GOV-AUTO-1`](#gov-auto-1--governance-pre-review-framework-next-active-gate) below).
 Implementation of any `GOV-VERIFY-1` capability that overlaps `GOV-AUTO-1`
 was governance-paused until the ROADMAP synchronization that records that
-decision had itself been independently reviewed, merged and post-merge
-certified; that condition is now satisfied (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)),
+decision had itself been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified; that condition is now satisfied (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)),
 so the design-reconciliation governance pause is satisfied. That is **not**
 permission to duplicate anything: shared
 Git-identity, diff-scope and CI-evidence facts must come from the `GOV-AUTO-1`
@@ -455,8 +454,7 @@ post-merge-certified contract ([`docs/gov-auto-1-design-reconciliation-v1.md`](d
 [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence)); the executable framework remains unimplemented
 (implementation `NOT_STARTED`), and implementation proceeds under that design,
 beginning with Wave 0, which is now the next governed implementation step: the
-ROADMAP synchronization recording the design has been independently reviewed,
-merged and post-merge certified (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)) and the
+ROADMAP synchronization recording the design has been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)) and the
 live ROADMAP has been re-read. Wave 0 remains `NOT_STARTED`.
 
 **Why now (facts only).** `AISEC-3` required ten correctives (C1..C10), each
@@ -620,8 +618,7 @@ constraints (evidence producer, never a merge authority; fail-closed; discrete
 evidence fields; no `SAFE_TO_MERGE` verdict; the listed negative fixtures)
 remains authoritative; it is not cancelled, obsolete or absorbed. **Pause and
 release:** the governance pause on overlapping `GOV-VERIFY-1` implementation was
-conditioned on the ROADMAP synchronization recording this decision being itself
-independently reviewed, merged and post-merge certified; that condition is now
+conditioned on the ROADMAP synchronization recording this decision being itself reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified; that condition is now
 satisfied (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)), so the design-reconciliation
 governance pause is satisfied, but that is not permission to duplicate anything: shared facts must come from `1A`/`1F`, where those interfaces do not
 yet exist the overlap is a technical dependency on them, and non-overlapping
@@ -1158,8 +1155,7 @@ roadmap-designated next active gate, with `AISEC-4` following it -- an
 authorization-level designation only. Its design/reconciliation has since been
 merged and post-merge certified (see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence)) while its
 implementation remains `NOT_STARTED`; the ROADMAP synchronization recording that
-design has itself been independently reviewed, merged and post-merge certified
-(PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)), so Wave 0 is now the next governed
+design has itself been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)), so Wave 0 is now the next governed
 implementation step and remains `NOT_STARTED`. `D-1` and
 `D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
 execution is started or activated by this state.
@@ -1981,8 +1977,7 @@ post-merge certification, canonical closure) has not begun, so `GOV-AUTO-1` is
 only (`READY`, `HUMAN_REVIEW_REQUIRED`, `NOT_READY`): `NOT_READY` does not bar
 independent human review and `READY` never authorizes a merge. The
 `GOV-VERIFY-1` governance pause on overlapping implementation was to be released only when the
-ROADMAP synchronization that records this evidence was itself independently
-reviewed, merged and post-merge certified -- a condition since satisfied (see
+ROADMAP synchronization that records this evidence was itself reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified -- a condition since satisfied (see
 [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)) -- and even then shared
 Git-identity, diff-scope and CI-evidence facts must come from the `1A`/`1F`
 interfaces. Review-chain independence was LIMITED throughout -- the `HEAVY` review chain, including the C7 approval, used same-session role separation -- and is recorded as such; the three INFO findings were non-blocking.
@@ -2025,7 +2020,7 @@ Type & Schema Boundary Audit:  distinct future gate
 ```
 
 The two conditions the roadmap waited on -- the synchronization recording the
-`GOV-AUTO-1` design being independently reviewed, merged and post-merge certified,
+`GOV-AUTO-1` design being reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified,
 and the live `ROADMAP.md` being re-read -- are now satisfied by `PR #186` and its
 post-merge push run. This is a factual closure-evidence update only: it changes no
 architecture, ownership, readiness semantics or stage order, does not start
@@ -2551,7 +2546,7 @@ is now the next active gate (inserted before `AISEC-4`; see [§7](#7-owner-phase
 design/reconciliation is merged and post-merge certified -- see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) --
 and `GOV-AUTO-1` implementation still precedes `AISEC-4`, with Wave 0 now the next
 governed implementation step -- the ROADMAP synchronization recording that design
-has been independently reviewed, merged and post-merge certified (see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)) --
+has been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)) --
 though Wave 0 remains `NOT_STARTED`; see
 [§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
