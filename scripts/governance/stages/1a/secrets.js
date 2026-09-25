@@ -9,10 +9,13 @@
  * expression supplied by the repository); it can never remove or weaken a
  * built-in rule, and a head can never disable a rule for its own review.
  *
- * Unscanned is never PASS: a changed file that cannot be interpreted as UTF-8 text (any NUL
- * byte, which covers binary files and UTF-16/32, or a UTF-16 byte-order mark) is scanned
- * byte-for-byte as Latin-1 so a plain-ASCII token inside it still FAILs, but the file can
- * never be declared clean: it makes the scan INCOMPLETE (SECRET_CONTENT_UNSCANNABLE).
+ * Unscanned is never PASS: only content PROVEN to be valid UTF-8 text (a strict, fatal
+ * decode succeeds and it holds no NUL byte and no UTF-16 byte-order mark) is scanned as
+ * text and can be reported clean. Anything else (binary, UTF-16/32, any invalid UTF-8,
+ * including NUL-free raw key bytes) is scanned byte-for-byte as Latin-1 purely as a
+ * DETECTION AID, so a plain-ASCII token inside it still FAILs; Latin-1 decodes every byte
+ * sequence, so it never establishes that a file is text. Such a file can never be declared
+ * clean: without a finding it makes the scan INCOMPLETE (SECRET_CONTENT_UNSCANNABLE).
  *
  * Output secrecy: a finding carries rule ID, path, line and the mask
  * `[REDACTED:<RULE>]` ONLY. The matched text exists solely inside this module to
@@ -55,10 +58,20 @@ const MARKER = /\[REDACTED:([A-Z_]+)\]/g;
 const CHARSET_CLASS = { ALNUM: "A-Za-z0-9", HEX: "0-9a-fA-F", BASE64URL: "A-Za-z0-9_-" };
 const HEURISTIC_RULES = new Set(["SENSITIVE_VALUE"]);
 
-/** True when a file cannot be reliably read as UTF-8 text by this scanner. */
-function isUnscannable(bytes) {
-  if (bytes.includes(0)) return true; // binary, UTF-16 without BOM, UTF-32
-  return bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)); // UTF-16 BOM
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Proven-text check: { text } when the bytes are valid UTF-8 without NUL or a UTF-16 BOM,
+ * otherwise { text: null } (unscannable as text). Deterministic; never repairs bytes.
+ */
+function readAsText(bytes) {
+  if (bytes.includes(0)) return { text: null }; // binary, UTF-16 without BOM, UTF-32
+  if (bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff))) return { text: null }; // UTF-16 BOM
+  try {
+    return { text: STRICT_UTF8.decode(bytes) };
+  } catch {
+    return { text: null }; // invalid UTF-8: not proven text
+  }
 }
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -233,7 +246,6 @@ async function scanSecrets(input) {
   let deletedOrLink = 0;
   let totalBytes = 0;
   let bound = null;
-  const decoder = new TextDecoder("utf-8", { fatal: false });
   for (const path of files) {
     const got = await reader.read(path, MAX_FILE_BYTES);
     if (got.kind === "absent" || got.kind === "symlink" || got.kind === "tree" || got.kind === "submodule") {
@@ -254,13 +266,15 @@ async function scanSecrets(input) {
       break;
     }
     let content;
-    if (isUnscannable(got.bytes)) {
+    const decoded = readAsText(got.bytes);
+    if (decoded.text === null) {
+      // Detection aid only: Latin-1 decodes any bytes, so it can find an ASCII token but can never clear the file.
       unscannable += 1;
       unscannablePaths.push(path);
       content = Buffer.from(got.bytes.buffer, got.bytes.byteOffset, got.bytes.length).toString("latin1");
     } else {
       scanned += 1;
-      content = decoder.decode(got.bytes);
+      content = decoded.text;
     }
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
@@ -335,7 +349,7 @@ async function scanSecrets(input) {
 
   const observed = { filesScanned: scanned, unscannable, unscannablePaths: sample(unscannablePaths), notFileContent: deletedOrLink, findingsTotal: findings.length, suppressed: suppressedCount, findings: findings.filter((f) => f.disposition !== "SUPPRESSED").slice(0, MAX_REPORTED) };
   if (fail > 0) add("1A.SECRETS.SCAN", STATUS.FAIL, REASON.SECRET_FOUND, "secret-shaped content was found (values are never printed)", observed);
-  else if (unscannable > 0) add("1A.SECRETS.SCAN", STATUS.INCOMPLETE, REASON.SECRET_CONTENT_UNSCANNABLE, "a changed file cannot be scanned as text (binary or UTF-16/32 content): it is never reported clean", observed);
+  else if (unscannable > 0) add("1A.SECRETS.SCAN", STATUS.INCOMPLETE, REASON.SECRET_CONTENT_UNSCANNABLE, "a changed file is not proven UTF-8 text (binary, UTF-16/32 or invalid UTF-8): it is never reported clean", observed);
   else if (bound !== null) add("1A.SECRETS.SCAN", STATUS.INCOMPLETE, REASON.SCAN_BOUND_EXCEEDED, bound, observed);
   else if (proposals > 0 && proposedHits.size > 0) add("1A.SECRETS.SCAN", STATUS.HUMAN_REVIEW_REQUIRED, REASON.SUPPRESSION_PROPOSED, "a head-proposed suppression covers a hit: it is a proposal and never PASS", observed);
   else if (review > 0) add("1A.SECRETS.SCAN", STATUS.HUMAN_REVIEW_REQUIRED, REASON.SECRET_HEURISTIC_HIT, "a heuristic sensitive-value hit needs human review (values are never printed)", observed);
