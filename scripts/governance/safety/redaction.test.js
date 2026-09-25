@@ -81,3 +81,99 @@ test("pathological input does not cause catastrophic matching time", () => {
   g.redactString("-----BEGIN " + "PRIVATE KEY-----" + "\n".repeat(50000));
   assert.ok(Date.now() - started < 3000);
 });
+
+// ---- Corrective C1 / SEC-M1: an input-bound cut can never emit part of a secret ----
+
+const INPUT_BOUND = 65536; // the internal input bound (redaction.js MAX_INPUT_LENGTH)
+const OPTIONS = { maxLength: 60000 };
+const BEARER_BODY = "Z".repeat(30);
+const SHRINKERS = `${GH} `.repeat(1500); // ~61.5k chars that collapse to ~36k after redaction
+
+// Text of exactly INPUT_BOUND + extra chars in which `secret` begins `before` chars
+// before the input bound and continues past it. `earlier` is prepended first.
+function straddle(secret, before, earlier = "") {
+  const head = earlier + " ".repeat(Math.max(0, INPUT_BOUND - before - earlier.length));
+  assert.ok(head.length === INPUT_BOUND - before, "fixture must place the secret at the intended offset");
+  return `${head}${secret} trailing words after the secret`;
+}
+
+const CASES = [
+  { name: "GitHub token", secret: GH, leak: ["ghp_", "BBBB"] },
+  { name: "GitHub fine-grained token", secret: PAT, leak: ["github_", "CCCC"] },
+  { name: "bearer token", secret: `Bearer ${BEARER_BODY}`, leak: ["ZZZZ"] },
+  { name: "JWT", secret: JWT, leak: ["eyJF", "FFFF", "GGGG"] },
+  { name: "sk- token", secret: SK, leak: ["sk-E", "EEEE"] },
+  { name: "AWS access key", secret: AWS, leak: ["AKIA", "DDDD"] },
+];
+
+test("SEC-M1: the original review counterexample (earlier redactions shrink output, token straddles the bound) leaks nothing", () => {
+  const input = straddle(GH, 20, SHRINKERS);
+  assert.ok(input.length > INPUT_BOUND);
+  const out = g.redactString(input, OPTIONS);
+  assert.equal(out.includes("ghp_"), false);
+  assert.equal(out.includes("BBBB"), false);
+  assert.equal(/gh[pousr]_/.test(out), false);
+});
+
+for (const c of CASES) {
+  for (const before of [1, 2, 5, 12, 20]) {
+    for (const earlier of ["", SHRINKERS]) {
+      test(`SEC-M1: ${c.name} starting ${before} chars before the input bound leaks no prefix (${earlier ? "with" : "without"} earlier redactions)`, () => {
+        const out = g.redactString(straddle(c.secret, before, earlier), OPTIONS);
+        for (const fragment of c.leak) assert.equal(out.includes(fragment), false, fragment);
+        assert.match(out, /\.\.\.\[truncated \d+\]$/);
+      });
+    }
+  }
+}
+
+test("SEC-M1: a token beginning exactly at or after the input bound is never emitted", () => {
+  for (const before of [0, -3]) {
+    const head = " ".repeat(INPUT_BOUND - before);
+    const out = g.redactString(`${head}${GH} tail`, OPTIONS);
+    assert.equal(out.includes("ghp_"), false);
+    assert.equal(out.includes("BBBB"), false);
+  }
+});
+
+test("SEC-M1: a private-key block crossing the input bound never emits its body", () => {
+  for (const before of [40, 200, 2000]) {
+    const pem = "-----BEGIN " + "PRIVATE KEY-----\n" + "MIIBVQIBADANBgkqhkiG9w0BAQEFAASC\n".repeat(400);
+    const out = g.redactString(straddle(pem, before, SHRINKERS), OPTIONS);
+    assert.equal(out.includes("MIIBVQ"), false);
+    assert.equal(out.includes("AQEFAASC"), false);
+  }
+});
+
+test("SEC-M1: a key=value secret crossing the input bound leaks no value characters", () => {
+  const out = g.redactString(straddle("password=" + "q".repeat(40), 30, SHRINKERS), OPTIONS);
+  assert.equal(out.includes("qqqq"), false);
+});
+
+test("SEC-M1: ordinary non-secret text near the bound is preserved except for the final partial word", () => {
+  const words = "plain ordinary words ".repeat(4000); // ~84k chars, no secrets
+  const out = g.redactString(words, OPTIONS);
+  assert.ok(out.startsWith("plain ordinary words plain ordinary words"));
+  assert.ok(out.length > 55000, "most of the bounded input is kept");
+  assert.ok(out.length <= 60100, "output stays bounded");
+  assert.match(out, /\.\.\.\[truncated \d+\]$/);
+  assert.equal(g.redactString(words, OPTIONS), out, "deterministic");
+});
+
+test("SEC-M1: a single whitespace-free input larger than the bound yields only the marker, bounded and quickly", () => {
+  const started = Date.now();
+  const out = g.redactString("A".repeat(500000), OPTIONS);
+  assert.ok(out.length < 100);
+  assert.match(out, /truncated 500000\]$/);
+  assert.ok(Date.now() - started < 3000);
+});
+
+test("SEC-M1: input below the bound is redacted in full and untouched by the boundary rule", () => {
+  const text = "w ".repeat(20000) + GH + " " + "w ".repeat(5000);
+  assert.ok(text.length < INPUT_BOUND);
+  const out = g.redactString(text, OPTIONS);
+  assert.equal(out.includes("ghp_"), false);
+  assert.equal(out.includes("BBBB"), false);
+  assert.equal(out.includes("[REDACTED:GITHUB_TOKEN]"), true);
+  assert.equal(out.includes("truncated"), false);
+});

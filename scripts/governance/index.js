@@ -23,7 +23,7 @@ const { validateGraph } = require("./kernel/graph");
 const { aggregate, checkDomainResultCompleteness, exitCodeFor } = require("./kernel/readiness");
 const { validateManifest, parseManifestText, parseManifestBytes } = require("./kernel/manifest");
 const { lexicalResolveWithin, resolveWithinRoot } = require("./safety/path");
-const { runProcess, describeProcessResult } = require("./safety/process");
+const { createProcessRunner, describeProcessResult } = require("./safety/process");
 const { redactString, redactValue } = require("./safety/redaction");
 const { loadManifestBytes, loadManifestFile } = require("./io/manifest-loader");
 
@@ -55,7 +55,7 @@ module.exports = Object.freeze({
   // safety primitives
   lexicalResolveWithin,
   resolveWithinRoot,
-  runProcess,
+  createProcessRunner,
   describeProcessResult,
   redactString,
   redactValue,

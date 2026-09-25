@@ -7,10 +7,13 @@
  * ADS-style or trailing-dot/space segments, so no Windows normalization can turn
  * an innocent-looking segment into `..`) and containment is decided with
  * path.relative, never a string prefix (so `/repo` cannot be confused with
- * `/repo-evil`). Symlinks are handled fail-closed: the deepest existing ancestor
- * of the target is resolved with realpath and must itself remain inside the
- * real root. (A check-then-use race against a concurrent filesystem writer is
- * outside a read-only pre-review's threat model and is documented, not hidden.)
+ * `/repo-evil`). Symlinks are handled fail-closed: every component below the root
+ * is inspected with lstat and any symlink/junction (dangling or not) is refused,
+ * and the deepest existing ancestor is additionally resolved with realpath and
+ * must remain inside the real root. A component that does not exist yet (a future
+ * output path) is allowed. This is a point-in-time check: a concurrent filesystem
+ * writer can still race any later use of the path, so callers that read files
+ * must harden the open itself (see io/manifest-loader.js).
  */
 
 "use strict";
@@ -80,11 +83,27 @@ function resolveWithinRoot(repositoryRoot, relativePath, options = {}) {
   } catch {
     throw unsafe("repositoryRoot cannot be resolved");
   }
-  let probe = lexical.absolute;
-  while (!fs.existsSync(probe)) {
-    const parent = nodePath.dirname(probe);
-    if (parent === probe) throw unsafe("no existing ancestor inside repositoryRoot");
-    probe = parent;
+  // Walk the components below the root with lstat (which never follows a link). A
+  // symlink or junction component or leaf, dangling or not, is refused outright:
+  // it is never treated as a nonexistent normal path. The first missing component
+  // ends the walk (a future output path); everything above it was inspected.
+  let probe = repositoryRoot;
+  let parentIsDirectory = true;
+  for (const segment of lexical.relative.split("/")) {
+    const next = nodePath.join(probe, segment);
+    let stat;
+    try {
+      stat = fs.lstatSync(next);
+    } catch (error) {
+      if (error && error.code === "ENOENT") {
+        if (!parentIsDirectory) throw unsafe("path continues below a non-directory");
+        break;
+      }
+      throw unsafe("path component cannot be inspected");
+    }
+    if (stat.isSymbolicLink()) throw unsafe("path contains a symlink component");
+    parentIsDirectory = stat.isDirectory();
+    probe = next;
   }
   let realProbe;
   try {

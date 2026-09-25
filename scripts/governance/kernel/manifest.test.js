@@ -110,7 +110,7 @@ test("load: a manifest is read through repositoryRoot, bounded, and load is sepa
     fs.writeFileSync(path.join(root, "governance", "m.json"), fixture("valid-minimal.json"));
     const bytes = g.loadManifestBytes(root, "governance/m.json");
     assert.equal(bytes.ok, true);
-    assert.ok(bytes.bytes instanceof Uint8Array);
+    assert.ok(bytes.read() instanceof Uint8Array);
     assert.equal(g.loadManifestFile(root, "governance/m.json").valid, true);
     assert.equal(g.loadManifestFile(root, "governance/missing.json").valid, false);
     assert.equal(g.loadManifestFile(root, "../escape.json").valid, false);

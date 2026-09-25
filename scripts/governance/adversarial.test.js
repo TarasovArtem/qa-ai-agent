@@ -68,14 +68,15 @@ test("fixture 10: a Windows path escape is rejected", () => {
 
 test("fixture 11: a shell-metacharacter argument stays inert data", async () => {
   const payload = "x; rm -rf / && echo pwned | tee /tmp/x `id` $(id)";
-  const r = await g.runProcess({ file: process.execPath, allowedExecutables: [process.execPath], args: ["-e", "process.stdout.write(process.argv[1])", payload] });
+  const runner = g.createProcessRunner({ repositoryRoot: process.cwd(), allowedExecutables: [process.execPath] });
+  const r = await runner.run({ file: process.execPath, args: ["-e", "process.stdout.write(process.argv[1])", payload] });
   assert.equal(r.stdout, payload);
 });
 
 test("fixture 12: oversized external command output is cut off and reported", async () => {
-  const r = await g.runProcess({
+  const runner = g.createProcessRunner({ repositoryRoot: process.cwd(), allowedExecutables: [process.execPath] });
+  const r = await runner.run({
     file: process.execPath,
-    allowedExecutables: [process.execPath],
     args: ["-e", "process.stdout.write('A'.repeat(3000000))"],
     maxStdoutBytes: 2048,
   });
@@ -115,9 +116,10 @@ test("public API boundary: internals are not exported and the surface is frozen"
   for (const internal of ["parseStrictJson", "RawNumber", "isRawNumber", "deepFreeze", "canonicalJson", "cloneJson", "isJsonValue", "parsePositiveInteger"]) {
     assert.equal(internal in g, false, internal);
   }
-  for (const pub of ["validateManifest", "validateGraph", "aggregate", "validateResultRecord", "resolveWithinRoot", "runProcess", "redactString"]) {
+  for (const pub of ["validateManifest", "validateGraph", "aggregate", "validateResultRecord", "resolveWithinRoot", "createProcessRunner", "redactString"]) {
     assert.equal(typeof g[pub], "function", pub);
   }
+  assert.equal("runProcess" in g, false, "the request-authorized runner was replaced by the policy-bound runner");
 });
 
 test("package surface: governance code is not published and package exports are unchanged", () => {

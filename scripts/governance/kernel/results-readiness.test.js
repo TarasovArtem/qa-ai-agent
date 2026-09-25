@@ -87,9 +87,6 @@ test("NOT_APPLICABLE is neutral, requires a proof, and never equals PASS", () =>
   const na = record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: { applicabilityProof: "no markdown changed" }, reasonCode: "NOT_APPLICABLE" });
   const ready = g.aggregate([record(), na]);
   assert.equal(ready.readiness.state, "READY");
-  const onlyNa = g.aggregate([na]);
-  assert.equal(onlyNa.readiness.state, "NOT_READY");
-  assert.ok(onlyNa.kernelRecords.some((r) => r.reasonCode === "NO_PASSING_EVIDENCE"));
   const noProof = g.aggregate([record(), record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: null, reasonCode: "NOT_APPLICABLE" })]);
   assert.equal(noProof.readiness.state, "NOT_READY");
   assert.ok(noProof.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
@@ -173,4 +170,51 @@ test("unknown status injected at runtime becomes a CONFIGURATION_ERROR kernel re
   const out = g.aggregate([record(), { ...record({ checkId: "1A.Q" }), status: "GREEN" }]);
   assert.equal(out.readiness.state, "NOT_READY");
   assert.equal(out.overallStatus, "CONFIGURATION_ERROR");
+});
+
+// Corrective C1 / DEV-L1: proven NOT_APPLICABLE follows the design (section 7) exactly.
+const na = (checkId, proof = "predicate evaluated true") =>
+  record({ checkId, status: "NOT_APPLICABLE", observed: proof === null ? null : { applicabilityProof: proof }, reasonCode: "NOT_APPLICABLE" });
+
+test("C1 DEV-L1: one proven NOT_APPLICABLE record is READY (no extra evidence rule)", () => {
+  const out = g.aggregate([na("1B.NA")]);
+  assert.equal(out.overallStatus, "PASS");
+  assert.equal(out.readiness.state, "READY");
+  assert.deepEqual(out.kernelRecords, []);
+});
+
+test("C1 DEV-L1: several proven NOT_APPLICABLE records are READY", () => {
+  const out = g.aggregate([na("1B.NA1"), na("1B.NA2"), na("1C.NA3")]);
+  assert.equal(out.readiness.state, "READY");
+  assert.equal(out.counts.PASS, 0);
+  assert.equal(out.counts.NOT_APPLICABLE, 3);
+});
+
+test("C1 DEV-L1: PASS mixed with NOT_APPLICABLE is READY", () => {
+  const out = g.aggregate([record(), na("1B.NA")]);
+  assert.equal(out.overallStatus, "PASS");
+  assert.equal(out.readiness.state, "READY");
+});
+
+test("C1 DEV-L1: NOT_APPLICABLE without proof is INCOMPLETE / NOT_READY, alone or mixed", () => {
+  for (const records of [[na("1B.NA", null)], [na("1B.NA", "")], [record(), na("1B.NA", null)]]) {
+    const out = g.aggregate(records);
+    assert.equal(out.overallStatus, "INCOMPLETE");
+    assert.equal(out.readiness.state, "NOT_READY");
+    assert.ok(out.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
+  }
+});
+
+test("C1 DEV-L1: HUMAN_REVIEW_REQUIRED and FAIL still dominate NOT_APPLICABLE", () => {
+  const human = g.aggregate([na("1B.NA"), record({ checkId: "1E.H", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "MEANING_DEPENDENCY_CHANGED" })]);
+  assert.equal(human.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  const fail = g.aggregate([na("1B.NA"), record({ checkId: "1A.F", status: "FAIL", reasonCode: "SOME_REASON" })]);
+  assert.equal(fail.overallStatus, "FAIL");
+  assert.equal(fail.readiness.state, "NOT_READY");
+});
+
+test("C1 DEV-L1: an empty record set is still INCOMPLETE (nothing established)", () => {
+  const out = g.aggregate([]);
+  assert.equal(out.overallStatus, "INCOMPLETE");
+  assert.equal(out.readiness.state, "NOT_READY");
 });

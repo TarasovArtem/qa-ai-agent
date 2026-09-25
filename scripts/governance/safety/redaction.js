@@ -6,8 +6,11 @@
  * sensitive key names are never emitted, in a stable, bounded form.
  *
  * Output never contains any character of a matched secret (no partial prefix),
- * only a rule identifier. Redaction runs before truncation so a cut can never
- * split a secret pattern and leak its head.
+ * only a rule identifier. Redaction runs before output truncation. The one lossy
+ * step that precedes matching is the input bound (MAX_INPUT_LENGTH); a cut there
+ * could split a token, so the trailing run of non-whitespace characters at the cut
+ * (the only place an incomplete secret candidate can sit) is dropped before
+ * matching and counted in the truncation marker. See redactString.
  */
 
 "use strict";
@@ -30,8 +33,9 @@ const RULES = Object.freeze([
 const SENSITIVE_PAIR = /\b((?:[A-Za-z0-9_-]{0,64}(?:password|passwd|secret|token|api[_-]?key|authorization|credential)[A-Za-z0-9_-]{0,64}))(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const SENSITIVE_KEY = /(?:password|passwd|secret|token|api[_-]?key|authorization|credential)/i;
 const MAX_REDACTION_DEPTH = 8;
-// Input is bounded before pattern matching (bounded regex cost); the output limit is
-// kept below it so a cut at the input bound can never surface a partial secret.
+// Input is bounded before pattern matching (bounded regex cost and memory). The
+// output limit is kept below it. A cut at the input bound is made safe by
+// dropping the trailing whitespace-free run, not by relying on output length.
 const MAX_INPUT_LENGTH = 65536;
 const MAX_OUTPUT_LENGTH = 60000;
 
@@ -44,8 +48,18 @@ function redactString(value, options = {}) {
   const requested = Number.isInteger(options.maxLength) && options.maxLength > 0 ? options.maxLength : LIMITS.maxDetailLength;
   const max = Math.min(requested, MAX_OUTPUT_LENGTH);
   const source = typeof value === "string" ? value : String(value);
-  const overflow = Math.max(0, source.length - MAX_INPUT_LENGTH);
-  let text = source.slice(0, MAX_INPUT_LENGTH);
+  let text = source;
+  let overflow = 0;
+  if (source.length > MAX_INPUT_LENGTH) {
+    // Secret tokens contain no whitespace (private-key blocks are redacted through
+    // an end-of-input alternative), so an incomplete candidate can only be the final
+    // whitespace-free run of the slice. Drop it entirely rather than let a partial
+    // token escape the length-anchored rules.
+    let end = MAX_INPUT_LENGTH;
+    while (end > 0 && !/\s/.test(source[end - 1])) end -= 1;
+    text = source.slice(0, end);
+    overflow = source.length - end;
+  }
   for (const rule of RULES) text = text.replace(rule.re, marker(rule.id));
   text = text.replace(SENSITIVE_PAIR, (_m, key, sep) => `${key}${sep}${marker("SENSITIVE_VALUE")}`);
   if (text.length > max || overflow > 0) return `${text.slice(0, max)}...[truncated ${text.length - Math.min(text.length, max) + overflow}]`;

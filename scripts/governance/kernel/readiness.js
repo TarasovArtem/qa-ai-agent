@@ -113,17 +113,15 @@ function aggregate(records, options = {}) {
     }
   }
 
-  // READY needs positive evidence: neutral records alone cannot attest.
-  const nonNeutral = [...valid, ...kernel].filter((r) => r.status !== STATUS.NOT_APPLICABLE);
-  if (nonNeutral.length === 0) {
-    kernel.push(kernelRecord("KERNEL.EVIDENCE", STATUS.INCOMPLETE, REASON.NO_PASSING_EVIDENCE, "no record establishes any fact", runSubject));
-  }
-
   const all = [...valid, ...kernel];
   const counts = {};
   for (const s of Object.values(STATUS)) counts[s] = 0;
   for (const r of all) counts[r.status] += 1;
-  const overallStatus = STATUS_PRECEDENCE.find((s) => counts[s] > 0) || STATUS.INCOMPLETE;
+  // Design section 7: READY when every record is PASS or a proven NOT_APPLICABLE.
+  // An unproven NOT_APPLICABLE already produced an INCOMPLETE kernel record above,
+  // so a run made only of neutral records reaching this point is fully proven. An
+  // empty run has no record at all and stays INCOMPLETE (nothing was established).
+  const overallStatus = STATUS_PRECEDENCE.find((s) => counts[s] > 0) || (counts[STATUS.NOT_APPLICABLE] > 0 ? STATUS.PASS : STATUS.INCOMPLETE);
   const state =
     overallStatus === STATUS.PASS ? READINESS.READY
       : overallStatus === STATUS.HUMAN_REVIEW_REQUIRED ? READINESS.HUMAN_REVIEW_REQUIRED

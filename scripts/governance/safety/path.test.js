@@ -102,3 +102,85 @@ test("error messages are bounded and do not echo the offending path", () => {
     assert.equal(error.message.includes("SECRET-VALUE"), false);
   }
 });
+
+// ---- Corrective C1 / SEC-L2: symlink components are never equivalent to missing paths ----
+
+function withLinkFixture(t, body) {
+  const base = fs.mkdtempSync(nodePath.join(os.tmpdir(), "gov-wave0-c1-link-"));
+  const root = nodePath.join(base, "repo");
+  const outside = nodePath.join(base, "outside");
+  try {
+    fs.mkdirSync(root);
+    fs.mkdirSync(nodePath.join(root, "docs"));
+    fs.mkdirSync(outside);
+    fs.writeFileSync(nodePath.join(outside, "secret.txt"), "x");
+    fs.writeFileSync(nodePath.join(root, "docs", "real.md"), "x");
+    const link = (target, at, type) => fs.symlinkSync(target, nodePath.join(root, at), type);
+    body({ root, outside, base, link });
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
+function symlinksAllowed(t, link) {
+  try {
+    link();
+    return true;
+  } catch {
+    t.skip("symlinks are not permitted in this environment");
+    return false;
+  }
+}
+
+test("SEC-L2: a dangling leaf symlink pointing outside the root is rejected", (t) => {
+  withLinkFixture(t, ({ root, base, link }) => {
+    if (!symlinksAllowed(t, () => link(nodePath.join(base, "missing-outside"), "dangling", "dir"))) return;
+    unsafe(() => g.resolveWithinRoot(root, "dangling"));
+    unsafe(() => g.resolveWithinRoot(root, "dangling/child.txt"));
+  });
+});
+
+test("SEC-L2: a dangling leaf symlink nominally pointing inside the root is rejected too", (t) => {
+  withLinkFixture(t, ({ root, link }) => {
+    if (!symlinksAllowed(t, () => link(nodePath.join(root, "docs", "not-yet.md"), "docs/soon.md", "file"))) return;
+    unsafe(() => g.resolveWithinRoot(root, "docs/soon.md"));
+  });
+});
+
+test("SEC-L2: an intermediate dangling symlink is rejected", (t) => {
+  withLinkFixture(t, ({ root, base, link }) => {
+    if (!symlinksAllowed(t, () => link(nodePath.join(base, "nowhere"), "docs/mid", "dir"))) return;
+    unsafe(() => g.resolveWithinRoot(root, "docs/mid/deeper/file.md"));
+  });
+});
+
+test("SEC-L2: an existing symlink to outside is rejected, leaf or intermediate", (t) => {
+  withLinkFixture(t, ({ root, outside, link }) => {
+    if (!symlinksAllowed(t, () => link(outside, "escape", "junction"))) return;
+    unsafe(() => g.resolveWithinRoot(root, "escape"));
+    unsafe(() => g.resolveWithinRoot(root, "escape/secret.txt"));
+    unsafe(() => g.resolveWithinRoot(root, "escape/new/file.txt"));
+  });
+});
+
+test("SEC-L2: an existing symlink to a location inside the root is rejected consistently", (t) => {
+  withLinkFixture(t, ({ root, link }) => {
+    if (!symlinksAllowed(t, () => link(nodePath.join(root, "docs"), "alias", "junction"))) return;
+    unsafe(() => g.resolveWithinRoot(root, "alias"));
+    unsafe(() => g.resolveWithinRoot(root, "alias/real.md"));
+  });
+});
+
+test("SEC-L2: a normal nonexistent leaf under a valid parent is still allowed", (t) => {
+  withLinkFixture(t, ({ root }) => {
+    assert.equal(g.resolveWithinRoot(root, "docs/future.md").absolute, nodePath.join(root, "docs", "future.md"));
+    assert.equal(g.resolveWithinRoot(root, "new-dir/deeper/future.md").absolute, nodePath.join(root, "new-dir", "deeper", "future.md"));
+    assert.equal(g.resolveWithinRoot(root, "docs/real.md").absolute, nodePath.join(root, "docs", "real.md"));
+  });
+});
+
+test("SEC-L2: a path below a regular file is rejected rather than treated as absent", (t) => {
+  withLinkFixture(t, ({ root }) => {
+    unsafe(() => g.resolveWithinRoot(root, "docs/real.md/child.txt"));
+  });
+});
