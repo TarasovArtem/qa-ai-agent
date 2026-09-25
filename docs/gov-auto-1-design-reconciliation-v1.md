@@ -654,7 +654,7 @@ protected field** of any existing governance-root policy.
 | Root policy present, `protectedTargetRefs` present and valid | The root policy list governs |
 | Root policy present, `protectedTargetRefs` absent | `CONFIGURATION_ERROR` |
 | Root policy present, list empty (`[]`) | `CONFIGURATION_ERROR`: a root policy that protects no governance target is semantically ambiguous and would make every post-merge verification fail, so it is illegal rather than given special semantics |
-| Root policy present, malformed list (a non-string or empty-string entry, an entry with surrounding whitespace, wildcard or control characters, or a duplicate entry) | `CONFIGURATION_ERROR` |
+| Root policy present, malformed list (a wrong container such as `null`, `{}` or the string `"main"`, a non-string or empty-string entry, an entry with surrounding whitespace, wildcard or control characters, or a duplicate entry) | `CONFIGURATION_ERROR` |
 | Root policy file present but unparseable or schema-invalid | `CONFIGURATION_ERROR` |
 
 Entries are exact branch names as the platform reports them; the list is read
@@ -662,7 +662,7 @@ from the governance root tip, never from the head. **The bootstrap fallback is
 used only when no governance-root policy exists.** Once a root policy exists the
 fallback is disabled, even if the policy or the field is missing or malformed, so
 a broken policy can never yield a weaker fallback. If the platform-authenticated
-default branch cannot be established, the result is `INCOMPLETE` (`NOT_READY`),
+default branch cannot be established, the result is `INCOMPLETE` (`DEFAULT_BRANCH_UNAVAILABLE`, `NOT_READY`),
 with no fallback to `main`, `origin/HEAD`, the local current branch or a
 manifest value.
 
@@ -730,7 +730,7 @@ bootstrap transition is stated explicitly, not left to inference.
 
 - *Capability declaration and versioning (C5).* The framework at the target tip
   declares `frameworkVersion`, an explicit `supportedCapabilities[]` and an
-  explicit `supportedSchemaVersions` range. The gate manifest and base policy
+  explicit, required and validated `supportedSchemaVersions` range (see the target range contract below). The gate manifest and base policy
   declare `schemaVersion` and `requiredCapabilities[]`. A capability identity
   includes its semantic version: `capability-id@major` (for example
   `dependency-aware-delta@1`), matching `^[a-z][a-z0-9-]{1,63}@[1-9][0-9]{0,3}$`.
@@ -761,22 +761,61 @@ bootstrap transition is stated explicitly, not left to inference.
     `123`. Invalid: `0`, `-1`, `+1`, `01`, `1.0`, `1.2.3`, `"2 "`, `"v2"`, `null`.
     This syntax is unrelated to the capability major of
     `capability-id@major`, which has its own pattern.
-  - **Order: validate, then compare.** raw value, then syntax and type
-    validation, then the normalized integer, then the compatibility comparison.
+    The manifest syntax is lexical, so it is established from the **raw JSON
+    token, before any numeric normalization**, or by an equivalent
+    lexical-preserving parser; inspecting an already parsed number cannot tell
+    `1` from `1.0`. This is an implementation requirement, not a new
+    architecture.
+  - **Order: validate, then compare.** target range retrieval, then target range validation, then the manifest raw value, then syntax and type validation, then the normalized integer, then the compatibility comparison.
     A malformed value is never compared numerically, so `"02"`, `"2foo"`,
     `"2.0"` and `null` can never become "newer".
+  - **Target range contract (L-11).** `supportedSchemaVersions` is **required,
+    validated, fail-closed** metadata of the target-tip framework. It comes only
+    from the target tip; the reviewed head cannot declare or override it, and no
+    manifest field can substitute for missing target metadata. Structure: an
+    object with exactly the fields `minSupported` and `maxSupported`, each a
+    positive base-10 integer (a JSON number token matching `^[1-9][0-9]{0,8}$`,
+    validated from the raw token exactly like a manifest value, with no coercion
+    from strings, decimals, `null` or NaN-like text) and with
+    `minSupported <= maxSupported`.
+
+    | Condition | Result |
+    |---|---|
+    | `supportedSchemaVersions`, `minSupported` or `maxSupported` absent | `INCOMPLETE` (`TARGET_SCHEMA_RANGE_UNAVAILABLE`, so `NOT_READY`) |
+    | wrong container (`null`, a string, an array, a non-object), unexpected or wrong fields, or a malformed, zero, negative, decimal or string bound | `INCOMPLETE` (`TARGET_SCHEMA_RANGE_INVALID`) |
+    | `minSupported > maxSupported` | `INCOMPLETE` (`TARGET_SCHEMA_RANGE_INVALID`); never reordered or swapped |
+    | container valid, both bounds valid, `minSupported <= maxSupported` | valid range: the manifest comparison below may proceed |
+
+    Nothing is assumed for a missing range (not minimum 1, not the current
+    manifest version, not an unbounded maximum). **The manifest is never compared
+    against a range that has not passed validation**: for `min = 5`, `max = 2`
+    and a manifest `3`, the result stops at `TARGET_SCHEMA_RANGE_INVALID` and is
+    never "below minimum", "above maximum" or "accepted". An unknown range is not
+    capability lag either, because the framework then cannot establish that the
+    capability is actually absent. **Why `INCOMPLETE`, not
+    `CONFIGURATION_ERROR`:** `CONFIGURATION_ERROR` is for an invalid reviewed
+    repository or governance configuration; a malformed or unavailable range is
+    target capability metadata, so the framework cannot establish what the target
+    supports, which is `INCOMPLETE`. Trusted provenance is not valid structure:
+    the metadata is trusted by source but structurally validated before use.
+
   - **Decision sequence** (the target framework's supported range
     `[minSupported, maxSupported]` comes only from target-tip metadata,
     `supportedSchemaVersions`, never from the head):
 
     | Condition | Result |
     |---|---|
+    | target range absent or invalid (see the target range contract above) | `INCOMPLETE` (`TARGET_SCHEMA_RANGE_UNAVAILABLE` or `TARGET_SCHEMA_RANGE_INVALID`); no comparison is made |
     | `schemaVersion` missing where required | `CONFIGURATION_ERROR` |
     | `schemaVersion` malformed | `CONFIGURATION_ERROR` |
     | valid, below `minSupported` | `CONFIGURATION_ERROR` (the manifest violates the current repository contract) |
     | valid, within `[minSupported, maxSupported]` | ACCEPT, as that schema; never silently upgraded |
     | valid, above `maxSupported` | `CAPABILITY_UNAVAILABLE_ON_TARGET` (`INCOMPLETE`, so `NOT_READY`): legitimate capability lag |
 
+  - **Precedence note.** A valid manifest `schemaVersion` below a newly raised
+    target minimum, on an old branch, is classified by this contract
+    (`CONFIGURATION_ERROR`); `POLICY_OUTDATED` is not required to replace it.
+    Both are fail-closed and `NOT_READY`.
   - **Manifest versus report.** The manifest `schemaVersion` participates in
     target capability compatibility (above). The `pre-review.json`
     `schemaVersion` ([§23](#23-minimum-pre-reviewjson-schema-and-versioning)) is a
@@ -1095,6 +1134,7 @@ Audit.
 | Input | Validation |
 |---|---|
 | Manifest and base | JSON parse with size cap; exact schema; unknown field rejected; `schemaVersion` per the [§14](#14-manifest-ownership-trust-anchor-and-authority) rule; string patterns; array/depth/length bounds; path and selector validation |
+| Target framework metadata | `supportedSchemaVersions` container, `minSupported` and `maxSupported` (raw-token positive integers) and `min <= max`; `frameworkVersion`; `supportedCapabilities[]` identities. Read from the target tip only; absent or invalid is `INCOMPLETE` per the [§14](#14-manifest-ownership-trust-anchor-and-authority) target range contract |
 | CLI/config arguments | Allow-listed flags; values validated; no environment-variable overrides of safety settings |
 | CI metadata (GitHub API) | Schema check of every field used; SHA is 40-hex; run/attempt numeric; unexpected shape is `INCOMPLETE`, never coerced |
 | Git-derived data | SHAs 40-hex; parent count 1 or 2 as expected; refs matched exactly; empty output treated as a failure to establish, not as "no changes" |
@@ -1127,7 +1167,7 @@ against `docs/package-surface-v2.md` before changing them.
 | `FAIL` | The artifact or evidence violates an invariant | Forbidden path changed, wrong-SHA CI, broken table |
 | `CONFIGURATION_ERROR` | The tool's configuration is invalid; no check outcome is trustworthy | Bad manifest, cycle, missing dependency declaration, malformed, missing or below-minimum manifest `schemaVersion` |
 | `HUMAN_REVIEW_REQUIRED` | The machine cannot decide; a human must | `MEANING` dependency change, promotion wording on inference, unexplained CI failure, protected-config change |
-| `INCOMPLETE` | The tool could not establish the fact | API unreachable, base unavailable, timeout, truncated output, valid manifest `schemaVersion` newer than the target framework supports (`CAPABILITY_UNAVAILABLE_ON_TARGET`) |
+| `INCOMPLETE` | The tool could not establish the fact | API unreachable, base unavailable, timeout, truncated output, valid manifest `schemaVersion` newer than the target framework supports (`CAPABILITY_UNAVAILABLE_ON_TARGET`), target schema capability metadata unavailable or invalid (`TARGET_SCHEMA_RANGE_UNAVAILABLE`, `TARGET_SCHEMA_RANGE_INVALID`), default branch unavailable (`DEFAULT_BRANCH_UNAVAILABLE`) |
 | `NOT_APPLICABLE` | The check or domain result does not apply, and applicability was deterministically established | A mode-specific check outside its mode; a selector absent from the changed-file set |
 Aggregation precedence for the overall run status (highest first):
 `CONFIGURATION_ERROR` > `FAIL` > `INCOMPLETE` > `HUMAN_REVIEW_REQUIRED` >
@@ -1306,7 +1346,7 @@ certification wherever pre-merge evidence is reused.
 | D6 | Topological transitive invalidation with worst-of join; `MEANING` edges yield `HUMAN_REVIEW_REQUIRED`, others `DEEP_REVIEW_REQUIRED` | A machine can re-derive counts and references but not judge meaning | Direct-dependency-only invalidation; all-changes-to-human | No silent preservation downstream of a change |
 | D7 | Change is per domain using seven conditions, not per file | A domain can change through an unmodified file's derived value | File-diff-only change detection | Manifest declaration changes also count |
 | D8 | SHA-256 over Git-object content, LF-normalized, versioned, framed; fingerprint means unchanged only | Cross-platform stability without semantic normalization | Working-tree bytes; whitespace collapsing; unversioned hashes | Fingerprint version bump forces re-review |
-| D9 | Committed, human-authored base policy plus per-gate manifest; the trust anchor is the governance root (the platform-authenticated default branch tip, resolved by the tool) whose policy defines the base-anchored `protectedTargetRefs`; the PR target must be authenticated **and** protected (`HUMAN_REVIEW_REQUIRED` otherwise), and a `POST_MERGE` target must be protected (`FAIL` otherwise); the base commit is a tool-resolved merge base (guarded against `base == head`) or, post-merge, the first parent of a two-parent merge reachable from the protected target; the diff is validated by a normalized, complete changed-path-set comparison, never a count; the base policy must equal the root policy in its protected fields (`POLICY_OUTDATED` is `INCOMPLETE`, rebase required), so an old branch point cannot weaken governance; workflow anchoring is independent of the diff; policy paths are framework constants; `expectedBase` is an assertion (`FAIL` on mismatch); the head may only tighten; manual runs are capped at `HUMAN_REVIEW_REQUIRED`; live branch protection stays `GOV-VERIFY-1`'s | A repository file is not authoritative merely by existing there; a head or its workflow must not choose its own base, target or policy | Head-supplied base, target list or policy path; trusting a supplied target SHA; count-only diff confirmation; stricter-policy composition without a defined ordering; a partial platform file list; workflow-change detection based on the same diff | A protected change is reviewed under the old configuration by a human and becomes the anchor only after merge; only a phase-2 run executed from the target tip can be `READY`; the bootstrap protected target is the platform-authenticated default branch; `schemaVersion` separates malformed or too-old (`CONFIGURATION_ERROR`) from valid-newer-than-target (`CAPABILITY_UNAVAILABLE_ON_TARGET`); a finalized report is authoritative only after external run-identity verification; `protectedTargetRefs` is a required field of an existing root policy (absent, empty or malformed is `CONFIGURATION_ERROR`) and the bootstrap fallback applies only when no root policy exists; the manifest `schemaVersion` has one canonical contract (positive integer, validated before comparison) |
+| D9 | Committed, human-authored base policy plus per-gate manifest; the trust anchor is the governance root (the platform-authenticated default branch tip, resolved by the tool) whose policy defines the base-anchored `protectedTargetRefs`; the PR target must be authenticated **and** protected (`HUMAN_REVIEW_REQUIRED` otherwise), and a `POST_MERGE` target must be protected (`FAIL` otherwise); the base commit is a tool-resolved merge base (guarded against `base == head`) or, post-merge, the first parent of a two-parent merge reachable from the protected target; the diff is validated by a normalized, complete changed-path-set comparison, never a count; the base policy must equal the root policy in its protected fields (`POLICY_OUTDATED` is `INCOMPLETE`, rebase required), so an old branch point cannot weaken governance; workflow anchoring is independent of the diff; policy paths are framework constants; `expectedBase` is an assertion (`FAIL` on mismatch); the head may only tighten; manual runs are capped at `HUMAN_REVIEW_REQUIRED`; live branch protection stays `GOV-VERIFY-1`'s | A repository file is not authoritative merely by existing there; a head or its workflow must not choose its own base, target or policy | Head-supplied base, target list or policy path; trusting a supplied target SHA; count-only diff confirmation; stricter-policy composition without a defined ordering; a partial platform file list; workflow-change detection based on the same diff | A protected change is reviewed under the old configuration by a human and becomes the anchor only after merge; only a phase-2 run executed from the target tip can be `READY`; the bootstrap protected target is the platform-authenticated default branch; `schemaVersion` separates malformed or too-old (`CONFIGURATION_ERROR`) from valid-newer-than-target (`CAPABILITY_UNAVAILABLE_ON_TARGET`); a finalized report is authoritative only after external run-identity verification; `protectedTargetRefs` is a required field of an existing root policy (absent, empty or malformed is `CONFIGURATION_ERROR`) and the bootstrap fallback applies only when no root policy exists; the manifest `schemaVersion` has one canonical contract (positive integer, validated before comparison); target capability metadata (including `supportedSchemaVersions`) is trusted by source but structurally validated before use, and a missing or invalid range is `INCOMPLETE`, never compared and never capability lag |
 | D10 | `1F` owns CI evidence, collected by an external post-run collector; a "justified" rerun needs an external, SHA/run-bound human determination issued by an authenticated actor in the base-anchored `authorizedDeterminers` set, tamper-evident and re-verified at decision time, never a manifest exception; a classification name never exceeds its provenance strength, so only `SEPARATE_PERSON` can emit `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` and `OWNER_ATTESTED` stays `HUMAN_REVIEW_REQUIRED`; unexplained failure is `HUMAN_REVIEW_REQUIRED` | Roadmap machine/human boundary; Git identities and self-declared fields are not authentication; a record inside the reviewed head lets the author self-justify; no rerun-until-green | Justification as manifest exception; self-declared reviewer field; Git author/committer as authorization; strict reviewer != commit author (unusable in a single-owner repository); reporting a justified classification the machine cannot prove; in-run CI observation; automatic flake classification | Provider choice remains open (OQ-GA-10) but must satisfy the section 17 rules; `OWNER_ATTESTED` never reaches `READY` |
 | D11 | Five statuses with fixed aggregation precedence; exit codes optional and non-authoritative | Distinguish "artifact wrong" from "tool could not tell" (precedent: `audit-drift-check.js`) | Boolean pass/fail; exit-code-only contract | `INCOMPLETE` never becomes `PASS` |
 | D12 | JSON canonical, Markdown derived, report `schemaVersion` mandatory, unknown report version fails (manifest `schemaVersion` follows the separate [§14](#14-manifest-ownership-trust-anchor-and-authority) contract) | Precedent: `branch-inventory.js` schema versioning | Best-effort reading of newer schemas | Schema changes are reviewed versions |
@@ -1361,6 +1401,7 @@ independent Security review, correctives, exact-head merge authorization,
 | GT-25 | Capability semantic drift or schema-version ambiguity: a target claims a capability name with older semantics, or a newer schema is treated as corruption | Capability identity is `id@major` with exact matching and a new major for breaking changes; malformed identity is `CONFIGURATION_ERROR`; one `schemaVersion` rule (malformed or too-old `CONFIGURATION_ERROR`, valid-newer `CAPABILITY_UNAVAILABLE_ON_TARGET`); supported sets come only from target-tip metadata | Fixtures: `X@1` against a `X@2` requirement, `X@unknown`, malformed and newer and older schema versions, head-claimed target support; the manifest `schemaVersion` syntax is defined and parsed before any comparison, so a malformed value can never become capability lag; capability major correctness is governance-enforced (a framework PR changing capability semantics is `HUMAN_REVIEW_REQUIRED`) |
 | GT-26 | Forged finalized report or anomalous provider file metadata | A `finalized` marker is never authoritative: the consumer verifies `phase = 2`, collector run ID, workflow identity and blob, and executed commit against provider-authenticated run metadata; a duplicate path in the platform file list is an anomaly (`INCOMPLETE`), never silently deduplicated | Fixtures: report claiming phase 2 without matching run evidence, report from a head-executed run, duplicate platform path entries |
 | GT-27 | Root-policy field omission weakening governance: a root policy without a valid `protectedTargetRefs` falls back to the default branch | `protectedTargetRefs` is required in an existing root policy; absent, empty, malformed or unparseable is `CONFIGURATION_ERROR`; the bootstrap fallback is used only when no root policy exists and is disabled once one does; an unobtainable default branch is `INCOMPLETE` with no guessing | Fixtures: root policy without the field, empty list, duplicate entries, unparseable policy, default branch unavailable |
+| GT-28 | Malformed or absent target capability metadata causing permissive compatibility handling (for example a missing range treated as unlimited support, or `min > max` swapped) | `supportedSchemaVersions` is required and validated (raw-token positive integers, `min <= max`); absent is `TARGET_SCHEMA_RANGE_UNAVAILABLE`, invalid is `TARGET_SCHEMA_RANGE_INVALID`, both `INCOMPLETE`; the manifest is never compared against an unvalidated range; the head cannot supply the range | Fixtures: missing, null, wrong-container, malformed, zero, decimal and reversed ranges; `min = 5`, `max = 2`, manifest `3`; a head-supplied range |
 
 Injection through Markdown content (prompt-style text in evidence files) is not
 executed or interpreted: the framework only parses structure and never follows
@@ -1428,7 +1469,7 @@ implementation; there are none.
 ## 32. Status summary
 
 ```text
-GOV-AUTO-1 design:                       AUTHORED (C1 to C6 applied; pending independent re-review)
+GOV-AUTO-1 design:                       AUTHORED (C1 to C7 applied; pending independent re-review)
 GOV-AUTO-1 implementation:               NOT_STARTED
 GOV-AUTO-1 COMPLETE_ON_MAIN:             NO
 Relationship model:                      A -- composition (GOV-AUTO-1 owns shared facts)
@@ -1437,10 +1478,10 @@ AISEC-4:                                 NOT_STARTED
 Type & Schema Boundary Audit:            separate; not satisfied by this design
 BLOCKING_DESIGN open questions:          0
 Merge authorization:                     NO
-Next step:                               independent GOV-AUTO-1 design C6 re-review (HEAVY)
+Next step:                               independent GOV-AUTO-1 design C7 re-review (HEAVY)
 ```
 
-## 33. Corrective traceability (C1, C2, C3, C4, C5, C6)
+## 33. Corrective traceability (C1, C2, C3, C4, C5, C6, C7)
 
 Status vocabulary: `CLOSED` only where an independent re-review has recorded
 it; otherwise `ADDRESSED -- closure pending independent review`. The author does
@@ -1455,8 +1496,7 @@ not self-declare closure.
 | G-2 (LOW), G-3 (LOW) | CLOSED by the C3 independent re-review | Provenance invariant; decision-time re-verification | [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary), [§25a](#25a-decision-time-evidence-freshness) |
 | H-2, L-3, L-4, L-5, G-1, F-8, F-3 | CLOSED by the C4 independent re-review | Protected targets; path-set comparison; rebase-required policy monotonicity; verified immutability; trusted invocation and base | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§25a](#25a-decision-time-evidence-freshness) |
 | M-1, H-1, L-6, L-8 | CLOSED by the C5 independent re-review | Readiness is framework attestation; bootstrap and capability-lag model; `capability-id@major`; built-in default-branch bootstrap target | [§7](#7-shared-evidence-contract), [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| L-7 (LOW) `schemaVersion` status inconsistency | ADDRESSED by C5 and C6 -- closure pending independent review (open in the C5 re-review through the section 22 residue) | One canonical manifest `schemaVersion` contract; section 22 corrected; every other section refers to it | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§22](#22-error-model-and-exit-codes) |
-| L-9 (LOW) manifest `schemaVersion` format undefined | ADDRESSED by C6 -- closure pending independent review | Positive base-10 integer syntax; validate before compare | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| L-10 (LOW) root-policy `protectedTargetRefs` edge | ADDRESSED by C6 -- closure pending independent review | Required protected field; absent, empty or malformed is `CONFIGURATION_ERROR`; fallback only when no root policy exists | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
-| INFO-1..3 (C5 re-review) | ADDRESSED by C6 | `finalized` defined and non-authoritative; default-branch-unavailable is `INCOMPLETE`; capability major correctness is governance-enforced | [§23](#23-minimum-pre-reviewjson-schema-and-versioning), [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| L-7, L-9, L-10 | CLOSED by the C6 independent re-review | One canonical manifest `schemaVersion` contract with raw-value syntax; required `protectedTargetRefs` in an existing root policy | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§22](#22-error-model-and-exit-codes) |
+| L-11 (LOW) target schema range validity undefined | ADDRESSED by C7 -- closure pending independent review | Required, validated `supportedSchemaVersions`; absent is `TARGET_SCHEMA_RANGE_UNAVAILABLE`, invalid or `min > max` is `TARGET_SCHEMA_RANGE_INVALID`, both `INCOMPLETE`; never compared before validation | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§22](#22-error-model-and-exit-codes), [§20](#20-runtime-validation-at-every-input) |
+| INFO-1..4 (C6 re-review) | ADDRESSED by C7 | Raw-token validation before numeric normalization; wrong-container `protectedTargetRefs` is `CONFIGURATION_ERROR`; `DEFAULT_BRANCH_UNAVAILABLE` reason code; manifest-schema precedence over `POLICY_OUTDATED` clarified | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
 | INFO items from earlier re-reviews | ADDRESSED or RESOLVED | See earlier rows | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
