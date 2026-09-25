@@ -208,4 +208,13 @@ function redactValue(value, options = {}, depth = 0) {
   return out;
 }
 
-module.exports = { redactString, redactValue };
+/**
+ * The token-shaped rule definitions as inert data ({ id, source, flags }), for
+ * internal governance consumers (1A secret scanning) that must classify a hit by
+ * rule. It is deliberately NOT exported through the public governance index and
+ * carries no live RegExp (no shared lastIndex state). This keeps exactly one
+ * definition of "secret-shaped": consumers compile these, they never redefine them.
+ */
+const TOKEN_RULES = Object.freeze(RULES.map((rule) => Object.freeze({ id: rule.id, source: rule.re.source, flags: rule.re.flags })));
+
+module.exports = { redactString, redactValue, TOKEN_RULES };
