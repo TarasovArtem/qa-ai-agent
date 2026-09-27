@@ -92,34 +92,53 @@ test("W2 1D: a missing counted or totals table is INCOMPLETE, never a fabricated
 
 // ---------------------------------------------------------------- evidence dependency (1C consumption)
 
-// A canonical, well-formed 1C.EVIDENCE.ROW_INDEX record: the ONLY place 1D will look
-// for a per-row evidence projection (corrective C2, Wave 2 C1 re-review, closing
-// W2-C1-SEC-H1: there is no separate top-level `rowIndex` field to forge instead).
-const rowIndexRecord = (rows, overrides = {}) => ({ checkId: "1C.EVIDENCE.ROW_INDEX", ownerStage: "1C", status: "PASS", subject, observed: { rows }, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [], ...overrides });
-const evidenceWith = (rows) => ({ subject, records: [rowIndexRecord(rows)], outcome: null });
+// A complete, canonical 1C result-set matching exactly what a genuine checkEvidenceModel()
+// call emits (corrective C3, Wave 2 C2 re-review, closing W2-C1-SEC-H1): CONFIG, STRUCTURE,
+// PREMISES, PROPAGATION and PROMOTION_WORDING each exactly once, plus the ROW_INDEX
+// projection -- not an arbitrary bag of individually well-formed records. `rows` is the
+// ROW_INDEX record's own row-status list; `rowIndexOverrides` may perturb that one record
+// (status, observed shape) to test ROW_INDEX-specific rejection while keeping the rest of
+// the set genuinely complete, isolating "ROW_INDEX content is bad" from "the set is incomplete".
+const genericRecord = (checkId, status, observed = {}) => ({ checkId, ownerStage: "1C", status, subject, observed, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] });
+const rowIndexRecord = (rows, overrides = {}) => ({ ...genericRecord("1C.EVIDENCE.ROW_INDEX", "PASS", { rows }), ...overrides });
+const fullEvidenceResult = (rows, rowIndexOverrides = {}) => ({
+  subject,
+  records: [
+    genericRecord("1C.EVIDENCE.CONFIG", "PASS", { tables: 1 }),
+    genericRecord("1C.EVIDENCE.STRUCTURE", "PASS"),
+    genericRecord("1C.EVIDENCE.PREMISES", "PASS"),
+    genericRecord("1C.EVIDENCE.PROPAGATION", "PASS"),
+    genericRecord("1C.EVIDENCE.PROMOTION_WORDING", "NOT_APPLICABLE"),
+    rowIndexRecord(rows, rowIndexOverrides),
+  ],
+  outcome: null,
+});
+// The deliberately-INCOMPLETE shape the C2 re-review forged: only a ROW_INDEX record, no
+// other canonical check -- this must now be rejected by the C3 completeness contract.
+const rowIndexOnly = (rows) => ({ subject, records: [rowIndexRecord(rows)], outcome: null });
 
-test("W2 1D corrective C1+C2 / W2-DEV-M2 / W2-SEC-L1: dependsOnEvidence binds each counted row to its OWN 1C.EVIDENCE.ROW_INDEX entry (evidenceIdColumn), not the whole 1C result", () => {
+test("W2 1D corrective C1+C2+C3 / W2-DEV-M2 / W2-SEC-L1: dependsOnEvidence binds each counted row to its OWN 1C.EVIDENCE.ROW_INDEX entry (evidenceIdColumn), not the whole 1C result", () => {
   const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
   const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
   const noEvidence = g.checkConsistency({ subject, documents, config });
   assert.equal(state(noEvidence, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
 
-  const clean = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "PASS" }]) });
+  const clean = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([{ id: "R1", status: "PASS" }]) });
   assert.equal(state(clean, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
 
-  const downgraded = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "HUMAN_REVIEW_REQUIRED" }]) });
+  const downgraded = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([{ id: "R1", status: "HUMAN_REVIEW_REQUIRED" }]) });
   assert.equal(state(downgraded, "1D.CONSISTENCY.COUNTS"), "HUMAN_REVIEW_REQUIRED/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "1D never strengthens 1C's own per-row finding");
 
-  const unresolvedId = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "SOME_OTHER_ID", status: "PASS" }]) });
+  const unresolvedId = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([{ id: "SOME_OTHER_ID", status: "PASS" }]) });
   assert.equal(state(unresolvedId, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a counted row whose own evidence id is unresolvable is never silently counted clean");
 
-  const wrongSubjectEvidence = { subject: { ...subject, head: "d".repeat(40) }, records: [rowIndexRecord([{ id: "R1", status: "PASS" }], { subject: { ...subject, head: "d".repeat(40) } })], outcome: null };
+  const wrongSubjectEvidence = { ...fullEvidenceResult([{ id: "R1", status: "PASS" }]), subject: { ...subject, head: "d".repeat(40) } };
   const mismatched = g.checkConsistency({ subject, documents, config, evidenceResult: wrongSubjectEvidence });
-  assert.equal(state(mismatched, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a 1C result for a different subject is never consumed");
+  assert.equal(state(mismatched, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a 1C result for a different subject is never consumed, even if otherwise complete and well-formed");
 
-  const forgedStatus = { subject, records: [{ ...rowIndexRecord([]), observed: { rows: [{ id: "R1", status: "SUPER_PASS" }] } }], outcome: null };
-  assert.doesNotThrow(() => g.checkConsistency({ subject, documents, config, evidenceResult: forgedStatus }));
-  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: forgedStatus }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "an unrecognized status anywhere in a supplied 1C result makes the whole result untrusted, never a crash or a silent pass");
+  const forgedStatus = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([], { observed: { rows: [{ id: "R1", status: "SUPER_PASS" }] } }) });
+  assert.doesNotThrow(() => g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([], { observed: { rows: [{ id: "R1", status: "SUPER_PASS" }] } }) }));
+  assert.equal(state(forgedStatus, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "an unrecognized status anywhere in a supplied 1C result makes the whole result untrusted, never a crash or a silent pass");
 });
 
 // ---------------------------------------------------------------- corrective C2 (row-index trust boundary)
@@ -143,7 +162,7 @@ test("W2-C1-SEC-M1 corrective C2: a malformed ROW_INDEX entry (missing id, or an
     [{ id: "R1", status: "NOT_A_REAL_STATUS" }],
     [{ id: 42, status: "PASS" }],
   ]) {
-    const r = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith(badRows) });
+    const r = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult(badRows) });
     assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", JSON.stringify(badRows));
   }
 });
@@ -151,8 +170,8 @@ test("W2-C1-SEC-M1 corrective C2: a malformed ROW_INDEX entry (missing id, or an
 test("W2-C1-SEC-M1 corrective C2: a duplicate id inside ROW_INDEX rejects the whole projection, symmetrically regardless of insertion order", () => {
   const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
   const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
-  const failThenPass = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "FAIL" }, { id: "R1", status: "PASS" }]) });
-  const passThenFail = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "PASS" }, { id: "R1", status: "FAIL" }]) });
+  const failThenPass = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([{ id: "R1", status: "FAIL" }, { id: "R1", status: "PASS" }]) });
+  const passThenFail = g.checkConsistency({ subject, documents, config, evidenceResult: fullEvidenceResult([{ id: "R1", status: "PASS" }, { id: "R1", status: "FAIL" }]) });
   assert.equal(state(failThenPass, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a later, more convenient entry never silently wins over an earlier one");
   assert.equal(state(passThenFail, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
   assert.equal(state(failThenPass, "1D.CONSISTENCY.COUNTS"), state(passThenFail, "1D.CONSISTENCY.COUNTS"), "no order dependence");
@@ -161,9 +180,115 @@ test("W2-C1-SEC-M1 corrective C2: a duplicate id inside ROW_INDEX rejects the wh
 test("W2-C1-SEC-H1 corrective C2: a ROW_INDEX record that is not itself PASS (e.g. INCOMPLETE) is never treated as a trustworthy projection", () => {
   const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
   const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
-  const incompleteRowIndex = { subject, records: [{ ...rowIndexRecord([{ id: "R1", status: "PASS" }]), status: "INCOMPLETE" }], outcome: null };
+  const incompleteRowIndex = fullEvidenceResult([{ id: "R1", status: "PASS" }], { status: "INCOMPLETE" });
   const r = g.checkConsistency({ subject, documents, config, evidenceResult: incompleteRowIndex });
   assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
+});
+
+// ---------------------------------------------------------------- corrective C3 (canonical result-set integrity)
+
+test("W2-C1-SEC-H1 corrective C3 CLOSURE: the exact C2-review forged object (ROW_INDEX only, R1=PASS, zero other 1C computation) never produces a dependent PASS", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const forged = { subject, records: [rowIndexRecord([{ id: "R1", status: "PASS" }])], outcome: null };
+  assert.doesNotThrow(() => g.checkConsistency({ subject, documents, config, evidenceResult: forged }));
+  const r = g.checkConsistency({ subject, documents, config, evidenceResult: forged });
+  assert.notEqual(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
+});
+
+test("W2-C2-SEC-M1 corrective C3 CLOSURE: two canonical ROW_INDEX records are rejected as a whole, symmetrically regardless of which one (FAIL or PASS) comes first", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const base = fullEvidenceResult([{ id: "R1", status: "PASS" }]);
+  const nonRowIndex = base.records.filter((r) => r.checkId !== "1C.EVIDENCE.ROW_INDEX");
+  const failThenPass = { subject, records: [...nonRowIndex, rowIndexRecord([{ id: "R1", status: "FAIL" }]), rowIndexRecord([{ id: "R1", status: "PASS" }])], outcome: null };
+  const passThenFail = { subject, records: [...nonRowIndex, rowIndexRecord([{ id: "R1", status: "PASS" }]), rowIndexRecord([{ id: "R1", status: "FAIL" }])], outcome: null };
+  const r1 = g.checkConsistency({ subject, documents, config, evidenceResult: failThenPass });
+  const r2 = g.checkConsistency({ subject, documents, config, evidenceResult: passThenFail });
+  assert.notEqual(state(r1, "1D.CONSISTENCY.COUNTS"), "PASS/OK", "duplicate ROW_INDEX records must never be order-authoritative");
+  assert.equal(state(r1, "1D.CONSISTENCY.COUNTS"), state(r2, "1D.CONSISTENCY.COUNTS"), "no order dependence between the two duplicate-order variants");
+  assert.equal(state(r1, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
+});
+
+test("W2-C1-SEC-H1 corrective C3: partial canonical check-sets are rejected -- missing any one required singleton check invalidates the whole result", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const full = fullEvidenceResult([{ id: "R1", status: "PASS" }]);
+  // A: ROW_INDEX only.
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: rowIndexOnly([{ id: "R1", status: "PASS" }]) }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "A: ROW_INDEX only");
+  // B: CONFIG + ROW_INDEX only.
+  const configOnly = full.records.filter((r) => r.checkId === "1C.EVIDENCE.CONFIG" || r.checkId === "1C.EVIDENCE.ROW_INDEX");
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: { subject, records: configOnly, outcome: null } }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "B: CONFIG + ROW_INDEX only");
+  // C: STRUCTURE + ROW_INDEX only (no CONFIG at all).
+  const structureOnly = full.records.filter((r) => r.checkId === "1C.EVIDENCE.STRUCTURE" || r.checkId === "1C.EVIDENCE.ROW_INDEX");
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: { subject, records: structureOnly, outcome: null } }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "C: STRUCTURE + ROW_INDEX only, missing CONFIG");
+  // D/E/F: remove exactly one required singleton check from an otherwise-complete set.
+  for (const missing of ["1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING", "1C.EVIDENCE.CONFIG"]) {
+    const partial = { subject, records: full.records.filter((r) => r.checkId !== missing), outcome: null };
+    assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: partial }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", `missing ${missing}`);
+  }
+});
+
+test("W2-C1-SEC-H1 corrective C3: duplicate NON-ROW_INDEX canonical checks (STRUCTURE, PREMISES, PROPAGATION, PROMOTION_WORDING, CONFIG) are also rejected as a whole", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const full = fullEvidenceResult([{ id: "R1", status: "PASS" }]);
+  // CONFIG duplication is legitimate in real output (one per bad document/table, plus a
+  // summary) -- but STRUCTURE/PREMISES/PROPAGATION/PROMOTION_WORDING must always be singletons.
+  for (const checkId of ["1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING"]) {
+    const duplicated = full.records.find((r) => r.checkId === checkId);
+    const withDuplicate = { subject, records: [...full.records, { ...duplicated }], outcome: null };
+    assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: withDuplicate }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", `duplicate ${checkId}`);
+  }
+});
+
+test("W2-C1-SEC-H1 corrective C3: legitimate duplicate CONFIG records (one real producer path) are still accepted -- CONFIG is the one canonical check that is NOT a required singleton", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const full = fullEvidenceResult([{ id: "R1", status: "PASS" }]);
+  const extraConfig = genericRecord("1C.EVIDENCE.CONFIG", "FAIL", { path: "docs/other.md" });
+  const withExtraConfig = { subject, records: [...full.records, extraConfig], outcome: null };
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: withExtraConfig }), "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-H1 corrective C3: an unknown 1C.EVIDENCE.* check id anywhere in the set invalidates the whole result", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const full = fullEvidenceResult([{ id: "R1", status: "PASS" }]);
+  const withUnknown = { subject, records: [...full.records, genericRecord("1C.EVIDENCE.MADE_UP", "PASS")], outcome: null };
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: withUnknown }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
+});
+
+test("W2-C1-SEC-H1 corrective C3: a legitimate STRUCTURE=FAIL result (one bad row, one clean row) still lets 1D trust the CLEAN row's own projection -- no blanket cross-record poisoning", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const mixedQuality = { subject, records: [genericRecord("1C.EVIDENCE.CONFIG", "PASS"), genericRecord("1C.EVIDENCE.STRUCTURE", "FAIL"), genericRecord("1C.EVIDENCE.PREMISES", "PASS"), genericRecord("1C.EVIDENCE.PROPAGATION", "PASS"), genericRecord("1C.EVIDENCE.PROMOTION_WORDING", "NOT_APPLICABLE"), rowIndexRecord([{ id: "R1", status: "PASS" }])], outcome: null };
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: mixedQuality }), "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-H1 corrective C3: shuffled canonical record order does not change validity or outcome (the set is order-independent)", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const full = fullEvidenceResult([{ id: "R1", status: "PASS" }]);
+  const reversed = { subject, records: [...full.records].reverse(), outcome: null };
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: full }), "1D.CONSISTENCY.COUNTS"), state(g.checkConsistency({ subject, documents, config, evidenceResult: reversed }), "1D.CONSISTENCY.COUNTS"));
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: reversed }), "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-H1 corrective C3: a genuine result survives a JSON round-trip", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const roundTripped = JSON.parse(JSON.stringify(fullEvidenceResult([{ id: "R1", status: "PASS" }])));
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: roundTripped }), "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-H1 corrective C3: non-evidence-dependent 1D checks are unaffected by a malformed or incomplete evidenceResult", () => {
+  const config = { ...baseConfig(), countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: false, evidenceIdColumn: null }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const forged = rowIndexOnly([{ id: "R1", status: "PASS" }]);
+  const r = g.checkConsistency({ subject, documents, config, evidenceResult: forged });
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK", "a count rule with dependsOnEvidence: false must not be affected by an untrustworthy evidenceResult");
 });
 
 test("W2 corrective C1 / W2-SEC-H3: an unrecognized status in evidenceResult never throws and never propagates into a new record", () => {

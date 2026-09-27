@@ -370,8 +370,12 @@ function checkEvidenceModel(input) {
   else if (rowsById.size === 0) notApplicable("1C.EVIDENCE.PROPAGATION", "no evidence row was recognized");
   else add("1C.EVIDENCE.PROPAGATION", STATUS.PASS, REASON.OK, "no row exceeds what its own evidence class, premises and independent evidence can support", { checked: rowsById.size });
 
-  // ---- Promotion wording: never a semantic judgment, only ever HUMAN_REVIEW_REQUIRED; never
-  // contributes to a row's ROW_INDEX status (it is about wording, not evidentiary support).
+  // ---- Promotion wording: never a semantic judgment, only ever HUMAN_REVIEW_REQUIRED. It DOES
+  // downgrade the affected row's own ROW_INDEX entry (via downgrade() below, to HRR): a per-row
+  // consumer must see that row's evidence as unresolved, never clean, purely because of wording
+  // that a human still needs to judge -- promotion wording is about wording, not evidentiary
+  // support, but a flagged row is still a flagged row (corrective C2, W2-C2-DEV-INFO1: this
+  // comment previously claimed the opposite).
   const promotionFindings = [];
   if (config.promotionWords.length > 0) {
     const pattern = new RegExp(`\\b(?:${config.promotionWords.map(escapeRegExp).join("|")})\\b`, "i");

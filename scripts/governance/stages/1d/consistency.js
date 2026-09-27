@@ -14,11 +14,16 @@
  *      group, if configured) matches a declared "totals" table's value. A
  *      dependsOnEvidence rule additionally binds EACH counted row to a specific
  *      1C evidence-row status, read ONLY from 1C's canonical
- *      `1C.EVIDENCE.ROW_INDEX` result record (corrective C2, Wave 2 C1 re-review,
- *      W2-C1-SEC-H1/M1: there is no separate, independently-forgeable rowIndex
- *      field to consult -- a missing, non-PASS, malformed or duplicate-id
- *      projection is rejected in full and every dependent row falls back to
- *      INCOMPLETE), so an unrelated 1C finding elsewhere never affects a count
+ *      `1C.EVIDENCE.ROW_INDEX` result record, and ONLY once the whole supplied
+ *      result has passed 1C's own result-set contract (stages/1c/result-contract.js
+ *      #validateEvidenceStageResult -- corrective C3, Wave 2 C2 re-review,
+ *      W2-C1-SEC-H1 / W2-C2-SEC-M1): a caller-constructed result is never trusted
+ *      merely because each record in it is individually well-formed; it must also
+ *      carry the exact, complete, duplicate-free canonical check-set a genuine
+ *      checkEvidenceModel() call actually emits. A missing/incomplete canonical
+ *      check-set, a malformed or duplicate-id row projection, or a duplicated
+ *      canonical checkId is rejected in full and every dependent row falls back to
+ *      INCOMPLETE, so an unrelated 1C finding elsewhere never affects a count
  *      table that only counts clean rows, and a row bound to an unresolved,
  *      failing or untrustworthy 1C fact is never silently counted;
  *   2. taxonomy consistency -- every value in a manifest-declared column belongs
@@ -40,8 +45,9 @@ const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { matchPathPattern } = require("../../safety/path-patterns");
 const { validateRepoRelativePath } = require("../../safety/repo-path");
-const { createRecordFactory, isValidSubject, sample, worseStatus, isValidStatus, isValidMarkdownStructure, validateStageResult } = require("../common");
+const { createRecordFactory, isValidSubject, sample, worseStatus, isValidMarkdownStructure } = require("../common");
 const { validateConsistencyConfig } = require("./config");
+const { validateEvidenceStageResult } = require("../1c/result-contract");
 
 const MAX_ROWS = 5000;
 const MAX_TOTAL_CELLS = 200_000;
@@ -62,32 +68,6 @@ function cellAt(table, row, column) {
 }
 function parseCount(text) {
   return COUNT_TOKEN.test(text) ? Number(text) : null;
-}
-
-/**
- * Extract the per-row evidence projection from a runtime-validated 1C result, reading
- * it ONLY from the canonical `1C.EVIDENCE.ROW_INDEX` record inside `records[]` -- 1C no
- * longer offers a separate top-level `rowIndex` field (corrective C2, Wave 2 C1
- * re-review, W2-C1-SEC-H1): there is exactly one place row data can come from, so a
- * caller can no longer supply an empty `records` array alongside a hand-authored row
- * status and have it trusted. Returns null when there is no result, no such record, the
- * record did not resolve to PASS (absent/incomplete rows are never treated as a
- * trustworthy projection), or the record itself is malformed or contains a duplicate id
- * (W2-C1-SEC-M1) -- in every one of those cases the WHOLE projection is rejected, never
- * partially trusted, and every dependent row falls back to INCOMPLETE.
- */
-function extractEvidenceRowIndex(evidenceResult) {
-  if (evidenceResult === null) return null;
-  const record = evidenceResult.records.find((r) => r.checkId === "1C.EVIDENCE.ROW_INDEX");
-  if (!record || record.status !== STATUS.PASS) return null;
-  if (!isPlainObject(record.observed) || !Array.isArray(record.observed.rows)) return null;
-  const map = new Map();
-  for (const entry of record.observed.rows) {
-    if (!isPlainObject(entry) || typeof entry.id !== "string" || !isValidStatus(entry.status)) return null;
-    if (map.has(entry.id)) return null;
-    map.set(entry.id, entry.status);
-  }
-  return map;
 }
 
 /**
@@ -119,10 +99,11 @@ function checkConsistency(input) {
   const config = validated.config;
   add("1D.CONSISTENCY.CONFIG", STATUS.PASS, REASON.OK, "the consistency configuration is valid", { countRules: config.countRules.length, taxonomyRules: config.taxonomyRules.length, methodRules: config.methodRules.length });
 
-  // A forged, malformed or wrong-subject evidenceResult is never trusted: it is treated
-  // exactly like no evidenceResult at all (corrective C1, W2-SEC-H3). Never throws.
-  const evidenceResult = validateStageResult(input.evidenceResult, subject, "1C");
-  const evidenceRowMap = extractEvidenceRowIndex(evidenceResult);
+  // A forged, malformed, wrong-subject, incomplete or duplicate-check-id evidenceResult
+  // is never trusted: it is treated exactly like no evidenceResult at all (corrective C1,
+  // W2-SEC-H3; corrective C3, W2-C1-SEC-H1 / W2-C2-SEC-M1). Never throws.
+  const evidence = validateEvidenceStageResult(input.evidenceResult, subject);
+  const evidenceRowMap = evidence.ok ? evidence.rowIndex : null;
   const evidenceRowStatus = (id) => (evidenceRowMap ? evidenceRowMap.get(id) ?? null : null);
 
   let totalCells = 0;
@@ -165,7 +146,7 @@ function checkConsistency(input) {
       // Per-row 1C evidence binding (corrective C1, W2-DEV-M2 / W2-SEC-L1): each counted row,
       // not the whole 1C result, decides whether ITS OWN inclusion in the count is trustworthy.
       if (rule.dependsOnEvidence) {
-        if (evidenceResult === null) countFindings.push({ path: doc.path, line: counted.line, message: "this count rule depends on 1C evidence, but no usable 1C result for this subject was supplied", code: REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED, downgrade: STATUS.INCOMPLETE });
+        if (!evidence.ok) countFindings.push({ path: doc.path, line: counted.line, message: "this count rule depends on 1C evidence, but no usable 1C result for this subject was supplied", code: REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED, downgrade: STATUS.INCOMPLETE });
         else {
           let rowsStatus = STATUS.PASS;
           for (const row of counted.rows) {
