@@ -86,7 +86,17 @@ function validateTableSelector(t, problems) {
   const conclusionColumn = optionalColumn(t.conclusionColumn, problems, "tables.conclusionColumn");
   const independentColumn = optionalColumn(t.independentColumn, problems, "tables.independentColumn");
   if (idColumn === null || classColumn === null) return null;
-  if (idColumn === classColumn || idColumn === strengthColumn || idColumn === premisesColumn) problems.push("tables columns must be distinct");
+  // Every configured logical column role must be a physically distinct column: a collision
+  // (for example independentColumn aliasing classColumn) would silently give one cell two
+  // incompatible meanings and can defeat an invariant this stage exists to enforce (Wave 2
+  // corrective C1, W2-SEC-M1).
+  const roles = { idColumn, classColumn, strengthColumn, premisesColumn, conclusionColumn, independentColumn };
+  const named = Object.entries(roles).filter(([, v]) => v !== null);
+  for (let i = 0; i < named.length; i += 1) {
+    for (let j = i + 1; j < named.length; j += 1) {
+      if (named[i][1] === named[j][1]) problems.push(`tables.${named[i][0]} and tables.${named[j][0]} must not name the same column`);
+    }
+  }
   return { filePatterns, idColumn, classColumn, strengthColumn, premisesColumn, conclusionColumn, independentColumn };
 }
 

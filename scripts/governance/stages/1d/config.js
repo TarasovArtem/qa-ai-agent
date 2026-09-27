@@ -43,9 +43,9 @@ function filePatternList(value, problems, label) {
   }
   return out;
 }
-function valueList(value, problems, label, { max = MAX_VALUES, pattern = VALUE_TOKEN } = {}) {
-  if (!Array.isArray(value) || value.length < 1 || value.length > max) {
-    problems.push(`${label} must be an array of 1..${max} tokens`);
+function valueList(value, problems, label, { min = 1, max = MAX_VALUES, pattern = VALUE_TOKEN } = {}) {
+  if (!Array.isArray(value) || value.length < min || value.length > max) {
+    problems.push(`${label} must be an array of ${min}..${max} tokens`);
     return [];
   }
   const out = [];
@@ -100,8 +100,12 @@ function validateMethodRule(r, problems) {
   const matchColumn = column(r.matchColumn, problems, "methodRules.matchColumn");
   const methodValues = valueList(r.methodValues, problems, "methodRules.methodValues");
   const textColumn = column(r.textColumn, problems, "methodRules.textColumn");
-  const ambiguousMarkers = valueList(r.ambiguousMarkers, problems, "methodRules.ambiguousMarkers", { max: MAX_WORDS, pattern: WORD_TOKEN });
+  // Zero ambiguity markers is a legitimate, MORE conservative configuration (every
+  // contradiction for this rule is always a deterministic FAIL, with no HRR escape) --
+  // corrective C1, W2-DEV-M1.
+  const ambiguousMarkers = valueList(r.ambiguousMarkers, problems, "methodRules.ambiguousMarkers", { min: 0, max: MAX_WORDS, pattern: WORD_TOKEN });
   const contradictions = [];
+  const seenMethods = new Set();
   if (!Array.isArray(r.contradictions) || r.contradictions.length > MAX_LIST) problems.push("methodRules.contradictions must be an array");
   else for (const c of r.contradictions) {
     if (!exactKeys(c, ["method", "forbiddenWords"])) {
@@ -110,7 +114,15 @@ function validateMethodRule(r, problems) {
     }
     const method = typeof c.method === "string" && methodValues.includes(c.method) ? c.method : (problems.push("methodRules.contradictions.method is not a declared methodValue"), null);
     const forbiddenWords = valueList(c.forbiddenWords, problems, "methodRules.contradictions.forbiddenWords", { max: MAX_WORDS, pattern: WORD_TOKEN });
-    if (method !== null) contradictions.push({ method, forbiddenWords });
+    if (method !== null) {
+      // A second contradiction entry for the same method would silently overwrite the
+      // first through Map construction -- reject it instead (corrective C1, W2 section 20).
+      if (seenMethods.has(method)) problems.push(`methodRules.contradictions declares "${method}" more than once`);
+      else {
+        seenMethods.add(method);
+        contradictions.push({ method, forbiddenWords });
+      }
+    }
   }
   return { filePatterns, matchColumn, methodValues, textColumn, contradictions, ambiguousMarkers };
 }

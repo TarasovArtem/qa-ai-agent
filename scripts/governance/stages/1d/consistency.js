@@ -2,32 +2,40 @@
  * GOV-AUTO-1 Wave 2 / 1D -- risk / source / method consistency (design section 18:
  * "Totals, counts, taxonomy, research-method contradiction checks"; non-goals
  * "never decides whether a risk is acceptable; nuanced method cases become
- * HUMAN_REVIEW_REQUIRED").
+ * HUMAN_REVIEW_REQUIRED"). Corrective C1 (Wave 2 HEAVY re-review) hardened this
+ * module; see the commit and PR history.
  *
  * checkConsistency() consumes ONLY the public 1B structure (never re-parses
  * Markdown) and, where a rule is marked dependsOnEvidence, the frozen result of
- * 1C's checkEvidenceModel() for the SAME subject (never recomputes evidence class,
- * strength or premise facts itself: 1C owns those). It checks three deterministic
- * invariants and nothing else:
+ * 1C's checkEvidenceModel() for the SAME subject (runtime-validated before any of
+ * its statuses are trusted; never re-derives evidence class, strength or premise
+ * facts itself -- 1C owns those). It checks three deterministic invariants:
  *   1. count consistency -- a manifest-declared "counted" table's row count (per
- *      group, if configured) matches a declared "totals" table's value;
+ *      group, if configured) matches a declared "totals" table's value. A
+ *      dependsOnEvidence rule additionally binds EACH counted row to a specific
+ *      1C evidence-row status (via 1C's rowIndex), so an unrelated 1C finding
+ *      elsewhere never affects a count table that only counts clean rows, and a
+ *      row bound to an unresolved/failing 1C fact is never silently counted;
  *   2. taxonomy consistency -- every value in a manifest-declared column belongs
  *      to the manifest-declared allowed set;
  *   3. method contradiction -- a manifest-declared method value paired, on the
- *      same row, with manifest-declared forbidden wording is flagged, unless an
+ *      same row, with manifest-declared forbidden wording is flagged, unless a
  *      manifest-declared ambiguity marker is also present, in which case it is
  *      HUMAN_REVIEW_REQUIRED rather than FAIL.
- * It never decides whether a risk is acceptable, a source is credible or a
- * method was adequate: that is a human, and later-wave, decision.
+ * A rule applicable to a document that cannot be evaluated (unparsed, or its
+ * required table is absent) is never silently skipped into a false PASS: it
+ * makes the check INCOMPLETE, whether or not some OTHER matching document was
+ * clean. It never decides whether a risk is acceptable, a source is credible or
+ * a method was adequate: that is a human, and later-wave, decision.
  */
 
 "use strict";
 
-const { REASON, STATUS, STATUS_PRECEDENCE, deepFreeze } = require("../../kernel/contracts");
+const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { matchPathPattern } = require("../../safety/path-patterns");
 const { validateRepoRelativePath } = require("../../safety/repo-path");
-const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
+const { createRecordFactory, isValidSubject, sample, worseStatus, isValidMarkdownStructure, validateStageResult } = require("../common");
 const { validateConsistencyConfig } = require("./config");
 
 const MAX_ROWS = 5000;
@@ -35,9 +43,6 @@ const MAX_TOTAL_CELLS = 200_000;
 const COUNT_TOKEN = /^[0-9]{1,9}$/;
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-function isParsedDocument(structure) {
-  return isPlainObject(structure) && structure.ok === true && Array.isArray(structure.tables);
-}
 function invalidInput(detail) {
   return deepFreeze({ subject: null, records: [], outcome: { status: STATUS.CONFIGURATION_ERROR, reasonCode: REASON.CONSISTENCY_INPUT_INVALID, detail } });
 }
@@ -53,19 +58,15 @@ function cellAt(table, row, column) {
 function parseCount(text) {
   return COUNT_TOKEN.test(text) ? Number(text) : null;
 }
-/** Worse of two Wave 0 statuses (NOT_APPLICABLE is neutral: it never wins). */
-function worseStatus(a, b) {
-  if (a === STATUS.NOT_APPLICABLE) return b;
-  if (b === STATUS.NOT_APPLICABLE) return a;
-  return STATUS_PRECEDENCE.indexOf(a) <= STATUS_PRECEDENCE.indexOf(b) ? a : b;
-}
 
 /**
  * checkConsistency({ subject, documents, config, evidenceResult? })
  *   documents      [{ path, structure }], structure = parseMarkdown()'s frozen output
+ *                  (runtime-validated here, never re-parsed)
  *   config         a raw consistency config (validated here; see ./config.js)
  *   evidenceResult the frozen result of checkEvidenceModel() for the SAME subject,
- *                  required only when a countRules entry declares dependsOnEvidence
+ *                  runtime-validated before use; required only when a countRules
+ *                  entry declares dependsOnEvidence
  */
 function checkConsistency(input) {
   if (!isPlainObject(input) || !isValidSubject(input.subject)) return invalidInput("a valid subject is required");
@@ -87,13 +88,11 @@ function checkConsistency(input) {
   const config = validated.config;
   add("1D.CONSISTENCY.CONFIG", STATUS.PASS, REASON.OK, "the consistency configuration is valid", { countRules: config.countRules.length, taxonomyRules: config.taxonomyRules.length, methodRules: config.methodRules.length });
 
-  const evidenceStatus = (() => {
-    if (!isPlainObject(input.evidenceResult) || !Array.isArray(input.evidenceResult.records)) return null;
-    if (!sameSubject(input.evidenceResult.subject, subject)) return null;
-    let worst = STATUS.NOT_APPLICABLE;
-    for (const r of input.evidenceResult.records) worst = worseStatus(worst, r.status);
-    return worst;
-  })();
+  // A forged, malformed or wrong-subject evidenceResult is never trusted: it is treated
+  // exactly like no evidenceResult at all (corrective C1, W2-SEC-H3). Never throws.
+  const evidenceResult = validateStageResult(input.evidenceResult, subject, "1C");
+  const evidenceRowMap = evidenceResult && Array.isArray(evidenceResult.rowIndex) ? new Map(evidenceResult.rowIndex.map((r) => [r.id, r.status])) : null;
+  const evidenceRowStatus = (id) => (evidenceRowMap ? evidenceRowMap.get(id) ?? null : null);
 
   let totalCells = 0;
   const bump = (n) => {
@@ -104,12 +103,13 @@ function checkConsistency(input) {
   // ---- Count consistency.
   const countFindings = [];
   let countChecked = 0;
-  let countDependencyUnresolved = false;
-  let countIncomplete = false;
+  let countIncomplete = false; // any matching document that could not be fully evaluated
+  let countMatchedAny = false;
   for (const rule of config.countRules) {
     for (const doc of input.documents) {
       if (!rule.filePatterns.some((p) => matchPathPattern(p, doc.path))) continue;
-      if (!isParsedDocument(doc.structure)) {
+      countMatchedAny = true;
+      if (!isValidMarkdownStructure(doc.structure)) {
         countIncomplete = true;
         continue;
       }
@@ -130,16 +130,29 @@ function checkConsistency(input) {
         return done();
       }
       countChecked += 1;
+
+      // Per-row 1C evidence binding (corrective C1, W2-DEV-M2 / W2-SEC-L1): each counted row,
+      // not the whole 1C result, decides whether ITS OWN inclusion in the count is trustworthy.
       if (rule.dependsOnEvidence) {
-        if (evidenceStatus === null) countDependencyUnresolved = true;
-        else if (evidenceStatus !== STATUS.PASS && evidenceStatus !== STATUS.NOT_APPLICABLE) countFindings.push({ path: doc.path, line: counted.line, message: "counted table depends on 1C evidence that is not established (PASS)", code: REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED, downgrade: evidenceStatus });
+        if (evidenceResult === null) countFindings.push({ path: doc.path, line: counted.line, message: "this count rule depends on 1C evidence, but no usable 1C result for this subject was supplied", code: REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED, downgrade: STATUS.INCOMPLETE });
+        else {
+          let rowsStatus = STATUS.PASS;
+          for (const row of counted.rows) {
+            const evidenceId = cellAt(counted, row, rule.evidenceIdColumn);
+            const status = evidenceId === "" ? null : evidenceRowStatus(evidenceId);
+            rowsStatus = worseStatus(rowsStatus, status === null ? STATUS.INCOMPLETE : status);
+          }
+          if (rowsStatus !== STATUS.PASS) countFindings.push({ path: doc.path, line: counted.line, message: "one or more counted rows are bound to 1C evidence that is not established (PASS)", code: REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED, downgrade: rowsStatus });
+        }
       }
+
       const groups = new Map();
       for (const row of counted.rows) {
         const key = rule.groupByColumn === null ? "" : cellAt(counted, row, rule.groupByColumn);
         groups.set(key, (groups.get(key) || 0) + 1);
       }
       const declaredKeys = new Set();
+      const duplicateKeys = new Set();
       let declaredSumWhenUngrouped = 0;
       for (const row of totals.rows) {
         const label = cellAt(totals, row, rule.totalsLabelColumn);
@@ -153,10 +166,12 @@ function checkConsistency(input) {
           declaredSumWhenUngrouped += value;
           continue;
         }
+        if (declaredKeys.has(label)) duplicateKeys.add(label);
         declaredKeys.add(label);
         const actual = groups.get(label) || 0;
         if (actual !== value) countFindings.push({ path: doc.path, line: row.line, message: `declared total for "${label}" is ${value} but ${actual} row(s) were counted`, code: REASON.CONSISTENCY_COUNT_MISMATCH });
       }
+      for (const label of duplicateKeys) countFindings.push({ path: doc.path, line: totals.line, message: `"${label}" is declared more than once in the totals table`, code: REASON.CONSISTENCY_COUNT_MISMATCH });
       if (rule.groupByColumn === null) {
         const actual = counted.rows.length;
         if (declaredSumWhenUngrouped !== actual) countFindings.push({ path: doc.path, line: totals.line, message: `declared total is ${declaredSumWhenUngrouped} but ${actual} row(s) were counted`, code: REASON.CONSISTENCY_COUNT_MISMATCH });
@@ -168,22 +183,31 @@ function checkConsistency(input) {
   if (config.countRules.length === 0) notApplicable("1D.CONSISTENCY.COUNTS", "no count rule is configured");
   else if (countFindings.length > 0) {
     const code = countFindings.some((f) => f.code === REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED) ? REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED : countFindings[0].code;
-    const dependencyOnly = countFindings.every((f) => f.code === REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED);
-    const worst = dependencyOnly ? countFindings.reduce((w, f) => worseStatus(w, f.downgrade), STATUS.PASS) : STATUS.FAIL;
+    let worst = countFindings.reduce((w, f) => worseStatus(w, f.downgrade || STATUS.FAIL), STATUS.PASS);
+    if (countIncomplete) worst = worseStatus(worst, STATUS.INCOMPLETE);
     add("1D.CONSISTENCY.COUNTS", worst, code, `${countFindings.length} finding(s); see observed.findings`, { count: countFindings.length, checked: countChecked, findings: sample(countFindings.map((f) => `${f.path}:${f.line}: ${f.message}`), 20) });
-  } else if (countDependencyUnresolved) add("1D.CONSISTENCY.COUNTS", STATUS.INCOMPLETE, REASON.CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED, "a count rule depends on 1C evidence, but no 1C result for this subject was supplied", { checked: countChecked });
-  else if (countIncomplete && countChecked === 0) add("1D.CONSISTENCY.COUNTS", STATUS.INCOMPLETE, REASON.CONSISTENCY_INPUT_INVALID, "a configured counted or totals table could not be found or parsed", {});
-  else add("1D.CONSISTENCY.COUNTS", STATUS.PASS, REASON.OK, "every declared total matches its counted rows", { checked: countChecked });
+  } else if (countIncomplete) add("1D.CONSISTENCY.COUNTS", STATUS.INCOMPLETE, REASON.CONSISTENCY_INPUT_INVALID, "a configured counted or totals table, or the evidence it depends on, could not be established for every matching document", { checked: countChecked });
+  else if (!countMatchedAny) notApplicable("1D.CONSISTENCY.COUNTS", "no changed document matches a configured count rule");
+  else add("1D.CONSISTENCY.COUNTS", STATUS.PASS, REASON.OK, "every declared total matches its counted rows, for every matching document", { checked: countChecked });
 
   // ---- Taxonomy consistency.
   const taxonomyFindings = [];
   let taxonomyChecked = 0;
+  let taxonomyIncomplete = false;
+  let taxonomyMatchedAny = false;
   for (const rule of config.taxonomyRules) {
     for (const doc of input.documents) {
       if (!rule.filePatterns.some((p) => matchPathPattern(p, doc.path))) continue;
-      if (!isParsedDocument(doc.structure)) continue;
+      taxonomyMatchedAny = true;
+      if (!isValidMarkdownStructure(doc.structure)) {
+        taxonomyIncomplete = true;
+        continue;
+      }
       const table = findTable(doc.structure, [rule.matchColumn]);
-      if (!table) continue;
+      if (!table) {
+        taxonomyIncomplete = true;
+        continue;
+      }
       if (!bump(table.rows.length) || table.rows.length > MAX_ROWS) {
         add("1D.CONSISTENCY.TAXONOMY", STATUS.INCOMPLETE, REASON.CONSISTENCY_BOUND_EXCEEDED, "taxonomy consistency exceeded its work bound", {});
         notApplicable("1D.CONSISTENCY.METHOD", "the resource bound was exceeded");
@@ -198,21 +222,32 @@ function checkConsistency(input) {
   }
   if (config.taxonomyRules.length === 0) notApplicable("1D.CONSISTENCY.TAXONOMY", "no taxonomy rule is configured");
   else if (taxonomyFindings.length > 0) add("1D.CONSISTENCY.TAXONOMY", STATUS.FAIL, REASON.CONSISTENCY_TAXONOMY_UNKNOWN, `${taxonomyFindings.length} finding(s); see observed.findings`, { count: taxonomyFindings.length, checked: taxonomyChecked, findings: sample(taxonomyFindings.map((f) => `${f.path}:${f.line}: ${f.message}`), 20) });
-  else add("1D.CONSISTENCY.TAXONOMY", STATUS.PASS, REASON.OK, "every value belongs to its declared taxonomy", { checked: taxonomyChecked });
+  else if (taxonomyIncomplete) add("1D.CONSISTENCY.TAXONOMY", STATUS.INCOMPLETE, REASON.CONSISTENCY_INPUT_INVALID, "a configured taxonomy table could not be established for every matching document", { checked: taxonomyChecked });
+  else if (!taxonomyMatchedAny) notApplicable("1D.CONSISTENCY.TAXONOMY", "no changed document matches a configured taxonomy rule");
+  else add("1D.CONSISTENCY.TAXONOMY", STATUS.PASS, REASON.OK, "every value belongs to its declared taxonomy, for every matching document", { checked: taxonomyChecked });
 
   // ---- Method-contradiction consistency.
   const methodFindings = [];
   const methodReviewFindings = [];
   let methodChecked = 0;
+  let methodIncomplete = false;
+  let methodMatchedAny = false;
   for (const rule of config.methodRules) {
     if (rule.contradictions.length === 0) continue;
     const byMethod = new Map(rule.contradictions.map((c) => [c.method, c.forbiddenWords]));
     const ambiguousPattern = rule.ambiguousMarkers.length > 0 ? new RegExp(`\\b(?:${rule.ambiguousMarkers.map(escapeRegExp).join("|")})\\b`, "i") : null;
     for (const doc of input.documents) {
       if (!rule.filePatterns.some((p) => matchPathPattern(p, doc.path))) continue;
-      if (!isParsedDocument(doc.structure)) continue;
+      methodMatchedAny = true;
+      if (!isValidMarkdownStructure(doc.structure)) {
+        methodIncomplete = true;
+        continue;
+      }
       const table = findTable(doc.structure, [rule.matchColumn, rule.textColumn]);
-      if (!table) continue;
+      if (!table) {
+        methodIncomplete = true;
+        continue;
+      }
       if (!bump(table.rows.length) || table.rows.length > MAX_ROWS) {
         add("1D.CONSISTENCY.METHOD", STATUS.INCOMPLETE, REASON.CONSISTENCY_BOUND_EXCEEDED, "method consistency exceeded its work bound", {});
         return done();
@@ -232,10 +267,12 @@ function checkConsistency(input) {
       }
     }
   }
-  if (config.methodRules.length === 0) notApplicable("1D.CONSISTENCY.METHOD", "no method rule is configured");
+  if (config.methodRules.every((r) => r.contradictions.length === 0)) notApplicable("1D.CONSISTENCY.METHOD", "no method rule with a configured contradiction is present");
   else if (methodFindings.length > 0) add("1D.CONSISTENCY.METHOD", STATUS.FAIL, REASON.CONSISTENCY_METHOD_CONTRADICTION, `${methodFindings.length} finding(s); see observed.findings`, { count: methodFindings.length, checked: methodChecked, findings: sample(methodFindings.map((f) => `${f.path}:${f.line}: ${f.message}`), 20) });
   else if (methodReviewFindings.length > 0) add("1D.CONSISTENCY.METHOD", STATUS.HUMAN_REVIEW_REQUIRED, REASON.CONSISTENCY_METHOD_CONTRADICTION, `${methodReviewFindings.length} ambiguous finding(s); a human must judge whether this is a real contradiction; see observed.findings`, { count: methodReviewFindings.length, checked: methodChecked, findings: sample(methodReviewFindings.map((f) => `${f.path}:${f.line}: ${f.message}`), 20) });
-  else add("1D.CONSISTENCY.METHOD", STATUS.PASS, REASON.OK, "no declared method contradicts its row's own wording", { checked: methodChecked });
+  else if (methodIncomplete) add("1D.CONSISTENCY.METHOD", STATUS.INCOMPLETE, REASON.CONSISTENCY_INPUT_INVALID, "a configured method table could not be established for every matching document", { checked: methodChecked });
+  else if (!methodMatchedAny) notApplicable("1D.CONSISTENCY.METHOD", "no changed document matches a configured method rule");
+  else add("1D.CONSISTENCY.METHOD", STATUS.PASS, REASON.OK, "no declared method contradicts its row's own wording, for every matching document", { checked: methodChecked });
 
   return done();
 }

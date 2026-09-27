@@ -48,7 +48,11 @@ test("W2 1D: invalid input rejected before config is read", () => {
 test("W2 1D: correct totals and correct grouped totals all PASS", () => {
   const r = runRisk([{ id: "R1", sev: "HIGH" }, { id: "R2", sev: "HIGH" }, { id: "R3", sev: "MEDIUM" }], [{ level: "HIGH", count: 2 }, { level: "MEDIUM", count: 1 }]);
   assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
-  assert.equal(g.aggregate(r.records).readiness.state, "READY");
+  // Isolate the count rule alone (no configured taxonomy/method table exists in this fixture,
+  // so a config that also declares those rules correctly reports them INCOMPLETE, not PASS --
+  // corrective C1, W2-SEC-H1; see the dedicated tests for that).
+  const countOnly = runRisk([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }], { taxonomyRules: [], methodRules: [] });
+  assert.equal(g.aggregate(countOnly.records).readiness.state, "READY");
 });
 
 test("W2 1D: a declared total that differs from the actual counted rows is a deterministic mismatch", () => {
@@ -88,23 +92,46 @@ test("W2 1D: a missing counted or totals table is INCOMPLETE, never a fabricated
 
 // ---------------------------------------------------------------- evidence dependency (1C consumption)
 
-test("W2 1D: a count rule marked dependsOnEvidence downgrades to 1C's worst status, and is INCOMPLETE with no 1C result supplied", () => {
-  const config = { ...baseConfig(), countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+test("W2 1D corrective C1 / W2-DEV-M2 / W2-SEC-L1: dependsOnEvidence binds each counted row to its OWN 1C rowIndex entry (evidenceIdColumn), not the whole 1C result", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
   const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
   const noEvidence = g.checkConsistency({ subject, documents, config });
   assert.equal(state(noEvidence, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
 
-  const passingEvidence = { subject, records: [{ checkId: "1C.EVIDENCE.STRUCTURE", ownerStage: "1C", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] }], outcome: null };
-  const clean = g.checkConsistency({ subject, documents, config, evidenceResult: passingEvidence });
+  const evidenceWith = (rowIndex) => ({ subject, records: [{ checkId: "1C.EVIDENCE.STRUCTURE", ownerStage: "1C", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] }], rowIndex, outcome: null });
+  const clean = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "PASS" }]) });
   assert.equal(state(clean, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
 
-  const hrrEvidence = { subject, records: [{ checkId: "1C.EVIDENCE.PROMOTION_WORDING", ownerStage: "1C", status: "HUMAN_REVIEW_REQUIRED", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] }], outcome: null };
-  const downgraded = g.checkConsistency({ subject, documents, config, evidenceResult: hrrEvidence });
-  assert.equal(state(downgraded, "1D.CONSISTENCY.COUNTS"), "HUMAN_REVIEW_REQUIRED/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "1D never strengthens 1C's own finding");
+  const downgraded = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "HUMAN_REVIEW_REQUIRED" }]) });
+  assert.equal(state(downgraded, "1D.CONSISTENCY.COUNTS"), "HUMAN_REVIEW_REQUIRED/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "1D never strengthens 1C's own per-row finding");
 
-  const wrongSubjectEvidence = { subject: { ...subject, head: "d".repeat(40) }, records: [], outcome: null };
+  const unresolvedId = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "SOME_OTHER_ID", status: "PASS" }]) });
+  assert.equal(state(unresolvedId, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a counted row whose own evidence id is unresolvable is never silently counted clean");
+
+  const wrongSubjectEvidence = { subject: { ...subject, head: "d".repeat(40) }, records: [], rowIndex: [{ id: "R1", status: "PASS" }], outcome: null };
   const mismatched = g.checkConsistency({ subject, documents, config, evidenceResult: wrongSubjectEvidence });
   assert.equal(state(mismatched, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a 1C result for a different subject is never consumed");
+
+  const forgedStatus = { subject, records: [], rowIndex: [{ id: "R1", status: "SUPER_PASS" }], outcome: null };
+  assert.doesNotThrow(() => g.checkConsistency({ subject, documents, config, evidenceResult: forgedStatus }));
+  assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: forgedStatus }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "an unrecognized status anywhere in a supplied 1C result makes the whole result untrusted, never a crash or a silent pass");
+});
+
+test("W2 corrective C1 / W2-SEC-H3: an unrecognized status in evidenceResult never throws and never propagates into a new record", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  for (const bad of [
+    { subject, records: [{ checkId: "1C.EVIDENCE.STRUCTURE", ownerStage: "1C", status: "SUPER_PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] }], outcome: null },
+    { subject, records: [{ checkId: "1C.EVIDENCE.STRUCTURE", ownerStage: "1D", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] }], outcome: null },
+    { subject, records: "not-an-array", outcome: null },
+    null,
+    "a string",
+    42,
+  ]) {
+    assert.doesNotThrow(() => g.checkConsistency({ subject, documents, config, evidenceResult: bad }), JSON.stringify(bad));
+    const r = g.checkConsistency({ subject, documents, config, evidenceResult: bad });
+    for (const rec of r.records) assert.equal(["PASS", "FAIL", "CONFIGURATION_ERROR", "HUMAN_REVIEW_REQUIRED", "INCOMPLETE", "NOT_APPLICABLE"].includes(rec.status), true);
+  }
 });
 
 // ---------------------------------------------------------------- taxonomy
@@ -162,4 +189,71 @@ test("W2 1D: deterministic ordering and immutability", () => {
 
 test("W2 1D: no internal helper is exported through the public governance interface", () => {
   for (const name of ["validateConsistencyConfig", "findTable", "worseStatus", "parseCount"]) assert.equal(name in g, false, name);
+});
+
+// ---------------------------------------------------------------- corrective C1 regressions
+
+test("W2-SEC-H1: a matching document with no matching taxonomy or method table is INCOMPLETE, never a fabricated PASS", () => {
+  const noTable = doc("docs/a.md", "# just prose, no table with a Severity or Method column\n");
+  const config = { ...baseConfig(), countRules: [] };
+  const taxOnly = g.checkConsistency({ subject, documents: [noTable], config: { ...config, methodRules: [] } });
+  assert.equal(state(taxOnly, "1D.CONSISTENCY.TAXONOMY"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+  const methodOnly = g.checkConsistency({ subject, documents: [noTable], config: { ...config, taxonomyRules: [] } });
+  assert.equal(state(methodOnly, "1D.CONSISTENCY.METHOD"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+});
+
+test("W2-SEC-H1: an unparsed matching document is INCOMPLETE for taxonomy and method, not silently skipped", () => {
+  const huge = { path: "docs/a.md", structure: g.parseMarkdown({ path: "docs/a.md", text: "x".repeat(2 * 1024 * 1024) }) };
+  const config = { ...baseConfig(), countRules: [] };
+  const r = g.checkConsistency({ subject, documents: [huge], config });
+  assert.equal(state(r, "1D.CONSISTENCY.TAXONOMY"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+  assert.equal(state(r, "1D.CONSISTENCY.METHOD"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+});
+
+test("W2-SEC-H1: a taxonomy/method rule with genuinely zero matching documents is NOT_APPLICABLE, not INCOMPLETE (true absence is still distinguished from an unresolvable fact)", () => {
+  const unrelated = doc("other/x.md", "no relevant tables\n");
+  const r = g.checkConsistency({ subject, documents: [unrelated], config: { ...baseConfig(), countRules: [] } });
+  assert.equal(state(r, "1D.CONSISTENCY.TAXONOMY"), "NOT_APPLICABLE/OK");
+  assert.equal(state(r, "1D.CONSISTENCY.METHOD"), "NOT_APPLICABLE/OK");
+});
+
+test("W2-SEC-H2: one clean matching document plus one matching document missing its totals table entirely is INCOMPLETE, not a fabricated PASS", () => {
+  const clean = riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }]);
+  const missingTotals = doc("docs/b.md", "| ID | Severity |\n|---|---|\n| R2 | HIGH |\n| R3 | HIGH |\n| R4 | HIGH |\n"); // 3 HIGH rows, no totals table at all
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [] };
+  const r = g.checkConsistency({ subject, documents: [clean, missingTotals], config });
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+});
+
+test("W2-SEC-H2: a real mismatch in one document combined with an incomplete sibling document preserves the more severe status (FAIL)", () => {
+  const mismatch = riskDoc([{ id: "R1", sev: "HIGH" }, { id: "R2", sev: "HIGH" }], [{ level: "HIGH", count: 3 }]);
+  const missingTotals = doc("docs/b.md", "| ID | Severity |\n|---|---|\n| R3 | MEDIUM |\n");
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [] };
+  const r = g.checkConsistency({ subject, documents: [mismatch, missingTotals], config });
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "FAIL/CONSISTENCY_COUNT_MISMATCH");
+});
+
+test("W2-SEC-H2: two clean matching documents both PASS; zero matching documents is NOT_APPLICABLE", () => {
+  const a = riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }]);
+  const b = doc("docs/b.md", "| ID | Severity |\n|---|---|\n| R2 | MEDIUM |\n\n| Level | Count |\n|---|---|\n| MEDIUM | 1 |\n");
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [] };
+  assert.equal(state(g.checkConsistency({ subject, documents: [a, b], config }), "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+  assert.equal(state(g.checkConsistency({ subject, documents: [doc("other/x.md", "n/a\n")], config }), "1D.CONSISTENCY.COUNTS"), "NOT_APPLICABLE/OK");
+});
+
+test("W2-DEV-M1: an empty ambiguousMarkers list is a valid, more conservative configuration (every contradiction for that rule is always FAIL, never HRR)", () => {
+  const valid = g.checkConsistency({ subject, documents: [], config: { ...baseConfig(), methodRules: [{ ...baseConfig().methodRules[0], ambiguousMarkers: [] }] } });
+  assert.equal(state(valid, "1D.CONSISTENCY.CONFIG"), "PASS/OK");
+  const r = runMethod([{ id: "M1", method: "STATIC_ANALYSIS", note: "we may have executed it once" }], { methodRules: [{ ...baseConfig().methodRules[0], ambiguousMarkers: [] }] });
+  assert.equal(state(r, "1D.CONSISTENCY.METHOD"), "FAIL/CONSISTENCY_METHOD_CONTRADICTION", "with no configured ambiguity marker, the contradiction is always a deterministic FAIL");
+});
+
+test("W2 section 20: two contradiction entries declared for the same method are rejected, not silently overwritten", () => {
+  const r = g.checkConsistency({ subject, documents: [], config: { ...baseConfig(), methodRules: [{ ...baseConfig().methodRules[0], contradictions: [{ method: "STATIC_ANALYSIS", forbiddenWords: ["executed"] }, { method: "STATIC_ANALYSIS", forbiddenWords: ["ran"] }] }] } });
+  assert.equal(state(r, "1D.CONSISTENCY.CONFIG"), "CONFIGURATION_ERROR/CONSISTENCY_CONFIG_INVALID");
+});
+
+test("W2 section 29: duplicate declared group labels in the totals table are a deterministic FAIL, even when each individually matches", () => {
+  const r = runRisk([{ id: "R1", sev: "HIGH" }, { id: "R2", sev: "HIGH" }], [{ level: "HIGH", count: 2 }, { level: "HIGH", count: 2 }], { taxonomyRules: [], methodRules: [] });
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "FAIL/CONSISTENCY_COUNT_MISMATCH");
 });

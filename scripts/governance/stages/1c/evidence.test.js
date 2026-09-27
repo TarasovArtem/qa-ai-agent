@@ -76,17 +76,36 @@ test("W2 1C: a derived conclusion with a compatible weakest premise is not an ov
   assert.equal(state(r, "1C.EVIDENCE.PROPAGATION"), "PASS/OK");
 });
 
-test("W2 1C: independent stronger evidence, only when explicitly declared, allows a strong conclusion despite a weak premise", () => {
+test("W2 1C: independent evidence, only when it references a real, resolvable, sufficiently strong row, allows a strong conclusion despite a weak premise", () => {
   const weak = run([
     { id: "A1", cls: "UNKNOWN" },
     { id: "A2", cls: "DIRECT_DOC", premises: "A1" },
   ]);
   assert.equal(state(weak, "1C.EVIDENCE.PROPAGATION"), "FAIL/EVIDENCE_STRENGTH_OVERCLAIM");
+  // A2 cites A3 (itself DIRECT_DOC, strong) as independent evidence: that alone justifies A2's strength.
   const declared = run([
     { id: "A1", cls: "UNKNOWN" },
-    { id: "A2", cls: "DIRECT_DOC", premises: "A1", independent: "yes" },
+    { id: "A3", cls: "DIRECT_DOC" },
+    { id: "A2", cls: "DIRECT_DOC", premises: "A1", independent: "A3" },
   ]);
   assert.equal(state(declared, "1C.EVIDENCE.PROPAGATION"), "PASS/OK");
+});
+
+test("W2 1C corrective C1 / W2-SEC-M2: independentColumn is never a bare boolean marker -- it must reference real, resolvable, sufficiently strong evidence", () => {
+  // A bare non-empty marker with no such row is a dangling reference, not an escape hatch.
+  const arbitraryMarker = run([{ id: "A1", cls: "UNKNOWN" }, { id: "A2", cls: "DIRECT_DOC", premises: "A1", independent: "yes" }]);
+  assert.equal(state(arbitraryMarker, "1C.EVIDENCE.PREMISES"), "FAIL/EVIDENCE_PREMISE_DANGLING");
+  assert.equal(state(arbitraryMarker, "1C.EVIDENCE.PROPAGATION"), "FAIL/EVIDENCE_STRENGTH_OVERCLAIM", "a dangling independent reference grants no authority");
+  // Weak independent evidence does not rescue a weak premise: still an overclaim.
+  const weakIndependent = run([
+    { id: "A1", cls: "UNKNOWN" },
+    { id: "A4", cls: "UNKNOWN" },
+    { id: "A2", cls: "DIRECT_DOC", premises: "A1", independent: "A4" },
+  ]);
+  assert.equal(state(weakIndependent, "1C.EVIDENCE.PROPAGATION"), "FAIL/EVIDENCE_STRENGTH_OVERCLAIM");
+  // A row cannot cite itself as independent evidence.
+  const selfRef = run([{ id: "A1", cls: "DIRECT_DOC", independent: "A1" }]);
+  assert.equal(state(selfRef, "1C.EVIDENCE.PREMISES"), "FAIL/EVIDENCE_PREMISE_CYCLE");
 });
 
 test("W2 1C: promotion wording on the strongest configured strength is not flagged", () => {
@@ -232,4 +251,71 @@ test("W2 1C: deterministic ordering and immutability", () => {
 
 test("W2 1C: no internal helper is exported through the public governance interface", () => {
   for (const name of ["validateEvidenceModelConfig", "resolve", "checkEvidenceModel_internal", "escapeRegExp"]) assert.equal(name in g, false, name);
+});
+
+// ---------------------------------------------------------------- corrective C1 regressions
+
+test("W2-SEC-M1: every non-null column role must be pairwise distinct; every collision is rejected", () => {
+  const t = baseConfig().tables[0];
+  const pairs = [
+    ["idColumn", "classColumn"], ["idColumn", "strengthColumn"], ["idColumn", "premisesColumn"], ["idColumn", "conclusionColumn"], ["idColumn", "independentColumn"],
+    ["classColumn", "strengthColumn"], ["classColumn", "premisesColumn"], ["classColumn", "conclusionColumn"], ["classColumn", "independentColumn"],
+    ["strengthColumn", "premisesColumn"], ["strengthColumn", "conclusionColumn"], ["strengthColumn", "independentColumn"],
+    ["premisesColumn", "conclusionColumn"], ["premisesColumn", "independentColumn"], ["conclusionColumn", "independentColumn"],
+  ];
+  for (const [a, b] of pairs) {
+    const collided = { ...t, [b]: t[a] };
+    const r = g.checkEvidenceModel({ subject, documents: [], config: { ...baseConfig(), tables: [collided] } });
+    assert.equal(state(r, "1C.EVIDENCE.CONFIG"), "CONFIGURATION_ERROR/EVIDENCE_CONFIG_INVALID", `${a} === ${b}`);
+  }
+});
+
+test("W2-SEC-M1 regression: the exact collision that previously defeated propagation (independentColumn === classColumn) is now rejected outright, not silently exploitable", () => {
+  const t = { ...baseConfig().tables[0], independentColumn: baseConfig().tables[0].classColumn };
+  const text = table([{ id: "A1", cls: "UNKNOWN" }, { id: "A2", cls: "DIRECT_DOC", premises: "A1" }]);
+  const r = g.checkEvidenceModel({ subject, documents: [doc("docs/a.md", text)], config: { ...baseConfig(), tables: [t] } });
+  assert.equal(state(r, "1C.EVIDENCE.CONFIG"), "CONFIGURATION_ERROR/EVIDENCE_CONFIG_INVALID");
+});
+
+test("W2-SEC-L2: overlapping selectors are both tried; a document is not limited to the first matching selector", () => {
+  const overlapping = {
+    ...baseConfig(),
+    tables: [
+      { filePatterns: ["docs/*.md"], idColumn: "RiskID", classColumn: "RiskClass", strengthColumn: null, premisesColumn: null, conclusionColumn: null, independentColumn: null },
+      baseConfig().tables[0],
+    ],
+  };
+  const text = "| RiskID | RiskClass |\n|---|---|\n| R1 | DIRECT_DOC |\n\n" + table([{ id: "A1", cls: "" }]);
+  const r = g.checkEvidenceModel({ subject, documents: [doc("docs/a.md", text)], config: overlapping });
+  assert.equal(rec(r, "1C.EVIDENCE.CONFIG").observed.tables, 2, "both tables were recognized under their own selector");
+  assert.equal(state(r, "1C.EVIDENCE.STRUCTURE"), "FAIL/EVIDENCE_CLASS_MISSING", "the second table's own defect is still caught");
+});
+
+test("W2-DEV-L2: the primary reasonCode for coexisting structural defects is deterministic, independent of row order", () => {
+  const forward = run([{ id: "A1", cls: "" }, { id: "A2", cls: "MADE_UP" }]);
+  const backward = run([{ id: "A2", cls: "MADE_UP" }, { id: "A1", cls: "" }]);
+  assert.equal(rec(forward, "1C.EVIDENCE.STRUCTURE").reasonCode, rec(backward, "1C.EVIDENCE.STRUCTURE").reasonCode);
+  assert.equal(rec(forward, "1C.EVIDENCE.STRUCTURE").reasonCode, "EVIDENCE_CLASS_UNKNOWN", "class-unknown outranks class-missing in the fixed precedence, regardless of row order");
+});
+
+test("W2 corrective C1: a cycle spanning both a premise edge and an independent-evidence edge is still detected", () => {
+  // A1 --premise--> A2 --independent--> A1
+  const r = run([
+    { id: "A1", cls: "DERIVED_INFERENCE", premises: "A2" },
+    { id: "A2", cls: "DERIVED_INFERENCE", independent: "A1" },
+  ]);
+  assert.equal(state(r, "1C.EVIDENCE.PREMISES"), "FAIL/EVIDENCE_PREMISE_CYCLE");
+  assert.notEqual(g.aggregate(r.records).readiness.state, "READY");
+});
+
+test("W2-DEV-M2 / W2-SEC-L1: checkEvidenceModel() returns an additive, frozen, deterministic rowIndex binding every recognized row to its worst structural/premise/propagation status", () => {
+  const r = run([
+    { id: "A1", cls: "DIRECT_DOC" },
+    { id: "A2", cls: "UNKNOWN" },
+    { id: "A3", cls: "DIRECT_DOC", premises: "A2" }, // overclaims
+  ]);
+  assert.equal(Object.isFrozen(r.rowIndex), true);
+  const byId = Object.fromEntries(r.rowIndex.map((x) => [x.id, x.status]));
+  assert.deepEqual(byId, { A1: "PASS", A2: "PASS", A3: "FAIL" });
+  assert.deepEqual([...r.rowIndex].map((x) => x.id), ["A1", "A2", "A3"], "rowIndex is sorted by id");
 });
