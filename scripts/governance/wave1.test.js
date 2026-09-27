@@ -241,8 +241,12 @@ test("W1 boundary: the public surface adds exactly the six design-named interfac
   assert.equal(Object.isFrozen(g), true);
 });
 
-test("W1 boundary: no later-wave or GOV-VERIFY residue capability exists (1C..1G, CI evidence, merge-gate facts)", () => {
-  for (const name of ["checkEvidenceModel", "checkConsistency", "computeDeltaReview", "collectCiEvidence", "buildReport", "computeFingerprints", "verifyMergeGate", "getBranchProtection", "computePackDiff"]) assert.equal(name in g, false, name);
+test("W1 boundary: no later-wave or GOV-VERIFY residue capability exists (1E..1G, CI evidence, merge-gate facts)", () => {
+  // checkEvidenceModel/checkConsistency are intentionally excluded from this Wave 1
+  // boundary list: Wave 2 (1C + 1D) adds them, and this file records the Wave 1
+  // boundary, not "nothing past Wave 1 exists" -- see wave2.test.js for the Wave 2
+  // boundary (1E/1F/1G and GOV-VERIFY-1 residue still must not exist).
+  for (const name of ["computeDeltaReview", "collectCiEvidence", "buildReport", "computeFingerprints", "verifyMergeGate", "getBranchProtection", "computePackDiff"]) assert.equal(name in g, false, name);
   const sources = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
