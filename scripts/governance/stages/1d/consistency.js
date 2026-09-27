@@ -13,9 +13,14 @@
  *   1. count consistency -- a manifest-declared "counted" table's row count (per
  *      group, if configured) matches a declared "totals" table's value. A
  *      dependsOnEvidence rule additionally binds EACH counted row to a specific
- *      1C evidence-row status (via 1C's rowIndex), so an unrelated 1C finding
- *      elsewhere never affects a count table that only counts clean rows, and a
- *      row bound to an unresolved/failing 1C fact is never silently counted;
+ *      1C evidence-row status, read ONLY from 1C's canonical
+ *      `1C.EVIDENCE.ROW_INDEX` result record (corrective C2, Wave 2 C1 re-review,
+ *      W2-C1-SEC-H1/M1: there is no separate, independently-forgeable rowIndex
+ *      field to consult -- a missing, non-PASS, malformed or duplicate-id
+ *      projection is rejected in full and every dependent row falls back to
+ *      INCOMPLETE), so an unrelated 1C finding elsewhere never affects a count
+ *      table that only counts clean rows, and a row bound to an unresolved,
+ *      failing or untrustworthy 1C fact is never silently counted;
  *   2. taxonomy consistency -- every value in a manifest-declared column belongs
  *      to the manifest-declared allowed set;
  *   3. method contradiction -- a manifest-declared method value paired, on the
@@ -35,7 +40,7 @@ const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { matchPathPattern } = require("../../safety/path-patterns");
 const { validateRepoRelativePath } = require("../../safety/repo-path");
-const { createRecordFactory, isValidSubject, sample, worseStatus, isValidMarkdownStructure, validateStageResult } = require("../common");
+const { createRecordFactory, isValidSubject, sample, worseStatus, isValidStatus, isValidMarkdownStructure, validateStageResult } = require("../common");
 const { validateConsistencyConfig } = require("./config");
 
 const MAX_ROWS = 5000;
@@ -57,6 +62,32 @@ function cellAt(table, row, column) {
 }
 function parseCount(text) {
   return COUNT_TOKEN.test(text) ? Number(text) : null;
+}
+
+/**
+ * Extract the per-row evidence projection from a runtime-validated 1C result, reading
+ * it ONLY from the canonical `1C.EVIDENCE.ROW_INDEX` record inside `records[]` -- 1C no
+ * longer offers a separate top-level `rowIndex` field (corrective C2, Wave 2 C1
+ * re-review, W2-C1-SEC-H1): there is exactly one place row data can come from, so a
+ * caller can no longer supply an empty `records` array alongside a hand-authored row
+ * status and have it trusted. Returns null when there is no result, no such record, the
+ * record did not resolve to PASS (absent/incomplete rows are never treated as a
+ * trustworthy projection), or the record itself is malformed or contains a duplicate id
+ * (W2-C1-SEC-M1) -- in every one of those cases the WHOLE projection is rejected, never
+ * partially trusted, and every dependent row falls back to INCOMPLETE.
+ */
+function extractEvidenceRowIndex(evidenceResult) {
+  if (evidenceResult === null) return null;
+  const record = evidenceResult.records.find((r) => r.checkId === "1C.EVIDENCE.ROW_INDEX");
+  if (!record || record.status !== STATUS.PASS) return null;
+  if (!isPlainObject(record.observed) || !Array.isArray(record.observed.rows)) return null;
+  const map = new Map();
+  for (const entry of record.observed.rows) {
+    if (!isPlainObject(entry) || typeof entry.id !== "string" || !isValidStatus(entry.status)) return null;
+    if (map.has(entry.id)) return null;
+    map.set(entry.id, entry.status);
+  }
+  return map;
 }
 
 /**
@@ -91,7 +122,7 @@ function checkConsistency(input) {
   // A forged, malformed or wrong-subject evidenceResult is never trusted: it is treated
   // exactly like no evidenceResult at all (corrective C1, W2-SEC-H3). Never throws.
   const evidenceResult = validateStageResult(input.evidenceResult, subject, "1C");
-  const evidenceRowMap = evidenceResult && Array.isArray(evidenceResult.rowIndex) ? new Map(evidenceResult.rowIndex.map((r) => [r.id, r.status])) : null;
+  const evidenceRowMap = extractEvidenceRowIndex(evidenceResult);
   const evidenceRowStatus = (id) => (evidenceRowMap ? evidenceRowMap.get(id) ?? null : null);
 
   let totalCells = 0;

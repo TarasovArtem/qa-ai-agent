@@ -92,13 +92,18 @@ test("W2 1D: a missing counted or totals table is INCOMPLETE, never a fabricated
 
 // ---------------------------------------------------------------- evidence dependency (1C consumption)
 
-test("W2 1D corrective C1 / W2-DEV-M2 / W2-SEC-L1: dependsOnEvidence binds each counted row to its OWN 1C rowIndex entry (evidenceIdColumn), not the whole 1C result", () => {
+// A canonical, well-formed 1C.EVIDENCE.ROW_INDEX record: the ONLY place 1D will look
+// for a per-row evidence projection (corrective C2, Wave 2 C1 re-review, closing
+// W2-C1-SEC-H1: there is no separate top-level `rowIndex` field to forge instead).
+const rowIndexRecord = (rows, overrides = {}) => ({ checkId: "1C.EVIDENCE.ROW_INDEX", ownerStage: "1C", status: "PASS", subject, observed: { rows }, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [], ...overrides });
+const evidenceWith = (rows) => ({ subject, records: [rowIndexRecord(rows)], outcome: null });
+
+test("W2 1D corrective C1+C2 / W2-DEV-M2 / W2-SEC-L1: dependsOnEvidence binds each counted row to its OWN 1C.EVIDENCE.ROW_INDEX entry (evidenceIdColumn), not the whole 1C result", () => {
   const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
   const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
   const noEvidence = g.checkConsistency({ subject, documents, config });
   assert.equal(state(noEvidence, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
 
-  const evidenceWith = (rowIndex) => ({ subject, records: [{ checkId: "1C.EVIDENCE.STRUCTURE", ownerStage: "1C", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] }], rowIndex, outcome: null });
   const clean = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "PASS" }]) });
   assert.equal(state(clean, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
 
@@ -108,13 +113,57 @@ test("W2 1D corrective C1 / W2-DEV-M2 / W2-SEC-L1: dependsOnEvidence binds each 
   const unresolvedId = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "SOME_OTHER_ID", status: "PASS" }]) });
   assert.equal(state(unresolvedId, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a counted row whose own evidence id is unresolvable is never silently counted clean");
 
-  const wrongSubjectEvidence = { subject: { ...subject, head: "d".repeat(40) }, records: [], rowIndex: [{ id: "R1", status: "PASS" }], outcome: null };
+  const wrongSubjectEvidence = { subject: { ...subject, head: "d".repeat(40) }, records: [rowIndexRecord([{ id: "R1", status: "PASS" }], { subject: { ...subject, head: "d".repeat(40) } })], outcome: null };
   const mismatched = g.checkConsistency({ subject, documents, config, evidenceResult: wrongSubjectEvidence });
   assert.equal(state(mismatched, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a 1C result for a different subject is never consumed");
 
-  const forgedStatus = { subject, records: [], rowIndex: [{ id: "R1", status: "SUPER_PASS" }], outcome: null };
+  const forgedStatus = { subject, records: [{ ...rowIndexRecord([]), observed: { rows: [{ id: "R1", status: "SUPER_PASS" }] } }], outcome: null };
   assert.doesNotThrow(() => g.checkConsistency({ subject, documents, config, evidenceResult: forgedStatus }));
   assert.equal(state(g.checkConsistency({ subject, documents, config, evidenceResult: forgedStatus }), "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "an unrecognized status anywhere in a supplied 1C result makes the whole result untrusted, never a crash or a silent pass");
+});
+
+// ---------------------------------------------------------------- corrective C2 (row-index trust boundary)
+
+test("W2-C1-SEC-H1 corrective C2: a forged evidenceResult with an empty records array and no ROW_INDEX record is never trusted, even if it carries a stray rowIndex-shaped field", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  // The pre-C2 exploit: zero real 1C computation (empty records), plus a hand-authored
+  // top-level rowIndex claiming PASS. That field no longer means anything to 1D.
+  const forged = { subject, records: [], rowIndex: [{ id: "R1", status: "PASS" }], outcome: null };
+  const r = g.checkConsistency({ subject, documents, config, evidenceResult: forged });
+  assert.notEqual(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK", "a forged rowIndex field must never produce a clean PASS");
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
+});
+
+test("W2-C1-SEC-M1 corrective C2: a malformed ROW_INDEX entry (missing id, or an unrecognized status) rejects the whole projection, never a partial one", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  for (const badRows of [
+    [{ status: "PASS" }], // missing id
+    [{ id: "R1", status: "NOT_A_REAL_STATUS" }],
+    [{ id: 42, status: "PASS" }],
+  ]) {
+    const r = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith(badRows) });
+    assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", JSON.stringify(badRows));
+  }
+});
+
+test("W2-C1-SEC-M1 corrective C2: a duplicate id inside ROW_INDEX rejects the whole projection, symmetrically regardless of insertion order", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const failThenPass = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "FAIL" }, { id: "R1", status: "PASS" }]) });
+  const passThenFail = g.checkConsistency({ subject, documents, config, evidenceResult: evidenceWith([{ id: "R1", status: "PASS" }, { id: "R1", status: "FAIL" }]) });
+  assert.equal(state(failThenPass, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED", "a later, more convenient entry never silently wins over an earlier one");
+  assert.equal(state(passThenFail, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
+  assert.equal(state(failThenPass, "1D.CONSISTENCY.COUNTS"), state(passThenFail, "1D.CONSISTENCY.COUNTS"), "no order dependence");
+});
+
+test("W2-C1-SEC-H1 corrective C2: a ROW_INDEX record that is not itself PASS (e.g. INCOMPLETE) is never treated as a trustworthy projection", () => {
+  const config = { ...baseConfig(), taxonomyRules: [], methodRules: [], countRules: [{ ...baseConfig().countRules[0], dependsOnEvidence: true, evidenceIdColumn: "ID" }] };
+  const documents = [riskDoc([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }])];
+  const incompleteRowIndex = { subject, records: [{ ...rowIndexRecord([{ id: "R1", status: "PASS" }]), status: "INCOMPLETE" }], outcome: null };
+  const r = g.checkConsistency({ subject, documents, config, evidenceResult: incompleteRowIndex });
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_EVIDENCE_DEPENDENCY_UNRESOLVED");
 });
 
 test("W2 corrective C1 / W2-SEC-H3: an unrecognized status in evidenceResult never throws and never propagates into a new record", () => {
@@ -168,6 +217,55 @@ test("W2 1D: the row bound fails closed, never silently truncated", () => {
   const rows = Array.from({ length: 5001 }, (_, i) => ({ id: `R${i}`, sev: "HIGH" }));
   const r = runRisk(rows, [{ level: "HIGH", count: 5001 }]);
   assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_BOUND_EXCEEDED");
+});
+
+// ---------------------------------------------------------------- W2-C1-SEC-M2 (aggregate structure bound)
+// Safe synthetic sizes only (max ~50,000 row objects, ~4000 tables) -- never anywhere
+// near the pathological 80,000,000-row product the corrective closes.
+
+const severityTable = (sevs) => ({ line: 1, header: ["Severity"], rows: sevs.map((s, i) => ({ line: i + 2, cells: [s] })) });
+const levelCountTable = (entries) => ({ line: 1_000_000, header: ["Level", "Count"], rows: entries.map((e, i) => ({ line: 1_000_000 + i + 1, cells: [e.level, String(e.count)] })) });
+const dummyTable = (n, offset) => ({ line: 2_000_000 + offset, header: [`Col${offset}`], rows: Array.from({ length: n }, (_, i) => ({ line: i + 1, cells: ["x"] })) });
+const structureOf = (tables) => ({ ok: true, path: "docs/synthetic.md", headings: [], anchors: [], links: [], definitions: [], tables });
+const runStructure = (structure) => g.checkConsistency({ subject, documents: [{ path: "docs/a.md", structure }], config: { ...baseConfig(), taxonomyRules: [], methodRules: [] } });
+
+test("W2-C1-SEC-M2 corrective C2: many small tables well under the aggregate row bound validate normally and the count rule still resolves", () => {
+  const dummies = Array.from({ length: 100 }, (_, i) => dummyTable(5, i));
+  const r = runStructure(structureOf([...dummies, severityTable(["HIGH"]), levelCountTable([{ level: "HIGH", count: 1 }])]));
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-M2 corrective C2: a structure at exactly the aggregate row bound (50,000) is still valid", () => {
+  const structure = structureOf([dummyTable(20_000, 1), dummyTable(20_000, 2), dummyTable(9_998, 3), severityTable(["HIGH"]), levelCountTable([{ level: "HIGH", count: 1 }])]);
+  const r = runStructure(structure);
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-M2 corrective C2: one row beyond the aggregate row bound (50,001) is rejected as an invalid structure, never accepted", () => {
+  const structure = structureOf([dummyTable(20_000, 1), dummyTable(20_000, 2), dummyTable(9_999, 3), severityTable(["HIGH"]), levelCountTable([{ level: "HIGH", count: 1 }])]);
+  const r = runStructure(structure);
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+});
+
+test("W2-C1-SEC-M2 corrective C2: a single table beyond the per-table row bound is rejected even though the aggregate total alone would be small", () => {
+  const r = runStructure(structureOf([dummyTable(20_001, 1)]));
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
+});
+
+test("W2-C1-SEC-M2 corrective C2: exactly 4000 tables with small row counts is valid and completes quickly", () => {
+  const dummies = Array.from({ length: 3998 }, (_, i) => dummyTable(1, i));
+  const structure = structureOf([...dummies, severityTable(["HIGH"]), levelCountTable([{ level: "HIGH", count: 1 }])]);
+  const t0 = Date.now();
+  const r = runStructure(structure);
+  assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0}ms`);
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "PASS/OK");
+});
+
+test("W2-C1-SEC-M2 corrective C2: one table beyond the table-count bound is rejected regardless of row counts", () => {
+  const dummies = Array.from({ length: 3999 }, (_, i) => dummyTable(1, i));
+  const structure = structureOf([...dummies, severityTable(["HIGH"]), levelCountTable([{ level: "HIGH", count: 1 }])]);
+  const r = runStructure(structure);
+  assert.equal(state(r, "1D.CONSISTENCY.COUNTS"), "INCOMPLETE/CONSISTENCY_INPUT_INVALID");
 });
 
 test("W2 1D: hostile control/bidi text in a note never reaches the result raw", () => {

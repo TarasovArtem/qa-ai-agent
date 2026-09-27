@@ -57,13 +57,13 @@ test("W2 1C: invalid input (subject / documents) is rejected before any config i
 
 // ---------------------------------------------------------------- positive
 
-test("W2 1C: one valid row, multiple valid rows, all PASS with the exact five records", () => {
+test("W2 1C: one valid row, multiple valid rows, all PASS with the exact six records", () => {
   const r = run([
     { id: "A1", cls: "DIRECT_DOC", conclusion: "the page states X" },
     { id: "A2", cls: "REPO_OBSERVED", conclusion: "observed in the repository" },
     { id: "A3", cls: "DERIVED_INFERENCE", premises: "A1, A2", conclusion: "follows from A1 and A2" },
   ]);
-  assert.deepEqual(r.records.map((x) => x.checkId), ["1C.EVIDENCE.CONFIG", "1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING"]);
+  assert.deepEqual(r.records.map((x) => x.checkId), ["1C.EVIDENCE.CONFIG", "1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING", "1C.EVIDENCE.ROW_INDEX"]);
   for (const rr of r.records) assert.equal(rr.status, "PASS", rr.checkId);
   assert.equal(g.aggregate(r.records).readiness.state, "READY");
 });
@@ -308,14 +308,37 @@ test("W2 corrective C1: a cycle spanning both a premise edge and an independent-
   assert.notEqual(g.aggregate(r.records).readiness.state, "READY");
 });
 
-test("W2-DEV-M2 / W2-SEC-L1: checkEvidenceModel() returns an additive, frozen, deterministic rowIndex binding every recognized row to its worst structural/premise/propagation status", () => {
+// ---------------------------------------------------------------- corrective C2 (row-index trust boundary)
+
+test("W2-DEV-M2 / W2-SEC-L1: checkEvidenceModel() emits a canonical 1C.EVIDENCE.ROW_INDEX record binding every recognized row to its worst structural/premise/propagation status", () => {
   const r = run([
     { id: "A1", cls: "DIRECT_DOC" },
     { id: "A2", cls: "UNKNOWN" },
     { id: "A3", cls: "DIRECT_DOC", premises: "A2" }, // overclaims
   ]);
-  assert.equal(Object.isFrozen(r.rowIndex), true);
-  const byId = Object.fromEntries(r.rowIndex.map((x) => [x.id, x.status]));
+  assert.equal(r.rowIndex, undefined, "there is no separate top-level rowIndex field");
+  const rowIndexRecord = rec(r, "1C.EVIDENCE.ROW_INDEX");
+  assert.equal(rowIndexRecord.status, "PASS");
+  assert.equal(Object.isFrozen(rowIndexRecord.observed.rows), true);
+  const byId = Object.fromEntries(rowIndexRecord.observed.rows.map((x) => [x.id, x.status]));
   assert.deepEqual(byId, { A1: "PASS", A2: "PASS", A3: "FAIL" });
-  assert.deepEqual([...r.rowIndex].map((x) => x.id), ["A1", "A2", "A3"], "rowIndex is sorted by id");
+  assert.deepEqual(rowIndexRecord.observed.rows.map((x) => x.id), ["A1", "A2", "A3"], "rows are sorted by id");
+});
+
+test("W2-C1-SEC-H1 corrective C2: no evidence row means the ROW_INDEX record is NOT_APPLICABLE, not a fabricated PASS", () => {
+  const r = g.checkEvidenceModel({ subject, documents: [doc("docs/a.md", "no tables here\n")], config: baseConfig() });
+  assert.equal(state(r, "1C.EVIDENCE.ROW_INDEX"), "NOT_APPLICABLE/OK");
+});
+
+test("W2-C1-SEC-H1 corrective C2: every early-exit path (bound exceeded, cycle work budget) still emits a ROW_INDEX record, never silently omitting it", () => {
+  const rows = Array.from({ length: 5001 }, (_, i) => ({ id: `R${i}`, cls: "DIRECT_DOC" }));
+  const r = run(rows);
+  assert.equal(state(r, "1C.EVIDENCE.ROW_INDEX"), "INCOMPLETE/EVIDENCE_BOUND_EXCEEDED");
+});
+
+test("W2-C1-SEC-H1 corrective C2: beyond the row-index projection bound, ROW_INDEX degrades to INCOMPLETE even though STRUCTURE/PREMISES/PROPAGATION can still resolve", () => {
+  const rows = Array.from({ length: 1001 }, (_, i) => ({ id: `R${i}`, cls: "DIRECT_DOC" }));
+  const r = run(rows);
+  assert.equal(state(r, "1C.EVIDENCE.PROPAGATION"), "PASS/OK");
+  assert.equal(state(r, "1C.EVIDENCE.ROW_INDEX"), "INCOMPLETE/EVIDENCE_BOUND_EXCEEDED");
 });

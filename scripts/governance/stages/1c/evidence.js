@@ -30,13 +30,22 @@
  * It never judges whether an inference is substantively correct: that is a
  * human, and later-wave, decision.
  *
- * Result shape: the usual frozen { subject, records, outcome }, PLUS an additive
- * `rowIndex` (frozen array of { id, status }, sorted by id): the per-row status --
- * the worst of that row's own structural validity, premise/independent-evidence
- * resolution, propagation and promotion-wording facts. This is the smallest
- * backward-compatible extension that lets 1D bind a specific counted row to a
- * specific 1C fact (corrective C1, W2-DEV-M2 / W2-SEC-L1); existing consumers
- * that read only subject/records/outcome are unaffected.
+ * Result shape: the usual frozen { subject, records, outcome } -- nothing else.
+ * checked(1D)'s need to bind a specific counted row to a specific 1C fact (design
+ * section 18) is met entirely INSIDE `records`: the canonical `1C.EVIDENCE.ROW_INDEX`
+ * record carries the bounded per-row projection (one { id, status } entry per
+ * recognized row, in `observed.rows`) -- the worst of that row's own structural
+ * validity, premise/independent-evidence resolution, propagation and promotion-
+ * wording facts. Corrective C1 (W2-DEV-M2 / W2-SEC-L1) first added this projection as
+ * a separate top-level `rowIndex` field; corrective C2 (Wave 2 C1 re-review,
+ * W2-C1-SEC-H1/M1) removed that field and folded it into this one canonical,
+ * validateResultRecord()-validated record instead, because a second, independently
+ * suppliable field let a caller assert a row's evidence status with NO corresponding
+ * 1C computation at all (an empty `records` array plus a hand-authored `rowIndex`).
+ * There is now exactly one place row data can come from. A consumer still cannot
+ * cryptographically prove who called checkEvidenceModel() -- nothing here invents
+ * provenance the runtime cannot establish -- but it can no longer be handed two
+ * disagreeing sources and asked to trust the more convenient one.
  */
 
 "use strict";
@@ -49,6 +58,12 @@ const { createRecordFactory, isValidSubject, sample, worseStatus, isValidMarkdow
 const { validateEvidenceModelConfig } = require("./config");
 
 const MAX_ROWS = 5000;
+// The compact per-row projection must fit inside ONE canonical result record's `observed`
+// (the kernel's bounded-JSON contract caps every array at 1024 entries): 1000 leaves
+// headroom for the wrapping object. Structural/premise checking itself still scales to
+// MAX_ROWS; only the ROW_INDEX projection has this smaller, separately-reported bound
+// (corrective C2, Wave 2 C1 re-review).
+const ROW_INDEX_LIMIT = 1000;
 const MAX_REFS_PER_ROW = 32;
 const MAX_DEPTH = 500;
 const BASE_BUDGET = 200_000;
@@ -84,7 +99,7 @@ function splitTokens(text) {
 }
 
 function invalidInput(detail) {
-  return deepFreeze({ subject: null, records: [], rowIndex: [], outcome: { status: STATUS.CONFIGURATION_ERROR, reasonCode: REASON.EVIDENCE_INPUT_INVALID, detail } });
+  return deepFreeze({ subject: null, records: [], outcome: { status: STATUS.CONFIGURATION_ERROR, reasonCode: REASON.EVIDENCE_INPUT_INVALID, detail } });
 }
 
 /**
@@ -98,8 +113,25 @@ function checkEvidenceModel(input) {
   const subject = input.subject;
   const out = createRecordFactory(subject, "1C");
   const { add, notApplicable } = out;
-  const rowIndexOf = (statuses) => deepFreeze([...statuses].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
-  const done = (statuses = []) => deepFreeze({ subject, records: out.records, rowIndex: rowIndexOf(statuses), outcome: null });
+  const done = () => deepFreeze({ subject, records: out.records, outcome: null });
+  /**
+   * The row-level projection lives ONLY inside this one canonical, validateResultRecord()-
+   * validated record -- there is no separate top-level field a caller could supply on its
+   * own and have trusted independently (corrective C2 closes W2-C1-SEC-H1/M1: a forged
+   * `evidenceResult` can no longer assert a row status with zero corresponding 1C
+   * computation, because there is only one place row data can come from). A consumer
+   * (1D) still cannot cryptographically prove who called checkEvidenceModel(); the
+   * documented trust model is that a structurally valid, internally self-consistent,
+   * same-subject 1C result is accepted as internal composition input (design section 18;
+   * no stronger provenance is invented).
+   */
+  function emitRowIndex(complete) {
+    if (!complete) return add("1C.EVIDENCE.ROW_INDEX", STATUS.INCOMPLETE, REASON.EVIDENCE_BOUND_EXCEEDED, "the per-row projection could not be established for every recognized row", { checked: rowsById.size });
+    if (rowsById.size === 0) return notApplicable("1C.EVIDENCE.ROW_INDEX", "no evidence row was recognized");
+    if (rowsById.size > ROW_INDEX_LIMIT) return add("1C.EVIDENCE.ROW_INDEX", STATUS.INCOMPLETE, REASON.EVIDENCE_BOUND_EXCEEDED, "the number of recognized rows exceeds the row-index projection bound", { checked: rowsById.size });
+    const rows = [...rowsById.keys()].sort().map((id) => ({ id, status: rowIssue.get(id) || STATUS.PASS }));
+    add("1C.EVIDENCE.ROW_INDEX", STATUS.PASS, REASON.OK, "one row-status entry per recognized evidence row", { rows });
+  }
 
   if (!Array.isArray(input.documents) || !input.documents.every((d) => isPlainObject(d) && validateRepoRelativePath(d.path).ok)) {
     return invalidInput("documents must be an array of { path, structure } with canonical paths");
@@ -108,7 +140,7 @@ function checkEvidenceModel(input) {
   const validated = validateEvidenceModelConfig(input.config);
   if (!validated.ok) {
     add("1C.EVIDENCE.CONFIG", validated.status, validated.reasonCode, "the evidence-model configuration is invalid", {});
-    for (const id of ["STRUCTURE", "PREMISES", "PROPAGATION", "PROMOTION_WORDING"]) notApplicable(`1C.EVIDENCE.${id}`, "no usable evidence-model configuration");
+    for (const id of ["STRUCTURE", "PREMISES", "PROPAGATION", "PROMOTION_WORDING", "ROW_INDEX"]) notApplicable(`1C.EVIDENCE.${id}`, "no usable evidence-model configuration");
     return done();
   }
   const config = validated.config;
@@ -143,7 +175,7 @@ function checkEvidenceModel(input) {
   }
   if (recognized.length === 0) {
     notApplicable("1C.EVIDENCE.CONFIG", "no changed document matches a configured evidence-table selector");
-    for (const id of ["STRUCTURE", "PREMISES", "PROPAGATION", "PROMOTION_WORDING"]) notApplicable(`1C.EVIDENCE.${id}`, "no evidence table was recognized");
+    for (const id of ["STRUCTURE", "PREMISES", "PROPAGATION", "PROMOTION_WORDING", "ROW_INDEX"]) notApplicable(`1C.EVIDENCE.${id}`, "no evidence table was recognized");
     return done();
   }
   if (out.records.some((r) => r.status === STATUS.FAIL || r.status === STATUS.INCOMPLETE)) {
@@ -168,6 +200,7 @@ function checkEvidenceModel(input) {
       if (totalRows > MAX_ROWS) {
         add("1C.EVIDENCE.STRUCTURE", STATUS.INCOMPLETE, REASON.EVIDENCE_BOUND_EXCEEDED, "the number of evidence rows exceeds the supported bound", { checked: totalRows });
         for (const id of ["PREMISES", "PROPAGATION", "PROMOTION_WORDING"]) notApplicable(`1C.EVIDENCE.${id}`, "the evidence-row bound was exceeded");
+        emitRowIndex(false);
         return done();
       }
       const cell = (i) => (i >= 0 ? cleanCell(row.cells[i]) : null);
@@ -222,6 +255,7 @@ function checkEvidenceModel(input) {
       if (premises.length > MAX_REFS_PER_ROW || independentRefs.length > MAX_REFS_PER_ROW) {
         add("1C.EVIDENCE.STRUCTURE", STATUS.INCOMPLETE, REASON.EVIDENCE_BOUND_EXCEEDED, "a row declares more premise or independent-evidence references than the supported bound", { path, line: row.line });
         for (const id of ["PREMISES", "PROPAGATION", "PROMOTION_WORDING"]) notApplicable(`1C.EVIDENCE.${id}`, "the reference-count bound was exceeded");
+        emitRowIndex(false);
         return done();
       }
       const conclusionText = conclusionI >= 0 ? row.cells[conclusionI] || "" : "";
@@ -323,6 +357,7 @@ function checkEvidenceModel(input) {
     add("1C.EVIDENCE.PREMISES", STATUS.INCOMPLETE, REASON.EVIDENCE_BOUND_EXCEEDED, "premise/independent-evidence resolution exceeded its work bound", {});
     notApplicable("1C.EVIDENCE.PROPAGATION", "premise resolution did not complete");
     notApplicable("1C.EVIDENCE.PROMOTION_WORDING", "premise resolution did not complete");
+    emitRowIndex(false);
     return done();
   }
 
@@ -336,14 +371,15 @@ function checkEvidenceModel(input) {
   else add("1C.EVIDENCE.PROPAGATION", STATUS.PASS, REASON.OK, "no row exceeds what its own evidence class, premises and independent evidence can support", { checked: rowsById.size });
 
   // ---- Promotion wording: never a semantic judgment, only ever HUMAN_REVIEW_REQUIRED; never
-  // contributes to a row's rowIndex status (it is about wording, not evidentiary support).
+  // contributes to a row's ROW_INDEX status (it is about wording, not evidentiary support).
   const promotionFindings = [];
   if (config.promotionWords.length > 0) {
     const pattern = new RegExp(`\\b(?:${config.promotionWords.map(escapeRegExp).join("|")})\\b`, "i");
     for (const [id, row] of rowsById) {
       if (!spend()) {
         add("1C.EVIDENCE.PROMOTION_WORDING", STATUS.INCOMPLETE, REASON.EVIDENCE_BOUND_EXCEEDED, "promotion-wording scanning exceeded its work bound", {});
-        return done([...rowsById.keys()].map((rid) => ({ id: rid, status: rowIssue.get(rid) || STATUS.PASS })));
+        emitRowIndex(false);
+        return done();
       }
       const text = String(row.conclusionText).slice(0, MAX_CELL_LENGTH);
       if (row.declaredRank < topRank && pattern.test(text)) {
@@ -356,7 +392,8 @@ function checkEvidenceModel(input) {
     else add("1C.EVIDENCE.PROMOTION_WORDING", STATUS.PASS, REASON.OK, "no non-strongest conclusion uses configured promotion wording", { checked: rowsById.size });
   } else notApplicable("1C.EVIDENCE.PROMOTION_WORDING", "no promotion word is configured");
 
-  return done([...rowsById.keys()].map((id) => ({ id, status: rowIssue.get(id) || STATUS.PASS })));
+  emitRowIndex(true);
+  return done();
 }
 
 module.exports = { checkEvidenceModel };
