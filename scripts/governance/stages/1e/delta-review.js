@@ -269,15 +269,22 @@ async function fingerprintSelectors(selectors, reader) {
  *                domain, never assumed unchanged
  *   records      pooled array of 1B/1C/1D result records (validated per
  *                record; see validRecordsFor())
- *   coveringChecks  { [domainId]: checkId[] } -- which records, if any,
- *                    "cover" a domain; a domain with no entry (or []) has no
- *                    required covering check (vacuously satisfied); an entry
- *                    naming a checkId that resolves to no valid record, or to
- *                    a non-PASS record, prevents PRESERVATION_CHECK_ONLY
+ *   coveringChecks  optional { [domainId]: checkId[] } -- which records, if
+ *                    any, "cover" a domain; an omitted map, or a domain with
+ *                    no own entry (or []), has no required covering check
+ *                    (vacuously satisfied); an entry naming a checkId that
+ *                    resolves to no valid record, or to a non-PASS record,
+ *                    prevents PRESERVATION_CHECK_ONLY. A present map that is
+ *                    not a plain object is DELTA_INPUT_INVALID; a present
+ *                    entry that is not an array is HUMAN_REVIEW_REQUIRED for
+ *                    that domain (COVERING_CHECK_DECLARATION_INVALID)
  *   recordedExtractorVersions  optional { [domainId]: string } -- a version
  *                    recorded at a prior base comparison; a mismatch with the
  *                    current FINGERPRINT_VERSION makes the domain changed
- *                    (design section 11 condition 7)
+ *                    (design section 11 condition 7). Same shape rules: a
+ *                    non-plain-object map is DELTA_INPUT_INVALID; a present
+ *                    non-string entry is HUMAN_REVIEW_REQUIRED for that
+ *                    domain (EXTRACTOR_VERSION_INVALID)
  *   reader       { atBase, atHead } head-reader-shaped objects (test seam), or
  *   git          { repositoryRoot, gitExecutable } / an injected adapter, used
  *                to build both readers via stages/head-reader.js
@@ -306,6 +313,12 @@ async function computeDeltaReview(input) {
   }
   const baseGraph = isValidatedGraph(input.baseGraph) ? input.baseGraph : null;
   if (input.baseGraph !== undefined && input.baseGraph !== null && baseGraph === null) return invalidInput("baseGraph, if supplied, must be a valid validateGraph() result");
+  // W3-C3-DEV-L1 fix (design section 20): an omitted container is the only
+  // supported absence; a present container that is not a plain object (null,
+  // an array, a string, a Map, a class instance, ...) is rejected, never
+  // replaced with {} -- that silently erased every declared requirement.
+  if (input.coveringChecks !== undefined && !isPlainObject(input.coveringChecks)) return invalidInput("coveringChecks, if supplied, must be a plain object");
+  if (input.recordedExtractorVersions !== undefined && !isPlainObject(input.recordedExtractorVersions)) return invalidInput("recordedExtractorVersions, if supplied, must be a plain object");
 
   let reader;
   if (isPlainObject(input.reader) && isHeadReader(input.reader.atBase) && isHeadReader(input.reader.atHead)) {
@@ -316,8 +329,8 @@ async function computeDeltaReview(input) {
     reader = { atBase: createHeadReader(adapter.git, subject.base), atHead: createHeadReader(adapter.git, subject.head) };
   }
 
-  const coveringChecks = isPlainObject(input.coveringChecks) ? input.coveringChecks : {};
-  const recordedExtractorVersions = isPlainObject(input.recordedExtractorVersions) ? input.recordedExtractorVersions : {};
+  const coveringChecks = input.coveringChecks === undefined ? {} : input.coveringChecks;
+  const recordedExtractorVersions = input.recordedExtractorVersions === undefined ? {} : input.recordedExtractorVersions;
   const validRecords = validRecordsFor(input.records, subject);
 
   const headById = new Map(headGraph.domains.map((d) => [d.domainId, d]));
@@ -373,7 +386,11 @@ async function computeDeltaReview(input) {
 
     // Extractor version (condition 7): checked before fingerprinting so a
     // recorded mismatch never depends on a successful extraction.
-    const recordedVersion = recordedExtractorVersions[id];
+    // Only an own entry counts; an absent entry is "no recorded version". A
+    // present non-string entry is handled below (after extraction, so its
+    // reason never hides an extraction reason) -- never treated as absent.
+    const hasRecordedVersion = Object.hasOwn(recordedExtractorVersions, id);
+    const recordedVersion = hasRecordedVersion ? recordedExtractorVersions[id] : undefined;
     if (typeof recordedVersion === "string" && recordedVersion !== FINGERPRINT_VERSION) {
       ownLevel = maxLevel(ownLevel, "DEEP_REVIEW_REQUIRED");
       reasons.push("EXTRACTOR_VERSION_CHANGED");
@@ -437,6 +454,24 @@ async function computeDeltaReview(input) {
       }
     }
 
+    // W3-C3-DEV-L1 fix (design section 20): a present entry of the wrong type
+    // is rejected for THIS domain only (hardFailure, like an unlocatable region
+    // or an oversized covering declaration) -- never coerced to "no recorded
+    // version" / "no covering requirement", which let a malformed declaration
+    // naming a FAIL record still yield PRESERVATION. Only an own property is
+    // a declaration; an absent key keeps its documented vacuous meaning. A
+    // non-array is rejected here before any `length` is read, so an array-like
+    // object can never pass as a declaration.
+    if (hasRecordedVersion && typeof recordedVersion !== "string") {
+      hardFailure = true;
+      reasons.push("EXTRACTOR_VERSION_INVALID");
+    }
+    const rawCovering = Object.hasOwn(coveringChecks, id) ? coveringChecks[id] : [];
+    if (!Array.isArray(rawCovering)) {
+      hardFailure = true;
+      reasons.push("COVERING_CHECK_DECLARATION_INVALID");
+    }
+
     if (hardFailure) {
       ownLevel = "HUMAN_REVIEW_REQUIRED";
       fingerprint = null;
@@ -455,8 +490,7 @@ async function computeDeltaReview(input) {
     // record's own HUMAN_REVIEW_REQUIRED status still independently
     // participates in the run's overall readiness aggregation.
     if (!hardFailure) {
-      const rawCovering = coveringChecks[id];
-      const declaredCovering = Array.isArray(rawCovering) ? rawCovering : [];
+      const declaredCovering = rawCovering; // an array: a non-array already set hardFailure above
       // W3-C2-SEC-M1 fix: the raw declared length is checked BEFORE any
       // slicing -- a declaration beyond MAX_COVERING_CHECKS_PER_DOMAIN is
       // never truncated to a trusted prefix (that let a required check past

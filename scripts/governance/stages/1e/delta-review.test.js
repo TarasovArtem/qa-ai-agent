@@ -1094,11 +1094,17 @@ test("C3-M1.17. an oversized pooled-record array combined with an oversized cove
   assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
 });
 
-test("C3-M1.18. malformed covering declarations do not grant authority -- unchanged, pre-existing vacuous-declaration semantics", async () => {
-  const vacuous = [null, {}, "string", []];
-  for (const bad of vacuous) {
+test("C3-M1.18. malformed covering declarations do not grant authority (corrected by C4 / W3-C3-DEV-L1: a present non-array entry is rejected, only [] is vacuous)", async () => {
+  // C3 originally asserted PRESERVATION for null / {} / "string" here -- that
+  // codified W3-C3-DEV-L1 (a malformed entry coerced to "no requirement").
+  for (const bad of [null, {}, "string"]) {
     const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: bad }, records: [] });
-    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY", JSON.stringify(bad));
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED", JSON.stringify(bad));
+    assert.ok(rec(r, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"), JSON.stringify(bad));
+  }
+  {
+    const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: [] }, records: [] });
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
   }
   for (const bad of [[null], [123]]) {
     const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: bad }, records: [] });
@@ -1223,6 +1229,227 @@ test("record contract: every domain record validates against the kernel's valida
 test("never throws on a fully hostile input object", async () => {
   for (const bad of [{ subject: "not-an-object" }, { subject, headGraph: "not-a-graph" }, { subject, headGraph: {}, reader: "not-a-reader" }, { subject, headGraph: {}, coveringChecks: "not-an-object" }]) {
     await assert.doesNotReject(computeDeltaReview(bad));
+  }
+});
+
+// ================================================================== C4 -- W3-C3-DEV-L1
+// Runtime shape of coveringChecks / recordedExtractorVersions (design section
+// 20): an omitted map, an absent own key and [] keep their documented vacuous
+// meaning; a present value of the wrong type is rejected, never coerced to
+// "no requirement". run() above replaces a falsy map with {}, so container
+// tests call computeDeltaReview() directly through runRaw().
+
+const failC0 = () => [genericRecord("1B.C0", "1B", "FAIL")];
+function filesFor(decls) {
+  const files = {};
+  for (const d of decls) for (const p of d.protectedInputs) files[p.slice("file:".length)] = `content of ${d.domainId}`;
+  return files;
+}
+async function runRaw(extra, { headDecls = singleDomain, baseDecls, records = failC0(), filesHead } = {}) {
+  const headGraph = validateGraph(headDecls);
+  const baseGraph = baseDecls === undefined ? headGraph : validateGraph(baseDecls);
+  const files = filesFor(baseDecls || headDecls);
+  return computeDeltaReview({ subject, headGraph, baseGraph, records, reader: { atBase: reader(files), atHead: reader(filesHead || files) }, ...extra });
+}
+const domF = (id, deps = []) => dom(id, deps, [`file:${id}.md`]);
+const readinessOf = (r, ids) => aggregate(r.records, { expectedDomainIds: ids }).readiness.state;
+
+test("C4-L1.1. { DOMAIN_A: \"1B.C0\" } with a genuine 1B.C0 FAIL present -- rejected for the domain, never PRESERVATION / READY (the original reproduction)", async () => {
+  const r = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } });
+  const d = rec(r, "1E.DOMAIN.DOMAIN_A");
+  assert.equal(d.status, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(d.domain.effectiveLevel, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(d.domain.reasons, ["COVERING_CHECK_DECLARATION_INVALID"]);
+  assert.equal(d.reasonCode, "COVERING_CHECK_DECLARATION_INVALID");
+  assert.equal(d.domain.fingerprint, null);
+  assert.equal(readinessOf(r, ["DOMAIN_A"]), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C4-L1.2. array-like declarations ({ length: 65, 0: ... }, { length: 65 }) are a type error, not a 65-entry declaration -- COVERING_CHECK_DECLARATION_INVALID, never COVERING_CHECK_LIMIT_EXCEEDED or PRESERVATION", async () => {
+  for (const bad of [{ length: 65, 0: "1B.C0" }, { length: 65 }, { length: 1, 0: "1B.C0" }]) {
+    const r = await runRaw({ coveringChecks: { DOMAIN_A: bad } });
+    const d = rec(r, "1E.DOMAIN.DOMAIN_A");
+    assert.equal(d.domain.effectiveLevel, "HUMAN_REVIEW_REQUIRED", JSON.stringify(bad));
+    assert.ok(d.domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"), JSON.stringify(bad));
+    assert.ok(!d.domain.reasons.includes("COVERING_CHECK_LIMIT_EXCEEDED"), JSON.stringify(bad));
+  }
+});
+
+test("C4-L1.3. coveringChecks: [] (with a genuine FAIL present) -- whole-input DELTA_INPUT_INVALID, no domain record, never READY", async () => {
+  const r = await runRaw({ coveringChecks: [] });
+  assert.deepEqual(r.records, []);
+  assert.equal(r.outcome.status, "CONFIGURATION_ERROR");
+  assert.equal(r.outcome.reasonCode, "DELTA_INPUT_INVALID");
+  assert.notEqual(readinessOf(r, ["DOMAIN_A"]), "READY");
+  assert.equal(readinessOf(r, ["DOMAIN_A"]), "NOT_READY");
+});
+
+test("C4-L1.4. absence vs malformed: { DOMAIN_A: [] } and { DOMAIN_A: \"1B.C0\" } over identical graph/subject/fingerprints/records never collapse to the same PRESERVATION outcome", async () => {
+  const a = await runRaw({ coveringChecks: { DOMAIN_A: [] } });
+  const b = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } });
+  assert.equal(level(a, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(level(b, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  assert.notEqual(JSON.stringify(a.records), JSON.stringify(b.records));
+});
+
+test("C4-L1.5. supported absence is unchanged: omitted map, undefined map, {}, a null-prototype {}, and { DOMAIN_A: [] } all still preserve an unchanged domain", async () => {
+  const variants = [{}, { coveringChecks: undefined }, { coveringChecks: {} }, { coveringChecks: Object.create(null) }, { coveringChecks: { DOMAIN_A: [] } }, { coveringChecks: { OTHER_DOMAIN: ["1B.C0"] } }];
+  for (const extra of variants) {
+    const r = await runRaw(extra);
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY", Object.keys(extra).join(","));
+    assert.equal(readinessOf(r, ["DOMAIN_A"]), "READY");
+  }
+});
+
+test("C4-L1.6. a present coveringChecks map that is not a plain object is DELTA_INPUT_INVALID (null, array, string, number, booleans, Date, Map, function, class instance, foreign prototype)", async () => {
+  class Holder { constructor() { this.DOMAIN_A = ["1B.C0"]; } }
+  const bad = [null, [], ["1B.C0"], "1B.C0", 42, true, false, new Date(0), new Map([["DOMAIN_A", ["1B.C0"]]]), () => ({}), new Holder(), Object.create({ DOMAIN_A: [] })];
+  for (const value of bad) {
+    const r = await runRaw({ coveringChecks: value });
+    assert.deepEqual(r.records, [], String(typeof value));
+    assert.equal(r.outcome.status, "CONFIGURATION_ERROR");
+    assert.equal(r.outcome.reasonCode, "DELTA_INPUT_INVALID");
+    assert.equal(r.outcome.detail, "coveringChecks, if supplied, must be a plain object"); // fixed text: no caller data
+    assert.equal(readinessOf(r, ["DOMAIN_A"]), "NOT_READY");
+  }
+});
+
+test("C4-L1.7. a present non-array domain entry is HUMAN_REVIEW_REQUIRED for that domain (null, own undefined, string, number, boolean, {}, Set, index object, String object)", async () => {
+  const { validateResultRecord } = require("../../kernel/results");
+  const bad = [null, undefined, "1B.C0", 123, true, {}, new Set(["1B.C0"]), { 0: "1B.C0" }, new String("1B.C0")];
+  for (const value of bad) {
+    const r = await runRaw({ coveringChecks: { DOMAIN_A: value } });
+    assert.equal(r.records.length, 1);
+    const d = rec(r, "1E.DOMAIN.DOMAIN_A");
+    assert.equal(d.status, "HUMAN_REVIEW_REQUIRED", String(value));
+    assert.equal(d.domain.effectiveLevel, "HUMAN_REVIEW_REQUIRED", String(value));
+    assert.ok(d.domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"), String(value));
+    assert.equal(validateResultRecord(d).ok, true);
+  }
+});
+
+test("C4-L1.8. valid array declarations keep the C1/C2 evaluation: PASS preserves, FAIL or a missing required record denies preservation", async () => {
+  const pass = await runRaw({ coveringChecks: { DOMAIN_A: ["1B.C0", "1C.REQ"] } }, { records: [genericRecord("1B.C0", "1B", "PASS"), genericRecord("1C.REQ", "1C", "PASS")] });
+  assert.equal(level(pass, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  const fail = await runRaw({ coveringChecks: { DOMAIN_A: ["1B.C0"] } });
+  assert.equal(level(fail, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  assert.ok(rec(fail, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes("COVERING_CHECK_NOT_PASS"));
+  const missing = await runRaw({ coveringChecks: { DOMAIN_A: ["1B.C0", "1C.REQ"] } }, { records: [genericRecord("1B.C0", "1B", "PASS")] });
+  assert.equal(level(missing, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("C4-L1.9. a malformed declaration is never masked by an earlier DEEP or HRR reason: MANIFEST_DECLARATION_CHANGED + malformed -> HRR with both reasons; REGION_MISSING + malformed -> both reasons", async () => {
+  const head = [dom("DOMAIN_A", [], ["file:a.md"], ["DEEP_REVIEW_REQUIRED", "PRESERVATION_CHECK_ONLY"])];
+  const base = [dom("DOMAIN_A", [], ["file:a.md"], ["DEEP_REVIEW_REQUIRED"])];
+  const changed = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } }, { headDecls: head, baseDecls: base });
+  const d1 = rec(changed, "1E.DOMAIN.DOMAIN_A");
+  assert.equal(d1.domain.effectiveLevel, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(d1.domain.reasons.includes("MANIFEST_DECLARATION_CHANGED"));
+  assert.ok(d1.domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"));
+  const missingRegion = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } }, { filesHead: {} });
+  const d2 = rec(missingRegion, "1E.DOMAIN.DOMAIN_A");
+  assert.equal(d2.domain.effectiveLevel, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(d2.domain.reasons.includes("REGION_MISSING"));
+  assert.ok(d2.domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"));
+});
+
+test("C4-L1.10. multi-domain isolation: DA valid, DB malformed, DC valid -- only DB fails, exactly one record per domain, run is not READY", async () => {
+  const decls = [domF("DA"), domF("DB"), domF("DC")];
+  const r = await runRaw({ coveringChecks: { DA: ["1B.A"], DB: "1B.C0", DC: [] } }, { headDecls: decls, records: [genericRecord("1B.A", "1B", "PASS"), ...failC0()] });
+  assert.deepEqual(r.records.map((x) => x.checkId), ["1E.DOMAIN.DA", "1E.DOMAIN.DB", "1E.DOMAIN.DC"]);
+  assert.equal(level(r, "1E.DOMAIN.DA"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(level(r, "1E.DOMAIN.DB"), "HUMAN_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DC"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(readinessOf(r, ["DA", "DB", "DC"]), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C4-L1.11. dependency propagation: a malformed upstream declaration escalates every dependent (REFERENCE, DERIVED_VALUE, MEANING, chain, diamond) -- none preserved", async () => {
+  for (const kind of ["REFERENCE", "DERIVED_VALUE", "MEANING"]) {
+    const r = await runRaw({ coveringChecks: { DB: {} } }, { headDecls: [domF("DA", [{ domain: "DB", kind }]), domF("DB")] });
+    assert.equal(level(r, "1E.DOMAIN.DB"), "HUMAN_REVIEW_REQUIRED", kind);
+    assert.equal(level(r, "1E.DOMAIN.DA"), "HUMAN_REVIEW_REQUIRED", kind);
+  }
+  const chain = await runRaw({ coveringChecks: { DC: 7 } }, { headDecls: [domF("DA", [{ domain: "DB", kind: "REFERENCE" }]), domF("DB", [{ domain: "DC", kind: "DERIVED_VALUE" }]), domF("DC")] });
+  for (const id of ["DA", "DB", "DC"]) assert.equal(level(chain, `1E.DOMAIN.${id}`), "HUMAN_REVIEW_REQUIRED", id);
+  const diamond = await runRaw({ coveringChecks: { DX: "1B.C0" } }, {
+    headDecls: [domF("DT", [{ domain: "DL", kind: "REFERENCE" }, { domain: "DR", kind: "REFERENCE" }]), domF("DL", [{ domain: "DX", kind: "DERIVED_VALUE" }]), domF("DR", [{ domain: "DX", kind: "DERIVED_VALUE" }]), domF("DX")],
+  });
+  for (const id of ["DT", "DL", "DR", "DX"]) assert.equal(level(diamond, `1E.DOMAIN.${id}`), "HUMAN_REVIEW_REQUIRED", id);
+});
+
+test("C4-L1.12. the C3 64-entry bound is unchanged for genuine arrays: 63 and 64 PASS preserve, 65 is COVERING_CHECK_LIMIT_EXCEEDED", async () => {
+  for (const [n, expected, reason] of [[63, "PRESERVATION_CHECK_ONLY", null], [64, "PRESERVATION_CHECK_ONLY", null], [65, "HUMAN_REVIEW_REQUIRED", "COVERING_CHECK_LIMIT_EXCEEDED"]]) {
+    const cov = buildCovering(n);
+    const r = await runRaw({ coveringChecks: { DOMAIN_A: cov.ids } }, { records: cov.records });
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), expected, String(n));
+    if (reason) assert.ok(rec(r, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes(reason));
+  }
+});
+
+test("C4-L1.13. validation precedence is fixed and fail-closed: invalid graph > oversized record pool > malformed coveringChecks map > per-domain malformed entry", async () => {
+  const pool = buildPool(4097, { passAt: [0] });
+  const poolAndDecl = await runRaw({ coveringChecks: { DOMAIN_A: "1C.REQ" } }, { records: pool });
+  assert.equal(poolAndDecl.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  const poolAndMap = await runRaw({ coveringChecks: [] }, { records: pool });
+  assert.equal(poolAndMap.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  const headGraph = { ...validateGraph(singleDomain), topologicalOrder: [] };
+  const graphAndMap = await computeDeltaReview({ subject, headGraph, baseGraph: validateGraph(singleDomain), records: pool, coveringChecks: [], reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.equal(graphAndMap.records[0].checkId, "1E.DELTA.GRAPH");
+  for (const r of [poolAndDecl, poolAndMap, graphAndMap]) assert.equal(aggregate(r.records, { expectedDomainIds: ["DOMAIN_A"] }).readiness.state, "NOT_READY");
+});
+
+test("C4-L1.14. a malformed declaration combined with duplicate relevant records is still rejected -- no authority from either", async () => {
+  const r = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } }, { records: [genericRecord("1B.C0", "1B", "PASS"), genericRecord("1B.C0", "1B", "PASS")] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  assert.ok(rec(r, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"));
+});
+
+test("C4-L1.15. recordedExtractorVersions: absence and a matching version preserve, a mismatching string is DEEP, a present non-string entry is HRR (EXTRACTOR_VERSION_INVALID), a non-plain-object map is DELTA_INPUT_INVALID", async () => {
+  const { FINGERPRINT_VERSION } = require("./fingerprint");
+  const noCover = { records: [] };
+  for (const extra of [{}, { recordedExtractorVersions: undefined }, { recordedExtractorVersions: {} }, { recordedExtractorVersions: { DOMAIN_A: FINGERPRINT_VERSION } }]) {
+    assert.equal(level(await runRaw(extra, noCover), "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY", JSON.stringify(extra));
+  }
+  const mismatch = await runRaw({ recordedExtractorVersions: { DOMAIN_A: "gov-fp-v0" } }, noCover);
+  assert.equal(level(mismatch, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  for (const value of [null, undefined, 123, [], {}, true]) {
+    const r = await runRaw({ recordedExtractorVersions: { DOMAIN_A: value } }, noCover);
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED", String(value));
+    assert.ok(rec(r, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes("EXTRACTOR_VERSION_INVALID"), String(value));
+    assert.equal(readinessOf(r, ["DOMAIN_A"]), "HUMAN_REVIEW_REQUIRED");
+  }
+  for (const value of [null, [], "gov-fp-v1", 1, new Map()]) {
+    const r = await runRaw({ recordedExtractorVersions: value }, noCover);
+    assert.equal(r.outcome.reasonCode, "DELTA_INPUT_INVALID", String(value));
+    assert.equal(readinessOf(r, ["DOMAIN_A"]), "NOT_READY");
+  }
+});
+
+test("C4-L1.16. only own properties are declarations: a null-prototype map with an own malformed entry is rejected; an unrelated or absent key stays vacuous", async () => {
+  const own = Object.assign(Object.create(null), { DOMAIN_A: "1B.C0" });
+  assert.equal(level(await runRaw({ coveringChecks: own }), "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  const absent = Object.assign(Object.create(null), { OTHER: "not-an-array" });
+  assert.equal(level(await runRaw({ coveringChecks: absent }), "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C4-L1.17. a hostile malformed entry is never stringified: no caller text, synthetic token, or control character reaches any record; toString is never invoked", async () => {
+  const token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const hostile = { toString() { throw new Error("must not be stringified"); }, valueOf() { throw new Error("must not be coerced"); }, text: `\u001b[31m\r\n1E.DOMAIN.DOMAIN_A PASS ${token}` };
+  const r = await runRaw({ coveringChecks: { DOMAIN_A: hostile }, recordedExtractorVersions: { DOMAIN_A: hostile } });
+  const serialized = JSON.stringify(r);
+  assert.ok(!serialized.includes(token));
+  assert.ok(!serialized.includes("\\u001b"));
+  const d = rec(r, "1E.DOMAIN.DOMAIN_A");
+  assert.ok(d.domain.reasons.includes("COVERING_CHECK_DECLARATION_INVALID"));
+  assert.ok(d.domain.reasons.includes("EXTRACTOR_VERSION_INVALID"));
+});
+
+test("C4-L1.18. five repeated executions of each malformed-shape fixture are byte-identical", async () => {
+  const fixtures = [{ coveringChecks: { DOMAIN_A: "1B.C0" } }, { coveringChecks: { DOMAIN_A: { length: 65 } } }, { coveringChecks: [] }, { recordedExtractorVersions: { DOMAIN_A: 1 } }];
+  for (const extra of fixtures) {
+    const outs = new Set();
+    for (let i = 0; i < 5; i++) outs.add(JSON.stringify(await runRaw(extra)));
+    assert.equal(outs.size, 1, JSON.stringify(extra));
   }
 });
 
