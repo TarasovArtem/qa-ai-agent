@@ -57,6 +57,73 @@ function isValidatedGraph(g) {
   return isPlainObject(g) && g.valid === true && Array.isArray(g.domains) && Array.isArray(g.topologicalOrder);
 }
 
+/** The enabled-domain-id set, derived only from the domain declarations themselves -- never from topologicalOrder. */
+function enabledDomainIds(domains) {
+  return new Set(domains.filter((d) => isPlainObject(d) && d.enabled === true && typeof d.domainId === "string").map((d) => d.domainId));
+}
+
+/**
+ * Structurally verify headGraph.topologicalOrder against the domain
+ * declarations and dependsOn edges (W3-SEC-H1 fix). `topologicalOrder` is a
+ * value the caller supplies alongside `domains` inside a hand-constructible
+ * `headGraph` object; a real `validateGraph()` result always produces a
+ * genuine topological order, but nothing here re-derives or re-checks that
+ * fact from `domains` before this function runs -- so it must be verified
+ * independently rather than trusted because `valid === true` was claimed.
+ * The enabled-domain-id set used everywhere else in this module comes from
+ * `enabledDomainIds(domains)`, never from `topologicalOrder`, so a forged or
+ * incomplete order can never narrow which domains are reported on or change
+ * the order dependency propagation runs in without first passing here.
+ * Rejects: a non-array; a non-string or duplicate entry; an entry that is
+ * not an enabled domain (covers both "unknown domain" and "disabled
+ * domain" in one check); a missing enabled domain; and any entry placed
+ * before a `dependsOn` edge it depends on. Fails closed with a reason, never
+ * silently reorders or repairs the input.
+ */
+function validateTopologicalOrder(headGraph) {
+  const domains = headGraph.domains;
+  const enabledIds = enabledDomainIds(domains);
+  const order = headGraph.topologicalOrder;
+  if (!Array.isArray(order)) return { ok: false, reason: "topologicalOrder must be an array" };
+  const position = new Map();
+  for (const id of order) {
+    if (typeof id !== "string") return { ok: false, reason: "topologicalOrder entry is not a string" };
+    if (position.has(id)) return { ok: false, reason: `topologicalOrder contains a duplicate entry: ${id}` };
+    if (!enabledIds.has(id)) return { ok: false, reason: `topologicalOrder entry is not an enabled domain: ${id}` };
+    position.set(id, position.size);
+  }
+  if (position.size !== enabledIds.size) return { ok: false, reason: "topologicalOrder is missing one or more enabled domains" };
+  const byId = new Map(domains.map((d) => [d.domainId, d]));
+  for (const id of order) {
+    const domain = byId.get(id);
+    for (const edge of domain.dependsOn) {
+      const upstreamPos = position.get(edge.domain);
+      if (upstreamPos === undefined || upstreamPos >= position.get(id)) {
+        return { ok: false, reason: `topologicalOrder does not place dependency ${edge.domain} before ${id}` };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/** The single non-domain record reported when the head graph fails structural verification -- see validateTopologicalOrder(). */
+function graphInconsistentRecord(subject, detail) {
+  const record = {
+    checkId: "1E.DELTA.GRAPH",
+    ownerStage: "1E",
+    status: STATUS.CONFIGURATION_ERROR,
+    subject,
+    observed: {},
+    expected: null,
+    reasonCode: REASON.DELTA_GRAPH_INCONSISTENT,
+    detail: String(detail).slice(0, 500),
+    evidenceRefs: [],
+  };
+  const checked = validateResultRecord(record);
+  if (!checked.ok) throw new Error(`internal error: invalid 1E.DELTA.GRAPH record: ${checked.problems.join("; ")}`);
+  return checked.record;
+}
+
 /** Deterministic canonical string for exact declaration-byte-identity comparison. */
 function canonicalDeclaration(domain) {
   return JSON.stringify({
@@ -79,16 +146,45 @@ function canonicalDeclaration(domain) {
  * equality, and a recognized ownerStage. A malformed or mismatched record is
  * silently excluded from the covering-check lookup -- never trusted, never a
  * crash -- which is equivalent to "no covering record found" (fail closed).
+ *
+ * Duplicate-checkId handling (W3-SEC-H2 fix, matching the Wave 2 C1/C2
+ * precedent in stages/1c/result-contract.js): a `checkId` claimed by more
+ * than one record for the same subject is never resolved by first-write-wins
+ * or last-write-wins -- every occurrence becomes permanently untrusted, so a
+ * later duplicate can never mask an earlier one regardless of insertion
+ * order or of which status (PASS or FAIL) arrives first or last. "Claimed by
+ * more than one record" is counted on the raw candidate -- checkId, a
+ * recognized ownerStage, and exact subject match -- before full schema
+ * validation, not after: a second, malformed record sharing a valid record's
+ * checkId and subject still poisons that checkId, so an attacker cannot
+ * launder a duplicate past this check merely by making one of the two
+ * copies fail validateResultRecord(). A record for a different subject
+ * (e.g. a stale prior head) is never "relevant" here at all -- it is
+ * excluded by the subject check before it can be counted as a duplicate of
+ * anything, so it can neither poison nor be poisoned by a current-subject
+ * record for the same checkId.
  */
 function validRecordsFor(records, subject) {
   const out = new Map(); // checkId -> record
   if (!Array.isArray(records)) return out;
-  for (const candidate of records.slice(0, 4096)) {
-    if (!isPlainObject(candidate)) continue;
-    if (!["1B", "1C", "1D"].includes(candidate.ownerStage)) continue;
+  const candidates = records.slice(0, 4096);
+  const isRelevant = (candidate) =>
+    isPlainObject(candidate) &&
+    typeof candidate.checkId === "string" &&
+    ["1B", "1C", "1D"].includes(candidate.ownerStage) &&
+    sameSubject(candidate.subject, subject);
+
+  const relevantCount = new Map(); // checkId -> occurrence count among relevant candidates
+  for (const candidate of candidates) {
+    if (!isRelevant(candidate)) continue;
+    relevantCount.set(candidate.checkId, (relevantCount.get(candidate.checkId) || 0) + 1);
+  }
+
+  for (const candidate of candidates) {
+    if (!isRelevant(candidate)) continue;
+    if (relevantCount.get(candidate.checkId) > 1) continue; // duplicated identity: never trusted, regardless of order
     const checked = validateResultRecord(candidate);
     if (!checked.ok) continue;
-    if (!sameSubject(checked.record.subject, subject)) continue;
     out.set(checked.record.checkId, checked.record);
   }
   return out;
@@ -150,6 +246,8 @@ async function computeDeltaReview(input) {
 
   if (!isValidatedGraph(input.headGraph)) return invalidInput("headGraph must be a valid validateGraph() result");
   const headGraph = input.headGraph;
+  const topoCheck = validateTopologicalOrder(headGraph);
+  if (!topoCheck.ok) return deepFreeze({ subject, records: [graphInconsistentRecord(subject, topoCheck.reason)], outcome: null });
   const baseGraph = isValidatedGraph(input.baseGraph) ? input.baseGraph : null;
   if (input.baseGraph !== undefined && input.baseGraph !== null && baseGraph === null) return invalidInput("baseGraph, if supplied, must be a valid validateGraph() result");
 
@@ -174,7 +272,7 @@ async function computeDeltaReview(input) {
   // mission section 64/65: "head removes protected region selector => cannot
   // gain PRESERVATION"). No merge-layer exists yet upstream of 1E, so this
   // minimal union is 1E's own enforcement of that rule.
-  const headEnabledIds = new Set(headGraph.topologicalOrder);
+  const headEnabledIds = enabledDomainIds(headGraph.domains);
   const baseEnabledIds = new Set([...baseById.values()].filter((d) => d.enabled).map((d) => d.domainId));
   const reportedIds = [...new Set([...headEnabledIds, ...baseEnabledIds])].sort();
   if (reportedIds.length > MAX_DOMAINS) return invalidInput("too many domains to report on");

@@ -422,6 +422,262 @@ test("adversarial: dependency chain designed to bypass transitive escalation sti
   assert.equal(level(r, "1E.DOMAIN.DOMAIN_D"), "DEEP_REVIEW_REQUIRED");
 });
 
+// ================================================================== Corrective C1: W3-SEC-H1 / W3-SEC-H2 trust-boundary hardening
+
+function forgedGraph(domains, topologicalOrder) {
+  return { valid: true, status: "PASS", findings: [], domains, topologicalOrder };
+}
+
+// ---- W3-SEC-H1: topologicalOrder structural verification (10 tests)
+
+test("H1.1. dependent placed before its dependency in topologicalOrder -> fails closed, no false PRESERVATION", async () => {
+  const domains = [
+    dom("DOMAIN_A", [], ["file:a.md"]),
+    dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"]),
+  ];
+  const headGraph = forgedGraph(domains, ["DOMAIN_B", "DOMAIN_A"]);
+  const r = await computeDeltaReview({
+    subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {},
+    reader: { atBase: reader({ "a.md": "orig", "b.md": "same" }), atHead: reader({ "a.md": "CHANGED", "b.md": "same" }) },
+  });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.GRAPH");
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DOMAIN.DOMAIN_B"), false);
+});
+
+test("H1.2. topologicalOrder omits an enabled domain -> fails closed, domain is never silently dropped without signal", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"])];
+  const headGraph = forgedGraph(domains, ["DOMAIN_A"]);
+  const r = await computeDeltaReview({
+    subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {},
+    reader: { atBase: reader({ "a.md": "x", "b.md": "x" }), atHead: reader({ "a.md": "x", "b.md": "x" }) },
+  });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.GRAPH");
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+test("H1.3. topologicalOrder contains a duplicate entry -> fails closed", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraph(domains, ["DOMAIN_A", "DOMAIN_A"]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+test("H1.4. topologicalOrder names a domain id that does not exist at all -> fails closed", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraph(domains, ["DOMAIN_A", "DOMAIN_GHOST"]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+test("H1.5. topologicalOrder includes a disabled domain -> fails closed", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"]), { ...dom("DOMAIN_B", [], ["file:b.md"]), enabled: false }];
+  const headGraph = forgedGraph(domains, ["DOMAIN_A", "DOMAIN_B"]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x", "b.md": "x" }), atHead: reader({ "a.md": "x", "b.md": "x" }) } });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+test("H1.6. topologicalOrder is not an array (string, null, object) -> fails closed, never throws, never produces a domain record", async () => {
+  // A non-array topologicalOrder is already rejected by the pre-existing
+  // isValidatedGraph() gate (it requires Array.isArray(topologicalOrder)),
+  // before validateTopologicalOrder() is even reached -- that is still a
+  // correct fail-closed outcome (the legacy invalidInput() shape), just via
+  // a different pre-existing mechanism than the new 1E.DELTA.GRAPH record.
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  for (const bad of ["DOMAIN_A", null, {}]) {
+    const headGraph = forgedGraph(domains, bad);
+    const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+    assert.equal(r.records.some((x) => x.checkId === "1E.DOMAIN.DOMAIN_A"), false, JSON.stringify(bad));
+    const failedClosed = (r.records.length === 0 && r.outcome && r.outcome.status === "CONFIGURATION_ERROR") ||
+      (r.records.length === 1 && r.records[0].status === "CONFIGURATION_ERROR");
+    assert.equal(failedClosed, true, JSON.stringify(bad));
+  }
+});
+
+test("H1.7. topologicalOrder entries are not strings -> fails closed", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraph(domains, [42]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+test("H1.8. a genuine validateGraph() diamond graph still resolves every level correctly post-fix", async () => {
+  const decls = [
+    dom("DOMAIN_A", [], ["file:a.md"]),
+    dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"]),
+    dom("DOMAIN_C", [{ domain: "DOMAIN_A", kind: "MEANING" }], ["file:c.md"]),
+    dom("DOMAIN_D", [], ["file:d.md"]),
+  ];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x", "b.md": "1", "c.md": "2", "d.md": "3" }, filesHead: { "a.md": "CHANGED", "b.md": "1", "c.md": "2", "d.md": "3" } });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_C"), "HUMAN_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_D"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("H1.9. the 1E.DELTA.GRAPH failure record itself validates against the kernel contract and carries no domain field", async () => {
+  const { validateResultRecord } = require("../../kernel/results");
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraph(domains, ["DOMAIN_A", "DOMAIN_A"]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.equal(validateResultRecord(r.records[0]).ok, true, JSON.stringify(r.records[0]));
+  assert.equal(Object.hasOwn(r.records[0], "domain"), false);
+});
+
+test("H1.10. an invalid topologicalOrder never yields an empty records array masquerading as success", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraph(domains, []);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.notEqual(r.records.length, 0);
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+// ---- W3-SEC-H2: duplicate checkId identity (10 tests)
+
+test("H2.1. duplicate covering checkId, [FAIL, PASS] order -> not trusted, not PRESERVATION", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const dup = [genericRecord("1B.CHECK", "1B", "FAIL"), genericRecord("1B.CHECK", "1B", "PASS")];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: dup });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.2. duplicate covering checkId, [PASS, FAIL] order -> symmetric, same result as H2.1", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const dup = [genericRecord("1B.CHECK", "1B", "PASS"), genericRecord("1B.CHECK", "1B", "FAIL")];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: dup });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.3. triple duplicate (FAIL, PASS, PASS) -> still not trusted despite a PASS majority", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const dup = [genericRecord("1B.CHECK", "1B", "FAIL"), genericRecord("1B.CHECK", "1B", "PASS"), genericRecord("1B.CHECK", "1B", "PASS")];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: dup });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.4. two byte-identical PASS records sharing a checkId -> still not trusted (no silent dedup)", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const dup = [genericRecord("1B.CHECK", "1B", "PASS"), genericRecord("1B.CHECK", "1B", "PASS")];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: dup });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.5. a single valid PASS with no duplicate is still trusted (regression)", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: [genericRecord("1B.CHECK", "1B", "PASS")] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("H2.6. a single genuine FAIL with no duplicate still correctly blocks preservation (regression)", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: [genericRecord("1B.CHECK", "1B", "FAIL")] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.7. a record sharing a checkId but a different (stale) subject is not counted as a duplicate; the current-subject record remains trusted alone", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const staleSubject = { ...subject, head: "e".repeat(40) };
+  const stale = { checkId: "1B.CHECK", ownerStage: "1B", status: "PASS", subject: staleSubject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  const current = genericRecord("1B.CHECK", "1B", "PASS");
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: [stale, current] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("H2.8. unrelated distinct checkIds are unaffected by each other's duplicate status", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"])];
+  const records = [
+    genericRecord("1B.CHECK_A", "1B", "PASS"),
+    genericRecord("1B.CHECK_B", "1B", "PASS"), genericRecord("1B.CHECK_B", "1B", "FAIL"),
+  ];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x", "b.md": "x" }, filesHead: { "a.md": "x", "b.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK_A"], DOMAIN_B: ["1B.CHECK_B"] }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.9. a malformed second record sharing a checkId and subject with a valid PASS still poisons the pair", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const valid = genericRecord("1B.CHECK", "1B", "PASS");
+  const malformed = { checkId: "1B.CHECK", ownerStage: "1B", status: "NOT-A-REAL-STATUS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.CHECK"] }, records: [valid, malformed] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+});
+
+test("H2.10. a checkId shared across two different domains' coveringChecks is poisoned for both once duplicated", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"])];
+  const dup = [genericRecord("1B.SHARED", "1B", "PASS"), genericRecord("1B.SHARED", "1B", "FAIL")];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x", "b.md": "x" }, filesHead: { "a.md": "x", "b.md": "x" }, coveringChecks: { DOMAIN_A: ["1B.SHARED"], DOMAIN_B: ["1B.SHARED"] }, records: dup });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "DEEP_REVIEW_REQUIRED");
+});
+
+// ---- Integration / cross-cutting (5 tests)
+
+test("INT.1. an invalid topologicalOrder combined with a duplicated covering checkId still fails closed via the graph-level error, before any domain (or false PRESERVATION) can be produced", async () => {
+  const domains = [
+    dom("DOMAIN_A", [], ["file:a.md"]),
+    dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"]),
+  ];
+  const headGraph = forgedGraph(domains, ["DOMAIN_B", "DOMAIN_A"]); // wrong order
+  const dup = [genericRecord("1B.CHECK", "1B", "PASS"), genericRecord("1B.CHECK", "1B", "FAIL")]; // duplicated covering check
+  const r = await computeDeltaReview({
+    subject, headGraph, baseGraph: headGraph, records: dup, coveringChecks: { DOMAIN_A: ["1B.CHECK"], DOMAIN_B: ["1B.CHECK"] },
+    reader: { atBase: reader({ "a.md": "x", "b.md": "x" }), atHead: reader({ "a.md": "x", "b.md": "x" }) },
+  });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.GRAPH");
+  assert.equal(r.records[0].status, "CONFIGURATION_ERROR");
+});
+
+test("INT.2. the full 8-condition PRESERVATION pre-gate still resolves end-to-end for a genuine unchanged multi-domain graph post-fix", async () => {
+  const decls = [
+    dom("DOMAIN_A", [], ["file:a.md"]),
+    dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"]),
+  ];
+  const r = await run({
+    headDecls: decls, filesBase: { "a.md": "x", "b.md": "y" }, filesHead: { "a.md": "x", "b.md": "y" },
+    coveringChecks: { DOMAIN_A: ["1B.CHECK"], DOMAIN_B: ["1B.CHECK2"] },
+    records: [genericRecord("1B.CHECK", "1B", "PASS"), genericRecord("1B.CHECK2", "1B", "PASS")],
+  });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("INT.3. a MEANING edge to an unchanged (PRESERVATION) upstream does not itself force escalation -- propagation semantics are unchanged by the fix", async () => {
+  const decls = [
+    dom("DOMAIN_A", [], ["file:a.md"]),
+    dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "MEANING" }], ["file:b.md"]),
+  ];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x", "b.md": "y" }, filesHead: { "a.md": "x", "b.md": "y" } });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("INT.4. deterministic output across repeated runs with a genuine graph and no duplicate records (duplicate-detection maps introduce no iteration-order nondeterminism)", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"]), dom("DOMAIN_C", [], ["file:c.md"])];
+  const coveringChecks = { DOMAIN_A: ["1B.A"], DOMAIN_B: ["1B.B"], DOMAIN_C: ["1B.C"] };
+  const records = [genericRecord("1B.A", "1B", "PASS"), genericRecord("1B.B", "1B", "PASS"), genericRecord("1B.C", "1B", "PASS")];
+  const args = { headDecls: decls, filesBase: { "a.md": "x", "b.md": "y", "c.md": "z" }, filesHead: { "a.md": "x", "b.md": "y", "c.md": "z" }, coveringChecks, records };
+  const r1 = await run(args);
+  const r2 = await run(args);
+  assert.deepEqual(r1.records, r2.records);
+});
+
+test("INT.5. combined forged topologicalOrder, duplicated records, and malformed coveringChecks never throws", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"])];
+  const headGraph = forgedGraph(domains, ["DOMAIN_A", "DOMAIN_A", "DOMAIN_GHOST"]);
+  const dup = [genericRecord("1B.CHECK", "1B", "PASS"), genericRecord("1B.CHECK", "1B", "PASS"), { not: "a record" }];
+  await assert.doesNotReject(computeDeltaReview({
+    subject, headGraph, baseGraph: headGraph, records: dup, coveringChecks: { DOMAIN_A: ["1B.CHECK"], DOMAIN_B: "not-an-array" },
+    reader: { atBase: reader({ "a.md": "x", "b.md": "x" }), atHead: reader({ "a.md": "x", "b.md": "x" }) },
+  }));
+});
+
 // ================================================================== performance (section 84)
 
 test("performance: ~100 domains, chained dependencies, moderate content completes quickly and near-linearly", async () => {
