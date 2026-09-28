@@ -31,12 +31,25 @@ test("W4: no internal Stage 1F helper is exported alongside the two public inter
     "fetchValidatedRun", "validateRunEvidence", "isGithubCiAdapter", "resolveGithubCiAdapter",
     "checkRequiredJobs", "classifyCiEvidence", "CLASSIFICATIONS",
     "validateDetermination", "isValidRecordBody", "isAuthorizedDeterminer", "resolveDeterminationMode", "checkBindings",
+    "isDeterminationAdapter", "resolveDeterminationAdapter", // Corrective C1 (W4-SEC-H1)
     "isValidTrustedContext", "isValidExternalEvidenceEntry", "isValidManifestProvenance", "SUPPORTED_REPORT_SCHEMA_VERSIONS",
     "renderMarkdown", "revalidateEvidence",
   ]) {
     if (name === "revalidateEvidence") continue; // kernel-owned (design section 25a), genuinely public -- see below
     assert.equal(name in g, false, name);
   }
+});
+
+// ---------------------------------------------------------------- Corrective C1 (W4-DEV-L1): header-staleness regression
+
+test("W4: the index header does not falsely claim Stage 1F is unimplemented, and does not prematurely claim Wave 4 / Stage 1F is merged or post-merge certified", () => {
+  const text = fs.readFileSync(nodePath.join(__dirname, "index.js"), "utf8");
+  assert.equal(/no CI-evidence or report-writing code/.test(text), false);
+  assert.equal(/1F,\s*1G are not implemented/.test(text), false);
+  assert.equal(/collectCiEvidence/.test(text), true);
+  assert.equal(/buildReport/.test(text), true);
+  assert.equal(/CERTIFIED_ON_MAIN/.test(text), false);
+  assert.equal(/Stage 1G[^.]*not implemented/.test(text), true);
 });
 
 test("W4: revalidateEvidence is exported as a kernel interface (design section 25a explicitly names it kernel-owned), not a Stage 1F interface", () => {

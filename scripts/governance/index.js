@@ -9,8 +9,10 @@
  * interfaces named for 1A and 1B in section 18 (getGitIdentity, getChangedFiles,
  * checkScope, scanSecrets, parseMarkdown, checkReferences); Wave 2 adds the two
  * named for 1C and 1D (checkEvidenceModel, checkConsistency); Wave 3 adds the
- * one named for 1E (computeDeltaReview). There is still no CI-evidence or
- * report-writing code (1F, 1G are not implemented).
+ * one named for 1E (computeDeltaReview); Wave 4 adds the two named for 1F
+ * (collectCiEvidence, buildReport) -- Stage 1F is implemented here but not yet
+ * merged or post-merge certified. Stage 1G (independent framework validation)
+ * is not implemented and is not code.
  */
 
 "use strict";

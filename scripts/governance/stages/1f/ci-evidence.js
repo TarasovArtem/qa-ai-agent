@@ -15,6 +15,17 @@
  * never merges or approves anything, never bypasses `validateDetermination()`
  * to manufacture a human decision, and never treats an in-progress run as
  * finalized (a `status !== "completed"` run is INCOMPLETE, full stop).
+ *
+ * CORRECTIVE C1 (W4-SEC-H1): a rerun's determination candidate is no longer
+ * accepted as a bare caller-supplied `determinationCandidate` object. It must
+ * now come from a resolved `determinationAdapter.fetchDetermination({subject,
+ * run})` call (see `./determination.js#resolveDeterminationAdapter()`), the
+ * same injection-seam discipline `./ci-run.js` already uses for run evidence.
+ * No adapter is ever built into this repository, so a rerun with no injected
+ * adapter -- or an adapter that throws, or returns a malformed/rejected
+ * response -- always leaves `determination` at `null`, which
+ * `classifyCiEvidence()` turns into `HUMAN_REVIEW_REQUIRED`
+ * (`CI_UNEXPLAINED_RERUN`), never a silent `PASS`.
  */
 
 "use strict";
@@ -25,7 +36,7 @@ const { validateResultRecord } = require("../../kernel/results");
 const { isValidSubject, safe } = require("../common");
 const { fetchValidatedRun } = require("./ci-run");
 const { checkRequiredJobs } = require("./required-jobs");
-const { validateDetermination } = require("./determination");
+const { validateDetermination, resolveDeterminationAdapter } = require("./determination");
 const { classifyCiEvidence } = require("./ci-classify");
 
 const CLASSIFICATION_STATUS = {
@@ -58,11 +69,16 @@ function ciRecord(subject, { classification, reasonCode, detail }, observed) {
  *                           stages/1f/ci-run.js#fetchValidatedRun()
  *   requiredJobs            base-anchored policy-derived job-name list
  *                           (stages/1f/required-jobs.js)
- *   determinationCandidate  optional raw input for
- *                           stages/1f/determination.js#validateDetermination()
- *                           -- only consulted when the run shows a rerun;
- *                           absent or rejected candidates simply leave the
- *                           classification at HUMAN_REVIEW_REQUIRED
+ *   determinationAdapter    optional injected adapter { fetchDetermination({subject, run})
+ *                           -> Promise<{ok:true, candidate} | {ok:false, reason}> } --
+ *                           only consulted when the run shows a rerun; the
+ *                           `candidate` shape is exactly stages/1f/determination.js
+ *                           #validateDetermination()'s input (minus subject/runEvidence,
+ *                           which this function supplies). No adapter, an adapter that
+ *                           throws, or a malformed/rejected response leaves the
+ *                           classification at HUMAN_REVIEW_REQUIRED -- this is the
+ *                           fail-closed default (Corrective C1 / W4-SEC-H1); a bare
+ *                           caller-supplied candidate object is no longer accepted.
  *
  * Output: { subject, records: [<one 1F.CI record>], outcome, externalEvidence }.
  * `externalEvidence` carries the accepted determination's pinned digest/version
@@ -78,13 +94,14 @@ async function collectCiEvidence(input) {
   });
   if (!runResult.ok) {
     const status = runResult.reason && runResult.reason.startsWith("WRONG_") ? STATUS.FAIL : STATUS.INCOMPLETE;
-    const record = ciRecord(subject, { classification: status === STATUS.FAIL ? "FAIL" : "INCOMPLETE", reasonCode: REASON.CI_NOT_COLLECTED, detail: `CI evidence could not be established: ${runResult.reason}` }, { collected: false, reason: runResult.reason });
+    const classification = status === STATUS.FAIL ? "FAIL" : "INCOMPLETE";
+    const record = ciRecord(subject, { classification, reasonCode: REASON.CI_NOT_COLLECTED, detail: `CI evidence could not be established: ${runResult.reason}` }, { classification, collected: false, reason: runResult.reason });
     return deepFreeze({ subject, records: [record], outcome: null, externalEvidence: [] });
   }
   const run = runResult.run;
 
   if (run.status !== "completed") {
-    const record = ciRecord(subject, { classification: "INCOMPLETE", reasonCode: REASON.CI_NOT_COLLECTED, detail: "the run has not completed" }, { collected: true, status: run.status });
+    const record = ciRecord(subject, { classification: "INCOMPLETE", reasonCode: REASON.CI_NOT_COLLECTED, detail: "the run has not completed" }, { classification: "INCOMPLETE", collected: true, status: run.status });
     return deepFreeze({ subject, records: [record], outcome: null, externalEvidence: [] });
   }
 
@@ -96,15 +113,47 @@ async function collectCiEvidence(input) {
   const hadRerun = run.attempt > 1 || run.attemptHistory.length > 0;
   let determination = null;
   const externalEvidence = [];
-  if (hadRerun && isPlainObject(input.determinationCandidate)) {
-    const result = validateDetermination({ ...input.determinationCandidate, subject, runEvidence: run });
-    if (result.accepted) {
-      determination = { accepted: true, mode: result.mode };
-      externalEvidence.push(result.externalEvidenceEntry);
+  // Corrective C1 (W4-SEC-H1): the candidate bundle must come from a resolved,
+  // injected adapter -- never from a bare `input.determinationCandidate` field
+  // supplied directly by the caller. No adapter, a throwing adapter, or a
+  // malformed/rejected response all leave `determination` at `null`, which
+  // classifyCiEvidence() turns into HUMAN_REVIEW_REQUIRED, never a silent PASS.
+  if (hadRerun) {
+    const resolvedAdapter = resolveDeterminationAdapter(input);
+    if (resolvedAdapter.ok) {
+      let fetched;
+      try {
+        fetched = await resolvedAdapter.adapter.fetchDetermination({ subject, run });
+      } catch {
+        fetched = null;
+      }
+      if (isPlainObject(fetched) && fetched.ok === true && isPlainObject(fetched.candidate)) {
+        const result = validateDetermination({ ...fetched.candidate, subject, runEvidence: run });
+        if (result.accepted) {
+          determination = { accepted: true, mode: result.mode, actor: fetched.candidate.authenticatedActor };
+          externalEvidence.push(result.externalEvidenceEntry);
+        }
+      }
     }
   }
 
   const classified = classifyCiEvidence({ requiredJobCheck, attempt: run.attempt, attemptHistory: run.attemptHistory, determination });
+
+  // Corrective C1 (W4-DEV-M1): the report's finalized `ci` field (design
+  // section 23) must be derivable from this SAME record, never recomputed
+  // independently -- so every field design section 23 requires is captured
+  // here, once, at the single point classification is actually decided.
+  let determinationDetail = {};
+  if (determination && determination.accepted && determination.mode === "SEPARATE_PERSON" && externalEvidence.length === 1) {
+    const evidence = externalEvidence[0];
+    determinationDetail = {
+      authenticatedActor: determination.actor, determinationMode: determination.mode,
+      contentDigest: evidence.contentDigest, channelObjectId: evidence.sourceObjectId, version: evidence.sourceVersion,
+    };
+  } else if (determination && determination.mode === "OWNER_ATTESTED") {
+    determinationDetail = { rerunObserved: true, attestationMode: "OWNER_ATTESTED", candidateClassification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN" };
+  }
+
   const record = ciRecord(subject, classified, {
     classification: classified.classification, repository: run.repository, runId: run.runId, event: run.event, attempt: run.attempt,
     requiredJobs: [...input.requiredJobs].sort(),
@@ -112,6 +161,7 @@ async function collectCiEvidence(input) {
     failed: requiredJobCheck.ok ? [...requiredJobCheck.failed].sort() : [],
     pending: requiredJobCheck.ok ? [...requiredJobCheck.pending].sort() : [],
     skipped: requiredJobCheck.ok ? [...requiredJobCheck.skipped].sort() : [],
+    ...determinationDetail,
   });
   return deepFreeze({ subject, records: [record], outcome: null, externalEvidence: deepFreeze(externalEvidence) });
 }

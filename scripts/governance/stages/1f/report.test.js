@@ -141,3 +141,82 @@ test("isValidTrustedContext / isValidExternalEvidenceEntry / isValidManifestProv
   assert.equal(isValidExternalEvidenceEntry({ sourceObjectId: "x", sourceVersion: "v", contentDigest: "d".repeat(64), collectedAt: "t", immutability: "MUTABLE" }), true);
   assert.equal(isValidManifestProvenance(manifest()), true);
 });
+
+// ---------------------------------------------------------------- Corrective C1 (W4-DEV-M1): finalized report.ci schema conformance
+//
+// Design section 23: `ci` must be "the 1F record with classification and,
+// when a determination was accepted, {authenticatedActor, determinationMode,
+// contentDigest, channelObjectId, version}", plus rerunObserved/attestationMode/
+// candidateClassification under OWNER_ATTESTED -- never the bare
+// `{ collected: true }` flag the original implementation produced.
+
+const ciRecord = (observed, overrides = {}) => ({
+  checkId: "1F.CI", ownerStage: "1F", status: "PASS", subject, observed, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [], ...overrides,
+});
+
+test("DEV-C1-02: a CLEAN_FIRST_PASS finalized report's ci carries the classification, with no determination fields", () => {
+  const record = ciRecord({ classification: "CLEAN_FIRST_PASS" });
+  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.report.ci, { classification: "CLEAN_FIRST_PASS" });
+});
+
+test("DEV-C1-03/09: a PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN finalized report's ci carries the classification plus the exact authenticatedActor/determinationMode/contentDigest/channelObjectId/version design section 23 requires, agreeing exactly with the underlying record", () => {
+  const observed = {
+    classification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN",
+    authenticatedActor: { provider: "github", accountId: "555", accountType: "User" },
+    determinationMode: "SEPARATE_PERSON", contentDigest: "d".repeat(64), channelObjectId: "comment-1", version: "v1",
+  };
+  const record = ciRecord(observed);
+  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.report.ci, {
+    classification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN",
+    authenticatedActor: observed.authenticatedActor, determinationMode: "SEPARATE_PERSON",
+    contentDigest: "d".repeat(64), channelObjectId: "comment-1", version: "v1",
+  });
+  assert.equal(r.report.ci.classification, record.observed.classification);
+});
+
+test("DEV-C1-04/05/06/07: an OWNER_ATTESTED-evidenced HUMAN_REVIEW_REQUIRED finalized report's ci exposes rerunObserved, attestationMode and candidateClassification, and readiness stays capped (never READY)", () => {
+  const observed = {
+    classification: "HUMAN_REVIEW_REQUIRED", rerunObserved: true, attestationMode: "OWNER_ATTESTED",
+    candidateClassification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN",
+  };
+  const record = ciRecord(observed, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "OWNER_SELF_DETERMINATION" });
+  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, true);
+  assert.equal(r.report.ci.rerunObserved, true);
+  assert.equal(r.report.ci.attestationMode, "OWNER_ATTESTED");
+  assert.equal(r.report.ci.candidateClassification, "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN");
+  assert.notEqual(r.report.readiness.state, "READY");
+  assert.equal(r.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+});
+
+test("DEV-C1-08: a record with no authenticatedActor/rerunObserved (a rejected or absent determination) never has those fields fabricated into ci", () => {
+  const record = ciRecord({ classification: "HUMAN_REVIEW_REQUIRED" }, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "CI_UNEXPLAINED_RERUN" });
+  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.report.ci, { classification: "HUMAN_REVIEW_REQUIRED" });
+  assert.equal("authenticatedActor" in r.report.ci, false);
+  assert.equal("rerunObserved" in r.report.ci, false);
+});
+
+test("DEV-C1-12/13: a 1F.CI record with a malformed observed payload (no classification) fails closed to a minimal, honest ci shape, never a fabricated one", () => {
+  const record = ciRecord({ somethingElse: true });
+  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.report.ci, { collected: true, classification: null });
+});
+
+test("DEV-C1-14: mixed-phase input -- ci:{state:NOT_COLLECTED} together with an already-collected 1F.CI record in records[] -- is rejected, not silently resolved either way", () => {
+  const record = ciRecord({ classification: "CLEAN_FIRST_PASS" });
+  const r = buildReport(baseInput({ ci: { state: "NOT_COLLECTED" }, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, false);
+});
+
+test("DEV-C1-10: report.ci cannot be independently overwritten by caller-supplied content for a finalized report -- ci must be omitted or the literal Phase-1 marker, never an arbitrary object", () => {
+  const record = ciRecord({ classification: "CLEAN_FIRST_PASS" });
+  const r = buildReport(baseInput({ ci: { classification: "FORGED" }, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  assert.equal(r.ok, false);
+});

@@ -52,6 +52,36 @@ function ciNotCollectedRecord(subject) {
   return checked.record;
 }
 
+/**
+ * finalizedCiFromRecord(record) -- Corrective C1 (W4-DEV-M1). Derives the
+ * report's `ci` field (design section 23) purely from an already-validated
+ * `1F.CI` result record's `observed` payload (produced by
+ * stages/1f/ci-evidence.js#collectCiEvidence()) -- never an independent,
+ * caller-controlled summary, and never a second, independently computed
+ * classification. Fails closed to a minimal, honest shape if the record's
+ * `observed` is not shaped as this function expects (defensive: buildReport()
+ * does not re-validate an already-validated record's internal shape, but it
+ * also never lets a malformed one silently become a claimed-complete `ci`).
+ */
+function finalizedCiFromRecord(record) {
+  const o = isPlainObject(record.observed) ? record.observed : {};
+  if (typeof o.classification !== "string") return { collected: true, classification: null };
+  const ci = { classification: o.classification };
+  if (isPlainObject(o.authenticatedActor)) {
+    ci.authenticatedActor = o.authenticatedActor;
+    ci.determinationMode = o.determinationMode;
+    ci.contentDigest = o.contentDigest;
+    ci.channelObjectId = o.channelObjectId;
+    ci.version = o.version;
+  }
+  if (o.rerunObserved === true) {
+    ci.rerunObserved = true;
+    ci.attestationMode = o.attestationMode;
+    ci.candidateClassification = o.candidateClassification;
+  }
+  return ci;
+}
+
 function isBoundedString(v, max) {
   return typeof v === "string" && v.length > 0 && v.length <= max;
 }
@@ -163,6 +193,11 @@ function buildReport(input) {
 
   const ci = input.ci === undefined ? null : input.ci;
   if (ci !== null && (!isPlainObject(ci) || ci.state !== "NOT_COLLECTED")) return invalidInput("ci must be omitted or exactly { state: \"NOT_COLLECTED\" } for a Phase 1 report");
+  const hasCollectedCiRecordInInput = input.records.some((r) => isPlainObject(r) && r.checkId === "1F.CI");
+  // Corrective C1 (W4-DEV-M1): a caller cannot claim Phase 1 (ci:{state:NOT_COLLECTED})
+  // while also supplying an already-collected 1F.CI record -- that is contradictory,
+  // mixed-phase input, not a report this function can honestly assemble.
+  if (ci !== null && hasCollectedCiRecordInInput) return invalidInput("ci is { state: \"NOT_COLLECTED\" } (Phase 1) but records[] already contains a collected 1F.CI record (Phase 2) -- mixed-phase input is rejected");
 
   // Design section 17: "[Phase 1] cannot observe its own run, so it emits ci
   // as { state: NOT_COLLECTED }, which yields an INCOMPLETE record (reasonCode
@@ -192,9 +227,18 @@ function buildReport(input) {
   // ci === null means the caller omitted the field, relying on a collected
   // 1F.CI record inside records[] to represent a finalized Phase 2 report;
   // an explicit { state: "NOT_COLLECTED" } always means Phase 1, never finalized.
-  const hasCollectedCi = input.records.some((r) => isPlainObject(r) && r.checkId === "1F.CI");
+  const collectedCiRecord = input.records.find((r) => isPlainObject(r) && r.checkId === "1F.CI") || null;
+  const hasCollectedCi = collectedCiRecord !== null;
   const finalized = ci === null && hasCollectedCi;
-  const ciValue = ci !== null ? ci : (hasCollectedCi ? { collected: true } : { state: "NOT_COLLECTED" });
+  // Design section 23: `ci` is "the 1F record with classification and, when a
+  // determination was accepted, {authenticatedActor, determinationMode,
+  // contentDigest, channelObjectId, version}" (plus rerunObserved/attestationMode/
+  // candidateClassification under OWNER_ATTESTED). Corrective C1 (W4-DEV-M1):
+  // this is derived ONLY from the validated 1F.CI record already folded into
+  // aggregation above -- never an independent, potentially contradictory
+  // caller-supplied summary, and never a second, separately computed
+  // classification.
+  const ciValue = ci !== null ? ci : (hasCollectedCi ? finalizedCiFromRecord(collectedCiRecord) : { state: "NOT_COLLECTED" });
 
   const report = {
     schemaVersion: 1,

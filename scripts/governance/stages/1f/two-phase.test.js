@@ -94,3 +94,55 @@ test("rendering the finalized Phase 2 report to Markdown never disagrees with it
   const md = renderMarkdown(finalReport.report);
   assert.match(md, new RegExp(`Readiness state: \`${finalReport.report.readiness.state}\``));
 });
+
+// ---------------------------------------------------------------- Corrective C1 (W4-SEC-H1 + W4-DEV-M1): full rerun composition through the real adapter seam
+
+function rerunRunAdapter() {
+  return {
+    fetchRun: async () => ({
+      ok: true,
+      run: { repository: REPO, workflowPath: WORKFLOW, runId: "2", event: "pull_request", headSha: subject.head, attempt: 2, status: "completed", jobs: [{ name: "Unit tests", status: "completed", conclusion: "success" }], attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Unit tests"] }] },
+    }),
+  };
+}
+function acceptedDeterminationAdapter() {
+  return {
+    fetchDetermination: async () => ({
+      ok: true,
+      candidate: {
+        record: { repository: REPO, headSha: subject.head, runId: "2", failedAttempts: [1], finalAttempt: 2, failedJobs: ["Unit tests"], failureSignature: "sig", reviewer: "x", decisionRef: "issue-comment:1", category: "KNOWN_CI_RELIABILITY_SIGNATURE", justification: "known symptom" },
+        authenticatedActor: { provider: "github", accountId: "555", accountType: "User" },
+        contentDigest: "d".repeat(64), channelObjectId: "comment-1", version: "v1", collectedAt: "2026-09-28T00:00:00Z",
+        policy: { authorizedDeterminers: [{ provider: "github", accountId: "555" }], determinationMode: "SEPARATE_PERSON" },
+        contributors: { accountIds: ["github:111"], hasUnresolved: false },
+      },
+    }),
+  };
+}
+
+test("DEV-C1-11: Phase 2 with an accepted, adapter-mediated SEPARATE_PERSON rerun determination -- the report reaches READY, report.ci carries the full design section 23 determination shape, and Markdown never disagrees with the JSON", async () => {
+  const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: rerunRunAdapter(), requiredJobs: REQUIRED, determinationAdapter: acceptedDeterminationAdapter() });
+  assert.equal(ci.records[0].status, "PASS");
+  assert.equal(ci.records[0].observed.classification, "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN");
+
+  const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
+  assert.equal(finalReport.ok, true);
+  assert.equal(finalReport.report.readiness.state, "READY");
+  assert.equal(finalReport.report.ci.classification, "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN");
+  assert.equal(finalReport.report.ci.determinationMode, "SEPARATE_PERSON");
+  assert.equal(finalReport.report.ci.channelObjectId, "comment-1");
+
+  const md = renderMarkdown(finalReport.report);
+  assert.match(md, new RegExp(`Readiness state: \`${finalReport.report.readiness.state}\``));
+  assert.match(md, /PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN/);
+});
+
+test("a rerun with NO determinationAdapter injected reaches Phase 2 HUMAN_REVIEW_REQUIRED, never READY, through the full real composition", async () => {
+  const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: rerunRunAdapter(), requiredJobs: REQUIRED });
+  assert.equal(ci.records[0].status, "HUMAN_REVIEW_REQUIRED");
+
+  const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], ci: undefined }));
+  assert.equal(finalReport.ok, true);
+  assert.notEqual(finalReport.report.readiness.state, "READY");
+  assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+});

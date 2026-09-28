@@ -35,6 +35,38 @@
  * comment body) and never re-fetches anything (revalidation at later
  * decision boundaries is kernel/revalidation.js's job, using the digest and
  * version this module pins at acceptance).
+ *
+ * CORRECTIVE C1 (W4-SEC-H1): `validateDetermination()` below is a pure
+ * validator over an already-assembled candidate bundle; it was never the
+ * defect. The defect was that `stages/1f/ci-evidence.js` used to accept
+ * that bundle (`authenticatedActor`, `policy`, `contentDigest`, ...)
+ * directly from ANY caller of the public `collectCiEvidence()` interface,
+ * with no adapter-resolution seam at all -- unlike `stages/1f/ci-run.js`,
+ * which requires a resolved adapter and fails closed
+ * (`NO_ADAPTER_AVAILABLE`) when none is injected. `resolveDeterminationAdapter()`
+ * below brings determination handling to that SAME architectural pattern
+ * (design section 24's injection seam, mirroring
+ * `stages/1a/git-adapter.js#resolveGitAdapter()` and
+ * `stages/1f/ci-run.js#resolveGithubCiAdapter()` exactly): the candidate
+ * bundle must now come from an injected `determinationAdapter.fetchDetermination()`
+ * call, never from a bare caller-supplied object.
+ *
+ * This closes the specific reproduced defect (a caller could fabricate
+ * `authenticatedActor` and a `policy` authorizing it, and `collectCiEvidence()`
+ * would accept it) and gives a future real, network-authenticated provider a
+ * well-defined, single integration point. It does NOT by itself prove that
+ * any injected adapter is genuinely GitHub-authenticated -- exactly as
+ * `resolveGithubCiAdapter()` does not prove that either. No real adapter is
+ * built anywhere in this repository: `resolveDeterminationAdapter()` returns
+ * `{ok:false}` unless a caller explicitly injects one, so the privileged
+ * `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` classification remains structurally
+ * unreachable through any current real caller of this framework today (design
+ * section 17's fail-closed default: a rerun with no resolvable, accepted
+ * determination is always `HUMAN_REVIEW_REQUIRED`). A genuinely operational,
+ * authenticated live provider -- and base-anchoring `authorizedDeterminers`
+ * to Stage 1A's policy (`stages/1a/policy.js` has no such field today) -- are
+ * separate, explicitly deferred prerequisites, not implemented by this
+ * corrective (see the Wave 4 Corrective C1 report).
  */
 
 "use strict";
@@ -50,6 +82,29 @@ const CATEGORIES = new Set(["KNOWN_CI_RELIABILITY_SIGNATURE", "TRANSIENT_INFRAST
 const MAX_ATTEMPTS = 64;
 const MAX_JOBS = 256;
 const MAX_TEXT = 500;
+
+// ---------------------------------------------------------------- determination adapter resolution (Corrective C1 / W4-SEC-H1)
+
+/** True when `adapter` exposes the complete injected determination-adapter surface. */
+function isDeterminationAdapter(adapter) {
+  return isPlainObject(adapter) && typeof adapter.fetchDetermination === "function";
+}
+
+/**
+ * resolveDeterminationAdapter(input) -- same resolution pattern as
+ * `stages/1a/git-adapter.js#resolveGitAdapter()` and
+ * `stages/1f/ci-run.js#resolveGithubCiAdapter()`: an already-valid injected
+ * adapter wins; anything else fails resolution. There is no "build a real
+ * one from config" branch here (unlike the Git/CI-run adapters) because no
+ * real, network-authenticated determination provider exists in this
+ * repository -- this function is therefore expected to return `{ok:false}`
+ * for every real caller today, which is the intended fail-closed state
+ * until a separately authorized provider integration exists.
+ */
+function resolveDeterminationAdapter(input) {
+  if (isPlainObject(input) && isDeterminationAdapter(input.determinationAdapter)) return { ok: true, adapter: input.determinationAdapter };
+  return { ok: false };
+}
 
 // ---------------------------------------------------------------- record body schema
 
@@ -208,4 +263,4 @@ function validateDetermination(input) {
   };
 }
 
-module.exports = { validateDetermination, isValidRecordBody, isAuthorizedDeterminer, resolveDeterminationMode, checkBindings };
+module.exports = { validateDetermination, isValidRecordBody, isAuthorizedDeterminer, resolveDeterminationMode, checkBindings, isDeterminationAdapter, resolveDeterminationAdapter };

@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { validateDetermination, isValidRecordBody, isAuthorizedDeterminer, resolveDeterminationMode, checkBindings } = require("./determination");
+const { validateDetermination, isValidRecordBody, isAuthorizedDeterminer, resolveDeterminationMode, checkBindings, isDeterminationAdapter, resolveDeterminationAdapter } = require("./determination");
 
 const HEAD = "a".repeat(40);
 const REPO = "TarasovArtem/qa-ai-agent";
@@ -236,4 +236,23 @@ test("resolveDeterminationMode rejects an unrecognized determinationMode value",
 test("checkBindings rejects malformed runEvidence without throwing", () => {
   assert.equal(checkBindings({ record: record(), runEvidence: null, subject }).ok, false);
   assert.doesNotThrow(() => checkBindings({ record: record(), runEvidence: {}, subject }));
+});
+
+// ---------------------------------------------------------------- Corrective C1 (W4-SEC-H1): determination adapter resolution
+
+test("isDeterminationAdapter accepts only an object exposing a fetchDetermination function", () => {
+  assert.equal(isDeterminationAdapter({ fetchDetermination: async () => {} }), true);
+  assert.equal(isDeterminationAdapter({}), false);
+  assert.equal(isDeterminationAdapter({ fetchDetermination: "not-a-function" }), false);
+  assert.equal(isDeterminationAdapter(null), false);
+  assert.equal(isDeterminationAdapter("nope"), false);
+});
+
+test("resolveDeterminationAdapter resolves only an injected, valid adapter -- there is no config-built fallback (no real provider exists in this repository)", () => {
+  const validAdapter = { fetchDetermination: async () => ({ ok: false }) };
+  assert.deepEqual(resolveDeterminationAdapter({ determinationAdapter: validAdapter }), { ok: true, adapter: validAdapter });
+  assert.equal(resolveDeterminationAdapter({}).ok, false);
+  assert.equal(resolveDeterminationAdapter({ determinationAdapter: {} }).ok, false);
+  assert.equal(resolveDeterminationAdapter(null).ok, false);
+  assert.equal(resolveDeterminationAdapter(undefined).ok, false);
 });
