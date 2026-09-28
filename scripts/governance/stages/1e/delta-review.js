@@ -455,27 +455,44 @@ async function computeDeltaReview(input) {
     // record's own HUMAN_REVIEW_REQUIRED status still independently
     // participates in the run's overall readiness aggregation.
     if (!hardFailure) {
-      const declaredCovering = Array.isArray(coveringChecks[id]) ? coveringChecks[id].slice(0, MAX_COVERING_CHECKS_PER_DOMAIN) : [];
-      let coveringClean = true;
-      for (const checkId of declaredCovering) {
-        const rec = typeof checkId === "string" ? validRecords.get(checkId) : undefined;
-        if (!rec) {
-          coveringClean = false;
-          reasons.push("COVERING_CHECK_NOT_PASS");
-          continue;
+      const rawCovering = coveringChecks[id];
+      const declaredCovering = Array.isArray(rawCovering) ? rawCovering : [];
+      // W3-C2-SEC-M1 fix: the raw declared length is checked BEFORE any
+      // slicing -- a declaration beyond MAX_COVERING_CHECKS_PER_DOMAIN is
+      // never truncated to a trusted prefix (that let a required check past
+      // index 63 be silently dropped, regardless of whether it would have
+      // resolved to FAIL, HUMAN_REVIEW_REQUIRED or simply been missing). An
+      // oversized declaration fails only THIS domain closed -- exactly like
+      // an unlocatable region does (hardFailure) -- never the whole run, so
+      // other domains with in-bound declarations are unaffected (the limit
+      // is per domain, not global).
+      if (declaredCovering.length > MAX_COVERING_CHECKS_PER_DOMAIN) {
+        hardFailure = true;
+        ownLevel = "HUMAN_REVIEW_REQUIRED";
+        fingerprint = null;
+        reasons.push("COVERING_CHECK_LIMIT_EXCEEDED");
+      } else {
+        let coveringClean = true;
+        for (const checkId of declaredCovering) {
+          const rec = typeof checkId === "string" ? validRecords.get(checkId) : undefined;
+          if (!rec) {
+            coveringClean = false;
+            reasons.push("COVERING_CHECK_NOT_PASS");
+            continue;
+          }
+          evidenceRefs.push(checkId);
+          if (rec.status !== STATUS.PASS && rec.status !== STATUS.NOT_APPLICABLE) {
+            coveringClean = false;
+            reasons.push("COVERING_CHECK_NOT_PASS");
+          }
         }
-        evidenceRefs.push(checkId);
-        if (rec.status !== STATUS.PASS && rec.status !== STATUS.NOT_APPLICABLE) {
-          coveringClean = false;
-          reasons.push("COVERING_CHECK_NOT_PASS");
-        }
-      }
-      if (!coveringClean) ownLevel = maxLevel(ownLevel, "DEEP_REVIEW_REQUIRED");
+        if (!coveringClean) ownLevel = maxLevel(ownLevel, "DEEP_REVIEW_REQUIRED");
 
-      // Eligibility condition 1: reviewModes must allow PRESERVATION_CHECK_ONLY.
-      if (!domain.reviewModes.includes("PRESERVATION_CHECK_ONLY")) {
-        ownLevel = maxLevel(ownLevel, "DEEP_REVIEW_REQUIRED");
-        reasons.push("PRESERVATION_NOT_ALLOWED");
+        // Eligibility condition 1: reviewModes must allow PRESERVATION_CHECK_ONLY.
+        if (!domain.reviewModes.includes("PRESERVATION_CHECK_ONLY")) {
+          ownLevel = maxLevel(ownLevel, "DEEP_REVIEW_REQUIRED");
+          reasons.push("PRESERVATION_NOT_ALLOWED");
+        }
       }
     }
 

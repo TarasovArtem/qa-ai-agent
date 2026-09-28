@@ -938,6 +938,257 @@ test("C2-INT.5. repeated runs of the same oversized-pool and sanitizer-triggerin
   assert.deepEqual(rec1, rec2);
 });
 
+// ================================================================== Corrective C3: W3-C2-SEC-M1 covering-check declaration completeness
+
+const { aggregate } = require("../../kernel/readiness");
+
+/** N declared covering checkIds `${prefix}_0..${n-1}`, with a matching record per index via `statusAt(i)` (default PASS); `omitAt` indices get no record at all. */
+function buildCovering(n, { statusAt = () => "PASS", omitAt = [], prefix = "1C.CHECK", ownerStage = "1C" } = {}) {
+  const ids = Array.from({ length: n }, (_, i) => `${prefix}_${i}`);
+  const records = [];
+  for (let i = 0; i < n; i++) {
+    if (omitAt.includes(i)) continue;
+    records.push(genericRecord(ids[i], ownerStage, statusAt(i)));
+  }
+  return { ids, records };
+}
+
+test("C3-M1.1. 64 PASS covering checks (at the cap) are accepted -- normal PRESERVATION, unaffected by the new bound", async () => {
+  const { ids, records } = buildCovering(64);
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C3-M1.2. 65 declared covering checks, 65th FAIL -- fails closed, never false PRESERVATION (central W3-C2-SEC-M1 regression)", async () => {
+  const { ids, records } = buildCovering(65, { statusAt: (i) => (i === 64 ? "FAIL" : "PASS") });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  assert.equal(rec(r, "1E.DOMAIN.DOMAIN_A").status, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(rec(r, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes("COVERING_CHECK_LIMIT_EXCEEDED"));
+});
+
+test("C3-M1.3. 65 declared covering checks, 65th missing entirely -- fails closed (an incomplete declaration is not completed merely by the overflow)", async () => {
+  const { ids, records } = buildCovering(65, { omitAt: [64] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.4. 65 declared covering checks, all 65 PASS -- still rejected under the bound (the bound is a completeness contract, not conditioned on content)", async () => {
+  const { ids, records } = buildCovering(65);
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.5. 65 declared covering checks, 65th HUMAN_REVIEW_REQUIRED -- fails closed, unresolved human review is not silently dropped", async () => {
+  const { ids, records } = buildCovering(65, { statusAt: (i) => (i === 64 ? "HUMAN_REVIEW_REQUIRED" : "PASS") });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.6. 65 declared covering checks, 65th INCOMPLETE -- fails closed, unresolved evidence is not hidden", async () => {
+  const { ids, records } = buildCovering(65, { statusAt: (i) => (i === 64 ? "INCOMPLETE" : "PASS") });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.7. 65 declared covering checks, 65th CONFIGURATION_ERROR -- fails closed", async () => {
+  const { ids, records } = buildCovering(65, { statusAt: (i) => (i === 64 ? "CONFIGURATION_ERROR" : "PASS") });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.8. FAIL at declared index 0 of an oversized (65-entry) declaration -- same fail-closed outcome", async () => {
+  const { ids, records } = buildCovering(65, { statusAt: (i) => (i === 0 ? "FAIL" : "PASS") });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.9. FAIL/missing placed at every position across an oversized declaration (0, 31, 63, 64) -- no caller-controlled ordering selects whether it is evaluated", async () => {
+  for (const idx of [0, 31, 63, 64]) {
+    const failCase = buildCovering(65, { statusAt: (i) => (i === idx ? "FAIL" : "PASS") });
+    const rFail = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: failCase.ids }, records: failCase.records });
+    assert.equal(level(rFail, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED", `FAIL at index ${idx}`);
+
+    const missingCase = buildCovering(65, { omitAt: [idx] });
+    const rMissing = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: missingCase.ids }, records: missingCase.records });
+    assert.equal(level(rMissing, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED", `missing at index ${idx}`);
+  }
+});
+
+test("C3-M1.10. duplicate covering checkId at declared positions 63/64 (65 raw entries, 64 unique ids) -- rejected on raw declared length, never silently deduplicated first", async () => {
+  const ids = Array.from({ length: 64 }, (_, i) => `1C.DUP_${i}`);
+  const declared = [...ids, ids[63]]; // 65 raw entries; the 65th repeats index 63's id
+  const records = ids.map((id) => genericRecord(id, "1C", "PASS"));
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: declared }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.11. oversized covering declaration (65) with all-unique ids and mixed statuses -- rejected on size alone", async () => {
+  const { ids, records } = buildCovering(65, { statusAt: (i) => (i % 7 === 0 ? "FAIL" : "PASS"), prefix: "1C.UNIQ" });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ids }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.12. oversized covering declaration (65 raw entries) consisting almost entirely of two repeated ids -- rejected on raw declared length", async () => {
+  const declared = Array.from({ length: 65 }, (_, i) => (i % 2 === 0 ? "1C.REPEAT_A" : "1C.REPEAT_B"));
+  const records = [genericRecord("1C.REPEAT_A", "1C", "PASS"), genericRecord("1C.REPEAT_B", "1C", "PASS")];
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: declared }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.13. two domains, each with its own 64 valid covering checks -- both preserve normally (the limit is per domain, not global)", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"])];
+  const covA = buildCovering(64, { prefix: "1C.A" });
+  const covB = buildCovering(64, { prefix: "1D.B", ownerStage: "1D" });
+  const r = await run({
+    headDecls: decls, filesBase: { "a.md": "x", "b.md": "y" }, filesHead: { "a.md": "x", "b.md": "y" },
+    coveringChecks: { DOMAIN_A: covA.ids, DOMAIN_B: covB.ids },
+    records: [...covA.records, ...covB.records],
+  });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C3-M1.14. one domain with an oversized declaration (65) alongside a domain with a valid declaration (64) -- only the oversized domain fails, the other is unaffected", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"])];
+  const covA = buildCovering(65, { prefix: "1C.A" });
+  const covB = buildCovering(64, { prefix: "1C.B" });
+  const r = await run({
+    headDecls: decls, filesBase: { "a.md": "x", "b.md": "y" }, filesHead: { "a.md": "x", "b.md": "y" },
+    coveringChecks: { DOMAIN_A: covA.ids, DOMAIN_B: covB.ids },
+    records: [...covA.records, ...covB.records],
+  });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C3-M1.15. a dependent domain cannot preserve when its upstream dependency has an oversized covering declaration", async () => {
+  const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"])];
+  const covA = buildCovering(65, { prefix: "1C.A" });
+  const r = await run({
+    headDecls: decls, filesBase: { "a.md": "x", "b.md": "y" }, filesHead: { "a.md": "x", "b.md": "y" },
+    coveringChecks: { DOMAIN_A: covA.ids }, records: covA.records,
+  });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C3-M1.16. an invalid topologicalOrder combined with an oversized covering declaration still fails closed via the graph-level error", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraphC2(domains, ["DOMAIN_A", "DOMAIN_A"]);
+  const cov = buildCovering(65, { prefix: "1C.A" });
+  const r = await computeDeltaReview({
+    subject, headGraph, baseGraph: headGraph, records: cov.records, coveringChecks: { DOMAIN_A: cov.ids },
+    reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) },
+  });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.GRAPH");
+});
+
+test("C3-M1.17. an oversized pooled-record array combined with an oversized covering declaration still fails closed via the record-pool error", async () => {
+  const cov = buildCovering(65, { prefix: "1C.A" });
+  const filler = buildPool(4097 - cov.records.length);
+  const records = [...cov.records, ...filler];
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: cov.ids }, records });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C3-M1.18. malformed covering declarations do not grant authority -- unchanged, pre-existing vacuous-declaration semantics", async () => {
+  const vacuous = [null, {}, "string", []];
+  for (const bad of vacuous) {
+    const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: bad }, records: [] });
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY", JSON.stringify(bad));
+  }
+  for (const bad of [[null], [123]]) {
+    const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: bad }, records: [] });
+    assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED", JSON.stringify(bad));
+  }
+});
+
+test("C3-M1.19. a domain result escalated by the covering-check limit still validates against kernel/results.js#validateResultRecord()", async () => {
+  const { validateResultRecord } = require("../../kernel/results");
+  const cov = buildCovering(65, { prefix: "1C.A" });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: cov.ids }, records: cov.records });
+  assert.equal(validateResultRecord(rec(r, "1E.DOMAIN.DOMAIN_A")).ok, true);
+});
+
+test("C3-M1.20. the covering-limit-exceeded domain result aggregates HUMAN_REVIEW_REQUIRED via the real kernel aggregator, never READY", async () => {
+  const cov = buildCovering(65, { prefix: "1C.A" });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: cov.ids }, records: cov.records });
+  const agg = aggregate(r.records, { expectedDomainIds: ["DOMAIN_A"] });
+  assert.notEqual(agg.readiness.state, "READY");
+  assert.equal(agg.readiness.state, "HUMAN_REVIEW_REQUIRED");
+});
+
+// ---- Integration / cross-cutting (8 tests)
+
+test("C3-INT.1. the C2 1E.DELTA.RECORD_POOL INCOMPLETE record aggregates NOT_READY via the real kernel aggregator, never READY", async () => {
+  const records = buildPool(4097, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  const agg = aggregate(r.records, {});
+  assert.equal(agg.readiness.state, "NOT_READY");
+  assert.notEqual(agg.readiness.state, "READY");
+});
+
+test("C3-INT.2. the C2 record-pool INCOMPLETE record plus an unrelated genuine PASS record still aggregates NOT_READY (the PASS cannot mask it)", async () => {
+  const oversizedRecords = buildPool(4097, { passAt: [0] });
+  const r1 = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records: oversizedRecords });
+  const unrelatedGenuinePass = genericRecord("1B.SOMETHING_ELSE", "1B", "PASS");
+  const agg = aggregate([...r1.records, unrelatedGenuinePass], {});
+  assert.equal(agg.readiness.state, "NOT_READY");
+});
+
+test("C3-INT.3. expected-domain completeness remains enforced by the real kernel aggregator: a missing domain result is detected, not silently accepted", () => {
+  const agg = aggregate([], { expectedDomainIds: ["DOMAIN_A"] });
+  assert.equal(agg.readiness.state, "NOT_READY");
+  assert.ok(agg.kernelRecords.some((k) => k.checkId === "KERNEL.DOMAIN_RESULT.DOMAIN_A"));
+});
+
+test("C3-INT.4. duplicate checkId at pooled-record indices 4094/4095 (within the 4096 cap) -- C1's within-cap duplicate exclusion remains correct", async () => {
+  const records = buildPool(4096, { passAt: [4094], failAt: [4095] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DELTA.RECORD_POOL"), false);
+});
+
+test("C3-INT.5. the W3-SEC-H1 topological-order correction remains effective post-C3", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"])];
+  const headGraph = forgedGraphC2(domains, ["DOMAIN_B", "DOMAIN_A"]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x", "b.md": "x" }), atHead: reader({ "a.md": "x", "b.md": "x" }) } });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.GRAPH");
+});
+
+test("C3-INT.6. the W3-C1-SEC-L1 diagnostic sanitizer correction remains effective post-C3", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraphC2(domains, ["DOMAIN_A", "EVIL\u001b\u0007" + "ghp_" + "G".repeat(36)]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.equal(/[\x1b\x07]/.test(r.records[0].detail), false);
+  assert.equal(r.records[0].detail.includes("ghp_" + "G".repeat(36)), false);
+});
+
+test("C3-INT.7. a normal genuine graph with a single legitimate PASS covering record still resolves PRESERVATION end-to-end post-C3 (regression)", async () => {
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records: [genericRecord("1C.REQ", "1C", "PASS")] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C3-INT.8. five repeated executions of each key C3 fixture (64-valid, 65-overflow, 65th-FAIL, 65th-missing, C2 4097-record) produce deterministic, byte-identical results", async () => {
+  const fixtures = [
+    { headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: buildCovering(64, { prefix: "1C.D1" }).ids }, records: buildCovering(64, { prefix: "1C.D1" }).records },
+    { headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: buildCovering(65, { prefix: "1C.D2" }).ids }, records: buildCovering(65, { prefix: "1C.D2" }).records },
+    (() => { const c = buildCovering(65, { prefix: "1C.D3", statusAt: (i) => (i === 64 ? "FAIL" : "PASS") }); return { headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: c.ids }, records: c.records }; })(),
+    (() => { const c = buildCovering(65, { prefix: "1C.D4", omitAt: [64] }); return { headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: c.ids }, records: c.records }; })(),
+    { headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records: buildPool(4097, { passAt: [0] }) },
+  ];
+  for (const args of fixtures) {
+    const outs = [];
+    for (let i = 0; i < 5; i++) outs.push(JSON.stringify((await run(args)).records));
+    assert.equal(new Set(outs).size, 1);
+  }
+});
+
 // ================================================================== performance (section 84)
 
 test("performance: ~100 domains, chained dependencies, moderate content completes quickly and near-linearly", async () => {
