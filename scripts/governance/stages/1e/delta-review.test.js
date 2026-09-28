@@ -678,6 +678,266 @@ test("INT.5. combined forged topologicalOrder, duplicated records, and malformed
   }));
 });
 
+// ================================================================== Corrective C2: W3-SEC-H2 residual / W3-C1-SEC-L1 diagnostic sanitization
+
+const MAX_POOLED_RECORDS = 4096;
+
+/** Build an N-record pool with specific records placed at given indices; every other slot is a distinct, unrelated, valid filler PASS record. */
+function buildPool(n, { passAt = [], failAt = [], checkId = "1C.REQ", malformedAt = [], wrongSubjectAt = [] } = {}) {
+  const arr = [];
+  const staleSubject = { ...subject, head: "f".repeat(40) };
+  for (let i = 0; i < n; i++) {
+    if (passAt.includes(i)) arr.push(genericRecord(checkId, "1C", "PASS"));
+    else if (failAt.includes(i)) arr.push(genericRecord(checkId, "1C", "FAIL"));
+    else if (malformedAt.includes(i)) arr.push({ checkId, ownerStage: "1C", status: "NOT-A-REAL-STATUS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] });
+    else if (wrongSubjectAt.includes(i)) arr.push({ checkId, ownerStage: "1C", status: "PASS", subject: staleSubject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] });
+    else arr.push(genericRecord(`1C.FILLER_${i}`, "1C", "PASS"));
+  }
+  return arr;
+}
+
+const singleDomain = [dom("DOMAIN_A", [], ["file:a.md"])];
+
+// ---- W3-SEC-H2 residual: record-pool completeness (15 tests)
+
+test("C2-H2.1. 4095 valid records (below the cap) -- normal processing, no rejection", async () => {
+  const records = buildPool(4095, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DELTA.RECORD_POOL"), false);
+});
+
+test("C2-H2.2. exactly 4096 valid records (at the cap) -- normal processing, no rejection", async () => {
+  const records = buildPool(4096, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DELTA.RECORD_POOL"), false);
+});
+
+test("C2-H2.3. 4097 valid (non-duplicate) records -- rejected outright, explicit fail-closed", async () => {
+  const records = buildPool(4097, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  assert.equal(r.records[0].status, "INCOMPLETE");
+  assert.equal(r.records[0].reasonCode, "DELTA_RECORD_POOL_LIMIT_EXCEEDED");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DOMAIN.DOMAIN_A"), false);
+});
+
+test("C2-H2.4. PASS at index 0, FAIL at index 4096 (4097 total) -- rejected, never resolves to false PRESERVATION", async () => {
+  const records = buildPool(4097, { passAt: [0], failAt: [4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  assert.equal(r.records[0].status, "INCOMPLETE");
+});
+
+test("C2-H2.5. FAIL at index 0, PASS at index 4096 (4097 total) -- same fail-closed classification (order-independent)", async () => {
+  const records = buildPool(4097, { failAt: [0], passAt: [4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  assert.equal(r.records[0].status, "INCOMPLETE");
+});
+
+test("C2-H2.6. duplicate checkId spanning indices 4095 and 4096 -- rejected", async () => {
+  const records = buildPool(4097, { passAt: [4095], failAt: [4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C2-H2.7. duplicate checkId spanning indices 0 and 4096 -- rejected", async () => {
+  const records = buildPool(4097, { passAt: [0], failAt: [4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C2-H2.8. byte-identical duplicate PASS pair beyond the cap -- still rejected, no silent dedup-through-rejection", async () => {
+  const records = buildPool(4097, { passAt: [0, 4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C2-H2.9. oversized input with no duplicate checkId anywhere -- still rejected on size alone", async () => {
+  const records = buildPool(4097, { passAt: [0] }); // every other slot is a distinct filler checkId; no duplicates exist
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C2-H2.10. oversized input where the only relevant covering record sits beyond the old cap -- fails closed, not treated as an absent (vacuously satisfied) covering check", async () => {
+  const records = buildPool(4097, { passAt: [4096] }); // the only "1C.REQ" occurrence is the very last element
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DOMAIN.DOMAIN_A"), false);
+});
+
+test("C2-H2.11. oversized input with a malformed final element -- fails closed on size alone, no crash", async () => {
+  const records = buildPool(4097, { malformedAt: [4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C2-H2.12. oversized input with a wrong-subject final element -- the public pool-size limit applies to the entire raw input, not a pre-filtered subset (documented choice)", async () => {
+  // The size gate reads input.records.length directly, before any subject
+  // filtering -- so a caller cannot dodge the bound by padding the pool with
+  // records that would later be excluded as irrelevant.
+  const records = buildPool(4097, { passAt: [0], wrongSubjectAt: [4096] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+});
+
+test("C2-H2.13. exactly-at-cap (4096) single legitimate PASS remains usable for PRESERVATION", async () => {
+  const records = buildPool(MAX_POOLED_RECORDS, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C2-H2.14. within-cap duplicate behavior from C1 is preserved (not superseded by the new size gate)", async () => {
+  const records = buildPool(100, { passAt: [0], failAt: [50] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(r.records.some((x) => x.checkId === "1E.DELTA.RECORD_POOL"), false);
+});
+
+test("C2-H2.15. a rejected oversized pool never yields an empty records array or a green/PASS outcome", async () => {
+  const records = buildPool(4097, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.notEqual(r.records.length, 0);
+  assert.notEqual(r.records[0].status, "PASS");
+  assert.equal(r.records[0].status, "INCOMPLETE");
+});
+
+// ---- W3-C1-SEC-L1: diagnostic sanitization (10 tests)
+
+function forgedGraphC2(domains, topologicalOrder) {
+  return { valid: true, status: "PASS", findings: [], domains, topologicalOrder };
+}
+async function invalidGraphDetail(evilOrderEntry) {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraphC2(domains, ["DOMAIN_A", evilOrderEntry]);
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  return r.records[0];
+}
+
+test("C2-L1.1. ESC and BEL in a graph-derived diagnostic are neutralized, never emitted raw", async () => {
+  const rec1 = await invalidGraphDetail("EVIL\u001b[31mBELL\u0007END");
+  assert.equal(/[\x1b\x07]/.test(rec1.detail), false);
+});
+
+test("C2-L1.2. CR/LF log-injection text is neutralized, never emitted raw", async () => {
+  const rec1 = await invalidGraphDetail("EVIL\r\nSECOND_LINE");
+  assert.equal(/[\r\n]/.test(rec1.detail), false);
+});
+
+test("C2-L1.3. a fake embedded '1E.DOMAIN.* PASS' result line cannot appear as its own line in the diagnostic, and the record itself stays CONFIGURATION_ERROR", async () => {
+  const rec1 = await invalidGraphDetail("X\n1E.DOMAIN.DB PASS PRESERVATION_CHECK_ONLY");
+  assert.equal(rec1.checkId, "1E.DELTA.GRAPH");
+  assert.equal(rec1.status, "CONFIGURATION_ERROR");
+  assert.equal(/\n1E\.DOMAIN\./.test(rec1.detail), false);
+});
+
+test("C2-L1.4. bidirectional override/isolate control characters are neutralized by the canonical sanitizer", async () => {
+  const bidi = "‪‫‭‮‬⁦⁧⁨⁩";
+  const rec1 = await invalidGraphDetail(`X${bidi}Y`);
+  for (const ch of bidi) assert.equal(rec1.detail.includes(ch), false, `bidi char U+${ch.codePointAt(0).toString(16)} leaked raw`);
+});
+
+test("C2-L1.5. a GitHub-token-shaped synthetic string is redacted, never emitted raw", async () => {
+  const fakeToken = "ghp_" + "A".repeat(36); // synthetic, non-functional shape only
+  // No sensitive-key-shaped prefix (token=, secret:, credential, ...) here:
+  // that would additionally trip the generic sensitive key/value redaction
+  // path (over-redaction, itself correct behavior) and mask which specific
+  // rule fired. This isolates the token-shape rule itself.
+  const rec1 = await invalidGraphDetail(`embedded-value ${fakeToken} end`);
+  assert.equal(rec1.detail.includes(fakeToken), false);
+  assert.ok(rec1.detail.includes("[REDACTED:GITHUB_TOKEN]"));
+});
+
+test("C2-L1.6. multiple distinct synthetic secret shapes in one diagnostic are all redacted", async () => {
+  const gh = "ghp_" + "B".repeat(36);
+  const aws = "AKIA" + "C".repeat(16);
+  const rec1 = await invalidGraphDetail(`${gh} and ${aws}`);
+  assert.equal(rec1.detail.includes(gh), false);
+  assert.equal(rec1.detail.includes(aws), false);
+});
+
+test("C2-L1.7. an oversized diagnostic string is bounded in the output", async () => {
+  const rec1 = await invalidGraphDetail("X".repeat(10000));
+  assert.ok(rec1.detail.length <= 500);
+});
+
+test("C2-L1.8. a short benign diagnostic remains readable and unmangled", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraphC2(domains, ["DOMAIN_A", "DOMAIN_A"]); // genuine duplicate-entry rejection reason
+  const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) } });
+  assert.ok(r.records[0].detail.includes("duplicate"));
+  assert.ok(r.records[0].detail.includes("DOMAIN_A"));
+});
+
+test("C2-L1.9. the record structure is correct (checkId/status/reasonCode/subject) even with a hostile diagnostic payload", async () => {
+  const rec1 = await invalidGraphDetail("\u001b\u0007\r\n" + "ghp_" + "D".repeat(36));
+  assert.equal(rec1.checkId, "1E.DELTA.GRAPH");
+  assert.equal(rec1.ownerStage, "1E");
+  assert.equal(rec1.status, "CONFIGURATION_ERROR");
+  assert.equal(rec1.reasonCode, "DELTA_GRAPH_INCONSISTENT");
+  assert.deepEqual(rec1.subject, subject);
+});
+
+test("C2-L1.10. the sanitized record still validates against the kernel's validateResultRecord()", async () => {
+  const { validateResultRecord } = require("../../kernel/results");
+  const rec1 = await invalidGraphDetail("‮" + "ghp_" + "E".repeat(36) + "\n\x07");
+  assert.equal(validateResultRecord(rec1).ok, true, JSON.stringify(rec1));
+});
+
+// ---- Integration / cross-cutting (5 tests)
+
+test("C2-INT.1. an invalid graph combined with an unsafe diagnostic AND an oversized record pool still fails closed with no domain record and no PRESERVATION", async () => {
+  const domains = [dom("DOMAIN_A", [], ["file:a.md"])];
+  const headGraph = forgedGraphC2(domains, ["DOMAIN_A", "EVIL\u001b\n1E.DOMAIN.DA PASS"]);
+  const records = buildPool(4097, { passAt: [0] });
+  const r = await computeDeltaReview({
+    subject, headGraph, baseGraph: headGraph, records, coveringChecks: { DOMAIN_A: ["1C.REQ"] },
+    reader: { atBase: reader({ "a.md": "x" }), atHead: reader({ "a.md": "x" }) },
+  });
+  assert.equal(r.records.some((x) => x.checkId === "1E.DOMAIN.DOMAIN_A"), false);
+  assert.equal(r.records.length, 1);
+  assert.equal(/[\x1b\n]/.test(r.records[0].detail), false);
+});
+
+test("C2-INT.2. a structurally valid graph with an oversized record pool is rejected via the record-pool path only (graph itself is fine)", async () => {
+  const records = buildPool(4097, { passAt: [0] });
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records });
+  assert.equal(r.records[0].checkId, "1E.DELTA.RECORD_POOL");
+  assert.equal(r.records[0].status, "INCOMPLETE");
+});
+
+test("C2-INT.3. a genuine graph with one legitimate covering PASS resolves PRESERVATION end to end post-C2 (regression)", async () => {
+  const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records: [genericRecord("1C.REQ", "1C", "PASS")] });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "PRESERVATION_CHECK_ONLY");
+});
+
+test("C2-INT.4. H1 transitive propagation (diamond graph) is unaffected by the C2 changes", async () => {
+  const decls = [
+    dom("DOMAIN_A", [], ["file:a.md"]),
+    dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "DERIVED_VALUE" }], ["file:b.md"]),
+    dom("DOMAIN_C", [{ domain: "DOMAIN_A", kind: "MEANING" }], ["file:c.md"]),
+  ];
+  const r = await run({ headDecls: decls, filesBase: { "a.md": "x", "b.md": "1", "c.md": "2" }, filesHead: { "a.md": "CHANGED", "b.md": "1", "c.md": "2" } });
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_B"), "DEEP_REVIEW_REQUIRED");
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_C"), "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C2-INT.5. repeated runs of the same oversized-pool and sanitizer-triggering fixtures are deterministic", async () => {
+  const records = buildPool(4097, { passAt: [0] });
+  const args = { headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: ["1C.REQ"] }, records };
+  const r1 = await run(args);
+  const r2 = await run(args);
+  assert.deepEqual(r1.records, r2.records);
+
+  const rec1 = await invalidGraphDetail("\u001b‮" + "ghp_" + "F".repeat(36));
+  const rec2 = await invalidGraphDetail("\u001b‮" + "ghp_" + "F".repeat(36));
+  assert.deepEqual(rec1, rec2);
+});
+
 // ================================================================== performance (section 84)
 
 test("performance: ~100 domains, chained dependencies, moderate content completes quickly and near-linearly", async () => {

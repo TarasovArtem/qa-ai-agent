@@ -34,7 +34,7 @@
 const { REASON, STATUS, EFFECTIVE_LEVELS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { validateResultRecord, statusForEffectiveLevel } = require("../../kernel/results");
-const { isValidSubject, sameSubject, sample } = require("../common");
+const { isValidSubject, sameSubject, sample, safe } = require("../common");
 const { isHeadReader, createHeadReader } = require("../head-reader");
 const { resolveGitAdapter } = require("../1a/git-adapter");
 const { FINGERPRINT_VERSION, frameRegion, hashFramedRegions } = require("./fingerprint");
@@ -44,6 +44,13 @@ const MAX_DOMAINS = 256; // matches kernel LIMITS.maxDomains; validateGraph() al
 const MAX_REASONS = 32;
 const MAX_EVIDENCE_REFS = 32;
 const MAX_COVERING_CHECKS_PER_DOMAIN = 64;
+// W3-SEC-H2 corrective C2: the pooled 1B-1D evidence array is bounded, but an
+// oversized pool is now rejected outright (see computeDeltaReview()'s own
+// length check, before validRecordsFor() is ever reached) -- never silently
+// sliced to this prefix. A silent slice let a duplicate checkId's second
+// occurrence beyond the prefix go uncounted, making the trusted outcome
+// depend on which half of an oversized pool happened to fall inside the cut.
+const MAX_POOLED_RECORDS = 4096;
 
 const LEVEL_RANK = Object.fromEntries(EFFECTIVE_LEVELS.map((l, i) => [l, i]));
 const maxLevel = (a, b) => (LEVEL_RANK[a] >= LEVEL_RANK[b] ? a : b);
@@ -106,7 +113,15 @@ function validateTopologicalOrder(headGraph) {
   return { ok: true };
 }
 
-/** The single non-domain record reported when the head graph fails structural verification -- see validateTopologicalOrder(). */
+/**
+ * The single non-domain record reported when the head graph fails structural
+ * verification -- see validateTopologicalOrder(). `detail` here can embed
+ * caller-controlled graph text (a topologicalOrder entry, a dependency edge
+ * target): W3-C1-SEC-L1 fix -- it is passed through the one canonical
+ * sanitizer (stages/common.js#safe()), never a bare length bound, so it can
+ * carry no raw control character, bidirectional-override, zero-width or
+ * secret-shaped text into the result record.
+ */
 function graphInconsistentRecord(subject, detail) {
   const record = {
     checkId: "1E.DELTA.GRAPH",
@@ -116,11 +131,36 @@ function graphInconsistentRecord(subject, detail) {
     observed: {},
     expected: null,
     reasonCode: REASON.DELTA_GRAPH_INCONSISTENT,
-    detail: String(detail).slice(0, 500),
+    detail: safe(detail),
     evidenceRefs: [],
   };
   const checked = validateResultRecord(record);
   if (!checked.ok) throw new Error(`internal error: invalid 1E.DELTA.GRAPH record: ${checked.problems.join("; ")}`);
+  return checked.record;
+}
+
+/**
+ * The single non-domain record reported when the caller-supplied pooled
+ * 1B-1D evidence array exceeds MAX_POOLED_RECORDS (W3-SEC-H2 residual fix).
+ * An oversized pool can never be evaluated as complete, so it is rejected
+ * outright -- status INCOMPLETE (matching the stages/1c/result-contract.js
+ * precedent for a bound-exceeded evidence set), never a domain result, and
+ * never a silently truncated prefix treated as authoritative.
+ */
+function recordPoolExceededRecord(subject, count) {
+  const record = {
+    checkId: "1E.DELTA.RECORD_POOL",
+    ownerStage: "1E",
+    status: STATUS.INCOMPLETE,
+    subject,
+    observed: { recordCount: count, limit: MAX_POOLED_RECORDS },
+    expected: null,
+    reasonCode: REASON.DELTA_RECORD_POOL_LIMIT_EXCEEDED,
+    detail: safe(`pooled record count (${count}) exceeds the ${MAX_POOLED_RECORDS}-record limit; the input cannot be treated as a complete evidence pool`),
+    evidenceRefs: [],
+  };
+  const checked = validateResultRecord(record);
+  if (!checked.ok) throw new Error(`internal error: invalid 1E.DELTA.RECORD_POOL record: ${checked.problems.join("; ")}`);
   return checked.record;
 }
 
@@ -163,11 +203,20 @@ function canonicalDeclaration(domain) {
  * excluded by the subject check before it can be counted as a duplicate of
  * anything, so it can neither poison nor be poisoned by a current-subject
  * record for the same checkId.
+ *
+ * This function no longer bounds `records` itself (W3-SEC-H2 residual fix):
+ * an oversized pool is rejected outright by computeDeltaReview() -- see
+ * MAX_POOLED_RECORDS and recordPoolExceededRecord() -- before this function
+ * is ever reached, so every candidate here is always considered. A silent
+ * `.slice()` here previously let a duplicate checkId's second occurrence
+ * beyond the slice go uncounted, making the trusted outcome depend on input
+ * order; removing the slice (rather than raising its bound) removes that
+ * class of gap regardless of pool size.
  */
 function validRecordsFor(records, subject) {
   const out = new Map(); // checkId -> record
   if (!Array.isArray(records)) return out;
-  const candidates = records.slice(0, 4096);
+  const candidates = records;
   const isRelevant = (candidate) =>
     isPlainObject(candidate) &&
     typeof candidate.checkId === "string" &&
@@ -248,6 +297,13 @@ async function computeDeltaReview(input) {
   const headGraph = input.headGraph;
   const topoCheck = validateTopologicalOrder(headGraph);
   if (!topoCheck.ok) return deepFreeze({ subject, records: [graphInconsistentRecord(subject, topoCheck.reason)], outcome: null });
+  // W3-SEC-H2 residual fix: an O(1) length check on the raw pool, before any
+  // reader/adapter work and before validRecordsFor() ever runs -- an
+  // oversized pool is rejected outright, never silently truncated to a
+  // prefix and never scanned in full just to discover it is too large.
+  if (Array.isArray(input.records) && input.records.length > MAX_POOLED_RECORDS) {
+    return deepFreeze({ subject, records: [recordPoolExceededRecord(subject, input.records.length)], outcome: null });
+  }
   const baseGraph = isValidatedGraph(input.baseGraph) ? input.baseGraph : null;
   if (input.baseGraph !== undefined && input.baseGraph !== null && baseGraph === null) return invalidInput("baseGraph, if supplied, must be a valid validateGraph() result");
 
