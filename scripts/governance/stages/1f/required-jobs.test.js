@@ -346,3 +346,195 @@ test("C8-DEV-L1-15: a throwing indexed getter fails with the canonical MALFORMED
   assert.equal(r.ok, false);
   assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
 });
+
+// ---------------------------------------------------------------- Corrective C9 (W4-C8R-DEV-L1): Proxy-safe policy snapshot boundary
+//
+// The reproduced defect: the C8 validator read `requiredJobs.length` four
+// times (isDenseArray(), `=== 0`, `> MAX_REQUIRED_JOBS`, snapshot sizing). A
+// Proxy is Array.isArray()-true and can answer each read differently, so
+// the length that passed the bound checks was not the length the snapshot
+// was built from; a throwing trap also escaped as an uncaught exception.
+// `lengthProxy(target, later)` answers the FIRST `length` read with the
+// target's real length and every later read with `later`, so any second
+// read of `length` is observable; it also counts `length` reads so tests can
+// assert the single-read contract directly.
+
+function lengthProxy(target, later) {
+  const counter = { lengthReads: 0 };
+  const proxy = new Proxy(target, {
+    get(t, k, r) {
+      if (k === "length") { counter.lengthReads += 1; return counter.lengthReads === 1 ? t.length : later; }
+      if (typeof k === "string" && /^\d+$/.test(k) && Number(k) >= t.length) return `phantom-${k}`;
+      return Reflect.get(t, k, r);
+    },
+  });
+  return { proxy, counter };
+}
+
+function assertMalformed(r, label) {
+  assert.equal(r.ok, false, label);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY", label);
+  assert.equal(r.requiredJobs, undefined, `${label}: no snapshot may be returned after a failed inspection`);
+}
+
+test("C9-PROXY-01 [single length read; cardinality]: a Proxy answering 3 then 2 cannot shrink the snapshot -- the one captured length (3) is used, so the third job stays required", () => {
+  const { proxy, counter } = lengthProxy(["Unit tests", "Cypress - chrome", "Hidden Job"], 2);
+  const r = validateRequiredJobsPolicy(proxy);
+  assert.equal(counter.lengthReads, 1, "length must be read exactly once");
+  assert.equal(r.ok, true);
+  assert.deepEqual([...r.requiredJobs], ["Unit tests", "Cypress - chrome", "Hidden Job"]);
+  const check = checkRequiredJobs({ run: run([job("Unit tests", "completed", "success"), job("Cypress - chrome", "completed", "success")]), requiredJobs: lengthProxy(["Unit tests", "Cypress - chrome", "Hidden Job"], 2).proxy });
+  assert.equal(check.ok, true);
+  assert.deepEqual(check.missing, ["Hidden Job"]);
+  assert.equal(check.allSucceeded, false);
+});
+
+test("C9-PROXY-02 [single length read; non-empty]: a Proxy answering 1 then 0 cannot produce an empty snapshot", () => {
+  const { proxy, counter } = lengthProxy(["Hidden Job"], 0);
+  const r = validateRequiredJobsPolicy(proxy);
+  assert.equal(counter.lengthReads, 1);
+  assert.equal(r.ok, true);
+  assert.deepEqual([...r.requiredJobs], ["Hidden Job"]);
+  const check = checkRequiredJobs({ run: run([]), requiredJobs: lengthProxy(["Hidden Job"], 0).proxy });
+  assert.deepEqual(check.missing, ["Hidden Job"]);
+  assert.equal(check.complete, false);
+});
+
+test("C9-PROXY-03 [single length read; MAX_REQUIRED_JOBS]: a Proxy answering 1 then 300 cannot produce a 300-entry snapshot", () => {
+  const { proxy, counter } = lengthProxy(["Unit tests"], 300);
+  const r = validateRequiredJobsPolicy(proxy);
+  assert.equal(counter.lengthReads, 1);
+  assert.equal(r.ok, true);
+  assert.deepEqual([...r.requiredJobs], ["Unit tests"]);
+  // and a first read that is itself out of bounds is rejected on that one read
+  assertMalformed(validateRequiredJobsPolicy(lengthProxy(Array.from({ length: 257 }, (_, i) => `j${i}`), 1).proxy), "first read 257");
+});
+
+test("C9-PROXY-04 [fail-closed boundary]: a Proxy whose ownKeys trap throws is MALFORMED_REQUIRED_JOB_POLICY, not an uncaught exception", () => {
+  const p = new Proxy(["Unit tests"], { ownKeys() { throw new Error("ownKeys boom"); } });
+  let r;
+  assert.doesNotThrow(() => { r = validateRequiredJobsPolicy(p); });
+  assertMalformed(r, "ownKeys");
+  assert.deepEqual(checkRequiredJobs({ run: run([]), requiredJobs: p }), { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" });
+});
+
+test("C9-PROXY-05 [fail-closed boundary]: a Proxy whose getOwnPropertyDescriptor trap throws is MALFORMED_REQUIRED_JOB_POLICY", () => {
+  const p = new Proxy(["Unit tests"], { getOwnPropertyDescriptor() { throw new Error("gopd boom"); } });
+  let r;
+  assert.doesNotThrow(() => { r = validateRequiredJobsPolicy(p); });
+  assertMalformed(r, "getOwnPropertyDescriptor");
+});
+
+test("C9-PROXY-06 [fail-closed boundary]: a Proxy whose length read throws (and a revoked Proxy, on which Array.isArray() throws) is MALFORMED_REQUIRED_JOB_POLICY", () => {
+  const p = new Proxy(["Unit tests"], { get(t, k, rc) { if (k === "length") throw new Error("length boom"); return Reflect.get(t, k, rc); } });
+  let r;
+  assert.doesNotThrow(() => { r = validateRequiredJobsPolicy(p); });
+  assertMalformed(r, "length");
+  const { proxy: revokable, revoke } = Proxy.revocable(["Unit tests"], {});
+  revoke();
+  assert.doesNotThrow(() => { r = validateRequiredJobsPolicy(revokable); });
+  assertMalformed(r, "revoked Proxy (Array.isArray throws)");
+});
+
+test("C9-PROXY-07 [fail-closed boundary]: a Proxy whose indexed get trap throws is MALFORMED_REQUIRED_JOB_POLICY", () => {
+  const p = new Proxy(["Unit tests", "Cypress - chrome"], { get(t, k, rc) { if (k === "1") throw new Error("index boom"); return Reflect.get(t, k, rc); } });
+  let r;
+  assert.doesNotThrow(() => { r = validateRequiredJobsPolicy(p); });
+  assertMalformed(r, "indexed get");
+});
+
+test("C9-PROXY-08 [snapshot isolation]: a Proxy that changes an indexed value after validation cannot change the accepted snapshot", () => {
+  let validated = false;
+  const p = new Proxy(["Unit tests", "Cypress - chrome"], { get(t, k, rc) { if (k === "0" && validated) return "Changed Later"; return Reflect.get(t, k, rc); } });
+  const r = validateRequiredJobsPolicy(p);
+  validated = true;
+  assert.equal(p[0], "Changed Later");
+  assert.equal(r.ok, true);
+  assert.equal(Object.isFrozen(r.requiredJobs), true);
+  assert.deepEqual([...r.requiredJobs], ["Unit tests", "Cypress - chrome"]);
+});
+
+test("C9-PROXY-09 [single indexed read]: a Proxy returning a different value on every indexed read is read exactly once per index, and the snapshot holds those single reads", () => {
+  const reads = { 0: 0, 1: 0 };
+  const p = new Proxy(["x", "y"], { get(t, k, rc) { if (k === "0" || k === "1") { reads[k] += 1; return `job-${k}-read-${reads[k]}`; } return Reflect.get(t, k, rc); } });
+  const r = validateRequiredJobsPolicy(p);
+  assert.deepEqual(reads, { 0: 1, 1: 1 });
+  assert.equal(r.ok, true);
+  assert.deepEqual([...r.requiredJobs], ["job-0-read-1", "job-1-read-1"]);
+});
+
+test("C9-PROXY-10 [own-index rule]: a hole filled by an inherited indexed property is rejected, with or without an extra own key masking the key count", () => {
+  const proto = Object.create(Array.prototype);
+  proto[1] = "Inherited Job";
+  const plain = ["Unit tests"]; plain.length = 2; Object.setPrototypeOf(plain, proto);
+  assert.equal(plain[1], "Inherited Job");
+  assertMalformed(validateRequiredJobsPolicy(plain), "inherited hole");
+  const masked = ["Unit tests"]; masked.length = 2; masked.extra = "pads Object.keys() to 2"; Object.setPrototypeOf(masked, proto);
+  assert.equal(Object.keys(masked).length, masked.length, "the own-key count alone would not catch this");
+  assertMalformed(validateRequiredJobsPolicy(masked), "inherited hole masked by an extra own key");
+});
+
+test("C9-PROXY-11 [compatibility]: a valid dense array is still accepted as an isolated, frozen snapshot", () => {
+  const a = ["Unit tests", "Cypress - chrome"];
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.notEqual(r.requiredJobs, a);
+  assert.equal(Object.isFrozen(r.requiredJobs), true);
+  assert.deepEqual([...r.requiredJobs], a);
+});
+
+test("C9-PROXY-12 [compatibility]: a valid Array subclass (no overrides) is still accepted", () => {
+  class JobList extends Array {}
+  const s = new JobList();
+  s.push("Unit tests", "Cypress - chrome");
+  const r = validateRequiredJobsPolicy(s);
+  assert.equal(r.ok, true);
+  assert.deepEqual([...r.requiredJobs], ["Unit tests", "Cypress - chrome"]);
+});
+
+test("C9-PROXY-13 [no iterator]: an overridden Symbol.iterator cannot hide a required job, and is never invoked", () => {
+  let iteratorCalls = 0;
+  const a = ["Unit tests", "Hidden Job"];
+  a[Symbol.iterator] = function* () { iteratorCalls += 1; yield "Unit tests"; };
+  const check = checkRequiredJobs({ run: run([job("Unit tests", "completed", "success")]), requiredJobs: a });
+  assert.equal(iteratorCalls, 0);
+  assert.deepEqual(check.missing, ["Hidden Job"]);
+  assert.equal(check.allSucceeded, false);
+});
+
+test("C9-PROXY-14 [duplicates]: duplicate captured names are rejected with DUPLICATE_REQUIRED_JOB_NAME (also through a Proxy)", () => {
+  assert.deepEqual(validateRequiredJobsPolicy(["Unit tests", "Unit tests"]), { ok: false, reason: "DUPLICATE_REQUIRED_JOB_NAME" });
+  assert.deepEqual(validateRequiredJobsPolicy(new Proxy(["Unit tests", "Unit tests"], {})), { ok: false, reason: "DUPLICATE_REQUIRED_JOB_NAME" });
+});
+
+test("C9-PROXY-15 [MAX_REQUIRED_JOBS bound]: exactly 256 valid names are accepted", () => {
+  const r = validateRequiredJobsPolicy(Array.from({ length: 256 }, (_, i) => `job-${i}`));
+  assert.equal(r.ok, true);
+  assert.equal(r.requiredJobs.length, 256);
+});
+
+test("C9-PROXY-16 [MAX_REQUIRED_JOBS bound]: 257 indexed names are rejected", () => {
+  assertMalformed(validateRequiredJobsPolicy(Array.from({ length: 257 }, (_, i) => `job-${i}`)), "257 names");
+});
+
+test("C9-PROXY-17 [name-length bound]: an exactly-200-character name is accepted", () => {
+  const r = validateRequiredJobsPolicy(["x".repeat(200)]);
+  assert.equal(r.ok, true);
+  assert.equal(r.requiredJobs[0].length, 200);
+});
+
+test("C9-PROXY-18 [name-length bound]: a 201-character name is rejected", () => {
+  assertMalformed(validateRequiredJobsPolicy(["x".repeat(201)]), "201 chars");
+});
+
+test("C9-PROXY-19 [single indexed read]: a getter-backed valid array is read exactly once per index (the own-index check does not invoke the getter)", () => {
+  const reads = [0, 0];
+  const a = ["", ""];
+  ["Unit tests", "Cypress - chrome"].forEach((name, i) => {
+    Object.defineProperty(a, i, { enumerable: true, configurable: true, get() { reads[i] += 1; return name; } });
+  });
+  const r = validateRequiredJobsPolicy(a);
+  assert.deepEqual(reads, [1, 1]);
+  assert.equal(r.ok, true);
+  assert.deepEqual([...r.requiredJobs], ["Unit tests", "Cypress - chrome"]);
+});

@@ -737,3 +737,149 @@ test("C6-INFO2-16: valid requiredJobs names at the allowed length (200 chars) an
   assert.equal(r.records[0].status, "PASS");
   assert.equal(r.records[0].observed.classification, "CLEAN_FIRST_PASS");
 });
+
+// ---------------------------------------------------------------- Corrective C9 (W4-C8R-DEV-L1): Proxy-safe policy snapshot, end to end
+//
+// The reproduced defect (C8 HEAD 6be0521): a Proxy-wrapped requiredJobs whose
+// `length` read answered 3 during validation and 2 when the snapshot was
+// sized dropped "Hidden Job" from the effective policy -- collectCiEvidence()
+// produced CLEAN_FIRST_PASS and buildReport() reached READY although the run
+// never ran that job. Answering 1 then 0 / 1 then 300 made the collector
+// publish completed-run evidence buildReport() then rejected (a collector/
+// report schema mismatch), and a throwing ownKeys trap escaped
+// collectCiEvidence() as an uncaught exception. These tests drive the real
+// collectCiEvidence() -> buildReport() composition.
+
+const { computeCiRunDigest } = require("./ci-evidence");
+
+// Answers the FIRST `length` read with the real length and every later read
+// with `later` (and any index past the real end with a phantom name), so a
+// validator that reads `length` more than once is observable.
+function c9LengthProxy(target, later) {
+  let lengthReads = 0;
+  return new Proxy(target, {
+    get(t, k, r) {
+      if (k === "length") { lengthReads += 1; return lengthReads === 1 ? t.length : later; }
+      if (typeof k === "string" && /^\d+$/.test(k) && Number(k) >= t.length) return `phantom-${k}`;
+      return Reflect.get(t, k, r);
+    },
+  });
+}
+
+function c9Report(collected) {
+  const { buildReport } = require("./report");
+  const trustedContext = {
+    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
+    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
+    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
+    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
+    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
+    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
+  };
+  const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
+  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  return buildReport({
+    subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: collected.externalEvidence,
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...collected.records],
+  });
+}
+
+// The published job set and the CI-run digest must describe the same policy.
+function assertPublishedMatchesDigest(collected, expectedRequiredJobs, label) {
+  const o = collected.records[0].observed;
+  assert.deepEqual(o.requiredJobs, [...expectedRequiredJobs].sort(), `${label}: published requiredJobs`);
+  assert.equal(collected.externalEvidence.length, 1, label);
+  const expectedDigest = computeCiRunDigest({
+    repository: o.repository, workflowPath: o.workflowPath, runId: o.runId, event: o.event, headSha: subject.head,
+    attempt: o.attempt, status: o.status, requiredJobs: o.requiredJobs, missing: o.missing, failed: o.failed,
+    pending: o.pending, skipped: o.skipped, attemptHistory: o.attemptHistory,
+  });
+  assert.equal(collected.externalEvidence[0].contentDigest, expectedDigest, `${label}: digest describes the published job set`);
+}
+
+test("C9-E2E-01 [mandatory false-READY regression, W4-C8R-DEV-L1 P1]: a Proxy answering length 3 then 2 cannot drop a missing required job -- INCOMPLETE and NOT_READY, never CLEAN_FIRST_PASS/READY", async () => {
+  const indexedPolicy = ["Unit tests", "Cypress - chrome", "Hidden Job"];
+  const r = await collectCiEvidence(baseInput({ requiredJobs: c9LengthProxy([...indexedPolicy], 2) }));
+  assert.equal(r.records.length, 1);
+  assert.equal(r.records[0].status, "INCOMPLETE");
+  assert.equal(r.records[0].observed.classification, "INCOMPLETE");
+  assert.deepEqual(r.records[0].observed.missing, ["Hidden Job"]);
+  assertPublishedMatchesDigest(r, indexedPolicy, "P1");
+
+  const report = c9Report(r);
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.equal(report.report.readiness.state, "NOT_READY");
+  assert.equal(report.report.ci.classification, "INCOMPLETE");
+});
+
+test("C9-E2E-02 [collector/report agreement, P2]: a Proxy answering length 1 then 0 yields the one-job policy the collector validated, and buildReport() accepts the collector's own record", async () => {
+  const r = await collectCiEvidence(baseInput({ requiredJobs: c9LengthProxy(["Hidden Job"], 0) }));
+  assert.equal(r.records[0].observed.classification, "INCOMPLETE");
+  assert.deepEqual(r.records[0].observed.missing, ["Hidden Job"]);
+  assertPublishedMatchesDigest(r, ["Hidden Job"], "P2");
+  const report = c9Report(r);
+  assert.equal(report.ok, true, `the report builder must accept the collector's own output: ${JSON.stringify(report)}`);
+  assert.equal(report.report.readiness.state, "NOT_READY");
+});
+
+test("C9-E2E-03 [collector/report agreement, P3]: a Proxy answering length 1 then 300 yields the one-job policy the collector validated (never 300 entries), and buildReport() accepts the collector's own record", async () => {
+  const r = await collectCiEvidence(baseInput({ requiredJobs: c9LengthProxy(["Unit tests"], 300) }));
+  assert.equal(r.records[0].observed.requiredJobs.length, 1);
+  assertPublishedMatchesDigest(r, ["Unit tests"], "P3");
+  const report = c9Report(r);
+  assert.equal(report.ok, true, `the report builder must accept the collector's own output: ${JSON.stringify(report)}`);
+  // the real one-job policy is fully satisfied by the run, so this is a genuine pass on that policy
+  assert.equal(report.report.ci.classification, "CLEAN_FIRST_PASS");
+  assert.equal(report.report.readiness.state, "READY");
+});
+
+test("C9-E2E-04 [fail-closed collector boundary, P4 + traps]: throwing Proxy traps (ownKeys, getOwnPropertyDescriptor, length, indexed get) and an inherited-hole policy are a canonical CONFIGURATION_ERROR with zero records and zero CI_RUN evidence, never an uncaught exception", async () => {
+  const thrower = (trap) => () => { throw new Error(`${trap} boom`); };
+  const proto = Object.create(Array.prototype);
+  proto[1] = "Inherited Job";
+  const inherited = ["Unit tests"]; inherited.length = 2; Object.setPrototypeOf(inherited, proto);
+  const cases = [
+    ["ownKeys", new Proxy([...REQUIRED], { ownKeys: thrower("ownKeys") })],
+    ["getOwnPropertyDescriptor", new Proxy([...REQUIRED], { getOwnPropertyDescriptor: thrower("gopd") })],
+    ["length get", new Proxy([...REQUIRED], { get(t, k, rc) { if (k === "length") throw new Error("length boom"); return Reflect.get(t, k, rc); } })],
+    ["indexed get", new Proxy([...REQUIRED], { get(t, k, rc) { if (k === "1") throw new Error("index boom"); return Reflect.get(t, k, rc); } })],
+    ["inherited hole", inherited],
+  ];
+  for (const [label, requiredJobs] of cases) {
+    await assertMalformedRequiredJobsRejected(requiredJobs, "MALFORMED_REQUIRED_JOB_POLICY", label);
+  }
+});
+
+test("C9-PROXY-20 [TOCTOU across the async determination path]: mutating the caller's array and the Proxy's answers during the rerun await cannot change the checked, published or digested job set", async () => {
+  const target = [...REQUIRED, "Hidden Job"];
+  let phase = "validate";
+  const proxied = new Proxy(target, {
+    get(t, k, rc) {
+      if (phase !== "validate" && k === "length") return 2;
+      if (phase !== "validate" && k === "2") return "Unit tests";
+      return Reflect.get(t, k, rc);
+    },
+  });
+  const input = baseInput({
+    requiredJobs: proxied,
+    adapter: adapter(rerunRun()),
+    determinationAdapter: {
+      fetchDetermination: async () => {
+        phase = "mutated";
+        target.length = 0;
+        target.push("Replacement Job");
+        await Promise.resolve();
+        return { ok: false };
+      },
+    },
+  });
+  const r = await collectCiEvidence(input);
+  assert.equal(phase, "mutated", "the determination await must actually have run");
+  // a missing required job (INCOMPLETE) outranks the unexplained rerun
+  assert.equal(r.records[0].status, "INCOMPLETE");
+  assert.deepEqual(r.records[0].observed.missing, ["Hidden Job"], "the job set checked before the await is the one reported");
+  assertPublishedMatchesDigest(r, [...REQUIRED, "Hidden Job"], "after async mutation");
+  const report = c9Report(r);
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.notEqual(report.report.readiness.state, "READY");
+});

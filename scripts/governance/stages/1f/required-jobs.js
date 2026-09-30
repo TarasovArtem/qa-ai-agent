@@ -65,6 +65,29 @@
  * already returns, never an uncaught exception. Each index is still read
  * EXACTLY ONCE, preserving the C7 single-read/TOCTOU-closing property for
  * getter-backed arrays.
+ *
+ * CORRECTIVE C9 (W4-C8R-DEV-L1): the C8 validator still read
+ * `requiredJobs.length` FOUR times -- inside `isDenseArray()`, in the
+ * `=== 0` check, in the `> MAX_REQUIRED_JOBS` check, and once more to size
+ * the snapshot. A real Array's `length` cannot change between those reads,
+ * but a Proxy is `Array.isArray()`-true and its `get` trap can return a
+ * different `length` on every read: validated as 3 (including a job the run
+ * never ran), captured as 2 -- the hidden job silently vanished from the
+ * checked, published and digested policy and the run reached a false
+ * CLEAN_FIRST_PASS/READY; captured as 0 or 300, the collector published
+ * evidence the report builder then rejected. A throwing Proxy trap
+ * (`ownKeys`, `getOwnPropertyDescriptor`, `get`) also escaped the collector
+ * as an uncaught exception. `validateRequiredJobsPolicy()` now reads
+ * `length` exactly ONCE, and that one captured value is the only length
+ * used by every bound check, the own-key count check, snapshot allocation
+ * and the read loop. Every index `0..length-1` must be an OWN property of
+ * the input (an inherited indexed property can no longer fill a hole), is
+ * then read exactly once, and every input-inspection step --
+ * `Array.isArray()` (throws on a revoked Proxy), the `length` read,
+ * `Object.keys()`, the own-index checks and the indexed reads -- sits inside
+ * one fail-closed boundary that maps any exception to
+ * `MALFORMED_REQUIRED_JOB_POLICY`. The caller's `Symbol.iterator` is still
+ * never invoked.
  */
 
 "use strict";
@@ -81,28 +104,44 @@ function isDenseArray(v) {
 
 /**
  * validateRequiredJobsPolicy(requiredJobs) -- the policy-list-only half of
- * checkRequiredJobs()'s validation: a DENSE (no holes) array, non-empty,
- * bounded (<=256), every entry a non-empty string (<=200 chars), no
- * duplicates. Never inspects a run. Returns `{ok:true, requiredJobs}` -- an
- * isolated, frozen SNAPSHOT taken by ONE read of the input, not the original
+ * checkRequiredJobs()'s validation: a DENSE (no holes, every index an own
+ * property) array, non-empty, bounded (<=256, checked against a single read
+ * of `length`), every entry a non-empty string (<=200 chars), no
+ * duplicates. Never inspects a run and never throws: any exception while
+ * inspecting the input is MALFORMED_REQUIRED_JOB_POLICY. Returns
+ * `{ok:true, requiredJobs}` -- an isolated, frozen SNAPSHOT taken by ONE
+ * read of each index, not the original
  * reference -- or `{ok:false, reason}` with the exact same reason strings
  * `checkRequiredJobs()` has always returned for these cases
  * (`MALFORMED_REQUIRED_JOB_POLICY`, `DUPLICATE_REQUIRED_JOB_NAME`).
  */
 function validateRequiredJobsPolicy(requiredJobs) {
-  if (!isDenseArray(requiredJobs) || requiredJobs.length === 0 || requiredJobs.length > MAX_REQUIRED_JOBS) {
-    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
-  }
-  // Corrective C8 (W4-C7R-DEV-L1): explicit indexed reads, never the
-  // iterator/spread protocol -- see the module note above. `length` is
-  // captured once, before any read, so a getter that mutates `.length` as a
-  // side effect cannot change how many indices this loop visits.
-  const length = requiredJobs.length;
-  const snapshot = new Array(length);
+  const malformed = { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
+  // Corrective C9 (W4-C8R-DEV-L1): ONE fail-closed boundary around every
+  // inspection of the caller's value, and ONE read of `length` -- the same
+  // captured value drives every bound check, the own-key count, snapshot
+  // allocation and the read loop (see the module note above). Corrective C8
+  // (W4-C7R-DEV-L1): explicit indexed reads, never the iterator/spread
+  // protocol.
+  let snapshot;
   try {
-    for (let i = 0; i < length; i++) snapshot[i] = requiredJobs[i];
+    if (!Array.isArray(requiredJobs)) return malformed;
+    const length = requiredJobs.length;
+    if (typeof length !== "number" || !Number.isInteger(length) || length < 1 || length > MAX_REQUIRED_JOBS) return malformed;
+    // Corrective C7 (W4-C6R-DEV-L2) density rule, now against the captured
+    // length: exactly `length` own enumerable keys ...
+    if (Object.keys(requiredJobs).length !== length) return malformed;
+    snapshot = new Array(length);
+    for (let i = 0; i < length; i++) {
+      // ... and every index an OWN property, so an inherited indexed
+      // property can never fill a hole. hasOwnProperty() inspects the
+      // descriptor without invoking an accessor, so each index is still
+      // READ exactly once, on the next line.
+      if (!Object.prototype.hasOwnProperty.call(requiredJobs, i)) return malformed;
+      snapshot[i] = requiredJobs[i];
+    }
   } catch {
-    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
+    return malformed;
   }
   if (!snapshot.every((n) => typeof n === "string" && n.length > 0 && n.length <= 200)) {
     return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
