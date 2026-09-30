@@ -1084,25 +1084,48 @@ test("C4-INFO-04: attempt 2 cannot be CLEAN_FIRST_PASS (pre-existing W4-C2R-INFO
 // ======================================================================
 // Corrective C5 (W4-C4R-AQA-L1): mutation-sensitive coverage of the
 // "PASS-mapped classification requires the complete CI-run evidence contract"
-// guard in validateCollectedCiRecord(). A pre-completion record whose key set
-// legitimately matches shape A ({classification, collected:false, reason}) or
-// shape B ({classification, collected:true, status}) passes the shape check, so
-// at the time this guard was added (Corrective C4), it was the ONLY thing
-// standing between a PASS claim on such a record and READY with zero CI-run
-// evidence; the C4 re-review showed that deleting it alone left the whole
-// suite green.
+// guard in validateCollectedCiRecord() (the "generic PASS-shape guard", the
+// `contract.status === STATUS.PASS && !isCompletedRunShaped` check). A
+// pre-completion record whose key set legitimately matches shape A
+// ({classification, collected:false, reason}) or shape B ({classification,
+// collected:true, status}) passes the shape check, so at the time this guard
+// was added (Corrective C4), it was the ONLY thing standing between a PASS
+// claim on such a record and READY with zero CI-run evidence; the C4
+// re-review showed that deleting it alone left the whole suite green.
 //
-// CORRECTIVE C7 (AQA-INFO-3a): that "fails if removed" claim is now stale on
-// its own -- Corrective C6 added a second, shape-specific classification
-// guard (immediately below, in the isShapeA/isShapeB block of
-// validateCollectedCiRecord()) that ALSO independently rejects a shape A/B
-// CLEAN_FIRST_PASS claim, and it fires first for those shapes. Disabling
-// only this older generic guard no longer fails C5-AQA-L1-01/02 by itself,
-// because the newer guard still catches the same case (verified by this
-// corrective's own mutation testing). `PASS_GUARD_REASON` below accepts
-// either guard's rejection message for exactly this reason: these tests stay
-// mutation-sensitive to EITHER guard being removed, but no single guard's
-// removal is any longer guaranteed, on its own, to fail this specific test.
+// Corrective C6 (W4-C4R-INFO-3) added a second, independent defense: the
+// isShapeA/isShapeB semantic-consistency block in validateCollectedCiRecord()
+// (immediately below), which restricts each shape's `classification` to what
+// the real collector can actually produce for it -- e.g. shape A can only be
+// FAIL or INCOMPLETE, never CLEAN_FIRST_PASS. For the CLEAN_FIRST_PASS-on-
+// shape-A/B cases C5-AQA-L1-01/02 test, BOTH the generic PASS-shape guard and
+// this shape-specific guard now independently reject the exact same record.
+//
+// CORRECTIVE C8 (W4-C6R-AQA-INFO-3): this comment and the one below it
+// (immediately preceding `PASS_GUARD_REASON`) previously gave inconsistent
+// accounts of what that redundancy actually implies for mutation testing.
+// The verified truth (mutation experiments M4/M5/M6, this corrective,
+// disposable copies, reverted before committing):
+// - M4, disabling ONLY the generic PASS-shape guard: C5-AQA-L1-01/02 stay
+//   GREEN -- an EQUIVALENT MUTANT for these tests, because the
+//   isShapeA/isShapeB block still independently rejects the record.
+// - M5, disabling ONLY the isShapeA/isShapeB block: C5-AQA-L1-01/02 also
+//   stay GREEN -- likewise an EQUIVALENT MUTANT, because the generic guard
+//   still rejects it (a shape A/B record is never `isCompletedRunShaped`).
+// - M6, disabling BOTH simultaneously: C5-AQA-L1-01/02 FAIL, reproducing the
+//   historical false-READY case (as do `C6-INFO3-11` and `C6-INFO3-18`
+//   below, which cover the same combined property).
+// In short: removing either single guard alone is NOT detected by
+// C5-AQA-L1-01/02 -- only removing the combined defense is. `PASS_GUARD_REASON`
+// below accepts either guard's rejection message because either one may be
+// the one that actually fires when both are present, not because removing
+// either one alone is what these two tests catch. The isShapeA/isShapeB
+// block's OWN, more granular checks (shape A claiming HUMAN_REVIEW_REQUIRED,
+// a malformed reason, a wrong reasonCode, the WRONG_* reason/classification
+// binding, an unrelated CI-run externalEvidence entry -- none of which are
+// PASS-mapped classifications, so the generic guard never fires for them at
+// all) remain independently, individually mutation-sensitive; see the
+// `C6-INFO3-*`/`C7-INFO1-*` tests below for those.
 // ======================================================================
 
 const stagePassRecords = () => [identity(), genericRecord("1B.MARKDOWN", "1B", "PASS"), genericRecord("1C.EVIDENCE", "1C", "PASS"), genericRecord("1D.CONSISTENCY", "1D", "PASS"), genericRecord("1E.DELTA", "1E", "PASS")];
@@ -1113,10 +1136,16 @@ const phase2WithStages = (ci, externalEvidence) => buildReport(phase2Input({ rec
 // "PASS-mapped classification requires the complete CI-run evidence
 // contract" guard these tests originally asserted verbatim. Both guards
 // independently prevent the exact same outcome (a pre-completion PASS claim
-// reaching READY) -- the new one is a strict superset for shape A/B (it
-// rejects EVERY non-FAIL/non-INCOMPLETE classification, not just PASS-mapped
-// ones), so accepting either message preserves this test's mutation-killing
-// property against either guard being removed while the other still stands.
+// reaching READY) for the CLEAN_FIRST_PASS cases these tests use -- the new
+// one is a strict superset for shape A/B in general (it rejects EVERY
+// non-FAIL/non-INCOMPLETE classification, not just PASS-mapped ones), but
+// see the corrected note above `PASS_GUARD_REASON`'s own section header:
+// Corrective C8 mutation testing confirmed that for THESE SPECIFIC tests,
+// removing EITHER guard alone is an equivalent mutant (the other one still
+// catches it), and only removing BOTH together is detected. Accepting either
+// rejection message here reflects that either guard may be the one that
+// actually fires when both are present -- it does not, by itself, make a
+// single guard's removal mutation-sensitive.
 const PASS_GUARD_REASON = /^invalid 1F\.CI record: (a PASS-mapped classification requires the complete CI-run evidence contract|a pre-completion fetch-failure record can only classify FAIL or INCOMPLETE|a pre-completion not-yet-completed record can only classify INCOMPLETE)$/;
 
 function assertPassGuardRejection(observed, label) {

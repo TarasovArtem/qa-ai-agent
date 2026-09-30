@@ -148,6 +148,114 @@ test("C7-L2: requiredJobs is read exactly ONCE by collectCiEvidence(), even when
   assert.deepEqual(r.records[0].observed.requiredJobs, [...REQUIRED].sort());
 });
 
+// ---------------------------------------------------------------- Corrective C8 (W4-C7R-DEV-L1): iterator-bypass, end to end
+//
+// Reproduces the mission's exact scenario: a completed run whose ACTUAL
+// required-job policy (indexed content) includes a job the run never ran,
+// but whose Symbol.iterator override hides that job from anything that
+// still trusted the iterator. Before this corrective's fix (Symbol
+// required-jobs.js), the collector's own boundary check used the iterator's
+// (short, satisfied-only) view to build the snapshot, so the missing job
+// never appeared anywhere -- collectCiEvidence() produced a false
+// CLEAN_FIRST_PASS record, and buildReport() then reached a false READY on
+// zero real evidence of the missing job. This test asserts the fixed
+// behavior: the indexed policy (including the hidden job) is what is
+// actually checked, published and digested; the iterator's substitute
+// content has no effect anywhere in the pipeline.
+test("C8-DEV-L1: a requiredJobs array whose Symbol.iterator hides a real, indexed-only required job cannot produce a false CLEAN_FIRST_PASS or false READY (producer/consumer integration, collectCiEvidence -> buildReport)", async () => {
+  const { buildReport } = require("./report");
+  const indexedPolicy = [...REQUIRED, "Missing Job Hidden By Iterator"];
+  const maliciousArray = [...indexedPolicy];
+  maliciousArray[Symbol.iterator] = function* () { for (const name of REQUIRED) yield name; };
+
+  const r = await collectCiEvidence(baseInput({ requiredJobs: maliciousArray }));
+  assert.equal(r.records[0].observed.classification, "INCOMPLETE", "the hidden job must not be silently satisfied");
+  assert.equal(r.records[0].status, "INCOMPLETE");
+  assert.deepEqual(r.records[0].observed.missing, ["Missing Job Hidden By Iterator"]);
+  assert.deepEqual(r.records[0].observed.requiredJobs, [...indexedPolicy].sort(), "the PUBLISHED policy must be the real indexed one, not the iterator's substitute");
+
+  const trustedContext = {
+    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
+    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
+    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
+    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
+    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
+    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
+  };
+  const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
+  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  const report = buildReport({
+    subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: r.externalEvidence,
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...r.records],
+  });
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.notEqual(report.report.readiness.state, "READY", "a hidden missing job must never reach READY");
+  assert.equal(report.report.readiness.state, "NOT_READY");
+  assert.equal(report.report.ci.classification, "INCOMPLETE");
+});
+
+test("C8-DEV-L1: a requiredJobs array whose Symbol.iterator differs from its indexed content, but whose REAL indexed policy is fully satisfied, still composes into a genuine CLEAN_FIRST_PASS / READY report (positive control)", async () => {
+  const { buildReport } = require("./report");
+  const decoyArray = [...REQUIRED];
+  decoyArray[Symbol.iterator] = function* () { yield "Some Other Job Entirely"; };
+
+  const r = await collectCiEvidence(baseInput({ requiredJobs: decoyArray }));
+  assert.equal(r.records[0].observed.classification, "CLEAN_FIRST_PASS");
+  assert.deepEqual(r.records[0].observed.requiredJobs, [...REQUIRED].sort());
+
+  const trustedContext = {
+    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
+    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
+    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
+    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
+    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
+    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
+  };
+  const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
+  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  const report = buildReport({
+    subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: r.externalEvidence,
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...r.records],
+  });
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.equal(report.report.readiness.state, "READY");
+  assert.equal(report.report.ci.classification, "CLEAN_FIRST_PASS");
+});
+
+// Corrective C8 (mission section 11: preserve C7 TOCTOU hardening against the
+// NEW indexed-read fix). Reproduces the original C7 getter scenario, but now
+// with getter-backed INDEXED ELEMENTS (not just a getter-backed
+// `requiredJobs` property) to prove the new explicit-index-read loop still
+// reads each element exactly once, still uses the same validated snapshot
+// for both the required-job check and the published record/digest across
+// the rerun/determination await, and is unaffected by a caller mutating the
+// original array's elements after validation.
+test("C8-DEV-L1: getter-backed INDEXED ELEMENTS of requiredJobs are each read exactly once, the same validated snapshot is used across the rerun/determination await, and post-validation mutation of the original array has no effect", async () => {
+  let reads = 0;
+  const original = [...REQUIRED];
+  const trackedArray = [...REQUIRED];
+  REQUIRED.forEach((name, i) => {
+    Object.defineProperty(trackedArray, i, { enumerable: true, configurable: true, get() { reads += 1; return name; } });
+  });
+
+  const input = baseInput({
+    requiredJobs: trackedArray,
+    adapter: adapter(rerunRun()),
+    determinationAdapter: { fetchDetermination: async () => { await Promise.resolve(); return { ok: false }; } },
+  });
+  const r = await collectCiEvidence(input);
+  assert.equal(reads, REQUIRED.length, "each indexed element must be read exactly once, even across the rerun await");
+  assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(r.records[0].observed.requiredJobs, [...original].sort());
+
+  // Mutate the caller's original array after validation -- must have no effect.
+  // (index 0 is a getter-only accessor property; redefine it via
+  // defineProperty, since a plain assignment to a getter-only property
+  // throws in strict mode rather than silently mutating anything.)
+  Object.defineProperty(trackedArray, 0, { enumerable: true, configurable: true, get() { return "Mutated After Validation"; } });
+  assert.deepEqual(r.records[0].observed.requiredJobs, [...original].sort());
+});
+
 // ---------------------------------------------------------------- Corrective C1 (W4-SEC-H1): determination adapter seam
 //
 // The reproduced defect: collectCiEvidence() used to accept a bare

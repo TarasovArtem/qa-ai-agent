@@ -33,12 +33,38 @@
  * array detector: a hole has no own enumerable key, but an explicit
  * `undefined`/`null` entry does and was already correctly rejected by the
  * per-entry check below) before any per-entry validation runs. It also now
- * takes its OWN single read of every entry (`[...requiredJobs]`, one pass
- * through the iterator) before validating or returning it, and returns that
- * frozen snapshot -- never the original, still-mutable/still-getter-backed
- * array -- so a caller cannot validate one array state and later consume a
- * different one (the array could be mutated, or backed by getters, between
- * this call and a later `await` in the caller).
+ * takes its OWN single read of every entry before validating or returning
+ * it, and returns that frozen snapshot -- never the original, still-mutable/
+ * still-getter-backed array -- so a caller cannot validate one array state
+ * and later consume a different one (the array could be mutated, or backed
+ * by getters, between this call and a later `await` in the caller).
+ *
+ * CORRECTIVE C8 (W4-C7R-DEV-L1): the C7 fix's own single read used
+ * `[...requiredJobs]` -- the SPREAD/ITERATOR protocol, i.e. whatever
+ * `requiredJobs[Symbol.iterator]` produces. `isDenseArray()` and the
+ * `.length`/`MAX_REQUIRED_JOBS` bound checks above it, however, inspect the
+ * array's own INDEXED properties (`Object.keys()`, `.length`) -- a
+ * completely different, independently overridable view for any object that
+ * is `Array.isArray()`-true (a real Array, or an Array subclass) but carries
+ * an own or inherited `Symbol.iterator` override. `const a = ["Unit tests"];
+ * a[Symbol.iterator] = function* () {};` passes every indexed check (dense,
+ * length 1, under the max) while `[...a]` -- and therefore the OLD
+ * snapshot -- silently yields `[]`: an empty, "valid" policy. The same
+ * technique can make the iterator yield MORE entries (bypassing
+ * `MAX_REQUIRED_JOBS` against the true indexed length), FEWER entries, or an
+ * entirely different job list than the one the length/density bound checks
+ * just validated -- letting a required job disappear from the effective
+ * policy without ever failing a single check. `validateRequiredJobsPolicy()`
+ * now captures the snapshot by EXPLICIT INDEXED READS
+ * (`requiredJobs[0..length-1]`), never via the iterator/spread protocol, so
+ * a `Symbol.iterator` override -- own-property or inherited via a subclass
+ * -- cannot substitute a different job set than the one already validated
+ * for density and length. A throwing indexed accessor (a getter that
+ * throws) is caught and mapped to the same canonical
+ * `MALFORMED_REQUIRED_JOB_POLICY` rejection every other malformed-input case
+ * already returns, never an uncaught exception. Each index is still read
+ * EXACTLY ONCE, preserving the C7 single-read/TOCTOU-closing property for
+ * getter-backed arrays.
  */
 
 "use strict";
@@ -67,7 +93,17 @@ function validateRequiredJobsPolicy(requiredJobs) {
   if (!isDenseArray(requiredJobs) || requiredJobs.length === 0 || requiredJobs.length > MAX_REQUIRED_JOBS) {
     return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
   }
-  const snapshot = [...requiredJobs];
+  // Corrective C8 (W4-C7R-DEV-L1): explicit indexed reads, never the
+  // iterator/spread protocol -- see the module note above. `length` is
+  // captured once, before any read, so a getter that mutates `.length` as a
+  // side effect cannot change how many indices this loop visits.
+  const length = requiredJobs.length;
+  const snapshot = new Array(length);
+  try {
+    for (let i = 0; i < length; i++) snapshot[i] = requiredJobs[i];
+  } catch {
+    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
+  }
   if (!snapshot.every((n) => typeof n === "string" && n.length > 0 && n.length <= 200)) {
     return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
   }

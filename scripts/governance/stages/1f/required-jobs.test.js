@@ -202,3 +202,147 @@ test("C7-L2-08: checkRequiredJobs() evaluates the run against the SAME validated
   original.push("Nonexistent job");
   assert.equal(r.missing.includes("Nonexistent job"), false, "the already-computed result must not be affected by a later mutation of the caller's original array");
 });
+
+// ---------------------------------------------------------------- Corrective C8 (W4-C7R-DEV-L1): iterator-bypass rejection
+//
+// Reproduction first (mission section 5): BEFORE this corrective,
+// `validateRequiredJobsPolicy()` validated an array's LENGTH and DENSITY
+// against its indexed/own-key view (`isDenseArray()`, `.length`), but
+// captured its CONTENT via `[...requiredJobs]` -- the iterator protocol.
+// These are two independently overridable views of the same object: any
+// value that is `Array.isArray()`-true (a real Array, or an Array subclass)
+// can carry an own or inherited `Symbol.iterator` override that yields
+// entirely different values, in a different quantity, than its actual
+// indexed properties. `const a = ["Unit tests"]; a[Symbol.iterator] =
+// function* () {};` passed every length/density check (indexed length 1,
+// dense, under the max) while `[...a]` -- and so the accepted "snapshot" --
+// silently produced `[]`, an empty policy accepted as valid. The fix
+// captures the snapshot via EXPLICIT INDEXED READS, never the iterator, so
+// this class of override is fully inert; every test below confirms the
+// snapshot reflects the array's real indexed content, ignoring whatever a
+// Symbol.iterator override claims.
+
+function withIterator(indexedValues, generator) {
+  const a = [...indexedValues];
+  a[Symbol.iterator] = generator;
+  return a;
+}
+
+test("C8-DEV-L1-01: a custom iterator yielding zero entries does not shrink the accepted snapshot -- the real indexed content is used", () => {
+  const a = withIterator(["Unit tests"], function* () {});
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, ["Unit tests"]);
+});
+
+test("C8-DEV-L1-02: a custom iterator yielding 300 entries does not let an oversized policy bypass MAX_REQUIRED_JOBS -- the real (small) indexed content is used and the bound is checked against it", () => {
+  const a = withIterator(["Unit tests"], function* () { for (let i = 0; i < 300; i++) yield `job-${i}`; });
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, ["Unit tests"]);
+});
+
+test("C8-DEV-L1-03: a custom iterator yielding a different job name does not substitute the effective policy -- the real indexed job name is used", () => {
+  const a = withIterator(["Unit tests"], function* () { yield "Totally Different Job"; });
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, ["Unit tests"]);
+});
+
+test("C8-DEV-L1-04: a custom iterator yielding duplicate names does not manufacture a false DUPLICATE_REQUIRED_JOB_NAME rejection (or hide a real one) -- the real indexed, duplicate-free content is used and accepted", () => {
+  const a = withIterator(["Unit tests", "Cypress - chrome"], function* () { yield "X"; yield "X"; });
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, ["Unit tests", "Cypress - chrome"]);
+});
+
+test("C8-DEV-L1-05: an Array subclass overriding Symbol.iterator is treated identically -- the real indexed content is used, not the subclass's iterator", () => {
+  class EvilArray extends Array {
+    [Symbol.iterator]() { return (function* () { yield "SUBCLASS_JOB"; })(); }
+  }
+  const a = EvilArray.from(["Unit tests", "Cypress - chrome"]);
+  assert.equal(Array.isArray(a), true);
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, ["Unit tests", "Cypress - chrome"]);
+});
+
+test("C8-DEV-L1-06: an iterator that throws when invoked has no effect at all -- indexed reads never call Symbol.iterator, so a throwing iterator is simply never exercised", () => {
+  const a = ["Unit tests"];
+  a[Symbol.iterator] = function* () { throw new Error("iterator boom"); };
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, ["Unit tests"]);
+});
+
+test("C8-DEV-L1-07: a sparse indexed array remains rejected (reconfirms the Corrective C7 sparse-array guard is unaffected by this corrective)", () => {
+  const a = [];
+  a.length = 2;
+  a[1] = "Unit tests";
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
+
+test("C8-DEV-L1-08: getter-backed indexed entries are read exactly once", () => {
+  let reads = 0;
+  const a = ["Unit tests", "Cypress - chrome"];
+  Object.defineProperty(a, "0", { enumerable: true, get() { reads += 1; return "Unit tests"; } });
+  const r = validateRequiredJobsPolicy(a);
+  assert.equal(r.ok, true);
+  assert.equal(reads, 1, "index 0 must be read exactly once");
+  assert.deepEqual(r.requiredJobs, ["Unit tests", "Cypress - chrome"]);
+});
+
+test("C8-DEV-L1-09: caller mutation of the original array after validation cannot change the accepted snapshot (reconfirms C7-L2-07/06 specifically against the new indexed-read path)", () => {
+  const original = ["Unit tests", "Cypress - chrome"];
+  const r = validateRequiredJobsPolicy(original);
+  assert.equal(r.ok, true);
+  original[0] = "Mutated After Validation";
+  original.push("Extra After Validation");
+  assert.deepEqual(r.requiredJobs, ["Unit tests", "Cypress - chrome"]);
+  assert.equal(Object.isFrozen(r.requiredJobs), true);
+});
+
+test("C8-DEV-L1-10: exactly 256 valid, unique names remain accepted", () => {
+  const names = Array.from({ length: 256 }, (_, i) => `job-${i}`);
+  const r = validateRequiredJobsPolicy(names);
+  assert.equal(r.ok, true);
+  assert.equal(r.requiredJobs.length, 256);
+});
+
+test("C8-DEV-L1-11: 257 indexed entries remain rejected", () => {
+  const names = Array.from({ length: 257 }, (_, i) => `job-${i}`);
+  const r = validateRequiredJobsPolicy(names);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
+
+test("C8-DEV-L1-12: an exactly-200-character name remains accepted", () => {
+  const name = "x".repeat(200);
+  const r = validateRequiredJobsPolicy([name]);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, [name]);
+});
+
+test("C8-DEV-L1-13: a 201-character name remains rejected", () => {
+  const name = "x".repeat(201);
+  const r = validateRequiredJobsPolicy([name]);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
+
+test("C8-DEV-L1-14: duplicate indexed job names (no iterator involved) remain rejected with the specific duplicate reason", () => {
+  const r = validateRequiredJobsPolicy(["Unit tests", "Unit tests"]);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "DUPLICATE_REQUIRED_JOB_NAME");
+});
+
+test("C8-DEV-L1-15: a throwing indexed getter fails with the canonical MALFORMED_REQUIRED_JOB_POLICY reason, never an uncaught exception", () => {
+  const a = ["Unit tests", "Cypress - chrome"];
+  Object.defineProperty(a, "1", { enumerable: true, get() { throw new Error("getter boom"); } });
+  let r;
+  assert.doesNotThrow(() => { r = validateRequiredJobsPolicy(a); });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
