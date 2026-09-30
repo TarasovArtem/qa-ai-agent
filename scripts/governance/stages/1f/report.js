@@ -18,6 +18,37 @@
  * authenticated Phase-2 invocation context) -- and validates its shape in
  * full before using it. `manifest` and `changedFiles` are handled the same
  * way: caller-supplied, canonical-shape-validated, never re-derived here.
+ *
+ * CORRECTIVE C3 (W4-C2R-SEC-L1): every field this function reads from `input`
+ * is untrusted, caller-supplied data, and JavaScript does not guarantee a
+ * plain-looking property reads the same value twice (a getter, a later
+ * mutation by the caller, or a `toJSON()` can all change what a second read
+ * sees). Reading the same value twice -- once to validate it, again to
+ * project it into the report -- is therefore a TOCTOU seam: a supplied 1F.CI
+ * record could validate as CLEAN_FIRST_PASS and publish as
+ * PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN. `buildReport()` now takes exactly one
+ * bounded `cloneJson()` snapshot of every relevant input field before any
+ * validation, and every check and the report itself read ONLY that snapshot
+ * from that point on -- never `input` again. `cloneJson()` (`JSON.parse(JSON.stringify(...))`)
+ * reads each property exactly once, so a getter fires at most once; it throws
+ * on a cyclic reference or a BigInt (mapped here to the canonical
+ * CONFIGURATION_ERROR-shaped rejection, never a partial report), and a
+ * `toJSON()` result is validated downstream like any other supplied shape --
+ * never trusted merely because it came from `toJSON()`.
+ *
+ * CORRECTIVE C3 (W4-C2R-DEV-M1): a report with neither an explicit Phase 1
+ * `ci:{state:"NOT_COLLECTED"}` marker NOR a collected `1F.CI` record used to
+ * fall through silently: `records[]` was aggregated as-is, with no CI
+ * check contributed at all, so an otherwise-all-PASS report could reach
+ * `READY` with zero CI evidence. Neither case is valid Stage 1F input, and
+ * both are now rejected before aggregation.
+ *
+ * CORRECTIVE C3 (W4-C2R-DEV-L1): `finalized` used to be derived only from
+ * whether `ci` was omitted and a collected record was present, with no cross-
+ * check against `trustedContext.phase` -- a caller could claim `phase: 1`
+ * while structuring the call as Phase 2 (or vice versa) and get a
+ * `finalized`/`readiness` combination that contradicted its own declared
+ * phase. The two are now required to agree.
  */
 
 "use strict";
@@ -25,10 +56,11 @@
 const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { aggregate } = require("../../kernel/readiness");
-const { validateResultRecord } = require("../../kernel/results");
+const { validateResultRecord, cloneJson } = require("../../kernel/results");
 const { isValidSubject, sameSubject } = require("../common");
 const { CLASSIFICATION_CONTRACT } = require("./ci-classify");
 const { UNMET_TRUST_PREREQUISITES } = require("./determination");
+const { ciRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const REPOSITORY_ID = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
@@ -123,6 +155,55 @@ function validateCollectedCiRecord(record, subject, externalEvidence) {
     if (o.rerunObserved !== true || o.attestationMode !== "OWNER_ATTESTED" || o.candidateClassification !== "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN") return "the OWNER_ATTESTED metadata is malformed";
   } else if (record.reasonCode === REASON.OWNER_SELF_DETERMINATION) {
     return "reasonCode OWNER_SELF_DETERMINATION requires the OWNER_ATTESTED metadata";
+  }
+
+  // Corrective C3 (W4-C2R-DEV-M2): a record produced past a completed,
+  // validated run fetch always carries these run-evidence fields (see
+  // stages/1f/ci-evidence.js#collectCiEvidence()'s final ciRecord() call); a
+  // record from an earlier exit (fetch failure, wrong identity, in-progress
+  // run) never does, and never requires CI-run externalEvidence (there is no
+  // completed run to pin). When present, the finalized report must carry
+  // EXACTLY ONE externalEvidence entry for THIS run, and its digest must
+  // match what the observed evidence itself implies -- an unrelated, missing,
+  // wrong-repository/HEAD/run/attempt, or digest-mismatched entry is rejected
+  // rather than silently accepted or silently left absent.
+  const runFields = ["repository", "workflowPath", "runId", "event", "attempt", "status", "requiredJobs", "missing", "failed", "pending", "skipped", "attemptHistory"];
+  const hasRunEvidence = runFields.every((k) => Object.hasOwn(o, k));
+  const someRunFields = runFields.some((k) => Object.hasOwn(o, k));
+  if (someRunFields && !hasRunEvidence) return "the 1F.CI record's run-evidence fields are incomplete";
+  if (hasRunEvidence) {
+    if (typeof o.repository !== "string" || typeof o.workflowPath !== "string" || typeof o.runId !== "string") return "the 1F.CI record's run identity fields are malformed";
+    // The record's `subject` (already checked equal to the report's subject
+    // above) is the sole HEAD authority; the digest below binds to
+    // record.subject.head, never to a headSha the observed payload might
+    // otherwise claim, so there is no separate headSha field to trust here.
+    const expectedSourceObjectId = ciRunSourceObjectId({ repository: o.repository, runId: o.runId });
+    const matchingRun = externalEvidence.filter((e) => e.sourceObjectId === expectedSourceObjectId);
+    if (matchingRun.length !== 1) return "the finalized report requires exactly one externalEvidence entry for the represented CI run";
+    const expectedDigest = computeCiRunDigest({
+      repository: o.repository, workflowPath: o.workflowPath, runId: o.runId, event: o.event, headSha: record.subject.head,
+      attempt: o.attempt, status: o.status, requiredJobs: o.requiredJobs, missing: o.missing, failed: o.failed, pending: o.pending, skipped: o.skipped,
+      attemptHistory: o.attemptHistory,
+    });
+    if (matchingRun[0].contentDigest !== expectedDigest) return "the CI-run externalEvidence entry's digest does not match the represented CI evidence";
+    if (matchingRun[0].sourceVersion !== String(o.attempt)) return "the CI-run externalEvidence entry's version does not match the represented attempt";
+    if (matchingRun[0].immutability !== "MUTABLE") return "CI-run evidence must be MUTABLE -- it is never VERIFIED_PROVIDER or VERIFIED_CRYPTO merely because it was collected or hashed";
+
+    // W4-C2R-INFO-2: the observed facts a supplied record claims must remain
+    // internally consistent with its own classification -- not a second
+    // classifier, only a check that the SAME canonical facts the real
+    // classifier (stages/1f/ci-classify.js) would have used are not
+    // self-contradictory. CLEAN_FIRST_PASS specifically means "attempt 1, no
+    // rerun, every required job succeeded": a record claiming that
+    // classification while also claiming attempt > 1, or a non-empty
+    // missing/failed/pending list, is rejected.
+    if (o.classification === "CLEAN_FIRST_PASS") {
+      if (o.attempt !== 1) return "CLEAN_FIRST_PASS is inconsistent with an attempt other than 1";
+      if (Array.isArray(o.attemptHistory) && o.attemptHistory.length > 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty attempt history";
+      if (!(Array.isArray(o.missing) && o.missing.length === 0)) return "CLEAN_FIRST_PASS is inconsistent with a non-empty missing-jobs list";
+      if (!(Array.isArray(o.failed) && o.failed.length === 0)) return "CLEAN_FIRST_PASS is inconsistent with a non-empty failed-jobs list";
+      if (!(Array.isArray(o.pending) && o.pending.length === 0)) return "CLEAN_FIRST_PASS is inconsistent with a non-empty pending-jobs list";
+    }
   }
   return null;
 }
@@ -234,8 +315,26 @@ function isValidManifestProvenance(m) {
  * `domains[]` is always DERIVED from `records[]` here, never trusted from a
  * caller-supplied value beyond the optional consistency check above.
  */
-function buildReport(input) {
-  if (!isPlainObject(input) || !isValidSubject(input.subject)) return invalidInput("a valid subject is required");
+function buildReport(rawInput) {
+  if (!isPlainObject(rawInput)) return invalidInput("input must be an object");
+  // Corrective C3 (W4-C2R-SEC-L1): one bounded JSON snapshot, taken before any
+  // validation, of every field this function reads. Every check below, and
+  // the report itself, read ONLY `input` (the snapshot) from this point on --
+  // never `rawInput` again.
+  let input;
+  try {
+    input = cloneJson({
+      subject: rawInput.subject, tool: rawInput.tool, trustedContext: rawInput.trustedContext,
+      externalEvidence: rawInput.externalEvidence, manifest: rawInput.manifest, reviewClass: rawInput.reviewClass,
+      changedFiles: rawInput.changedFiles, records: rawInput.records, ci: rawInput.ci,
+      expectedDomainIds: rawInput.expectedDomainIds, domainsProjection: rawInput.domainsProjection,
+      parents: rawInput.parents, branch: rawInput.branch,
+    });
+  } catch {
+    return invalidInput("input could not be safely snapshotted (a cyclic reference, a BigInt, or a throwing toJSON)");
+  }
+
+  if (!isValidSubject(input.subject)) return invalidInput("a valid subject is required");
   const subject = input.subject;
   if (!isPlainObject(input.tool) || typeof input.tool.name !== "string" || typeof input.tool.version !== "string") return invalidInput("tool must be { name, version }");
   if (!isValidTrustedContext(input.trustedContext)) return invalidInput("trustedContext is malformed or incomplete");
@@ -255,6 +354,12 @@ function buildReport(input) {
   // while also supplying an already-collected 1F.CI record -- that is contradictory,
   // mixed-phase input, not a report this function can honestly assemble.
   if (ci !== null && hasCollectedCiRecordInInput) return invalidInput("ci is { state: \"NOT_COLLECTED\" } (Phase 1) but records[] already contains a collected 1F.CI record (Phase 2) -- mixed-phase input is rejected");
+  // Corrective C3 (W4-C2R-DEV-M1): the third, invalid case -- ci omitted AND no
+  // collected 1F.CI record present -- used to fall through silently (no CI
+  // check ever reached aggregation, so an otherwise-all-PASS report could
+  // reach READY with zero CI evidence). Neither Phase 1 nor Phase 2 was
+  // actually supplied; this is a configuration failure, not a report.
+  if (ci === null && !hasCollectedCiRecordInInput) return invalidInput("ci must be either { state: \"NOT_COLLECTED\" } (Phase 1) or omitted with an already-collected 1F.CI record present in records[] (Phase 2); neither was supplied");
   // Corrective C2 (W4-C1-DEV-M1): a finalized report's `ci` is projected from
   // exactly one 1F.CI record, so that record is validated here -- before
   // aggregation or projection -- and a duplicate is rejected rather than
@@ -265,6 +370,16 @@ function buildReport(input) {
     const problem = validateCollectedCiRecord(ciRecords[0], subject, input.externalEvidence);
     if (problem !== null) return invalidInput(`invalid 1F.CI record: ${problem}`);
   }
+
+  // Corrective C3 (W4-C2R-DEV-L1): the report's declared phase and its actual
+  // CI-collection shape must agree. Phase 1 (trustedContext.phase === 1) is,
+  // by definition, the deterministic pre-review that cannot observe its own
+  // run (design section 17) -- it must supply the explicit NOT_COLLECTED
+  // marker, never rely on a collected record. Phase 2 is the external
+  // post-run collector -- it must never also claim the Phase 1 marker.
+  const phase = input.trustedContext.phase;
+  if (phase === 1 && ci === null) return invalidInput("trustedContext.phase is 1 (Phase 1) but ci was omitted -- Phase 1 requires the explicit ci: { state: \"NOT_COLLECTED\" } marker");
+  if (phase === 2 && ci !== null) return invalidInput("trustedContext.phase is 2 (Phase 2) but ci is the explicit Phase 1 NOT_COLLECTED marker -- Phase 2 must omit ci");
 
   // Design section 17: "[Phase 1] cannot observe its own run, so it emits ci
   // as { state: NOT_COLLECTED }, which yields an INCOMPLETE record (reasonCode

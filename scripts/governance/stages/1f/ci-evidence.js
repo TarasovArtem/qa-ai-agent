@@ -30,23 +30,116 @@
  * determination policy, a qualifying provider and the other prerequisites it
  * lists exist. Every rerun -- with no adapter, a throwing or malformed one, or
  * one returning fabricated "trusted" metadata -- therefore stays
- * `HUMAN_REVIEW_REQUIRED` (`CI_UNEXPLAINED_RERUN`) with no `externalEvidence`.
- * This is safe fail-closed behavior, not an operational D4-A provider.
+ * `HUMAN_REVIEW_REQUIRED` (`CI_UNEXPLAINED_RERUN`) with no accepted
+ * determination evidence. This is safe fail-closed behavior, not an
+ * operational D4-A provider.
+ *
+ * CORRECTIVE C3 (W4-C2R-DEV-M2): design section 25a requires every externally
+ * mutable source a report relies on to be captured and later revalidated. The
+ * CI run itself is exactly such a source (its attempt/job/status data can
+ * change under a rerun), so a successfully collected, completed run now
+ * always contributes exactly one canonical CI-run `externalEvidence[]` entry
+ * -- `ciRunSourceObjectId()`/`computeCiRunDigest()` below define its identity
+ * and content digest, always `immutability: "MUTABLE"` (never claimed
+ * provider- or crypto-verified merely because it came through an adapter or
+ * was SHA-256-hashed). This is distinct from, and never a substitute for, an
+ * accepted human-determination entry (which remains impossible in this
+ * configuration per Corrective C2).
  */
 
 "use strict";
 
+const crypto = require("node:crypto");
 const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
-const { validateResultRecord } = require("../../kernel/results");
+const { validateResultRecord, canonicalJson } = require("../../kernel/results");
 const { isValidSubject, safe } = require("../common");
 const { fetchValidatedRun } = require("./ci-run");
 const { checkRequiredJobs } = require("./required-jobs");
 const { qualifyDetermination, resolveDeterminationAdapter } = require("./determination");
 const { classifyCiEvidence, CLASSIFICATION_CONTRACT } = require("./ci-classify");
 
+const CI_RUN_SOURCE_PREFIX = "ci-run:";
+
 function invalidInput(subject, detail) {
   return deepFreeze({ subject: subject || null, records: [], outcome: { status: STATUS.CONFIGURATION_ERROR, reasonCode: REASON.RESULT_RECORD_INVALID, detail }, externalEvidence: [] });
+}
+
+/**
+ * ciRunSourceObjectId({repository, runId}) -- the canonical, deterministic,
+ * bounded identity of a CI run as an externally mutable evidence source.
+ * `runId` is unique within `repository` in this framework's model (the same
+ * granularity `stages/1f/determination.js#checkBindings()` already relies on
+ * for run identity), so the pair is sufficient and stays well under the
+ * report schema's 300-character `sourceObjectId` bound. The `ci-run:` prefix
+ * keeps this namespace unambiguous against a determination's own
+ * `channelObjectId` (design section 25a: two evidence sources must never
+ * share an ambiguous identity).
+ */
+function ciRunSourceObjectId({ repository, runId }) {
+  return `${CI_RUN_SOURCE_PREFIX}${repository}:${runId}`;
+}
+
+/** True when `sourceObjectId` was produced by ciRunSourceObjectId() -- used to map a report's externalEvidence[] entries to the CI-run revalidation adapter. */
+function isCiRunSourceObjectId(sourceObjectId) {
+  return typeof sourceObjectId === "string" && sourceObjectId.startsWith(CI_RUN_SOURCE_PREFIX);
+}
+
+/**
+ * sourceTypeForExternalEvidenceEntry(entry) -- the deterministic, unambiguous
+ * mapping a trusted caller uses to build kernel/revalidation.js#revalidateEvidence()'s
+ * `items[]` from a report's `externalEvidence[]` (design section 25a: the
+ * canonical entry carries no `sourceType` field itself). Returns `"CI_RUN"`
+ * for a CI-run entry, else `null` -- an unrecognized entry must never be
+ * silently dropped when a caller constructs `items[]`; `null` is the caller's
+ * explicit signal to fail closed (e.g. INCOMPLETE) rather than ignore it.
+ */
+function sourceTypeForExternalEvidenceEntry(entry) {
+  return isPlainObject(entry) && isCiRunSourceObjectId(entry.sourceObjectId) ? "CI_RUN" : null;
+}
+
+/**
+ * computeCiRunDigest({repository, workflowPath, runId, event, headSha,
+ * attempt, status, requiredJobs, missing, failed, pending, skipped,
+ * attemptHistory}) -- SHA-256 of the canonical JSON
+ * (`kernel/results.js#canonicalJson()`, the same convention
+ * `stages/1a/policy.js#policyDigest()` and
+ * `stages/1f/determination.js#computeDeterminationDigest()` already use) over
+ * every field that can change what the run's classification means: identity
+ * (repository/workflowPath/runId/event/headSha/attempt/status), the
+ * base-anchored required-job list and each required job's outcome category
+ * (missing/failed/pending/skipped -- "required jobs and their relevant
+ * conclusions"; a non-required job cannot change classification and is
+ * intentionally excluded), and the full attempt history. Never the arbitrary
+ * raw provider response, and never a digest an adapter supplies -- this
+ * function always computes it. Its inputs are exactly the fields
+ * `collectCiEvidence()` already stores in a `1F.CI` record's `observed`
+ * payload (plus `subject.head` for `headSha`), so `stages/1f/report.js` can
+ * recompute the SAME digest from an already-collected record alone, with no
+ * second, independently-shaped copy of the run evidence.
+ */
+function computeCiRunDigest({ repository, workflowPath, runId, event, headSha, attempt, status, requiredJobs, missing, failed, pending, skipped, attemptHistory }) {
+  const body = {
+    repository, workflowPath, runId, event, headSha, attempt, status,
+    requiredJobs: [...requiredJobs].sort(),
+    missing: [...missing].sort(), failed: [...failed].sort(), pending: [...pending].sort(), skipped: [...skipped].sort(),
+    attemptHistory: [...attemptHistory].map((a) => ({ attempt: a.attempt, conclusion: a.conclusion, failedJobs: [...a.failedJobs].sort() })).sort((a, b) => a.attempt - b.attempt),
+  };
+  return crypto.createHash("sha256").update(canonicalJson(body)).digest("hex");
+}
+
+/**
+ * collectedAtOf(now) -- design section 25a requires a trusted or explicitly
+ * injected collection clock, never a live, non-deterministic default (the
+ * same convention `stages/1a/secrets.js#todayOf()` already uses for
+ * suppression-expiry evaluation). `now` must be a `Date` or a non-empty
+ * bounded string; anything else fails resolution (`null`), which the caller
+ * below turns into CONFIGURATION_ERROR rather than fabricating a timestamp.
+ */
+function collectedAtOf(now) {
+  if (now instanceof Date && Number.isFinite(now.getTime())) return now.toISOString();
+  if (typeof now === "string" && now.length > 0 && now.length <= 64) return now;
+  return null;
 }
 
 function ciRecord(subject, { classification, reasonCode, detail }, observed) {
@@ -78,12 +171,17 @@ function ciRecord(subject, { classification, reasonCode, detail }, observed) {
  *                           classifies HUMAN_REVIEW_REQUIRED, whatever the adapter
  *                           returns (Corrective C2 / W4-SEC-H1). There is no
  *                           `determinationCandidate` input; such a field is ignored.
+ *   now                     Corrective C3 (W4-C2R-DEV-M2): a `Date` or bounded ISO
+ *                           string collection clock, required once a completed run
+ *                           is being recorded as CI-run evidence -- see collectedAtOf().
  *
  * Output: { subject, records: [<one 1F.CI record>], outcome, externalEvidence }.
- * `externalEvidence` would carry an accepted determination's pinned digest/version
- * for a report's `externalEvidence[]` and later `kernel/revalidation.js
- * #revalidateEvidence()` calls; because no determination can be accepted in this
- * configuration, it is always empty.
+ * For a successfully collected, completed run, `externalEvidence` always carries
+ * exactly one canonical CI-run entry (design section 25a) -- see
+ * ciRunSourceObjectId()/computeCiRunDigest() -- in addition to any accepted
+ * determination's own entry (always empty in this configuration, Corrective C2).
+ * For every other path (fetch failure, wrong identity, in-progress run, or a
+ * malformed call), `externalEvidence` is empty: there is no completed run to pin.
  */
 async function collectCiEvidence(input) {
   if (!isPlainObject(input) || !isValidSubject(input.subject)) return invalidInput(null, "a valid subject is required");
@@ -108,6 +206,12 @@ async function collectCiEvidence(input) {
   if (!Array.isArray(input.requiredJobs) || input.requiredJobs.length === 0) {
     return invalidInput(subject, "requiredJobs must be a non-empty, base-anchored policy list");
   }
+  // Corrective C3 (W4-C2R-DEV-M2): from this point on a completed, validated run
+  // always contributes a canonical CI-run externalEvidence entry (design section
+  // 25a), which requires a trusted collection clock -- never a fabricated or
+  // non-deterministic default.
+  const collectedAt = collectedAtOf(input.now);
+  if (collectedAt === null) return invalidInput(subject, "now (a Date or bounded ISO string collection clock) is required to record CI-run evidence");
   const requiredJobCheck = checkRequiredJobs({ run, requiredJobs: input.requiredJobs });
 
   const hadRerun = run.attempt > 1 || run.attemptHistory.length > 0;
@@ -131,15 +235,39 @@ async function collectCiEvidence(input) {
 
   const classified = classifyCiEvidence({ requiredJobCheck, attempt: run.attempt, attemptHistory: run.attemptHistory, determination: null });
 
+  const missing = requiredJobCheck.ok ? [...requiredJobCheck.missing].sort() : [];
+  const failed = requiredJobCheck.ok ? [...requiredJobCheck.failed].sort() : [];
+  const pending = requiredJobCheck.ok ? [...requiredJobCheck.pending].sort() : [];
+  const skipped = requiredJobCheck.ok ? [...requiredJobCheck.skipped].sort() : [];
+  const requiredJobsSorted = [...input.requiredJobs].sort();
+
   const record = ciRecord(subject, classified, {
-    classification: classified.classification, repository: run.repository, runId: run.runId, event: run.event, attempt: run.attempt,
-    requiredJobs: [...input.requiredJobs].sort(),
-    missing: requiredJobCheck.ok ? [...requiredJobCheck.missing].sort() : [],
-    failed: requiredJobCheck.ok ? [...requiredJobCheck.failed].sort() : [],
-    pending: requiredJobCheck.ok ? [...requiredJobCheck.pending].sort() : [],
-    skipped: requiredJobCheck.ok ? [...requiredJobCheck.skipped].sort() : [],
+    classification: classified.classification, repository: run.repository, workflowPath: input.workflowPath, runId: run.runId,
+    event: run.event, attempt: run.attempt, status: run.status, requiredJobs: requiredJobsSorted,
+    missing, failed, pending, skipped, attemptHistory: run.attemptHistory,
   });
-  return deepFreeze({ subject, records: [record], outcome: null, externalEvidence: [] });
+
+  // Corrective C3 (W4-C2R-DEV-M2): the CI run itself is an externally mutable
+  // source the classification above relied on -- it is captured here,
+  // unconditionally, for every completed-and-validated run, regardless of
+  // classification (CLEAN_FIRST_PASS, FAIL, INCOMPLETE or HUMAN_REVIEW_REQUIRED),
+  // never only for a passing outcome. It is never an accepted-determination
+  // substitute and is always MUTABLE (never VERIFIED_PROVIDER/VERIFIED_CRYPTO
+  // merely because it came through an adapter or was SHA-256-hashed).
+  const ciRunEvidence = {
+    sourceObjectId: ciRunSourceObjectId({ repository: run.repository, runId: run.runId }),
+    sourceVersion: String(run.attempt),
+    contentDigest: computeCiRunDigest({
+      repository: run.repository, workflowPath: input.workflowPath, runId: run.runId, event: run.event, headSha: run.headSha,
+      attempt: run.attempt, status: run.status, requiredJobs: requiredJobsSorted, missing, failed, pending, skipped, attemptHistory: run.attemptHistory,
+    }),
+    collectedAt,
+    immutability: "MUTABLE",
+  };
+
+  return deepFreeze({ subject, records: [record], outcome: null, externalEvidence: deepFreeze([ciRunEvidence]) });
 }
 
-module.exports = { collectCiEvidence };
+module.exports = {
+  collectCiEvidence, ciRunSourceObjectId, isCiRunSourceObjectId, sourceTypeForExternalEvidenceEntry, computeCiRunDigest,
+};

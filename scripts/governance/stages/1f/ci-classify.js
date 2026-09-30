@@ -8,11 +8,16 @@
  * five classifications.
  *
  * The `determination` input, when present, must already be the FULLY
- * validated output of the Stage 1F determination-authority module (not yet
- * built in this WP): this function does not authenticate anyone and does
+ * validated output of the Stage 1F determination-authority module
+ * (`./determination.js`): this function does not authenticate anyone and does
  * not itself decide SEPARATE_PERSON vs OWNER_ATTESTED -- it only reads the
  * already-decided `mode` and whether the record was `accepted`. A record
  * this function was not told is accepted is never treated as accepted.
+ * Correctives C1/C2 built that module's adapter-resolution
+ * (`resolveDeterminationAdapter()`) and qualification (`qualifyDetermination()`)
+ * layers; in the current configuration `qualifyDetermination()` never accepts
+ * anything (see its own header), so `determination` reaching this function is
+ * always `null` in practice -- a safe fail-closed state, not a missing module.
  */
 
 "use strict";

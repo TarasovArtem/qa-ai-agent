@@ -25,9 +25,23 @@ function adapter(runOrFailure) {
   return { fetchRun: async () => (runOrFailure && runOrFailure.ok === false ? runOrFailure : { ok: true, run: runOrFailure }) };
 }
 
+const NOW = "2026-09-30T00:00:00.000Z";
+
 const baseInput = (overrides = {}) => ({
-  subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", requiredJobs: REQUIRED, adapter: adapter(rawRun()), ...overrides,
+  subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", requiredJobs: REQUIRED, adapter: adapter(rawRun()), now: NOW, ...overrides,
 });
+
+// Corrective C3 (W4-C2R-DEV-M2): every completed, validated run now always
+// contributes exactly one canonical CI-run externalEvidence entry (design
+// section 25a), whatever its classification -- distinct from, and never
+// containing, any accepted-determination entry (which stays impossible in
+// this configuration per Corrective C2). Tests below that used to assert
+// `externalEvidence: []` for a completed run now assert this instead.
+function assertOnlyCiRunEvidence(externalEvidence, label) {
+  assert.equal(externalEvidence.length, 1, label);
+  assert.equal(externalEvidence[0].sourceObjectId.startsWith("ci-run:"), true, label);
+  assert.equal(externalEvidence[0].immutability, "MUTABLE", label);
+}
 
 test("a clean, matching, fully successful attempt-1 run produces a PASS 1F.CI record classified CLEAN_FIRST_PASS", async () => {
   const r = await collectCiEvidence(baseInput());
@@ -37,7 +51,7 @@ test("a clean, matching, fully successful attempt-1 run produces a PASS 1F.CI re
   assert.equal(r.records[0].status, "PASS");
   assert.equal(r.records[0].observed.classification, "CLEAN_FIRST_PASS");
   assert.deepEqual(r.records[0].subject, subject);
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
 test("a required job that failed produces a FAIL record", async () => {
@@ -89,7 +103,7 @@ test("a rerun with no determination candidate resolves to HUMAN_REVIEW_REQUIRED,
   const run = rawRun({ attempt: 2, attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Cypress - chrome"] }] });
   const r = await collectCiEvidence(baseInput({ adapter: adapter(run) }));
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
 // ---------------------------------------------------------------- Corrective C1 (W4-SEC-H1): determination adapter seam
@@ -140,7 +154,7 @@ test("SEC-C2-02 (replaces the C1 positive test): a self-consistent candidate fro
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
   assert.equal(r.records[0].observed.classification, "HUMAN_REVIEW_REQUIRED");
   assert.equal(r.records[0].reasonCode, "CI_UNEXPLAINED_RERUN");
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
   for (const field of ["authenticatedActor", "determinationMode", "contentDigest", "channelObjectId", "version", "rerunObserved", "attestationMode", "candidateClassification"]) {
     assert.equal(Object.hasOwn(r.records[0].observed, field), false, field);
   }
@@ -152,20 +166,20 @@ test("SEC-C1-01/02/03/04/05/13: a rerun with a REJECTED determination candidate 
     determinationAdapter: determinationAdapter(validCandidate({ record: { ...validCandidate().record, repository: "wrong/repo" } })),
   }));
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
 test("SEC-C1-06/24: no determinationAdapter injected at all -- the rerun resolves to HUMAN_REVIEW_REQUIRED; no privileged PASS is reachable through arbitrary public-API arguments without a resolvable adapter", async () => {
   const r = await collectCiEvidence(baseInput({ adapter: adapter(rerunRun()) }));
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
   assert.equal(r.records[0].reasonCode, "CI_UNEXPLAINED_RERUN");
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
 test("SEC-C1-06b: the original reproduction -- a bare `determinationCandidate` field on the public input -- is no longer read at all; it is silently ignored (not a supported field) and the rerun still resolves to HUMAN_REVIEW_REQUIRED", async () => {
   const r = await collectCiEvidence(baseInput({ adapter: adapter(rerunRun()), determinationCandidate: validCandidate() }));
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
 test("SEC-C1-07: a determinationAdapter that throws is treated exactly like no adapter -- HUMAN_REVIEW_REQUIRED, never an uncaught exception", async () => {
@@ -206,7 +220,7 @@ test("SEC-C2-11/22 (replaces SEC-C1-15): an adapter-fabricated OWNER_ATTESTED po
   assert.equal(r.records[0].reasonCode, "CI_UNEXPLAINED_RERUN");
   assert.equal(Object.hasOwn(r.records[0].observed, "rerunObserved"), false);
   assert.equal(Object.hasOwn(r.records[0].observed, "attestationMode"), false);
-  assert.deepEqual(r.externalEvidence, []);
+  assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
 test("SEC-C1-16/17/18: replay across HEAD, repository or run is rejected through the real adapter-mediated call path (not merely at the isolated validateDetermination() unit level)", async () => {
@@ -290,9 +304,12 @@ test("untrusted determination free-text (justification, failureSignature, review
   assert.equal(serialized.includes(secretShaped), false);
 });
 
-test("no internal helper is exported through the module", () => {
+test("only the approved public interface and the Corrective C3 CI-run-evidence helper functions are exported through the module", () => {
   const mod = require("./ci-evidence");
-  assert.deepEqual(Object.keys(mod), ["collectCiEvidence"]);
+  assert.deepEqual(
+    [...Object.keys(mod)].sort(),
+    ["ciRunSourceObjectId", "collectCiEvidence", "computeCiRunDigest", "isCiRunSourceObjectId", "sourceTypeForExternalEvidenceEntry"].sort(),
+  );
 });
 
 // ---------------------------------------------------------------- Corrective C2 (W4-SEC-H1): public-facade negative matrix
@@ -320,7 +337,7 @@ async function assertUnexplainedRerun(extraInput, label) {
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED", label);
   assert.equal(r.records[0].observed.classification, "HUMAN_REVIEW_REQUIRED", label);
   assert.equal(r.records[0].reasonCode, "CI_UNEXPLAINED_RERUN", label);
-  assert.deepEqual(r.externalEvidence, [], label);
+  assertOnlyCiRunEvidence(r.externalEvidence, label);
 }
 
 test("SEC-C2-01: the original direct determinationCandidate attack stays blocked through the public facade", async () => {
@@ -391,7 +408,7 @@ test("SEC-C2-23/24: CLEAN_FIRST_PASS and FAIL remain operational, and a forged a
   const failing = rerunRun({ jobs: [{ name: "Unit tests", status: "completed", conclusion: "success" }, { name: "Cypress - chrome", status: "completed", conclusion: "failure" }] });
   const failed = await governance.collectCiEvidence(baseInput({ adapter: adapter(failing), determinationAdapter: twoLineAdapter(withCorrectDigest(originalAttackPayload())) }));
   assert.equal(failed.records[0].status, "FAIL");
-  assert.deepEqual(failed.externalEvidence, []);
+  assertOnlyCiRunEvidence(failed.externalEvidence);
 });
 
 test("SEC-C2-25/26/27: no adapter, a throwing adapter and malformed provider data all fail closed", async () => {

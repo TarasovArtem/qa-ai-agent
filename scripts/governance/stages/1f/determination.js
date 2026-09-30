@@ -6,9 +6,24 @@
  * failure can ever be classified PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN
  * instead of HUMAN_REVIEW_REQUIRED, so every rule here fails closed.
  *
+ * READER NOTE (Corrective C3 / W4-C2R-INFO-1): the "Trust chain" paragraph
+ * immediately below, and `validateDetermination()`'s own docstring, describe
+ * a design where the CALLER independently computes and pins `contentDigest`
+ * at acceptance time. That is `validateDetermination()`'s contract as a pure
+ * validator of an ALREADY-TRUSTED bundle -- it is NOT what actually runs
+ * today. `stages/1f/ci-evidence.js#collectCiEvidence()` does not call
+ * `validateDetermination()` at all; every real adapter response goes through
+ * `qualifyDetermination()` (below `validateDetermination()` in this file),
+ * which computes `contentDigest` itself (`computeDeterminationDigest()`) and
+ * rejects an adapter-supplied digest that disagrees, and which never accepts
+ * anything in the current configuration regardless of digest agreement (see
+ * its own docstring and `UNMET_TRUST_PREREQUISITES`). Read the "Trust chain"
+ * paragraph as `validateDetermination()`'s own contract for a future trusted
+ * caller, not as a description of the live `collectCiEvidence()` path.
+ *
  * Trust chain (why a GitHub comment can be a sound provider despite being
- * editable): this module never trusts the comment's own claimed content by
- * itself. It trusts only:
+ * editable) -- validateDetermination()'s contract: this module never trusts
+ * the comment's own claimed content by itself. It trusts only:
  *   (a) the AUTHENTICATED comment-author identity the platform channel
  *       returns -- never a self-declared `reviewer` field in the body;
  *   (b) a base-anchored `authorizedDeterminers` allowlist -- never a value

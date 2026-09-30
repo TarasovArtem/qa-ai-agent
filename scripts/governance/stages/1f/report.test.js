@@ -81,7 +81,7 @@ test("a Phase 2 report (ci omitted, 1F.CI record present) is marked finalized", 
   // Corrective C2: the 1F.CI record must now be a valid CI evidence record (a bare
   // record with empty `observed` is exactly the malformed input W4-C1-DEV-M1 rejects).
   const ciEvidence = { ...genericRecord("1F.CI", "1F", "PASS"), observed: { classification: "CLEAN_FIRST_PASS" } };
-  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), ciEvidence] }));
+  const r = buildReport(baseInput({ ci: undefined, trustedContext: trustedContext({ phase: 2 }), records: [genericRecord("1A.IDENTITY", "1A", "PASS"), ciEvidence] }));
   assert.equal(r.ok, true);
   assert.equal(r.report.finalized, true);
 });
@@ -157,9 +157,11 @@ const ciRecord = (observed, overrides = {}) => ({
   checkId: "1F.CI", ownerStage: "1F", status: "PASS", subject, observed, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [], ...overrides,
 });
 
+const phase2Input = (overrides = {}) => baseInput({ ci: undefined, trustedContext: trustedContext({ phase: 2 }), ...overrides });
+
 test("DEV-C1-02: a CLEAN_FIRST_PASS finalized report's ci carries the classification, with no determination fields", () => {
   const record = ciRecord({ classification: "CLEAN_FIRST_PASS" });
-  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  const r = buildReport(phase2Input({ records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
   assert.equal(r.ok, true);
   assert.deepEqual(r.report.ci, { classification: "CLEAN_FIRST_PASS" });
 });
@@ -177,11 +179,11 @@ test("DEV-C1-03/09 (corrected by C2): a PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN rec
     determinationMode: "SEPARATE_PERSON", contentDigest: "d".repeat(64), channelObjectId: "comment-1", version: "v1",
   };
   const records = [genericRecord("1A.IDENTITY", "1A", "PASS"), ciRecord(observed)];
-  const withoutEvidence = buildReport(baseInput({ ci: undefined, records }));
+  const withoutEvidence = buildReport(phase2Input({ records }));
   assert.equal(withoutEvidence.ok, false);
   assert.match(withoutEvidence.reason, /exactly one externalEvidence entry/);
   const evidence = { sourceObjectId: "comment-1", sourceVersion: "v1", contentDigest: "d".repeat(64), collectedAt: "t", immutability: "MUTABLE" };
-  const consistent = buildReport(baseInput({ ci: undefined, records, externalEvidence: [evidence] }));
+  const consistent = buildReport(phase2Input({ records, externalEvidence: [evidence] }));
   assert.equal(consistent.ok, false);
   assert.match(consistent.reason, /cannot be produced by collectCiEvidence\(\) in this configuration/);
 });
@@ -192,7 +194,7 @@ test("DEV-C1-04/05/06/07: an OWNER_ATTESTED-evidenced HUMAN_REVIEW_REQUIRED fina
     candidateClassification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN",
   };
   const record = ciRecord(observed, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "OWNER_SELF_DETERMINATION" });
-  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  const r = buildReport(phase2Input({ records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
   assert.equal(r.ok, true);
   assert.equal(r.report.ci.rerunObserved, true);
   assert.equal(r.report.ci.attestationMode, "OWNER_ATTESTED");
@@ -203,7 +205,7 @@ test("DEV-C1-04/05/06/07: an OWNER_ATTESTED-evidenced HUMAN_REVIEW_REQUIRED fina
 
 test("DEV-C1-08: a record with no authenticatedActor/rerunObserved (a rejected or absent determination) never has those fields fabricated into ci", () => {
   const record = ciRecord({ classification: "HUMAN_REVIEW_REQUIRED" }, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "CI_UNEXPLAINED_RERUN" });
-  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  const r = buildReport(phase2Input({ records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
   assert.equal(r.ok, true);
   assert.deepEqual(r.report.ci, { classification: "HUMAN_REVIEW_REQUIRED" });
   assert.equal("authenticatedActor" in r.report.ci, false);
@@ -215,7 +217,7 @@ test("DEV-C1-08: a record with no authenticatedActor/rerunObserved (a rejected o
 // reached READY with no classification at all (W4-C1-DEV-M1). It is now rejected.
 test("DEV-C1-12/13 (corrected by C2): a 1F.CI record with no classification is rejected, never projected as { collected: true, classification: null }", () => {
   const record = ciRecord({ somethingElse: true });
-  const r = buildReport(baseInput({ ci: undefined, records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
+  const r = buildReport(phase2Input({ records: [genericRecord("1A.IDENTITY", "1A", "PASS"), record] }));
   assert.equal(r.ok, false);
   assert.match(r.reason, /classification is missing or not one of the canonical classifications/);
 });
@@ -242,7 +244,10 @@ test("DEV-C1-10: report.ci cannot be independently overwritten by caller-supplie
 const { renderMarkdown } = require("./render-markdown");
 
 const identity = () => genericRecord("1A.IDENTITY", "1A", "PASS");
-const finalize = (ciRecords, extra = {}) => buildReport(baseInput({ ci: undefined, records: [identity(), ...ciRecords], ...extra }));
+// Corrective C3 (W4-C2R-DEV-L1): a Phase 2 (finalized) report must declare
+// trustedContext.phase === 2, or buildReport() now rejects the phase/ci
+// mismatch before ever reaching aggregation.
+const finalize = (ciRecords, extra = {}) => buildReport(baseInput({ ci: undefined, trustedContext: trustedContext({ phase: 2 }), records: [identity(), ...ciRecords], ...extra }));
 const acceptedDetermination = (overrides = {}) => ({
   classification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN",
   authenticatedActor: { provider: "github", accountId: "555", accountType: "User" },
@@ -312,7 +317,7 @@ test("DEV-C2-14/15/16: duplicate, cross-HEAD and mixed Phase 1/Phase 2 CI record
 });
 
 test("DEV-C2-17: a valid first-pass record produces the canonical CI projection and is the only path to READY", () => {
-  const r = finalize([ciRecord({ classification: "CLEAN_FIRST_PASS", repository: "o/r", runId: "1" })]);
+  const r = finalize([ciRecord({ classification: "CLEAN_FIRST_PASS" })]);
   assert.equal(r.ok, true);
   assert.equal(r.report.finalized, true);
   assert.deepEqual(r.report.ci, { classification: "CLEAN_FIRST_PASS" });
@@ -364,4 +369,352 @@ test("DEV-C2-20: no malformed finalized CI evidence produces a READY report", ()
       assert.equal(r.ok, false, JSON.stringify(record.observed));
     }
   }
+});
+
+// ======================================================================
+// Corrective C3 (W4-C2R-DEV-M1): missing-CI never reaches READY
+// ======================================================================
+//
+// The independent C2 re-review reproduced: input.ci undefined or null,
+// input.records containing no 1F.CI record -> ok:true, readiness.state:READY,
+// overallStatus:PASS, finalized:false, ci:{state:"NOT_COLLECTED"}, zero 1F.CI
+// records. Neither Phase 1 nor Phase 2 was actually supplied; this is now a
+// configuration failure, never a successful report.
+
+test("C3-DEV-M1-01: ci omitted and no 1F.CI record -- rejected, never a successful report", () => {
+  const r = buildReport(baseInput({ ci: undefined, records: [identity()] }));
+  assert.equal(r.ok, false);
+  assert.equal(r.report, null);
+  assert.match(r.reason, /neither was supplied/);
+});
+
+test("C3-DEV-M1-02: ci explicitly null and no 1F.CI record -- rejected the same way as omitted", () => {
+  const r = buildReport(baseInput({ ci: null, records: [identity()] }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /neither was supplied/);
+});
+
+test("C3-DEV-M1-03: ci omitted with otherwise-all-PASS Stage 1A-1E records still cannot reach READY -- the exact reviewer reproduction", () => {
+  const r = buildReport(baseInput({
+    ci: undefined,
+    records: [identity(), genericRecord("1B.MARKDOWN", "1B", "PASS"), genericRecord("1E.DOMAIN.X", "1E", "PASS")],
+  }));
+  assert.equal(r.ok, false);
+  assert.notEqual(r.ok && r.report && r.report.readiness.state, "READY");
+});
+
+test("C3-DEV-M1-04: ci null with otherwise-all-PASS records -- same rejection", () => {
+  const r = buildReport(baseInput({ ci: null, records: [identity(), genericRecord("1B.MARKDOWN", "1B", "PASS")] }));
+  assert.equal(r.ok, false);
+});
+
+test("C3-DEV-M1-05: explicit Phase 1 NOT_COLLECTED remains NOT_READY (unaffected by this corrective)", () => {
+  const r = buildReport(baseInput({ ci: { state: "NOT_COLLECTED" }, records: [identity()] }));
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "NOT_READY");
+});
+
+test("C3-DEV-M1-06: exactly one valid Phase 2 1F.CI record is accepted, subject to all other canonical requirements", () => {
+  const r = finalize([ciRecord({ classification: "CLEAN_FIRST_PASS" })]);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
+test("C3-DEV-M1-07: duplicate 1F.CI records are rejected (pre-existing DEV-C2-14 coverage, reconfirmed here under the DEV-M1 numbering)", () => {
+  const r = finalize([ciRecord({ classification: "CLEAN_FIRST_PASS" }), ciRecord({ classification: "FAIL" }, { status: "FAIL", reasonCode: "CI_REQUIRED_JOB_FAILED" })]);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /more than one 1F\.CI record/);
+});
+
+test("C3-DEV-M1-08: a Phase 1 marker plus a collected record is rejected (pre-existing DEV-C1-14 coverage, reconfirmed here)", () => {
+  const r = buildReport(baseInput({ ci: { state: "NOT_COLLECTED" }, records: [identity(), ciRecord({ classification: "CLEAN_FIRST_PASS" })] }));
+  assert.equal(r.ok, false);
+});
+
+test("C3-DEV-M1-09: a wrong-subject 1F.CI record is rejected", () => {
+  const wrongSubject = { ...subject, head: "b".repeat(40) };
+  const r = finalize([ciRecord({ classification: "CLEAN_FIRST_PASS" }, { subject: wrongSubject })]);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /subject differs/);
+});
+
+test("C3-DEV-M1-10: empty records[] alone (no CI, no Phase 1 marker) never accidentally succeeds", () => {
+  const r = buildReport(baseInput({ ci: undefined, records: [] }));
+  assert.equal(r.ok, false);
+});
+
+// ======================================================================
+// Corrective C3 (W4-C2R-DEV-M2): CI-run externalEvidence completeness
+// ======================================================================
+
+const { computeCiRunDigest, ciRunSourceObjectId } = require("./ci-evidence");
+
+const runObserved = (overrides = {}) => ({
+  classification: "CLEAN_FIRST_PASS", repository: "TarasovArtem/qa-ai-agent", workflowPath: ".github/workflows/cypress.yml",
+  runId: "42", event: "pull_request", attempt: 1, status: "completed", requiredJobs: ["Unit tests"],
+  missing: [], failed: [], pending: [], skipped: [], attemptHistory: [], ...overrides,
+});
+const runDigestOf = (o) => computeCiRunDigest({
+  repository: o.repository, workflowPath: o.workflowPath, runId: o.runId, event: o.event, headSha: subject.head,
+  attempt: o.attempt, status: o.status, requiredJobs: o.requiredJobs, missing: o.missing, failed: o.failed, pending: o.pending, skipped: o.skipped,
+  attemptHistory: o.attemptHistory,
+});
+const runEvidenceFor = (o, overrides = {}) => ({
+  sourceObjectId: ciRunSourceObjectId({ repository: o.repository, runId: o.runId }), sourceVersion: String(o.attempt),
+  contentDigest: runDigestOf(o), collectedAt: "t", immutability: "MUTABLE", ...overrides,
+});
+
+test("C3-DEV-M2-01: a CLEAN_FIRST_PASS record with matching CI-run externalEvidence is accepted and reaches READY", () => {
+  const o = runObserved();
+  const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o)] });
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
+test("C3-DEV-M2-02: a finalized report with full run-evidence fields but NO CI-run externalEvidence entry is rejected", () => {
+  const o = runObserved();
+  const r = finalize([ciRecord(o)], { externalEvidence: [] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exactly one externalEvidence entry for the represented CI run/);
+});
+
+test("C3-DEV-M2-03: wrong-repository CI-run evidence (a different repository's ci-run: entry) is rejected", () => {
+  const o = runObserved();
+  const wrong = runEvidenceFor(runObserved({ repository: "someone-else/other-repo" }));
+  const r = finalize([ciRecord(o)], { externalEvidence: [wrong] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exactly one externalEvidence entry for the represented CI run/);
+});
+
+test("C3-DEV-M2-04/05: wrong-HEAD and wrong-run CI evidence are rejected", () => {
+  const o = runObserved();
+  const wrongRun = runEvidenceFor(runObserved({ runId: "99" }));
+  const r1 = finalize([ciRecord(o)], { externalEvidence: [wrongRun] });
+  assert.equal(r1.ok, false, "wrong run");
+  // "Wrong HEAD" for CI-run evidence is expressed as a digest mismatch, because
+  // the digest binds to record.subject.head (there is no separate headSha field
+  // in the canonical entry or the observed payload -- see report.js's comment).
+  const wrongHeadDigest = { ...runEvidenceFor(o), contentDigest: "f".repeat(64) };
+  const r2 = finalize([ciRecord(o)], { externalEvidence: [wrongHeadDigest] });
+  assert.equal(r2.ok, false, "wrong head (digest mismatch)");
+  assert.match(r2.reason, /digest does not match/);
+});
+
+test("C3-DEV-M2-06: wrong-attempt (version) evidence is rejected", () => {
+  const o = runObserved();
+  const wrongVersion = { ...runEvidenceFor(o), sourceVersion: "99" };
+  const r = finalize([ciRecord(o)], { externalEvidence: [wrongVersion] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /version does not match the represented attempt/);
+});
+
+test("C3-DEV-M2-14: a partial/incomplete set of run-evidence observed fields is rejected outright (never silently treated as absent)", () => {
+  const r = finalize([ciRecord({ classification: "CLEAN_FIRST_PASS", repository: "o/r" })]);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /run-evidence fields are incomplete/);
+});
+
+test("C3-DEV-M2-16/17: a changed digest or version between the record and its externalEvidence entry is rejected (this is the report-boundary consistency half of design section 25a; decision-time revalidation itself is kernel/revalidation.js's job, exercised in two-phase.test.js)", () => {
+  const o = runObserved();
+  const badDigest = { ...runEvidenceFor(o), contentDigest: "0".repeat(64) };
+  assert.equal(finalize([ciRecord(o)], { externalEvidence: [badDigest] }).ok, false);
+});
+
+test("C3-DEV-M2-11/12: CI-run evidence must be MUTABLE -- VERIFIED_PROVIDER or VERIFIED_CRYPTO is rejected even with an otherwise-correct entry", () => {
+  const o = runObserved();
+  for (const immutability of ["VERIFIED_PROVIDER", "VERIFIED_CRYPTO"]) {
+    const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o, { immutability })] });
+    assert.equal(r.ok, false, immutability);
+    assert.match(r.reason, /must be MUTABLE/);
+  }
+});
+
+test("C3-DEV-M2-20: an accepted determination's externalEvidence entry cannot substitute for the mandatory CI-run entry (they are distinct sources, matched by distinct sourceObjectId namespaces)", () => {
+  const o = runObserved();
+  const determinationOnly = evidenceEntry(); // sourceObjectId "comment-1" -- not a ci-run: entry
+  const r = finalize([ciRecord(o)], { externalEvidence: [determinationOnly] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exactly one externalEvidence entry for the represented CI run/);
+});
+
+test("C3-DEV-M2-24: two CI-run evidence entries claiming the SAME sourceObjectId (ambiguous identity) are rejected, never silently resolved by picking one", () => {
+  const o = runObserved();
+  const entry = runEvidenceFor(o);
+  const decoy = { ...entry, contentDigest: "9".repeat(64) };
+  const r = finalize([ciRecord(o)], { externalEvidence: [entry, decoy] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exactly one externalEvidence entry for the represented CI run/);
+});
+
+test("C3-DEV-M2-25: normal first-pass classification with correct CI-run evidence remains fully functional end to end", () => {
+  const o = runObserved();
+  const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o)] });
+  assert.equal(r.ok, true);
+  assert.equal(r.report.overallStatus, "PASS");
+});
+
+// W4-C2R-INFO-2: CLEAN_FIRST_PASS internal-consistency check (a narrow
+// sanity check on the record's own canonical fields, not a second classifier).
+
+test("W4-C2R-INFO-2: a CLEAN_FIRST_PASS record claiming attempt > 1, a non-empty attempt history, or a non-empty missing/failed/pending list is rejected as internally inconsistent", () => {
+  const attemptTwo = runObserved({ attempt: 2 });
+  assert.equal(finalize([ciRecord(attemptTwo)], { externalEvidence: [runEvidenceFor(attemptTwo)] }).ok, false, "attempt 2");
+  const withHistory = runObserved({ attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Unit tests"] }] });
+  assert.equal(finalize([ciRecord(withHistory)], { externalEvidence: [runEvidenceFor(withHistory)] }).ok, false, "non-empty history");
+  const withFailed = runObserved({ failed: ["Unit tests"] });
+  assert.equal(finalize([ciRecord(withFailed)], { externalEvidence: [runEvidenceFor(withFailed)] }).ok, false, "non-empty failed");
+  const withMissing = runObserved({ missing: ["Cypress"] });
+  assert.equal(finalize([ciRecord(withMissing)], { externalEvidence: [runEvidenceFor(withMissing)] }).ok, false, "non-empty missing");
+});
+
+test("a genuinely consistent CLEAN_FIRST_PASS record (attempt 1, empty history, empty missing/failed/pending) is accepted", () => {
+  const o = runObserved();
+  const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o)] });
+  assert.equal(r.ok, true);
+});
+
+// ======================================================================
+// Corrective C3 (W4-C2R-DEV-L1): phase / finalized consistency
+// ======================================================================
+
+test("C3-DEV-L1-01: trustedContext.phase 1 with ci omitted (finalized-shaped input) is rejected", () => {
+  const r = buildReport(baseInput({ ci: undefined, trustedContext: trustedContext({ phase: 1 }), records: [identity(), ciRecord({ classification: "CLEAN_FIRST_PASS" })] }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Phase 1 requires the explicit/);
+});
+
+test("C3-DEV-L1-02: phase 1 with a collected CI record present (via omitted ci) is rejected -- same check, restated for the collected-record case", () => {
+  const o = runObserved();
+  const r = buildReport(baseInput({
+    ci: undefined, trustedContext: trustedContext({ phase: 1 }), records: [identity(), ciRecord(o)], externalEvidence: [runEvidenceFor(o)],
+  }));
+  assert.equal(r.ok, false);
+});
+
+test("C3-DEV-L1-03: phase 1 with the explicit NOT_COLLECTED marker remains NOT_READY (the valid Phase 1 shape)", () => {
+  const r = buildReport(baseInput({ ci: { state: "NOT_COLLECTED" }, trustedContext: trustedContext({ phase: 1 }), records: [identity()] }));
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "NOT_READY");
+});
+
+test("C3-DEV-L1-04: phase 2 with valid collected CI and externalEvidence is accepted", () => {
+  const o = runObserved();
+  const r = buildReport(baseInput({
+    ci: undefined, trustedContext: trustedContext({ phase: 2 }), records: [identity(), ciRecord(o)], externalEvidence: [runEvidenceFor(o)],
+  }));
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
+test("C3-DEV-L1-05: phase 2 without mandatory CI evidence cannot reach READY (restates DEV-M1 under the phase-2-declared case)", () => {
+  const r = buildReport(baseInput({ ci: undefined, trustedContext: trustedContext({ phase: 2 }), records: [identity()] }));
+  assert.equal(r.ok, false);
+});
+
+test("C3-DEV-L1-06: mixed-phase records (ci NOT_COLLECTED marker plus a collected record) are rejected regardless of the declared phase", () => {
+  const clean = ciRecord({ classification: "CLEAN_FIRST_PASS" });
+  for (const phase of [1, 2]) {
+    const r = buildReport(baseInput({ ci: { state: "NOT_COLLECTED" }, trustedContext: trustedContext({ phase }), records: [identity(), clean] }));
+    assert.equal(r.ok, false, `phase ${phase}`);
+  }
+});
+
+test("C3-DEV-L1-07: the final report's trustedContext.phase agrees with its own finalized and ci fields for both valid shapes", () => {
+  const p1 = buildReport(baseInput({ ci: { state: "NOT_COLLECTED" }, trustedContext: trustedContext({ phase: 1 }), records: [identity()] }));
+  assert.equal(p1.report.trustedContext.phase, 1);
+  assert.equal(p1.report.finalized, false);
+  assert.deepEqual(p1.report.ci, { state: "NOT_COLLECTED" });
+
+  const o = runObserved();
+  const p2 = buildReport(baseInput({
+    ci: undefined, trustedContext: trustedContext({ phase: 2 }), records: [identity(), ciRecord(o)], externalEvidence: [runEvidenceFor(o)],
+  }));
+  assert.equal(p2.report.trustedContext.phase, 2);
+  assert.equal(p2.report.finalized, true);
+  assert.equal(p2.report.ci.classification, "CLEAN_FIRST_PASS");
+});
+
+// ======================================================================
+// Corrective C3 (W4-C2R-SEC-L1): single input snapshot (TOCTOU elimination)
+// ======================================================================
+//
+// The independent C2 re-review reproduced: a 1F.CI record's `observed` object
+// exposing a getter for `classification` that returns "CLEAN_FIRST_PASS" the
+// first time it is read (validation) and "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN"
+// the second time (projection into report.ci) -- validating one value and
+// publishing another. cloneJson() at the buildReport() boundary reads every
+// property exactly once, so this is no longer reachable.
+
+function getterRecord(reads) {
+  const observed = {};
+  Object.defineProperty(observed, "classification", { enumerable: true, get: () => reads.shift() });
+  return { checkId: "1F.CI", ownerStage: "1F", status: "PASS", subject, observed, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+}
+
+test("C3-SEC-L1-01/02/03: a classification getter that would return a different, more privileged value on a second read is neutralized -- cloneJson() reads it exactly once, so the record is validated and published against the SAME (first) value", () => {
+  // If this were still a two-read TOCTOU, the queue [CLEAN_FIRST_PASS, PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN]
+  // would let validation see the safe value and projection see the privileged one. With a single snapshot
+  // read, only the FIRST queued value is ever observed, and it alone determines both validation and ci.
+  const reads = ["CLEAN_FIRST_PASS", "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN"];
+  const r = finalize([getterRecord(reads)]);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.ci.classification, "CLEAN_FIRST_PASS");
+  assert.equal(r.report.overallStatus, "PASS");
+  // the getter must have been consulted exactly once (one value left unconsumed), proving no second read occurred
+  assert.equal(reads.length, 1);
+});
+
+test("C3-SEC-L1-04: mutating a caller-held nested object (records[], externalEvidence[]) after calling buildReport() never changes the returned report", () => {
+  const o = runObserved();
+  const records = [identity(), ciRecord(o)];
+  const externalEvidence = [runEvidenceFor(o)];
+  const r = finalize(records.slice(1), { records: [identity(), ciRecord(o)], externalEvidence });
+  const before = JSON.stringify(r.report);
+  records[0].status = "FAIL";
+  externalEvidence[0].contentDigest = "0".repeat(64);
+  assert.equal(JSON.stringify(r.report), before);
+});
+
+test("C3-SEC-L1-05: a cyclic object anywhere in the input fails closed (CONFIGURATION_ERROR-shaped rejection), never a partial report", () => {
+  const cyclic = { checkId: "1F.CI", ownerStage: "1F", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  cyclic.observed.self = cyclic;
+  const r = buildReport(phase2Input({ records: [identity(), cyclic] }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /cyclic/);
+});
+
+test("C3-SEC-L1-06: a BigInt anywhere in a required plain-data object fails closed", () => {
+  const withBigInt = { checkId: "1F.CI", ownerStage: "1F", status: "PASS", subject, observed: { classification: "CLEAN_FIRST_PASS", n: 10n }, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  const r = buildReport(phase2Input({ records: [identity(), withBigInt] }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /BigInt/);
+});
+
+test("C3-SEC-L1-07: a malformed toJSON() response on a supplied record cannot produce READY -- its result is validated downstream like any other shape, never trusted merely because it came from toJSON()", () => {
+  const record = { toJSON: () => ({ checkId: "1F.CI", ownerStage: "1F", status: "PASS" }) }; // missing subject/observed/etc.
+  const r = buildReport(phase2Input({ records: [identity(), record] }));
+  assert.equal(r.ok, false);
+});
+
+test("C3-SEC-L1-08: JSON (report.records[].observed) and the projected report.ci never disagree about the accepted classification", () => {
+  const o = runObserved();
+  const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o)] });
+  assert.equal(r.ok, true);
+  const rec = r.report.records.find((x) => x.checkId === "1F.CI");
+  assert.equal(rec.observed.classification, r.report.ci.classification);
+});
+
+test("C3-SEC-L1-09: a stable, valid plain-data object (no getters, no toJSON) preserves existing behavior exactly", () => {
+  const o = runObserved();
+  const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o)] });
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
+test("C3-SEC-L1-10: kernel aggregation consumes the validated snapshot, not the original mutable records array -- a mutation to the original array after the call never changes counts/readiness", () => {
+  const records = [identity()];
+  const r = buildReport(baseInput({ records }));
+  const beforeCounts = JSON.stringify(r.report.counts);
+  records.push(genericRecord("1B.MARKDOWN", "1B", "FAIL"));
+  assert.equal(JSON.stringify(r.report.counts), beforeCounts);
 });
