@@ -49,6 +49,31 @@
  * while structuring the call as Phase 2 (or vice versa) and get a
  * `finalized`/`readiness` combination that contradicted its own declared
  * phase. The two are now required to agree.
+ *
+ * CORRECTIVE C4 (W4-C2R-DEV-M2 / W4-C3R-DEV-L1 / W4-C3R-DEV-L2 / W4-C3R-SEC-L1):
+ * `validateCollectedCiRecord()` below was tightened along four axes -- see its
+ * own doc comment and the `IDENTITY_FIELDS`/shape-matching note above it for
+ * the exact rules: (1) a sparse PASS-mapped record with none of the
+ * completed-run evidence fields is now rejected outright, not merely records
+ * with a PARTIAL field subset; (2) every completed-run field is type/bound-
+ * validated before it ever reaches `computeCiRunDigest()`, so a malformed
+ * type fails closed with the canonical rejection rather than throwing; (3) an
+ * authentic pre-completion (queued/waiting/in_progress) collector record is
+ * now recognized as its own permissible shape, distinct from a partial
+ * completed-run record; (4) a completed-run record's repository and event are
+ * cross-bound to `trustedContext.repositoryId`/`eventType`.
+ *
+ * W4-C3R-INFO-2 (documented, not re-architected): the `cloneJson()` snapshot
+ * at this function's boundary normalizes a few JSON-only-representable
+ * distinctions -- `undefined` values and functions are dropped rather than
+ * preserved, and `NaN`/`Infinity` become `null`. None of the fields this
+ * module treats as authority-bearing (SHA-40 hex strings, canonical enum
+ * values, digests, bounded strings, integers checked with `Number.isInteger`)
+ * can silently acquire a different TRUSTED meaning through this normalization
+ * -- a `null` or dropped key still fails the same explicit presence/type
+ * checks a live `undefined` or a non-numeric value would have failed. This
+ * has been checked field-by-field for the current schema; it is not a
+ * standing guarantee for a future field added without the same check.
  */
 
 "use strict";
@@ -60,7 +85,7 @@ const { validateResultRecord, cloneJson } = require("../../kernel/results");
 const { isValidSubject, sameSubject } = require("../common");
 const { CLASSIFICATION_CONTRACT } = require("./ci-classify");
 const { UNMET_TRUST_PREREQUISITES } = require("./determination");
-const { ciRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
+const { ciRunSourceObjectId, isCiRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const REPOSITORY_ID = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
@@ -94,6 +119,81 @@ function isValidAuthenticatedActor(actor) {
     isBoundedString(actor.provider, 32) && isBoundedString(actor.accountId, 100) && isBoundedString(actor.accountType, 32);
 }
 
+// ---------------------------------------------------------------- Corrective C4: permissible 1F.CI observed shapes
+//
+// collectCiEvidence() (stages/1f/ci-evidence.js) produces exactly three
+// families of `observed` shape, discriminated by KEY SET alone (never by
+// value inspection, which would risk treating a malformed value as absent):
+//   A. pre-completion, fetch failed / wrong identity: {classification, collected:false, reason}
+//   B. pre-completion, not yet completed (queued/waiting/in_progress):
+//      {classification, collected:true, status}
+//   C. completed-run (any of the 5 classifications): {classification, status,
+//      repository, workflowPath, runId, event, attempt, requiredJobs, missing,
+//      failed, pending, skipped, attemptHistory}, optionally extended with the
+//      full DETERMINATION_FIELDS or ATTESTATION_FIELDS set.
+// A record matching none of these three key sets is rejected outright --
+// never partially trusted, never inferred. This closes W4-C2R-DEV-M2 (a
+// sparse {classification:"CLEAN_FIRST_PASS"} record with none of shape C's
+// fields matched none of the OLD "all-or-nothing" checks below because those
+// only fired when at least one run-evidence field was present) without
+// reopening W4-C3R-DEV-L2 (an authentic shape-B in-progress record, which
+// legitimately shares the `status` key with shape C but none of shape C's
+// identity fields, was previously misclassified as "partial run evidence").
+
+const IDENTITY_FIELDS = ["repository", "workflowPath", "runId", "event", "attempt", "requiredJobs", "missing", "failed", "pending", "skipped", "attemptHistory"];
+const NOT_COMPLETED_STATUSES = new Set(["in_progress", "queued", "waiting"]);
+const SHAPE_A_KEY_SET = new Set(["classification", "collected", "reason"]);
+const SHAPE_B_KEY_SET = new Set(["classification", "collected", "status"]);
+const COMPLETED_RUN_BASE_KEY_SET = new Set(["classification", "status", ...IDENTITY_FIELDS]);
+const MAX_JOB_NAME = 200;
+const MAX_JOBS_LIST = 256;
+const MAX_ATTEMPTS_LIST = 64;
+const MAX_ATTEMPT_NUMBER = 1000;
+const RUN_EVENTS = new Set(["pull_request", "push"]);
+
+function keySetsEqual(a, b) {
+  return a.size === b.size && [...a].every((k) => b.has(k));
+}
+
+function isJobNameArray(v, max) {
+  return Array.isArray(v) && v.length <= max && v.every((j) => typeof j === "string" && j.length > 0 && j.length <= MAX_JOB_NAME);
+}
+
+function isValidAttemptHistoryEntry(e) {
+  if (!isPlainObject(e)) return false;
+  if (Object.keys(e).sort().join(",") !== "attempt,conclusion,failedJobs") return false;
+  if (!Number.isInteger(e.attempt) || e.attempt < 1 || e.attempt > MAX_ATTEMPT_NUMBER) return false;
+  if (typeof e.conclusion !== "string" || e.conclusion.length === 0 || e.conclusion.length > 32) return false;
+  return isJobNameArray(e.failedJobs, MAX_JOBS_LIST);
+}
+
+/**
+ * isValidCiRunIdentity(o) -- Corrective C4 (W4-C3R-DEV-L1). Full type/bound/
+ * shape validation of every field a completed-run-shaped record carries,
+ * called ONLY after key-set matching already confirmed the record is
+ * shape C -- computeCiRunDigest() below must never receive a value that has
+ * not passed this check first (a malformed type reaching it, e.g.
+ * `requiredJobs: 5` or `attemptHistory: [null]`, would previously throw an
+ * uncaught TypeError deep inside the digest computation instead of the
+ * canonical `{ok:false, reason}` rejection every other input-validation
+ * failure in this framework produces).
+ */
+function isValidCiRunIdentity(o) {
+  if (typeof o.repository !== "string" || !REPOSITORY_ID.test(o.repository)) return false;
+  if (typeof o.workflowPath !== "string" || o.workflowPath.length === 0 || o.workflowPath.length > 300) return false;
+  if (typeof o.runId !== "string" || o.runId.length === 0 || o.runId.length > 64) return false;
+  if (!RUN_EVENTS.has(o.event)) return false;
+  if (!Number.isInteger(o.attempt) || o.attempt < 1 || o.attempt > MAX_ATTEMPT_NUMBER) return false;
+  if (o.status !== "completed") return false;
+  if (!isJobNameArray(o.requiredJobs, MAX_JOBS_LIST) || o.requiredJobs.length === 0) return false;
+  if (new Set(o.requiredJobs).size !== o.requiredJobs.length) return false;
+  if (!isJobNameArray(o.missing, MAX_JOBS_LIST)) return false;
+  if (!isJobNameArray(o.failed, MAX_JOBS_LIST)) return false;
+  if (!isJobNameArray(o.pending, MAX_JOBS_LIST)) return false;
+  if (!isJobNameArray(o.skipped, MAX_JOBS_LIST)) return false;
+  return Array.isArray(o.attemptHistory) && o.attemptHistory.length <= MAX_ATTEMPTS_LIST && o.attemptHistory.every(isValidAttemptHistoryEntry);
+}
+
 /**
  * validateCollectedCiRecord(record, subject, externalEvidence) -- Corrective C2
  * (W4-C1-DEV-M1). Runtime validation (design section 20) of the one supplied
@@ -117,7 +217,7 @@ function isValidAuthenticatedActor(actor) {
  * PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN record did not come from it and is
  * rejected even when internally consistent (Corrective C2 / W4-SEC-H1).
  */
-function validateCollectedCiRecord(record, subject, externalEvidence) {
+function validateCollectedCiRecord(record, subject, externalEvidence, trustedContext) {
   const checked = validateResultRecord(record);
   if (!checked.ok) return "the 1F.CI record is not a valid result record";
   if (record.ownerStage !== "1F") return "the 1F.CI record must be owned by stage 1F";
@@ -157,52 +257,82 @@ function validateCollectedCiRecord(record, subject, externalEvidence) {
     return "reasonCode OWNER_SELF_DETERMINATION requires the OWNER_ATTESTED metadata";
   }
 
-  // Corrective C3 (W4-C2R-DEV-M2): a record produced past a completed,
-  // validated run fetch always carries these run-evidence fields (see
-  // stages/1f/ci-evidence.js#collectCiEvidence()'s final ciRecord() call); a
-  // record from an earlier exit (fetch failure, wrong identity, in-progress
-  // run) never does, and never requires CI-run externalEvidence (there is no
-  // completed run to pin). When present, the finalized report must carry
-  // EXACTLY ONE externalEvidence entry for THIS run, and its digest must
-  // match what the observed evidence itself implies -- an unrelated, missing,
-  // wrong-repository/HEAD/run/attempt, or digest-mismatched entry is rejected
-  // rather than silently accepted or silently left absent.
-  const runFields = ["repository", "workflowPath", "runId", "event", "attempt", "status", "requiredJobs", "missing", "failed", "pending", "skipped", "attemptHistory"];
-  const hasRunEvidence = runFields.every((k) => Object.hasOwn(o, k));
-  const someRunFields = runFields.some((k) => Object.hasOwn(o, k));
-  if (someRunFields && !hasRunEvidence) return "the 1F.CI record's run-evidence fields are incomplete";
-  if (hasRunEvidence) {
-    if (typeof o.repository !== "string" || typeof o.workflowPath !== "string" || typeof o.runId !== "string") return "the 1F.CI record's run identity fields are malformed";
+  // Corrective C4 (W4-C2R-DEV-M2 / W4-C3R-DEV-L2): the record's observed key
+  // set must match EXACTLY one of the three permissible shapes (see the
+  // module note above `IDENTITY_FIELDS`); anything else -- including a sparse
+  // record with none of shape C's fields, or a partial subset -- is rejected.
+  const keySet = new Set(Object.keys(o));
+  const someIdentityFields = IDENTITY_FIELDS.some((k) => keySet.has(k));
+  const isShapeA = keySetsEqual(keySet, SHAPE_A_KEY_SET) && o.collected === false;
+  const isShapeB = keySetsEqual(keySet, SHAPE_B_KEY_SET) && o.collected === true && NOT_COMPLETED_STATUSES.has(o.status);
+  const completedRunKeySet = new Set([...COMPLETED_RUN_BASE_KEY_SET, ...(hasDetermination ? DETERMINATION_FIELDS : hasAttestation ? ATTESTATION_FIELDS : [])]);
+  const isCompletedRunShaped = keySetsEqual(keySet, completedRunKeySet);
+
+  if (!isShapeA && !isShapeB && !isCompletedRunShaped) {
+    return someIdentityFields
+      ? "the 1F.CI record's run-evidence fields are incomplete or contain unexpected fields"
+      : "the 1F.CI record's observed evidence does not match a permissible shape (pre-completion fetch-failure, pre-completion not-yet-completed, or completed-run)";
+  }
+  // Every PASS-mapped classification (CLEAN_FIRST_PASS, and in a future
+  // configuration PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN) requires the complete
+  // CI-run evidence contract -- never merely "some run-evidence field was
+  // present" (the exact reproduced W4-C2R-DEV-M2 defect: a bare
+  // {classification:"CLEAN_FIRST_PASS"} record, matching neither shape A, B
+  // nor C, must be rejected here, not silently accepted because it also
+  // failed to match the OLD "someRunFields" partial-detection heuristic).
+  if (contract.status === STATUS.PASS && !isCompletedRunShaped) return "a PASS-mapped classification requires the complete CI-run evidence contract";
+
+  if (isCompletedRunShaped) {
+    // Corrective C4 (W4-C3R-DEV-L1): every field is type/bound-validated
+    // BEFORE any of it reaches computeCiRunDigest() -- a malformed type here
+    // (e.g. requiredJobs: 5, attemptHistory: [null]) must fail closed with
+    // the canonical rejection, never throw an uncaught TypeError.
+    if (!isValidCiRunIdentity(o)) return "the 1F.CI record's run-evidence fields are malformed or out of bounds";
+
+    // Corrective C4 (W4-C3R-SEC-L1): the represented run's repository and
+    // event are cross-bound to the trusted invocation context. This is a
+    // structural consistency check, not independent proof of platform
+    // authentication -- trustedContext itself is caller-assembled input,
+    // validated only for shape by isValidTrustedContext() above.
+    if (o.repository !== trustedContext.repositoryId) return "the 1F.CI record's repository does not match trustedContext.repositoryId";
+    if (o.event !== trustedContext.eventType) return "the 1F.CI record's event does not match trustedContext.eventType";
+
     // The record's `subject` (already checked equal to the report's subject
     // above) is the sole HEAD authority; the digest below binds to
     // record.subject.head, never to a headSha the observed payload might
     // otherwise claim, so there is no separate headSha field to trust here.
     const expectedSourceObjectId = ciRunSourceObjectId({ repository: o.repository, runId: o.runId });
-    const matchingRun = externalEvidence.filter((e) => e.sourceObjectId === expectedSourceObjectId);
-    if (matchingRun.length !== 1) return "the finalized report requires exactly one externalEvidence entry for the represented CI run";
+    // Corrective C4 (W4-C3R-INFO-3): every CI-run-shaped externalEvidence
+    // entry -- not just one matching by ID -- is inspected; an unrelated
+    // extra CI_RUN entry (e.g. for a different run) makes the report
+    // ambiguous and is rejected, never silently ignored.
+    const ciRunEntries = externalEvidence.filter((e) => isCiRunSourceObjectId(e.sourceObjectId));
+    if (ciRunEntries.length !== 1 || ciRunEntries[0].sourceObjectId !== expectedSourceObjectId) {
+      return "the finalized report requires exactly one CI-run externalEvidence entry, matching the represented run, and no unrelated CI-run entry";
+    }
+    const matchingRun = ciRunEntries[0];
     const expectedDigest = computeCiRunDigest({
       repository: o.repository, workflowPath: o.workflowPath, runId: o.runId, event: o.event, headSha: record.subject.head,
       attempt: o.attempt, status: o.status, requiredJobs: o.requiredJobs, missing: o.missing, failed: o.failed, pending: o.pending, skipped: o.skipped,
       attemptHistory: o.attemptHistory,
     });
-    if (matchingRun[0].contentDigest !== expectedDigest) return "the CI-run externalEvidence entry's digest does not match the represented CI evidence";
-    if (matchingRun[0].sourceVersion !== String(o.attempt)) return "the CI-run externalEvidence entry's version does not match the represented attempt";
-    if (matchingRun[0].immutability !== "MUTABLE") return "CI-run evidence must be MUTABLE -- it is never VERIFIED_PROVIDER or VERIFIED_CRYPTO merely because it was collected or hashed";
+    if (matchingRun.contentDigest !== expectedDigest) return "the CI-run externalEvidence entry's digest does not match the represented CI evidence";
+    if (matchingRun.sourceVersion !== String(o.attempt)) return "the CI-run externalEvidence entry's version does not match the represented attempt";
+    if (matchingRun.immutability !== "MUTABLE") return "CI-run evidence must be MUTABLE -- it is never VERIFIED_PROVIDER or VERIFIED_CRYPTO merely because it was collected or hashed";
 
     // W4-C2R-INFO-2: the observed facts a supplied record claims must remain
     // internally consistent with its own classification -- not a second
     // classifier, only a check that the SAME canonical facts the real
     // classifier (stages/1f/ci-classify.js) would have used are not
     // self-contradictory. CLEAN_FIRST_PASS specifically means "attempt 1, no
-    // rerun, every required job succeeded": a record claiming that
-    // classification while also claiming attempt > 1, or a non-empty
-    // missing/failed/pending list, is rejected.
+    // rerun, every required job succeeded, none skipped".
     if (o.classification === "CLEAN_FIRST_PASS") {
       if (o.attempt !== 1) return "CLEAN_FIRST_PASS is inconsistent with an attempt other than 1";
-      if (Array.isArray(o.attemptHistory) && o.attemptHistory.length > 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty attempt history";
-      if (!(Array.isArray(o.missing) && o.missing.length === 0)) return "CLEAN_FIRST_PASS is inconsistent with a non-empty missing-jobs list";
-      if (!(Array.isArray(o.failed) && o.failed.length === 0)) return "CLEAN_FIRST_PASS is inconsistent with a non-empty failed-jobs list";
-      if (!(Array.isArray(o.pending) && o.pending.length === 0)) return "CLEAN_FIRST_PASS is inconsistent with a non-empty pending-jobs list";
+      if (o.attemptHistory.length > 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty attempt history";
+      if (o.missing.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty missing-jobs list";
+      if (o.failed.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty failed-jobs list";
+      if (o.pending.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty pending-jobs list";
+      if (o.skipped.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty skipped-jobs list";
     }
   }
   return null;
@@ -367,7 +497,7 @@ function buildReport(rawInput) {
   const ciRecords = input.records.filter((r) => isPlainObject(r) && r.checkId === "1F.CI");
   if (ciRecords.length > 1) return invalidInput("records[] contains more than one 1F.CI record -- a report has exactly one CI evidence record");
   if (ciRecords.length === 1) {
-    const problem = validateCollectedCiRecord(ciRecords[0], subject, input.externalEvidence);
+    const problem = validateCollectedCiRecord(ciRecords[0], subject, input.externalEvidence, input.trustedContext);
     if (problem !== null) return invalidInput(`invalid 1F.CI record: ${problem}`);
   }
 

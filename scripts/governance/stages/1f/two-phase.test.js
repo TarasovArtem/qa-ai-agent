@@ -8,7 +8,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { buildReport } = require("./report");
-const { collectCiEvidence } = require("./ci-evidence");
+const { collectCiEvidence, ciRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
 const { renderMarkdown } = require("./render-markdown");
 const { revalidateEvidence } = require("../../kernel/revalidation");
 const { makeSubject } = require("../../test-support-git");
@@ -167,11 +167,31 @@ test("SEC-C2-18: forged evidence plus a forged revalidation response never estab
 });
 
 test("SEC-C2-22: an OWNER_ATTESTED CI record never lets a Phase 2 report reach READY", () => {
+  // Corrective C4 (W4-C2R-DEV-M2): a genuinely valid OWNER_ATTESTED record is
+  // always a completed-run rerun record too -- the sparse fixture this test
+  // used to rely on is rejected outright now (proven separately elsewhere);
+  // here the fixture carries the full CI-run evidence contract so the test
+  // actually exercises the OWNER_ATTESTED authority cap, not just shape rejection.
+  const ownerObserved = {
+    classification: "HUMAN_REVIEW_REQUIRED", repository: REPO, workflowPath: WORKFLOW, runId: "3", event: "pull_request",
+    attempt: 2, status: "completed", requiredJobs: REQUIRED, missing: [], failed: [], pending: [], skipped: [],
+    attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Unit tests"] }],
+    rerunObserved: true, attestationMode: "OWNER_ATTESTED", candidateClassification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN",
+  };
   const owner = {
     checkId: "1F.CI", ownerStage: "1F", status: "HUMAN_REVIEW_REQUIRED", subject, expected: null, reasonCode: "OWNER_SELF_DETERMINATION", detail: "", evidenceRefs: [],
-    observed: { classification: "HUMAN_REVIEW_REQUIRED", rerunObserved: true, attestationMode: "OWNER_ATTESTED", candidateClassification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN" },
+    observed: ownerObserved,
   };
-  const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, owner], ci: undefined }));
+  const ownerEvidence = {
+    sourceObjectId: ciRunSourceObjectId({ repository: ownerObserved.repository, runId: ownerObserved.runId }), sourceVersion: String(ownerObserved.attempt),
+    contentDigest: computeCiRunDigest({
+      repository: ownerObserved.repository, workflowPath: ownerObserved.workflowPath, runId: ownerObserved.runId, event: ownerObserved.event,
+      headSha: subject.head, attempt: ownerObserved.attempt, status: ownerObserved.status, requiredJobs: ownerObserved.requiredJobs,
+      missing: ownerObserved.missing, failed: ownerObserved.failed, pending: ownerObserved.pending, skipped: ownerObserved.skipped, attemptHistory: ownerObserved.attemptHistory,
+    }),
+    collectedAt: "t", immutability: "MUTABLE",
+  };
+  const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, owner], externalEvidence: [ownerEvidence], ci: undefined }));
   assert.equal(finalReport.ok, true);
   assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
   assertNeverPromoted(finalReport.report);
@@ -219,11 +239,43 @@ test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation agains
   assert.equal(revalidation1.records[0].status, "PASS");
 
   // Same repository, same HEAD, same run ID, a NEW attempt (2) with a failed required job.
-  const changedRun = { subject, repository: REPO, workflowPath: WORKFLOW, runId: "1", event: "pull_request", headSha: subject.head, attempt: 2, status: "completed", jobs: [{ name: "Unit tests", status: "completed", conclusion: "failure" }], attemptHistory: [{ attempt: 1, conclusion: "success", failedJobs: [] }] };
-  const changedRunAdapter = { fetch: async () => ({ ok: true, version: "2", digest: "0".repeat(64) }) }; // the run's current state no longer matches what was pinned
+  // Corrective C4 (W4-C3R-INFO-1): the changed run's current version/digest are not
+  // hardcoded -- they are DERIVED from the real production collector, run through the
+  // exact same collectCiEvidence() -> computeCiRunDigest() path as the original pinned
+  // evidence, so this genuinely composes producer and revalidator rather than merely
+  // asserting an arbitrary adapter response.
+  const changedRunAdapterFetch = {
+    fetchRun: async () => ({
+      ok: true,
+      run: { repository: REPO, workflowPath: WORKFLOW, runId: "1", event: "pull_request", headSha: subject.head, attempt: 2, status: "completed", jobs: [{ name: "Unit tests", status: "completed", conclusion: "failure" }], attemptHistory: [{ attempt: 1, conclusion: "success", failedJobs: [] }] },
+    }),
+  };
+  const changedCollection = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: changedRunAdapterFetch, requiredJobs: REQUIRED, now: NOW });
+  assert.equal(changedCollection.records[0].status, "FAIL");
+  const changedEntry = changedCollection.externalEvidence[0];
+  assert.equal(changedEntry.sourceObjectId, pinnedEntry.sourceObjectId, "same repository/run -- same source identity, only the version/digest changed");
+  assert.notEqual(changedEntry.contentDigest, pinnedEntry.contentDigest, "the digest must actually differ once a required job's conclusion changes");
+  const changedRunAdapter = { fetch: async () => ({ ok: true, version: changedEntry.sourceVersion, digest: changedEntry.contentDigest }) };
   const revalidation2 = await revalidateEvidence({ subject, items: items1, adapters: { CI_RUN: changedRunAdapter } });
   assert.equal(revalidation2.records[0].status, "INCOMPLETE");
   assert.equal(revalidation2.records[0].reasonCode, "STALE_EVIDENCE");
+
+  // Also test: same attempt number, but a changed required-job conclusion --
+  // this alone must still change the digest and produce STALE_EVIDENCE.
+  const sameAttemptChangedConclusionAdapter = {
+    fetchRun: async () => ({
+      ok: true,
+      run: { repository: REPO, workflowPath: WORKFLOW, runId: "1", event: "pull_request", headSha: subject.head, attempt: 1, status: "completed", jobs: [{ name: "Unit tests", status: "completed", conclusion: "failure" }], attemptHistory: [] },
+    }),
+  };
+  const sameAttemptChanged = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: sameAttemptChangedConclusionAdapter, requiredJobs: REQUIRED, now: NOW });
+  const sameAttemptChangedEntry = sameAttemptChanged.externalEvidence[0];
+  assert.equal(sameAttemptChangedEntry.sourceVersion, pinnedEntry.sourceVersion, "attempt number alone is unchanged");
+  assert.notEqual(sameAttemptChangedEntry.contentDigest, pinnedEntry.contentDigest, "the digest must differ purely from the changed job conclusion");
+  const sameAttemptAdapter = { fetch: async () => ({ ok: true, version: sameAttemptChangedEntry.sourceVersion, digest: sameAttemptChangedEntry.contentDigest }) };
+  const revalidation3 = await revalidateEvidence({ subject, items: items1, adapters: { CI_RUN: sameAttemptAdapter } });
+  assert.equal(revalidation3.records[0].status, "INCOMPLETE");
+  assert.equal(revalidation3.records[0].reasonCode, "STALE_EVIDENCE");
 
   // The original READY report is not reusable: folding the revalidation record into
   // its own record pool turns readiness away from READY.
@@ -236,6 +288,38 @@ test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation agains
   // produce PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN -- only a fresh collectCiEvidence()
   // call against the changed run could ever re-establish evidence, and (per Corrective
   // C2) even that would stay HUMAN_REVIEW_REQUIRED with no accepted determination.
-  void changedRun; // documents the scenario's shape; the adapter response is what revalidateEvidence() actually consults
+  //
+  // Honest disclosure: `changedRunAdapterFetch`/`sameAttemptChangedConclusionAdapter`
+  // above are deterministic OFFLINE fixtures (the same injection seam every other test
+  // in this suite uses), not a real GitHub provider -- this proves the producer/
+  // revalidator COMPOSITION is correct, not operational GitHub-provider authenticity
+  // (which remains UNVERIFIED/DEFERRED per the Corrective C1/C2 reports).
   assert.notEqual(notReusable.report.overallStatus, "PASS");
 });
+
+// ======================================================================
+// Corrective C4 (W4-C3R-DEV-L2): the real collector's pre-completion output
+// is representable as an incomplete Phase 2 report -- end to end, through
+// the actual collectCiEvidence() -> buildReport() composition, not an
+// isolated report.js fixture.
+// ======================================================================
+
+function notCompletedRunAdapter(status) {
+  return { fetchRun: async () => ({ ok: true, run: { repository: REPO, workflowPath: WORKFLOW, runId: "9", event: "pull_request", headSha: subject.head, attempt: 1, status, jobs: [], attemptHistory: [] } }) };
+}
+
+for (const status of ["queued", "waiting", "in_progress"]) {
+  test(`C4-L2: the real collector's ${status} output composes into an INCOMPLETE, NOT_READY Phase 2 report -- never rejected as malformed completed-run evidence, never fabricated as PASS`, async () => {
+    const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: notCompletedRunAdapter(status), requiredJobs: REQUIRED, now: NOW });
+    assert.equal(ci.records[0].status, "INCOMPLETE");
+    assert.deepEqual(ci.records[0].observed, { classification: "INCOMPLETE", collected: true, status });
+    assert.deepEqual(ci.externalEvidence, []); // no completed run to pin
+
+    const report = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
+    assert.equal(report.ok, true, status);
+    assert.equal(report.report.overallStatus, "INCOMPLETE", status);
+    assert.equal(report.report.readiness.state, "NOT_READY", status);
+    assert.equal(report.report.finalized, true, status); // Phase 2 was genuinely attempted; it just could not complete
+    assert.equal(report.report.ci.classification, "INCOMPLETE", status);
+  });
+}
