@@ -10,6 +10,7 @@ const assert = require("node:assert/strict");
 const { buildReport } = require("./report");
 const { collectCiEvidence } = require("./ci-evidence");
 const { renderMarkdown } = require("./render-markdown");
+const { revalidateEvidence } = require("../../kernel/revalidation");
 const { makeSubject } = require("../../test-support-git");
 
 const subject = makeSubject();
@@ -120,22 +121,57 @@ function acceptedDeterminationAdapter() {
   };
 }
 
-test("DEV-C1-11: Phase 2 with an accepted, adapter-mediated SEPARATE_PERSON rerun determination -- the report reaches READY, report.ci carries the full design section 23 determination shape, and Markdown never disagrees with the JSON", async () => {
+// Corrective C2 (W4-SEC-H1): this test used to assert that the adapter below -- whose
+// actor, self-authorizing policy and contributors are all its own claims -- carries a
+// Phase 2 report to READY. That was the reproduced exploit end to end. The same
+// composition must now stay HUMAN_REVIEW_REQUIRED, with JSON and Markdown agreeing.
+test("DEV-C1-11 (corrected by C2): Phase 2 with a fabricated adapter-mediated SEPARATE_PERSON determination stays HUMAN_REVIEW_REQUIRED end to end -- never READY -- and Markdown agrees with the JSON", async () => {
   const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: rerunRunAdapter(), requiredJobs: REQUIRED, determinationAdapter: acceptedDeterminationAdapter() });
-  assert.equal(ci.records[0].status, "PASS");
-  assert.equal(ci.records[0].observed.classification, "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN");
+  assert.equal(ci.records[0].status, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(ci.records[0].reasonCode, "CI_UNEXPLAINED_RERUN");
+  assert.deepEqual(ci.externalEvidence, []);
 
   const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
   assert.equal(finalReport.ok, true);
-  assert.equal(finalReport.report.readiness.state, "READY");
-  assert.equal(finalReport.report.ci.classification, "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN");
-  assert.equal(finalReport.report.ci.determinationMode, "SEPARATE_PERSON");
-  assert.equal(finalReport.report.ci.channelObjectId, "comment-1");
+  assert.equal(finalReport.report.finalized, true);
+  assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(finalReport.report.ci, { classification: "HUMAN_REVIEW_REQUIRED" });
 
   const md = renderMarkdown(finalReport.report);
   assert.match(md, new RegExp(`Readiness state: \`${finalReport.report.readiness.state}\``));
-  assert.match(md, /PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN/);
+  assert.doesNotMatch(md, /PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN/);
 });
+
+test("SEC-C2-18: forged evidence plus a forged revalidation response never establishes initial authentication -- revalidation checks freshness only, and the forged justified record is refused at the report boundary", async () => {
+  const forgedEntry = { sourceObjectId: "comment-1", sourceVersion: "v1", contentDigest: "d".repeat(64), collectedAt: "2026-09-30T00:00:00Z", immutability: "MUTABLE" };
+  const revalidation = await revalidateEvidence({ subject, items: [{ entry: forgedEntry, sourceType: "comment" }], adapters: { comment: { fetch: async () => ({ ok: true, version: "v1", digest: "d".repeat(64) }) } } });
+  assert.equal(revalidation.records[0].status, "PASS", "the forged source is 'fresh' -- freshness is all revalidation establishes");
+
+  const forgedCi = {
+    checkId: "1F.CI", ownerStage: "1F", status: "PASS", subject, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [],
+    observed: { classification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN", authenticatedActor: { provider: "github", accountId: "attacker-1", accountType: "User" }, determinationMode: "SEPARATE_PERSON", contentDigest: "d".repeat(64), channelObjectId: "comment-1", version: "v1" },
+  };
+  const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, forgedCi, ...revalidation.records], externalEvidence: [forgedEntry], ci: undefined }));
+  assert.equal(finalReport.ok, false);
+  assert.match(finalReport.reason, /cannot be produced by collectCiEvidence\(\) in this configuration/);
+});
+
+test("SEC-C2-22: an OWNER_ATTESTED CI record never lets a Phase 2 report reach READY", () => {
+  const owner = {
+    checkId: "1F.CI", ownerStage: "1F", status: "HUMAN_REVIEW_REQUIRED", subject, expected: null, reasonCode: "OWNER_SELF_DETERMINATION", detail: "", evidenceRefs: [],
+    observed: { classification: "HUMAN_REVIEW_REQUIRED", rerunObserved: true, attestationMode: "OWNER_ATTESTED", candidateClassification: "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN" },
+  };
+  const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, owner], ci: undefined }));
+  assert.equal(finalReport.ok, true);
+  assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assertNeverPromoted(finalReport.report);
+  assert.equal(buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, { ...owner, status: "PASS" }], ci: undefined })).ok, false);
+});
+
+function assertNeverPromoted(report) {
+  assert.notEqual(report.readiness.state, "READY");
+  assert.notEqual(report.ci.classification, "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN");
+}
 
 test("a rerun with NO determinationAdapter injected reaches Phase 2 HUMAN_REVIEW_REQUIRED, never READY, through the full real composition", async () => {
   const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: rerunRunAdapter(), requiredJobs: REQUIRED });

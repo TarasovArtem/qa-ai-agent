@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { classifyCiEvidence, CLASSIFICATIONS } = require("./ci-classify");
+const { classifyCiEvidence, CLASSIFICATIONS, CLASSIFICATION_CONTRACT } = require("./ci-classify");
 
 const complete = (allSucceeded) => ({ ok: true, complete: true, allSucceeded, missing: [], failed: allSucceeded ? [] : ["X"], pending: [], skipped: [], succeeded: [] });
 const incomplete = (extra = {}) => ({ ok: true, complete: false, allSucceeded: false, missing: [], failed: [], pending: [], skipped: [], succeeded: [], ...extra });
@@ -111,6 +111,27 @@ test("every returned classification is one of the exact five canonical values", 
     null,
   ];
   for (const f of fixtures) assert.ok(CLASSIFICATIONS.includes(classifyCiEvidence(f).classification), JSON.stringify(f));
+});
+
+test("DEV-C2-CONTRACT: CLASSIFICATION_CONTRACT covers exactly the five classifications, and every (classification, reasonCode) the decision table emits is in it", () => {
+  assert.deepEqual(Object.keys(CLASSIFICATION_CONTRACT).sort(), [...CLASSIFICATIONS].sort());
+  assert.equal(Object.isFrozen(CLASSIFICATION_CONTRACT), true);
+  const history = [{ attempt: 1, conclusion: "failure", failedJobs: ["X"] }];
+  const fixtures = [
+    { requiredJobCheck: complete(true), attempt: 1, attemptHistory: [] },
+    { requiredJobCheck: complete(false), attempt: 1, attemptHistory: [] },
+    { requiredJobCheck: incomplete(), attempt: 1, attemptHistory: [] },
+    { requiredJobCheck: complete(true), attempt: 2, attemptHistory: history },
+    { requiredJobCheck: complete(true), attempt: 2, attemptHistory: history, determination: { accepted: true, mode: "SEPARATE_PERSON" } },
+    { requiredJobCheck: complete(true), attempt: 2, attemptHistory: history, determination: { accepted: true, mode: "OWNER_ATTESTED" } },
+    { requiredJobCheck: complete(true), attempt: 0, attemptHistory: [] },
+    { requiredJobCheck: complete(true), attempt: 1, attemptHistory: null },
+    null,
+  ];
+  for (const f of fixtures) {
+    const out = classifyCiEvidence(f);
+    assert.ok(CLASSIFICATION_CONTRACT[out.classification].reasonCodes.includes(out.reasonCode), JSON.stringify(out));
+  }
 });
 
 test("five repeated classifications of an identical fixture are deterministic", () => {

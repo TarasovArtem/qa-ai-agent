@@ -2,7 +2,12 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { validateDetermination, isValidRecordBody, isAuthorizedDeterminer, resolveDeterminationMode, checkBindings, isDeterminationAdapter, resolveDeterminationAdapter } = require("./determination");
+const {
+  validateDetermination, isValidRecordBody, isAuthorizedDeterminer, resolveDeterminationMode, checkBindings, isDeterminationAdapter, resolveDeterminationAdapter,
+  qualifyDetermination, computeDeterminationDigest, UNMET_TRUST_PREREQUISITES,
+} = require("./determination");
+const { canonicalJson } = require("../../kernel/results");
+const nodeCrypto = require("node:crypto");
 
 const HEAD = "a".repeat(40);
 const REPO = "TarasovArtem/qa-ai-agent";
@@ -17,9 +22,14 @@ const record = (overrides = {}) => ({
   ...overrides,
 });
 
+// validateDetermination() is a pure validator of an ALREADY-TRUSTED bundle, so this
+// fixture models run evidence carrying a machine-collected failureSignature (design
+// section 17 rule 6). Real validated run evidence (stages/1f/ci-run.js) carries none
+// today, which is why checkBindings() fails closed on it (Corrective C2 tests below).
 const runEvidence = (overrides = {}) => ({
   repository: REPO, headSha: HEAD, runId: "999", attempt: 2,
   attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Cypress - chrome"] }],
+  failureSignature: "sig-1",
   ...overrides,
 });
 
@@ -255,4 +265,110 @@ test("resolveDeterminationAdapter resolves only an injected, valid adapter -- th
   assert.equal(resolveDeterminationAdapter({ determinationAdapter: {} }).ok, false);
   assert.equal(resolveDeterminationAdapter(null).ok, false);
   assert.equal(resolveDeterminationAdapter(undefined).ok, false);
+});
+
+// ---------------------------------------------------------------- Corrective C2 (W4-SEC-H1): failureSignature binding (design section 17 rule 6)
+//
+// Before C2, checkBindings() validated record.failureSignature only as a string: a
+// determination whose ONLY difference was an arbitrary failure signature was accepted.
+// The signature must equal the machine-collected one; validated run evidence carries
+// none today, so the binding fails closed.
+
+test("SEC-C2-FS-01: a record whose ONLY difference is an arbitrary failureSignature is rejected", () => {
+  const r = validateDetermination(fullInput({ record: record({ failureSignature: "totally unrelated text" }) }));
+  assert.equal(r.accepted, false);
+  assert.equal(r.reason, "FAILURE_SIGNATURE_MISMATCH");
+});
+
+test("SEC-C2-FS-02: run evidence with no machine-collected failureSignature (the real ci-run.js shape) rejects every determination", () => {
+  const { failureSignature, ...withoutSignature } = runEvidence();
+  assert.equal(failureSignature, "sig-1");
+  assert.deepEqual(checkBindings({ record: record(), runEvidence: withoutSignature, subject }), { ok: false, reason: "FAILURE_SIGNATURE_UNAVAILABLE" });
+  assert.deepEqual(checkBindings({ record: record(), runEvidence: runEvidence({ failureSignature: "" }), subject }), { ok: false, reason: "FAILURE_SIGNATURE_UNAVAILABLE" });
+  assert.equal(validateDetermination(fullInput({ runEvidence: withoutSignature })).reason, "FAILURE_SIGNATURE_UNAVAILABLE");
+});
+
+// ---------------------------------------------------------------- Corrective C2 (W4-SEC-H1): qualifyDetermination()
+
+const liveRunEvidence = () => { const { failureSignature, ...rest } = runEvidence(); return rest; }; // what ci-run.js really produces
+const candidateFor = (rec, overrides = {}) => ({
+  record: rec, authenticatedActor: actor(), contentDigest: computeDeterminationDigest(rec), channelObjectId: "comment-1",
+  version: "v1", collectedAt: "2026-09-30T00:00:00Z", policy: separatePersonPolicy(), contributors: contributorsClean(), ...overrides,
+});
+const qualify = (candidate, extra = {}) => qualifyDetermination({ response: { ok: true, candidate }, subject, runEvidence: liveRunEvidence(), ...extra });
+
+test("SEC-C2-UNMET: the unmet trust prerequisites are exactly the four missing trusted sources, and the list is frozen", () => {
+  assert.deepEqual([...UNMET_TRUST_PREREQUISITES], ["BASE_POLICY_UNAVAILABLE", "NO_QUALIFYING_PROVIDER", "EDIT_HISTORY_UNVERIFIED", "CONTRIBUTOR_SET_UNAVAILABLE"]);
+  assert.equal(Object.isFrozen(UNMET_TRUST_PREREQUISITES), true);
+});
+
+test("SEC-C2-DIGEST: the digest is SHA-256 of canonicalJson(record), computed independently of any adapter claim", () => {
+  const expected = nodeCrypto.createHash("sha256").update(canonicalJson(record())).digest("hex");
+  assert.equal(computeDeterminationDigest(record()), expected);
+  assert.equal(computeDeterminationDigest({ ...record() }), computeDeterminationDigest(Object.fromEntries(Object.entries(record()).reverse())), "key order never changes the digest");
+  assert.notEqual(computeDeterminationDigest(record({ justification: "other" })), expected);
+});
+
+test("SEC-C2-05/06/07/08/09/10/15/16/17: a fully self-consistent, fabricated 'trusted' candidate (correct digest, self-authorizing policy, clean contributors, history flags, version) is never accepted", () => {
+  const r = qualify(candidateFor(record(), {
+    policy: separatePersonPolicy({ authorizedDeterminers: [{ provider: "github", accountId: "555" }, { provider: "github", accountId: "head-added" }] }),
+    contributors: { accountIds: [], hasUnresolved: false }, editHistoryVerified: true, historyComplete: true, immutable: true, trusted: true,
+    basePolicyDigest: "b".repeat(64), provider: "github", authenticated: true,
+  }));
+  assert.equal(r.accepted, false);
+  assert.equal(r.reasons.includes("CONTENT_DIGEST_MISMATCH"), false, "the digest really is correct -- rejection is not a digest artefact");
+  for (const prerequisite of UNMET_TRUST_PREREQUISITES) assert.ok(r.reasons.includes(prerequisite), prerequisite);
+});
+
+test("SEC-C2-11: a fabricated OWNER_ATTESTED policy naming the attacker as owner is never accepted", () => {
+  const r = qualify(candidateFor(record(), { policy: ownerAttestedPolicy({ ownerAccountId: "555" }), contributors: contributorsClean({ accountIds: ["github:555"] }) }));
+  assert.equal(r.accepted, false);
+  assert.ok(r.reasons.includes("BASE_POLICY_UNAVAILABLE"));
+});
+
+test("SEC-C2-12: a supplied 64-hex digest that is not SHA-256 of the canonical record is flagged CONTENT_DIGEST_MISMATCH", () => {
+  const r = qualify(candidateFor(record(), { contentDigest: DIGEST }));
+  assert.equal(r.accepted, false);
+  assert.equal(r.reasons[0], "CONTENT_DIGEST_MISMATCH");
+});
+
+test("SEC-C2-13: a record changed after its digest was taken no longer matches that digest", () => {
+  const acceptedDigest = computeDeterminationDigest(record());
+  const r = qualify(candidateFor(record({ justification: "edited after acceptance" }), { contentDigest: acceptedDigest }));
+  assert.equal(r.accepted, false);
+  assert.ok(r.reasons.includes("CONTENT_DIGEST_MISMATCH"));
+});
+
+test("SEC-C2-19/20/21: cross-HEAD, cross-run and cross-repository records are reported by their binding reason (and never accepted)", () => {
+  assert.ok(qualify(candidateFor(record({ headSha: "b".repeat(40) }))).reasons.includes("HEAD_MISMATCH"));
+  assert.ok(qualify(candidateFor(record({ runId: "1000" }))).reasons.includes("RUN_ID_MISMATCH"));
+  assert.ok(qualify(candidateFor(record({ repository: "someone/else" }))).reasons.includes("REPOSITORY_MISMATCH"));
+});
+
+test("SEC-C2-FS-03: through qualifyDetermination(), real run evidence (no machine signature) always yields FAILURE_SIGNATURE_UNAVAILABLE", () => {
+  assert.ok(qualify(candidateFor(record())).reasons.includes("FAILURE_SIGNATURE_UNAVAILABLE"));
+});
+
+test("SEC-C2-27: malformed provider data fails closed without throwing", () => {
+  const cyclic = {}; cyclic.self = cyclic;
+  const cases = [
+    { response: null }, { response: "ok" }, { response: { ok: false, reason: "X" } }, { response: { ok: "true", candidate: candidateFor(record()) } },
+    { response: { ok: true } }, { response: { ok: true, candidate: "x" } }, { response: { ok: true, candidate: { record: { ...record(), extra: 1 } } } },
+    { response: cyclic }, { response: { ok: true, candidate: { record: record(), n: 10n } } },
+  ];
+  for (const c of cases) {
+    let r;
+    assert.doesNotThrow(() => { r = qualifyDetermination({ ...c, subject, runEvidence: liveRunEvidence() }); });
+    assert.equal(r.accepted, false);
+  }
+  assert.deepEqual(qualifyDetermination(null), { accepted: false, reasons: ["MALFORMED_INPUT"] });
+});
+
+test("SEC-C2-SNAPSHOT: the record is snapshotted once -- a getter that changes on every read cannot make the hashed and validated bytes differ", () => {
+  let reads = 0;
+  const rec = record();
+  Object.defineProperty(rec, "justification", { enumerable: true, get: () => `read-${++reads}` });
+  const r = qualifyDetermination({ response: { ok: true, candidate: { ...candidateFor(record()), record: rec } }, subject, runEvidence: liveRunEvidence() });
+  assert.equal(r.accepted, false);
+  assert.equal(reads, 1, "the untrusted record is read exactly once, by the snapshot");
 });

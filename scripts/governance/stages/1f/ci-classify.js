@@ -17,10 +17,28 @@
 
 "use strict";
 
-const { REASON } = require("../../kernel/contracts");
+const { REASON, STATUS } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 
 const CLASSIFICATIONS = ["CLEAN_FIRST_PASS", "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN", "FAIL", "INCOMPLETE", "HUMAN_REVIEW_REQUIRED"];
+
+/**
+ * The canonical classification -> 1F.CI record contract (design sections 17
+ * and 22), defined once here beside the decision table that produces it.
+ * `status` is the record status each classification yields; `reasonCodes` are
+ * every reasonCode a 1F.CI record with that classification can carry -- those
+ * this table emits plus the CI_NOT_COLLECTED codes stages/1f/ci-evidence.js
+ * uses when run evidence could not be established (Corrective C2 /
+ * W4-C1-DEV-M1: stages/1f/report.js validates supplied records against this
+ * same table instead of keeping a second copy).
+ */
+const CLASSIFICATION_CONTRACT = Object.freeze({
+  CLEAN_FIRST_PASS: Object.freeze({ status: STATUS.PASS, reasonCodes: Object.freeze([REASON.OK]) }),
+  PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN: Object.freeze({ status: STATUS.PASS, reasonCodes: Object.freeze([REASON.OK]) }),
+  FAIL: Object.freeze({ status: STATUS.FAIL, reasonCodes: Object.freeze([REASON.CI_REQUIRED_JOB_FAILED, REASON.CI_NOT_COLLECTED]) }),
+  INCOMPLETE: Object.freeze({ status: STATUS.INCOMPLETE, reasonCodes: Object.freeze([REASON.CI_REQUIRED_JOB_INCOMPLETE, REASON.CI_NOT_COLLECTED]) }),
+  HUMAN_REVIEW_REQUIRED: Object.freeze({ status: STATUS.HUMAN_REVIEW_REQUIRED, reasonCodes: Object.freeze([REASON.CI_UNEXPLAINED_RERUN, REASON.OWNER_SELF_DETERMINATION]) }),
+});
 
 function isAcceptedDetermination(determination) {
   if (!isPlainObject(determination)) return false;
@@ -83,4 +101,4 @@ function classifyCiEvidence(input) {
   return { classification: "FAIL", reasonCode: REASON.CI_REQUIRED_JOB_FAILED, detail: "a required job did not succeed on the current attempt" };
 }
 
-module.exports = { classifyCiEvidence, CLASSIFICATIONS };
+module.exports = { classifyCiEvidence, CLASSIFICATIONS, CLASSIFICATION_CONTRACT };

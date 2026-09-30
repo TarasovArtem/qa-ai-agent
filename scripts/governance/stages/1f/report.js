@@ -26,7 +26,9 @@ const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { aggregate } = require("../../kernel/readiness");
 const { validateResultRecord } = require("../../kernel/results");
-const { isValidSubject } = require("../common");
+const { isValidSubject, sameSubject } = require("../common");
+const { CLASSIFICATION_CONTRACT } = require("./ci-classify");
+const { UNMET_TRUST_PREREQUISITES } = require("./determination");
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const REPOSITORY_ID = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
@@ -52,33 +54,88 @@ function ciNotCollectedRecord(subject) {
   return checked.record;
 }
 
+const DETERMINATION_FIELDS = ["authenticatedActor", "channelObjectId", "contentDigest", "determinationMode", "version"];
+const ATTESTATION_FIELDS = ["attestationMode", "candidateClassification", "rerunObserved"];
+
+function isValidAuthenticatedActor(actor) {
+  return isPlainObject(actor) && Object.keys(actor).sort().join(",") === "accountId,accountType,provider" &&
+    isBoundedString(actor.provider, 32) && isBoundedString(actor.accountId, 100) && isBoundedString(actor.accountType, 32);
+}
+
 /**
- * finalizedCiFromRecord(record) -- Corrective C1 (W4-DEV-M1). Derives the
- * report's `ci` field (design section 23) purely from an already-validated
- * `1F.CI` result record's `observed` payload (produced by
- * stages/1f/ci-evidence.js#collectCiEvidence()) -- never an independent,
- * caller-controlled summary, and never a second, independently computed
- * classification. Fails closed to a minimal, honest shape if the record's
- * `observed` is not shaped as this function expects (defensive: buildReport()
- * does not re-validate an already-validated record's internal shape, but it
- * also never lets a malformed one silently become a claimed-complete `ci`).
+ * validateCollectedCiRecord(record, subject, externalEvidence) -- Corrective C2
+ * (W4-C1-DEV-M1). Runtime validation (design section 20) of the one supplied
+ * `1F.CI` record a finalized report's `ci` (design section 23) is projected
+ * from, BEFORE that projection. Returns `null` when valid, else the reason.
+ *
+ * It validates the record against the canonical classification contract
+ * (stages/1f/ci-classify.js#CLASSIFICATION_CONTRACT -- no second copy), so a
+ * record whose classification is missing or non-canonical, whose status or
+ * reasonCode contradicts its classification, or whose determination /
+ * OWNER_ATTESTED metadata is partial, malformed, or attached to a
+ * classification that did not accept it, is rejected rather than projected.
+ * An accepted-determination claim must match exactly one `externalEvidence[]`
+ * entry (channel object ID, digest and version), or it would escape design
+ * section 25a's revalidation.
+ *
+ * It never computes readiness (kernel.aggregate() remains the sole authority)
+ * and cannot authenticate a supplied record. It does know what the collector
+ * can produce: while stages/1f/determination.js#UNMET_TRUST_PREREQUISITES is
+ * non-empty, collectCiEvidence() cannot accept any determination, so a
+ * PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN record did not come from it and is
+ * rejected even when internally consistent (Corrective C2 / W4-SEC-H1).
+ */
+function validateCollectedCiRecord(record, subject, externalEvidence) {
+  const checked = validateResultRecord(record);
+  if (!checked.ok) return "the 1F.CI record is not a valid result record";
+  if (record.ownerStage !== "1F") return "the 1F.CI record must be owned by stage 1F";
+  if (!sameSubject(record.subject, subject)) return "the 1F.CI record's subject differs from the report subject";
+  const o = record.observed;
+  if (!isPlainObject(o)) return "the 1F.CI record has no observed evidence";
+  if (typeof o.classification !== "string" || !Object.hasOwn(CLASSIFICATION_CONTRACT, o.classification)) return "the 1F.CI classification is missing or not one of the canonical classifications";
+  const contract = CLASSIFICATION_CONTRACT[o.classification];
+  if (record.status !== contract.status) return `the 1F.CI status ${record.status} contradicts classification ${o.classification}`;
+  if (!contract.reasonCodes.includes(record.reasonCode)) return `the 1F.CI reasonCode ${record.reasonCode} contradicts classification ${o.classification}`;
+
+  const determinationKeys = DETERMINATION_FIELDS.filter((k) => Object.hasOwn(o, k));
+  const attestationKeys = ATTESTATION_FIELDS.filter((k) => Object.hasOwn(o, k));
+  if (determinationKeys.length > 0 && determinationKeys.length !== DETERMINATION_FIELDS.length) return "the 1F.CI accepted-determination metadata is incomplete";
+  if (attestationKeys.length > 0 && attestationKeys.length !== ATTESTATION_FIELDS.length) return "the 1F.CI OWNER_ATTESTED metadata is incomplete";
+  const hasDetermination = determinationKeys.length > 0;
+  const hasAttestation = attestationKeys.length > 0;
+
+  if (o.classification === "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN" && !hasDetermination) return "a justified rerun requires accepted-determination evidence";
+  if (hasDetermination) {
+    if (o.classification !== "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN") return "accepted-determination metadata on a record whose classification did not accept a determination";
+    if (o.determinationMode !== "SEPARATE_PERSON") return "only a SEPARATE_PERSON determination can justify a rerun";
+    if (!isValidAuthenticatedActor(o.authenticatedActor)) return "the accepted determination's authenticatedActor is malformed";
+    if (typeof o.contentDigest !== "string" || !/^[0-9a-f]{64}$/.test(o.contentDigest) || !isBoundedString(o.channelObjectId, 300) || !isBoundedString(o.version, 300)) {
+      return "the accepted determination's digest, channel object ID or version is malformed";
+    }
+    const matching = externalEvidence.filter((e) => e.sourceObjectId === o.channelObjectId);
+    if (matching.length !== 1) return "an accepted determination must match exactly one externalEvidence entry for its channel object";
+    if (matching[0].contentDigest !== o.contentDigest || matching[0].sourceVersion !== o.version) return "the accepted determination's digest or version differs from its externalEvidence entry";
+    if (UNMET_TRUST_PREREQUISITES.length > 0) return `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN cannot be produced by collectCiEvidence() in this configuration (unmet: ${UNMET_TRUST_PREREQUISITES.join(", ")})`;
+  }
+
+  if (hasAttestation) {
+    if (o.classification !== "HUMAN_REVIEW_REQUIRED" || record.reasonCode !== REASON.OWNER_SELF_DETERMINATION) return "OWNER_ATTESTED metadata requires HUMAN_REVIEW_REQUIRED with reasonCode OWNER_SELF_DETERMINATION";
+    if (o.rerunObserved !== true || o.attestationMode !== "OWNER_ATTESTED" || o.candidateClassification !== "PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN") return "the OWNER_ATTESTED metadata is malformed";
+  } else if (record.reasonCode === REASON.OWNER_SELF_DETERMINATION) {
+    return "reasonCode OWNER_SELF_DETERMINATION requires the OWNER_ATTESTED metadata";
+  }
+  return null;
+}
+
+/**
+ * finalizedCiFromRecord(record) -- derives the report's `ci` (design section 23)
+ * from the 1F.CI record ONLY after validateCollectedCiRecord() accepted it:
+ * the classification plus the determination or OWNER_ATTESTED fields it carries.
  */
 function finalizedCiFromRecord(record) {
-  const o = isPlainObject(record.observed) ? record.observed : {};
-  if (typeof o.classification !== "string") return { collected: true, classification: null };
+  const o = record.observed;
   const ci = { classification: o.classification };
-  if (isPlainObject(o.authenticatedActor)) {
-    ci.authenticatedActor = o.authenticatedActor;
-    ci.determinationMode = o.determinationMode;
-    ci.contentDigest = o.contentDigest;
-    ci.channelObjectId = o.channelObjectId;
-    ci.version = o.version;
-  }
-  if (o.rerunObserved === true) {
-    ci.rerunObserved = true;
-    ci.attestationMode = o.attestationMode;
-    ci.candidateClassification = o.candidateClassification;
-  }
+  for (const key of [...DETERMINATION_FIELDS, ...ATTESTATION_FIELDS]) if (Object.hasOwn(o, key)) ci[key] = o[key];
   return ci;
 }
 
@@ -198,6 +255,16 @@ function buildReport(input) {
   // while also supplying an already-collected 1F.CI record -- that is contradictory,
   // mixed-phase input, not a report this function can honestly assemble.
   if (ci !== null && hasCollectedCiRecordInInput) return invalidInput("ci is { state: \"NOT_COLLECTED\" } (Phase 1) but records[] already contains a collected 1F.CI record (Phase 2) -- mixed-phase input is rejected");
+  // Corrective C2 (W4-C1-DEV-M1): a finalized report's `ci` is projected from
+  // exactly one 1F.CI record, so that record is validated here -- before
+  // aggregation or projection -- and a duplicate is rejected rather than
+  // silently resolved by picking one.
+  const ciRecords = input.records.filter((r) => isPlainObject(r) && r.checkId === "1F.CI");
+  if (ciRecords.length > 1) return invalidInput("records[] contains more than one 1F.CI record -- a report has exactly one CI evidence record");
+  if (ciRecords.length === 1) {
+    const problem = validateCollectedCiRecord(ciRecords[0], subject, input.externalEvidence);
+    if (problem !== null) return invalidInput(`invalid 1F.CI record: ${problem}`);
+  }
 
   // Design section 17: "[Phase 1] cannot observe its own run, so it emits ci
   // as { state: NOT_COLLECTED }, which yields an INCOMPLETE record (reasonCode
@@ -227,17 +294,17 @@ function buildReport(input) {
   // ci === null means the caller omitted the field, relying on a collected
   // 1F.CI record inside records[] to represent a finalized Phase 2 report;
   // an explicit { state: "NOT_COLLECTED" } always means Phase 1, never finalized.
-  const collectedCiRecord = input.records.find((r) => isPlainObject(r) && r.checkId === "1F.CI") || null;
+  const collectedCiRecord = ciRecords.length === 1 ? ciRecords[0] : null;
   const hasCollectedCi = collectedCiRecord !== null;
   const finalized = ci === null && hasCollectedCi;
   // Design section 23: `ci` is "the 1F record with classification and, when a
   // determination was accepted, {authenticatedActor, determinationMode,
   // contentDigest, channelObjectId, version}" (plus rerunObserved/attestationMode/
   // candidateClassification under OWNER_ATTESTED). Corrective C1 (W4-DEV-M1):
-  // this is derived ONLY from the validated 1F.CI record already folded into
-  // aggregation above -- never an independent, potentially contradictory
-  // caller-supplied summary, and never a second, separately computed
-  // classification.
+  // this is derived ONLY from the 1F.CI record already folded into aggregation
+  // above -- never an independent, potentially contradictory caller-supplied
+  // summary, and never a second, separately computed classification -- and,
+  // since Corrective C2, only after validateCollectedCiRecord() accepted it.
   const ciValue = ci !== null ? ci : (hasCollectedCi ? finalizedCiFromRecord(collectedCiRecord) : { state: "NOT_COLLECTED" });
 
   const report = {
