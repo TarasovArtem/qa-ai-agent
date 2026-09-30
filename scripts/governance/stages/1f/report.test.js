@@ -824,32 +824,55 @@ test("C4-L1-03: missing:null fails cleanly", () => {
   assert.match(r.reason, /malformed or out of bounds/);
 });
 
+// Corrective C5 (W4-C4R-AQA-INFO-1): C4-L1-04/05/06 originally passed
+// `externalEvidence: []`, so the evidence-count check rejected every case before
+// computeCiRunDigest() could ever run -- removing isValidCiRunIdentity() left
+// them green. Each malformed case below now carries the CI-run evidence entry of
+// the VALID baseline run (same repository/runId/attempt, so sourceObjectId and
+// sourceVersion match and the evidence-count check passes); only the target
+// field is malformed. isValidCiRunIdentity() must therefore be the first
+// substantive rejection: without it the record reaches computeCiRunDigest()
+// (a thrown TypeError, or a "digest does not match" rejection), and the exact
+// reason assertion below fails either way.
+const baselineRunEvidence = () => runEvidenceFor(runObserved());
+
+function assertRunEvidenceMalformedRejection(observed, label) {
+  let r;
+  try {
+    r = finalize([ciRecord(observed)], { externalEvidence: [baselineRunEvidence()] });
+  } catch (err) {
+    assert.fail(`${label}: buildReport() threw instead of a canonical rejection: ${err && err.message}`);
+  }
+  assert.equal(r.ok, false, label);
+  assert.equal(r.report, null, label);
+  assert.match(r.reason, /the 1F\.CI record's run-evidence fields are malformed or out of bounds/, label);
+}
+
+test("C5 control: the baseline CI-run evidence used by the malformed-input tests is accepted for the valid run (so it never masks the target check)", () => {
+  const r = finalize([ciRecord(runObserved())], { externalEvidence: [baselineRunEvidence()] });
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
 test("C4-L1-04: attemptHistory containing null, or an entry missing failedJobs, fails cleanly", () => {
   for (const attemptHistory of [[null], [{}], [{ attempt: 1, conclusion: "failure" }]]) {
-    const o = runObserved({ attemptHistory });
-    assert.doesNotThrow(() => finalize([ciRecord(o)], { externalEvidence: [] }));
-    const r = finalize([ciRecord(o)], { externalEvidence: [] });
-    assert.equal(r.ok, false, JSON.stringify(attemptHistory));
+    assertRunEvidenceMalformedRejection(runObserved({ attemptHistory }), JSON.stringify(attemptHistory));
   }
 });
 
 test("C4-L1-05: a malformed failedJobs entry inside attemptHistory (non-string, non-array) fails cleanly", () => {
-  for (const failedJobs of [null, "x", [1, 2], [null]]) {
-    const o = runObserved({ attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs }] });
-    assert.doesNotThrow(() => finalize([ciRecord(o)], { externalEvidence: [] }));
-    assert.equal(finalize([ciRecord(o)], { externalEvidence: [] }).ok, false, JSON.stringify(failedJobs));
+  for (const failedJobs of [null, "x", 5, [1, 2], [null]]) {
+    assertRunEvidenceMalformedRejection(runObserved({ attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs }] }), JSON.stringify(failedJobs));
   }
 });
 
 test("C4-L1-06: an oversized nested run-evidence array (beyond the canonical bound) fails cleanly, never silently truncated", () => {
   const tooManyJobs = Array.from({ length: 300 }, (_, i) => `job-${i}`);
-  const o = runObserved({ requiredJobs: tooManyJobs });
-  assert.doesNotThrow(() => finalize([ciRecord(o)], { externalEvidence: [] }));
-  assert.equal(finalize([ciRecord(o)], { externalEvidence: [] }).ok, false);
+  assertRunEvidenceMalformedRejection(runObserved({ requiredJobs: tooManyJobs }), "requiredJobs x300");
   const tooManyAttempts = Array.from({ length: 100 }, (_, i) => ({ attempt: i + 1, conclusion: "failure", failedJobs: [] }));
-  const o2 = runObserved({ attemptHistory: tooManyAttempts });
-  assert.doesNotThrow(() => finalize([ciRecord(o2)], { externalEvidence: [] }));
-  assert.equal(finalize([ciRecord(o2)], { externalEvidence: [] }).ok, false);
+  assertRunEvidenceMalformedRejection(runObserved({ attemptHistory: tooManyAttempts }), "attemptHistory x100");
+  const tooManyFailedJobs = Array.from({ length: 300 }, (_, i) => `job-${i}`);
+  assertRunEvidenceMalformedRejection(runObserved({ attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: tooManyFailedJobs }] }), "attemptHistory[0].failedJobs x300");
 });
 
 // ---------------------------------------------------------------- C4-SEC: trusted-context binding (W4-C3R-SEC-L1)
@@ -903,4 +926,69 @@ test("C4-INFO-04: attempt 2 cannot be CLEAN_FIRST_PASS (pre-existing W4-C2R-INFO
   const r = finalize([ciRecord(o)], { externalEvidence: [runEvidenceFor(o)] });
   assert.equal(r.ok, false);
   assert.match(r.reason, /attempt other than 1/);
+});
+
+// ======================================================================
+// Corrective C5 (W4-C4R-AQA-L1): mutation-sensitive coverage of the
+// "PASS-mapped classification requires the complete CI-run evidence contract"
+// guard in validateCollectedCiRecord(). A pre-completion record whose key set
+// legitimately matches shape A ({classification, collected:false, reason}) or
+// shape B ({classification, collected:true, status}) passes the shape check, so
+// this guard is the ONLY thing standing between a PASS claim on such a record
+// and READY with zero CI-run evidence. The C4 re-review showed that deleting
+// it left the whole suite green; these tests fail if it is removed.
+// ======================================================================
+
+const stagePassRecords = () => [identity(), genericRecord("1B.MARKDOWN", "1B", "PASS"), genericRecord("1C.EVIDENCE", "1C", "PASS"), genericRecord("1D.CONSISTENCY", "1D", "PASS"), genericRecord("1E.DELTA", "1E", "PASS")];
+const phase2WithStages = (ci, externalEvidence) => buildReport(phase2Input({ records: [...stagePassRecords(), ci], externalEvidence }));
+const PASS_GUARD_REASON = /^invalid 1F\.CI record: a PASS-mapped classification requires the complete CI-run evidence contract$/;
+
+function assertPassGuardRejection(observed, label) {
+  let r;
+  try {
+    r = phase2WithStages(ciRecord(observed, { status: "PASS", reasonCode: "OK" }), []);
+  } catch (err) {
+    assert.fail(`${label}: buildReport() threw instead of a canonical rejection: ${err && err.message}`);
+  }
+  assert.equal(r.ok, false, `${label}: a pre-completion PASS claim must never produce a report (READY reachable)`);
+  assert.equal(r.report, null, label);
+  assert.match(r.reason, PASS_GUARD_REASON, label);
+}
+
+test("C5 control: the Phase 2 context used by C5-AQA-L1-* is otherwise valid (a complete CLEAN_FIRST_PASS reaches READY in it)", () => {
+  const o = runObserved();
+  const r = phase2WithStages(ciRecord(o), [runEvidenceFor(o)]);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.trustedContext.phase, 2);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
+test("C5-AQA-L1-01: a pre-run/fetch-failure CI record cannot claim PASS or produce READY", () => {
+  assertPassGuardRejection({ classification: "CLEAN_FIRST_PASS", collected: false, reason: "X" }, "shape A CLEAN_FIRST_PASS");
+});
+
+test("C5-AQA-L1-02: an unfinished CI run cannot claim PASS or produce READY", () => {
+  for (const status of ["in_progress", "queued", "waiting"]) {
+    assertPassGuardRejection({ classification: "CLEAN_FIRST_PASS", collected: true, status }, `shape B CLEAN_FIRST_PASS ${status}`);
+  }
+});
+
+test("C5-AQA-L1-03 (positive control): an unfinished CI run correctly represented as INCOMPLETE is accepted as a NOT_READY Phase 2 report", () => {
+  for (const status of ["in_progress", "queued", "waiting"]) {
+    const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: true, status }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+    assert.equal(r.ok, true, status);
+    assert.equal(r.report.overallStatus, "INCOMPLETE", status);
+    assert.equal(r.report.readiness.state, "NOT_READY", status);
+    assert.deepEqual(r.report.externalEvidence, [], status);
+    assert.deepEqual(r.report.ci, { classification: "INCOMPLETE" }, status);
+    assert.equal(r.report.records.find((rec) => rec.checkId === "1F.CI").status, "INCOMPLETE", status);
+  }
+});
+
+test("C5-AQA-L1-04 (positive control): a pre-run/fetch-failure CI record correctly represented as INCOMPLETE is accepted as a NOT_READY Phase 2 report", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: false, reason: "SOURCE_UNREACHABLE" }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.overallStatus, "INCOMPLETE");
+  assert.equal(r.report.readiness.state, "NOT_READY");
+  assert.deepEqual(r.report.externalEvidence, []);
 });
