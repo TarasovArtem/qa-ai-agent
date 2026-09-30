@@ -86,6 +86,7 @@ const { isValidSubject, sameSubject } = require("../common");
 const { CLASSIFICATION_CONTRACT } = require("./ci-classify");
 const { UNMET_TRUST_PREREQUISITES } = require("./determination");
 const { ciRunSourceObjectId, isCiRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
+const { isDenseArray } = require("./required-jobs");
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const REPOSITORY_ID = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
@@ -155,8 +156,16 @@ function keySetsEqual(a, b) {
   return a.size === b.size && [...a].every((k) => b.has(k));
 }
 
+// Corrective C7 (W4-C6R-DEV-L2): Array.prototype.every() SKIPS holes in a
+// sparse array, so a run-evidence field like `requiredJobs` or `attemptHistory`
+// carrying a hole (`const a = []; a.length = 2; a[1] = "x";`) previously passed
+// every check below vacuously -- the hole was never visited. isDenseArray()
+// (imported from required-jobs.js, the single canonical detector, per
+// W4-C4R-INFO-2's own factoring rationale) is now checked before any
+// .every()-based validation runs here, exactly mirroring the same fix already
+// applied to required-jobs.js#validateRequiredJobsPolicy().
 function isJobNameArray(v, max) {
-  return Array.isArray(v) && v.length <= max && v.every((j) => typeof j === "string" && j.length > 0 && j.length <= MAX_JOB_NAME);
+  return isDenseArray(v) && v.length <= max && v.every((j) => typeof j === "string" && j.length > 0 && j.length <= MAX_JOB_NAME);
 }
 
 function isValidAttemptHistoryEntry(e) {
@@ -191,7 +200,11 @@ function isValidCiRunIdentity(o) {
   if (!isJobNameArray(o.failed, MAX_JOBS_LIST)) return false;
   if (!isJobNameArray(o.pending, MAX_JOBS_LIST)) return false;
   if (!isJobNameArray(o.skipped, MAX_JOBS_LIST)) return false;
-  return Array.isArray(o.attemptHistory) && o.attemptHistory.length <= MAX_ATTEMPTS_LIST && o.attemptHistory.every(isValidAttemptHistoryEntry);
+  // Corrective C7 (W4-C6R-DEV-L2): same sparse-array guard as isJobNameArray()
+  // above -- attemptHistory is itself an array-of-objects field subject to the
+  // identical hole-skipping bypass, independently of the failedJobs field
+  // nested inside each entry.
+  return isDenseArray(o.attemptHistory) && o.attemptHistory.length <= MAX_ATTEMPTS_LIST && o.attemptHistory.every(isValidAttemptHistoryEntry);
 }
 
 /**
@@ -291,6 +304,19 @@ function validateCollectedCiRecord(record, subject, externalEvidence, trustedCon
     if (o.classification !== "FAIL" && o.classification !== "INCOMPLETE") return "a pre-completion fetch-failure record can only classify FAIL or INCOMPLETE";
     if (record.reasonCode !== REASON.CI_NOT_COLLECTED) return "a pre-completion fetch-failure record must carry reasonCode CI_NOT_COLLECTED";
     if (!isBoundedString(o.reason, 200)) return "the 1F.CI record's fetch-failure reason is malformed";
+    // Corrective C7 (W4-C6R-INFO-1): the real collector
+    // (ci-evidence.js#collectCiEvidence()) derives shape A's classification
+    // from the exact same rule -- `reason.startsWith("WRONG_")` (a run
+    // fetched successfully but bound to the wrong repository/SHA/event/
+    // workflow, ci-run.js's own WRONG_* identity-mismatch reasons) means
+    // FAIL; every other fetch-failure reason (unreachable source, malformed
+    // shape, no adapter, adapter threw, ambiguous job identity, or a
+    // non-canonical adapter-supplied string normalized by
+    // ci-run.js#normalizeFetchFailureReason()) means INCOMPLETE. A record
+    // claiming the opposite pairing never came from the collector.
+    const isWrongIdentityReason = o.reason.startsWith("WRONG_");
+    if (isWrongIdentityReason && o.classification !== "FAIL") return "a WRONG_* fetch-failure reason can only classify FAIL";
+    if (!isWrongIdentityReason && o.classification !== "INCOMPLETE") return "a non-WRONG_* fetch-failure reason can only classify INCOMPLETE";
     if (externalEvidence.some((e) => isCiRunSourceObjectId(e.sourceObjectId))) return "a pre-completion record cannot carry CI-run externalEvidence -- there is no completed run to pin";
   }
   if (isShapeB) {
@@ -359,6 +385,38 @@ function validateCollectedCiRecord(record, subject, externalEvidence, trustedCon
       if (o.failed.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty failed-jobs list";
       if (o.pending.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty pending-jobs list";
       if (o.skipped.length !== 0) return "CLEAN_FIRST_PASS is inconsistent with a non-empty skipped-jobs list";
+    }
+
+    // Corrective C7 (Shape C self-consistency): the same narrow,
+    // non-classifying pattern W4-C2R-INFO-2 established for CLEAN_FIRST_PASS
+    // above extended to the other three completed-run classifications, using
+    // exactly the same boolean formula ci-classify.js#classifyCiEvidence()
+    // itself reads off `complete`/`allSucceeded` -- `complete` means
+    // `missing.length === 0 && pending.length === 0`, `allSucceeded` means
+    // `complete && failed.length === 0 && skipped.length === 0`, and "hadRerun"
+    // means `attempt > 1 || attemptHistory.length > 0`. This is not a second
+    // classifier: it never inspects anything the real classifier itself does
+    // not also read from these same four fields, and a completed-run-shaped
+    // record's `missing`/`failed`/`pending`/`skipped` fields ARE the complete,
+    // sufficient basis the real classifier uses -- there is no raw job list or
+    // other data this check would need but lack. A completed-run record whose
+    // own declared classification is impossible given its own declared job
+    // outcome lists never came from the real collector and is rejected here,
+    // the same way CLEAN_FIRST_PASS's self-contradiction already was.
+    if (o.classification === "FAIL") {
+      if (o.missing.length !== 0) return "FAIL is inconsistent with a non-empty missing-jobs list (an incomplete run classifies INCOMPLETE, not FAIL)";
+      if (o.pending.length !== 0) return "FAIL is inconsistent with a non-empty pending-jobs list (an incomplete run classifies INCOMPLETE, not FAIL)";
+      if (o.failed.length === 0 && o.skipped.length === 0) return "FAIL requires at least one failed or skipped required job";
+    }
+    if (o.classification === "INCOMPLETE") {
+      if (o.missing.length === 0 && o.pending.length === 0) return "INCOMPLETE requires at least one missing or pending required job";
+    }
+    if (o.classification === "HUMAN_REVIEW_REQUIRED") {
+      if (o.missing.length !== 0) return "HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty missing-jobs list";
+      if (o.pending.length !== 0) return "HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty pending-jobs list";
+      if (o.failed.length !== 0) return "HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty failed-jobs list";
+      if (o.skipped.length !== 0) return "HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty skipped-jobs list";
+      if (o.attempt <= 1 && o.attemptHistory.length === 0) return "HUMAN_REVIEW_REQUIRED requires a rerun (attempt > 1 or a non-empty attempt history)";
     }
   }
   return null;

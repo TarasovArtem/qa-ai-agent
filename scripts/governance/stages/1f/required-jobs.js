@@ -24,6 +24,21 @@
  * -- can reuse the exact same rule set rather than re-implementing a second,
  * potentially divergent one. `checkRequiredJobs()`'s own behavior and return
  * shape are unchanged; it now simply calls the extracted function.
+ *
+ * CORRECTIVE C7 (W4-C6R-DEV-L2): `Array.prototype.every()` SKIPS holes in a
+ * sparse array -- `const a = []; a.length = 2; a[1] = "Unit tests";` has
+ * `a.every(...)` visit only index 1 and report `true`, never inspecting the
+ * absent index 0. `validateRequiredJobsPolicy()` now explicitly rejects any
+ * sparse array (`Object.keys(v).length !== v.length`, the standard sparse-
+ * array detector: a hole has no own enumerable key, but an explicit
+ * `undefined`/`null` entry does and was already correctly rejected by the
+ * per-entry check below) before any per-entry validation runs. It also now
+ * takes its OWN single read of every entry (`[...requiredJobs]`, one pass
+ * through the iterator) before validating or returning it, and returns that
+ * frozen snapshot -- never the original, still-mutable/still-getter-backed
+ * array -- so a caller cannot validate one array state and later consume a
+ * different one (the array could be mutated, or backed by getters, between
+ * this call and a later `await` in the caller).
  */
 
 "use strict";
@@ -34,24 +49,30 @@ const MAX_REQUIRED_JOBS = 256;
 const SUCCESS_LIKE = new Set(["success"]);
 const SKIPPED_LIKE = new Set(["skipped"]);
 
+function isDenseArray(v) {
+  return Array.isArray(v) && Object.keys(v).length === v.length;
+}
+
 /**
  * validateRequiredJobsPolicy(requiredJobs) -- the policy-list-only half of
- * checkRequiredJobs()'s validation: non-empty, bounded (<=256), every entry a
- * non-empty string (<=200 chars), no duplicates. Never inspects a run. Returns
- * `{ok:true, requiredJobs}` (the same array, not copied -- callers that need
- * an isolated copy make one) or `{ok:false, reason}` with the exact same
- * reason strings `checkRequiredJobs()` has always returned for these cases
+ * checkRequiredJobs()'s validation: a DENSE (no holes) array, non-empty,
+ * bounded (<=256), every entry a non-empty string (<=200 chars), no
+ * duplicates. Never inspects a run. Returns `{ok:true, requiredJobs}` -- an
+ * isolated, frozen SNAPSHOT taken by ONE read of the input, not the original
+ * reference -- or `{ok:false, reason}` with the exact same reason strings
+ * `checkRequiredJobs()` has always returned for these cases
  * (`MALFORMED_REQUIRED_JOB_POLICY`, `DUPLICATE_REQUIRED_JOB_NAME`).
  */
 function validateRequiredJobsPolicy(requiredJobs) {
-  if (!Array.isArray(requiredJobs) || requiredJobs.length === 0 || requiredJobs.length > MAX_REQUIRED_JOBS) {
+  if (!isDenseArray(requiredJobs) || requiredJobs.length === 0 || requiredJobs.length > MAX_REQUIRED_JOBS) {
     return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
   }
-  if (!requiredJobs.every((n) => typeof n === "string" && n.length > 0 && n.length <= 200)) {
+  const snapshot = [...requiredJobs];
+  if (!snapshot.every((n) => typeof n === "string" && n.length > 0 && n.length <= 200)) {
     return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
   }
-  if (new Set(requiredJobs).size !== requiredJobs.length) return { ok: false, reason: "DUPLICATE_REQUIRED_JOB_NAME" };
-  return { ok: true, requiredJobs };
+  if (new Set(snapshot).size !== snapshot.length) return { ok: false, reason: "DUPLICATE_REQUIRED_JOB_NAME" };
+  return { ok: true, requiredJobs: Object.freeze(snapshot) };
 }
 
 /**
@@ -96,4 +117,4 @@ function checkRequiredJobs(input) {
   return { ok: true, complete, allSucceeded, missing, failed, pending, skipped, succeeded };
 }
 
-module.exports = { checkRequiredJobs, validateRequiredJobsPolicy, MAX_REQUIRED_JOBS };
+module.exports = { checkRequiredJobs, validateRequiredJobsPolicy, MAX_REQUIRED_JOBS, isDenseArray };

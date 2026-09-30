@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { validateRunEvidence, fetchValidatedRun, isGithubCiAdapter, resolveGithubCiAdapter } = require("./ci-run");
+const { validateRunEvidence, fetchValidatedRun, isGithubCiAdapter, resolveGithubCiAdapter, normalizeFetchFailureReason } = require("./ci-run");
 
 const HEAD = "a".repeat(40);
 const OTHER_HEAD = "b".repeat(40);
@@ -133,6 +133,96 @@ test("adapter reports unreachable/not-found -> fails closed with the adapter's o
   const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: "NOT_FOUND" }) });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "NOT_FOUND");
+});
+
+// ---------------------------------------------------------------- Corrective C7 (W4-C6R-DEV-L1): normalizeFetchFailureReason()
+//
+// Reproduction first (mission section 5): BEFORE this corrective, a
+// fetch-failure `reason` was published verbatim from whatever an injected
+// adapter returned -- an empty string, a 5000-character string, lowercase
+// text, or non-string garbage would all reach stages/1f/report.js's Shape A
+// validation (`isBoundedString(o.reason, 200)`, non-empty, <=200 chars)
+// exactly as the adapter wrote them, and a value outside that bound made the
+// collector produce a record report.js would then reject as malformed --
+// the two modules disagreeing about the same record's validity. C7-L1-01/02
+// below reproduce that exact defect against the CURRENT, fixed behavior
+// (normalization now closes the gap; these are permanent regressions, not a
+// one-time repro script).
+
+test("C7-L1-01: an empty-string adapter reason (would violate report.js's non-empty Shape A bound if published verbatim) is normalized to the fixed fallback", async () => {
+  const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: "" }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "SOURCE_UNREACHABLE");
+});
+
+test("C7-L1-02: a 201-character adapter reason (would violate report.js's <=200-char Shape A bound if published verbatim) is normalized to the fixed fallback", async () => {
+  const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: "X".repeat(201) }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "SOURCE_UNREACHABLE");
+});
+
+test("C7-L1-03: a very long (5000-character) adapter reason is normalized to the fixed fallback, never echoed at length", async () => {
+  const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: "Y".repeat(5000) }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "SOURCE_UNREACHABLE");
+});
+
+test("C7-L1-04: a lowercase or mixed-case adapter reason (non-canonical shape) is normalized to the fixed fallback", async () => {
+  for (const bad of ["not_found", "Not_Found", "notFound"]) {
+    const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: bad }) });
+    assert.equal(r.ok, false, bad);
+    assert.equal(r.reason, "SOURCE_UNREACHABLE", bad);
+  }
+});
+
+test("C7-L1-05: an adapter reason containing non-canonical characters (spaces, punctuation, markup) is normalized to the fixed fallback, never published as free text", async () => {
+  for (const bad of ["NOT FOUND", "<script>alert(1)</script>", "rate-limited!", "NOT_FOUND.", "a".repeat(1) + " "]) {
+    const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: bad }) });
+    assert.equal(r.ok, false, bad);
+    assert.equal(r.reason, "SOURCE_UNREACHABLE", bad);
+  }
+});
+
+test("C7-L1-06: a non-string adapter reason (number, object, array, null, or a missing field entirely) is normalized to the fixed fallback, never coerced or thrown", async () => {
+  for (const bad of [404, { message: "nope" }, ["NOT_FOUND"], null, undefined]) {
+    const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: bad }) });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.equal(r.reason, "SOURCE_UNREACHABLE", JSON.stringify(bad));
+  }
+  const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "SOURCE_UNREACHABLE");
+});
+
+test("C7-L1-07: a canonical, bounded, uppercase adapter reason is passed through unchanged", async () => {
+  for (const good of ["NOT_FOUND", "RATE_LIMITED", "SOURCE_UNREACHABLE", "A"]) {
+    const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: good }) });
+    assert.equal(r.ok, false, good);
+    assert.equal(r.reason, good, good);
+  }
+});
+
+test("C7-L1-08: a canonical reason exactly at the 64-character pattern bound is passed through unchanged; one character over is normalized", () => {
+  const atBound = "A" + "B".repeat(63);
+  assert.equal(atBound.length, 64);
+  assert.equal(normalizeFetchFailureReason(atBound), atBound);
+  const overBound = atBound + "C";
+  assert.equal(normalizeFetchFailureReason(overBound), "SOURCE_UNREACHABLE");
+});
+
+test("C7-L1-09: an adapter-supplied reason claiming one of the four internal-only WRONG_* codes in an {ok:false} response is normalized to the fixed fallback, never published verbatim", async () => {
+  for (const spoofed of ["WRONG_REPOSITORY", "WRONG_SHA", "WRONG_EVENT", "WRONG_WORKFLOW"]) {
+    const r = await fetchValidatedRun({ ...request(), adapter: adapter({ ok: false, reason: spoofed }) });
+    assert.equal(r.ok, false, spoofed);
+    assert.equal(r.reason, "SOURCE_UNREACHABLE", spoofed);
+    assert.equal(normalizeFetchFailureReason(spoofed), "SOURCE_UNREACHABLE", spoofed);
+  }
+});
+
+test("C7-L1-10: a genuine, internally-detected WRONG_* mismatch (a successfully fetched, fully validated run whose fields do not match the request) still produces the exact WRONG_* code -- the exclusion in normalizeFetchFailureReason() only blocks adapter-SUPPLIED text, never the internal identity-comparison codes", async () => {
+  const r = await fetchValidatedRun({ ...request(), adapter: adapter(validRun({ headSha: OTHER_HEAD })) });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "WRONG_SHA");
 });
 
 test("adapter throws -> fails closed, never an uncaught exception", async () => {

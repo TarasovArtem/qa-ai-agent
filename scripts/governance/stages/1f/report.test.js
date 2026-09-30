@@ -602,6 +602,110 @@ test("a genuinely consistent CLEAN_FIRST_PASS record (attempt 1, empty history, 
 });
 
 // ======================================================================
+// Corrective C7 (Shape C self-consistency): the CLEAN_FIRST_PASS-only
+// internal-consistency check above (W4-C2R-INFO-2) left the other three
+// completed-run classifications (FAIL, INCOMPLETE, HUMAN_REVIEW_REQUIRED)
+// unchecked -- a record could, for example, declare FAIL with every job
+// outcome list empty, an impossible state per ci-classify.js's own decision
+// table. Extended with the identical narrow, non-classifying pattern.
+// ======================================================================
+
+function failRecord(overrides) {
+  return ciRecord(runObserved({ classification: "FAIL", ...overrides }), { status: "FAIL", reasonCode: "CI_REQUIRED_JOB_FAILED" });
+}
+function incompleteRecord(overrides) {
+  return ciRecord(runObserved({ classification: "INCOMPLETE", ...overrides }), { status: "INCOMPLETE", reasonCode: "CI_REQUIRED_JOB_INCOMPLETE" });
+}
+function humanReviewRecord(overrides) {
+  return ciRecord(runObserved({ classification: "HUMAN_REVIEW_REQUIRED", attempt: 2, attemptHistory: [{ attempt: 1, conclusion: "success", failedJobs: [] }], ...overrides }), { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "CI_UNEXPLAINED_RERUN" });
+}
+
+test("C7-SHAPEC-01: a genuinely consistent FAIL record (empty missing/pending, non-empty failed) is accepted", () => {
+  const record = failRecord({ failed: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, true);
+});
+
+test("C7-SHAPEC-02: a genuinely consistent FAIL record (empty missing/pending/failed, non-empty skipped) is accepted", () => {
+  const record = failRecord({ skipped: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, true);
+});
+
+test("C7-SHAPEC-03: FAIL is inconsistent with a non-empty missing-jobs list -- an incomplete run classifies INCOMPLETE, not FAIL", () => {
+  const record = failRecord({ missing: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /FAIL is inconsistent with a non-empty missing-jobs list/);
+});
+
+test("C7-SHAPEC-04: FAIL is inconsistent with a non-empty pending-jobs list -- an incomplete run classifies INCOMPLETE, not FAIL", () => {
+  const record = failRecord({ pending: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /FAIL is inconsistent with a non-empty pending-jobs list/);
+});
+
+test("C7-SHAPEC-05: FAIL with every job outcome list empty (an impossible state -- nothing failed, missing, pending or skipped) is rejected", () => {
+  const record = failRecord({});
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /FAIL requires at least one failed or skipped required job/);
+});
+
+test("C7-SHAPEC-06: a genuinely consistent INCOMPLETE record (non-empty missing) is accepted", () => {
+  const record = incompleteRecord({ missing: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, true);
+});
+
+test("C7-SHAPEC-07: a genuinely consistent INCOMPLETE record (non-empty pending) is accepted", () => {
+  const record = incompleteRecord({ pending: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, true);
+});
+
+test("C7-SHAPEC-08: INCOMPLETE with every job outcome list empty (nothing actually missing or pending) is rejected", () => {
+  const record = incompleteRecord({});
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /INCOMPLETE requires at least one missing or pending required job/);
+});
+
+test("C7-SHAPEC-09: a genuinely consistent HUMAN_REVIEW_REQUIRED record (rerun via attempt > 1, every job outcome list empty) is accepted", () => {
+  const record = humanReviewRecord({});
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, true);
+});
+
+test("C7-SHAPEC-10: a genuinely consistent HUMAN_REVIEW_REQUIRED record (rerun via a non-empty attempt history, attempt still 1) is accepted", () => {
+  const record = humanReviewRecord({ attempt: 1, attemptHistory: [{ attempt: 1, conclusion: "success", failedJobs: [] }] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, true);
+});
+
+test("C7-SHAPEC-11: HUMAN_REVIEW_REQUIRED with attempt 1 and no attempt history (no rerun occurred) is rejected", () => {
+  const record = humanReviewRecord({ attempt: 1, attemptHistory: [] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /HUMAN_REVIEW_REQUIRED requires a rerun/);
+});
+
+test("C7-SHAPEC-12: HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty failed-jobs list", () => {
+  const record = humanReviewRecord({ failed: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty failed-jobs list/);
+});
+
+test("C7-SHAPEC-13: HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty missing-jobs list", () => {
+  const record = humanReviewRecord({ missing: ["Unit tests"] });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(record.observed)] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /HUMAN_REVIEW_REQUIRED is inconsistent with a non-empty missing-jobs list/);
+});
+
+// ======================================================================
 // Corrective C3 (W4-C2R-DEV-L1): phase / finalized consistency
 // ======================================================================
 
@@ -875,6 +979,55 @@ test("C4-L1-06: an oversized nested run-evidence array (beyond the canonical bou
   assertRunEvidenceMalformedRejection(runObserved({ attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: tooManyFailedJobs }] }), "attemptHistory[0].failedJobs x300");
 });
 
+// ---------------------------------------------------------------- Corrective C7 (W4-C6R-DEV-L2): sparse-array rejection in isValidCiRunIdentity()
+//
+// Reproduction first (mission section 5): the same Array.prototype.every()
+// hole-skipping bug fixed in required-jobs.js also existed independently
+// here -- isJobNameArray() and the top-level attemptHistory check both used
+// plain `.every()` with no density guard, so a sparse `requiredJobs`,
+// `missing`/`failed`/`pending`/`skipped`, or `attemptHistory` array could
+// vacuously pass isValidCiRunIdentity() and reach computeCiRunDigest(). Each
+// case below carries the baseline run's matching CI-run evidence (per the
+// C5 rationale above) so isValidCiRunIdentity() is the first thing that can
+// reject it -- these fail (report reachable, or a thrown TypeError from
+// computeCiRunDigest()) without the isDenseArray() guard added in this
+// corrective.
+
+function sparseArrayWithHole(...values) {
+  const a = [];
+  a.length = values.length + 1;
+  values.forEach((v, i) => { a[i] = v; });
+  // trailing hole at the end (a[values.length] is never assigned)
+  return a;
+}
+
+test("C7-L2-09: a sparse requiredJobs array (hole at the end) is rejected, never vacuously validated", () => {
+  assertRunEvidenceMalformedRejection(runObserved({ requiredJobs: sparseArrayWithHole("Unit tests") }), "sparse requiredJobs");
+});
+
+test("C7-L2-10: a sparse missing/failed/pending/skipped array (hole at the end) is rejected in each field independently", () => {
+  assertRunEvidenceMalformedRejection(runObserved({ missing: sparseArrayWithHole("Unit tests") }), "sparse missing");
+  assertRunEvidenceMalformedRejection(runObserved({ failed: sparseArrayWithHole("Unit tests") }), "sparse failed");
+  assertRunEvidenceMalformedRejection(runObserved({ pending: sparseArrayWithHole("Unit tests") }), "sparse pending");
+  assertRunEvidenceMalformedRejection(runObserved({ skipped: sparseArrayWithHole("Unit tests") }), "sparse skipped");
+});
+
+test("C7-L2-11: a sparse attemptHistory array (hole at the end, so .every() never visits the hole) is rejected", () => {
+  assertRunEvidenceMalformedRejection(runObserved({ attemptHistory: sparseArrayWithHole({ attempt: 1, conclusion: "failure", failedJobs: [] }) }), "sparse attemptHistory");
+});
+
+test("C7-L2-12: a sparse failedJobs array nested inside a well-formed attemptHistory entry is rejected", () => {
+  const sparseFailedJobs = sparseArrayWithHole("Unit tests");
+  assertRunEvidenceMalformedRejection(runObserved({ attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: sparseFailedJobs }] }), "sparse nested failedJobs");
+});
+
+test("C7-L2-13: a dense (non-sparse) valid record with every array field populated is still accepted -- the new guard rejects only sparse shapes, not legitimate ones", () => {
+  const o = runObserved({ classification: "FAIL", failed: ["Unit tests"], attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Unit tests"] }], attempt: 2 });
+  const record = ciRecord(o, { status: "FAIL", reasonCode: "CI_REQUIRED_JOB_FAILED" });
+  const r = finalize([record], { externalEvidence: [runEvidenceFor(o)] });
+  assert.equal(r.ok, true);
+});
+
 // ---------------------------------------------------------------- C4-SEC: trusted-context binding (W4-C3R-SEC-L1)
 
 test("C4-SEC-01: a completed-run record whose repository differs from trustedContext.repositoryId is rejected", () => {
@@ -934,9 +1087,22 @@ test("C4-INFO-04: attempt 2 cannot be CLEAN_FIRST_PASS (pre-existing W4-C2R-INFO
 // guard in validateCollectedCiRecord(). A pre-completion record whose key set
 // legitimately matches shape A ({classification, collected:false, reason}) or
 // shape B ({classification, collected:true, status}) passes the shape check, so
-// this guard is the ONLY thing standing between a PASS claim on such a record
-// and READY with zero CI-run evidence. The C4 re-review showed that deleting
-// it left the whole suite green; these tests fail if it is removed.
+// at the time this guard was added (Corrective C4), it was the ONLY thing
+// standing between a PASS claim on such a record and READY with zero CI-run
+// evidence; the C4 re-review showed that deleting it alone left the whole
+// suite green.
+//
+// CORRECTIVE C7 (AQA-INFO-3a): that "fails if removed" claim is now stale on
+// its own -- Corrective C6 added a second, shape-specific classification
+// guard (immediately below, in the isShapeA/isShapeB block of
+// validateCollectedCiRecord()) that ALSO independently rejects a shape A/B
+// CLEAN_FIRST_PASS claim, and it fires first for those shapes. Disabling
+// only this older generic guard no longer fails C5-AQA-L1-01/02 by itself,
+// because the newer guard still catches the same case (verified by this
+// corrective's own mutation testing). `PASS_GUARD_REASON` below accepts
+// either guard's rejection message for exactly this reason: these tests stay
+// mutation-sensitive to EITHER guard being removed, but no single guard's
+// removal is any longer guaranteed, on its own, to fail this specific test.
 // ======================================================================
 
 const stagePassRecords = () => [identity(), genericRecord("1B.MARKDOWN", "1B", "PASS"), genericRecord("1C.EVIDENCE", "1C", "PASS"), genericRecord("1D.CONSISTENCY", "1D", "PASS"), genericRecord("1E.DELTA", "1E", "PASS")];
@@ -1048,6 +1214,42 @@ test("C6-INFO3-05: shape A with an inconsistent reasonCode (not CI_NOT_COLLECTED
   const r = phase2WithStages(ciRecord({ classification: "FAIL", collected: false, reason: "WRONG_REPOSITORY" }, { status: "FAIL", reasonCode: "CI_REQUIRED_JOB_FAILED" }), []);
   assert.equal(r.ok, false);
   assert.match(r.reason, /must carry reasonCode CI_NOT_COLLECTED/);
+});
+
+// Corrective C7 (W4-C6R-INFO-1): the real collector
+// (ci-evidence.js#collectCiEvidence()) derives shape A's classification from
+// `runResult.reason.startsWith("WRONG_")` alone -- a WRONG_* reason always
+// means FAIL, every other reason always means INCOMPLETE. C6-INFO3-01/02
+// above already cover the two CONSISTENT pairings as positive controls; the
+// four tests below cover the two INCONSISTENT pairings the real collector
+// never produces, which report.js could not previously distinguish (it only
+// checked "classification is FAIL or INCOMPLETE", not which one the
+// specific reason implies).
+
+test("C7-INFO1-01: shape A with a WRONG_* reason but classification INCOMPLETE is rejected -- the real collector always classifies a WRONG_* reason FAIL", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: false, reason: "WRONG_SHA" }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /a WRONG_\* fetch-failure reason can only classify FAIL/);
+});
+
+test("C7-INFO1-02: shape A with a non-WRONG_* reason but classification FAIL is rejected -- the real collector always classifies a non-WRONG_* reason INCOMPLETE", () => {
+  const r = phase2WithStages(ciRecord({ classification: "FAIL", collected: false, reason: "SOURCE_UNREACHABLE" }, { status: "FAIL", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /a non-WRONG_\* fetch-failure reason can only classify INCOMPLETE/);
+});
+
+test("C7-INFO1-03: shape A with each of the four internal WRONG_* reasons and classification FAIL is accepted (positive controls, all four codes)", () => {
+  for (const reason of ["WRONG_REPOSITORY", "WRONG_SHA", "WRONG_EVENT", "WRONG_WORKFLOW"]) {
+    const r = phase2WithStages(ciRecord({ classification: "FAIL", collected: false, reason }, { status: "FAIL", reasonCode: "CI_NOT_COLLECTED" }), []);
+    assert.equal(r.ok, true, reason);
+  }
+});
+
+test("C7-INFO1-04: shape A with a non-WRONG_* reason (e.g. an adapter-supplied or internally-generated fetch-failure code) and classification INCOMPLETE is accepted", () => {
+  for (const reason of ["SOURCE_UNREACHABLE", "NOT_FOUND", "MALFORMED_RUN_SHAPE", "NO_ADAPTER_AVAILABLE", "ADAPTER_THREW", "AMBIGUOUS_JOB_IDENTITY"]) {
+    const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: false, reason }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+    assert.equal(r.ok, true, reason);
+  }
 });
 
 for (const status of ["queued", "waiting", "in_progress"]) {

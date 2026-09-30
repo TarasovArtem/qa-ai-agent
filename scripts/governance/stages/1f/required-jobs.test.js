@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { checkRequiredJobs } = require("./required-jobs");
+const { checkRequiredJobs, validateRequiredJobsPolicy, isDenseArray } = require("./required-jobs");
 
 const job = (name, status, conclusion) => ({ name, status, conclusion });
 const run = (jobs) => ({ jobs });
@@ -95,4 +95,110 @@ test("never throws on a fully hostile input object", () => {
 test("the function does not hard-code any specific job name: an arbitrary caller-supplied policy is honored exactly", () => {
   const r = checkRequiredJobs({ run: run([job("Totally Custom Job Name", "completed", "success")]), requiredJobs: ["Totally Custom Job Name"] });
   assert.equal(r.allSucceeded, true);
+});
+
+// ---------------------------------------------------------------- Corrective C7 (W4-C6R-DEV-L2): sparse-array rejection + snapshot
+//
+// Reproduction first (mission section 5): BEFORE this corrective,
+// Array.prototype.every() silently SKIPPED holes -- `const a = []; a.length
+// = 2; a[1] = "Unit tests";` has `a.every(...)` visit ONLY index 1 and
+// report `true`, never inspecting the absent index 0. The OLD validation
+// (`Array.isArray(v) && v.length <= max && v.every(...)`) therefore accepted
+// this array as if it were a single-entry, fully-populated policy list, and
+// `new Set(requiredJobs).size !== requiredJobs.length` did not catch it
+// either (Set iteration treats a hole as `undefined`, giving matching
+// sizes). isDenseArray() below is the fix; these tests reproduce the exact
+// shapes that bypassed the old check and confirm they are now rejected.
+
+function sparseHoleAtStart() {
+  const a = [];
+  a.length = 2;
+  a[1] = "Unit tests";
+  return a;
+}
+function sparseHoleInMiddle() {
+  const a = ["Unit tests"];
+  a.length = 3;
+  a[2] = "Cypress - chrome";
+  return a;
+}
+function sparseHoleAtEnd() {
+  const a = ["Unit tests"];
+  a.length = 2;
+  return a;
+}
+
+test("isDenseArray() rejects every sparse shape and accepts every dense one", () => {
+  assert.equal(isDenseArray(sparseHoleAtStart()), false);
+  assert.equal(isDenseArray(sparseHoleInMiddle()), false);
+  assert.equal(isDenseArray(sparseHoleAtEnd()), false);
+  assert.equal(isDenseArray([]), true);
+  assert.equal(isDenseArray(["a", "b"]), true);
+  assert.equal(isDenseArray(["a", undefined, "b"]), true); // explicit undefined has an own key -- not a hole
+  assert.equal(isDenseArray(["a", null, "b"]), true); // explicit null has an own key -- not a hole
+  assert.equal(isDenseArray("not-an-array"), false);
+  assert.equal(isDenseArray(null), false);
+});
+
+test("C7-L2-01: a sparse requiredJobs array with a hole at the start is rejected, never vacuously accepted via every()'s hole-skipping", () => {
+  const r = validateRequiredJobsPolicy(sparseHoleAtStart());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
+
+test("C7-L2-02: a sparse requiredJobs array with a hole in the middle is rejected", () => {
+  const r = validateRequiredJobsPolicy(sparseHoleInMiddle());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
+
+test("C7-L2-03: a sparse requiredJobs array with a trailing hole (length extended past the last real entry) is rejected", () => {
+  const r = validateRequiredJobsPolicy(sparseHoleAtEnd());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY");
+});
+
+test("C7-L2-04: the same three sparse shapes are also rejected through checkRequiredJobs() (the caller most external code actually uses)", () => {
+  for (const sparse of [sparseHoleAtStart(), sparseHoleInMiddle(), sparseHoleAtEnd()]) {
+    const r = checkRequiredJobs({ run: run([job("Unit tests", "completed", "success")]), requiredJobs: sparse });
+    assert.equal(r.ok, false, JSON.stringify(sparse));
+    assert.equal(r.reason, "MALFORMED_REQUIRED_JOB_POLICY", JSON.stringify(sparse));
+  }
+});
+
+test("C7-L2-05: explicit undefined/null entries (not sparse holes -- both have an own enumerable key) are still rejected, but for their own per-entry type reason, not MALFORMED_REQUIRED_JOB_POLICY's sparse path being bypassed", () => {
+  const withUndefined = ["Unit tests", undefined];
+  const withNull = ["Unit tests", null];
+  assert.equal(isDenseArray(withUndefined), true);
+  assert.equal(isDenseArray(withNull), true);
+  assert.equal(validateRequiredJobsPolicy(withUndefined).ok, false);
+  assert.equal(validateRequiredJobsPolicy(withNull).ok, false);
+});
+
+test("C7-L2-06: a genuinely dense, valid requiredJobs array is accepted and returns a frozen snapshot, not the original reference", () => {
+  const original = ["Unit tests", "Cypress - chrome"];
+  const r = validateRequiredJobsPolicy(original);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.requiredJobs, original);
+  assert.notEqual(r.requiredJobs, original, "must be an isolated snapshot, not the same array reference");
+  assert.equal(Object.isFrozen(r.requiredJobs), true);
+  assert.throws(() => { r.requiredJobs.push("extra"); });
+});
+
+test("C7-L2-07: mutating the caller's original array AFTER validateRequiredJobsPolicy() returns never changes the returned snapshot", () => {
+  const original = ["Unit tests", "Cypress - chrome"];
+  const r = validateRequiredJobsPolicy(original);
+  assert.equal(r.ok, true);
+  original.push("Late addition");
+  original[0] = "Mutated";
+  assert.deepEqual(r.requiredJobs, ["Unit tests", "Cypress - chrome"]);
+});
+
+test("C7-L2-08: checkRequiredJobs() evaluates the run against the SAME validated snapshot it returns evidence about, not a separately re-read copy of the input", () => {
+  const original = ["Unit tests", "Cypress - chrome"];
+  const r = checkRequiredJobs({ run: run([job("Unit tests", "completed", "success"), job("Cypress - chrome", "completed", "success")]), requiredJobs: original });
+  assert.equal(r.ok, true);
+  assert.equal(r.allSucceeded, true);
+  original.push("Nonexistent job");
+  assert.equal(r.missing.includes("Nonexistent job"), false, "the already-computed result must not be affected by a later mutation of the caller's original array");
 });

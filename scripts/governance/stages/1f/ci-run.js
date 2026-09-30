@@ -30,6 +30,21 @@
  * D5 deferral and the Wave 4 corrective reports' own "D4/D5 live provider:
  * DEFERRED" disclosures); its future existence must not be inferred from this
  * comment or from the presence of the injection seam itself.
+ *
+ * CORRECTIVE C7 (W4-C6R-DEV-L1): a fetch-failure `reason` used to be
+ * published verbatim from whatever an injected adapter returned (`fetched.reason`,
+ * any string, any length) -- an untrusted-shaped value with no bound and no
+ * canonical form, which `stages/1f/report.js`'s own, stricter Shape A
+ * validation (Corrective C6) would then reject if it were empty or over 200
+ * characters, leaving the collector able to publish a record the report
+ * builder disagreed with. `normalizeFetchFailureReason()` below now maps
+ * every adapter-supplied reason to a bounded, canonical-code-shaped value
+ * (or a fixed fallback) BEFORE it is ever returned -- never an uncaught
+ * exception, never unbounded text, and never treated as authoritative
+ * platform identity: the four `WRONG_*` reasons remain exclusively internal
+ * (produced only by the identity comparisons below, never derived from
+ * adapter text), so normalizing the adapter's own `reason` string can never
+ * manufacture one.
  */
 
 "use strict";
@@ -44,16 +59,57 @@ const JOB_CONCLUSIONS = new Set(["success", "failure", "cancelled", "timed_out",
 const MAX_JOBS = 256;
 const MAX_ATTEMPTS = 64;
 const MAX_ATTEMPT_NUMBER = 1000;
+// Every reason this module or its caller may ever need to represent already
+// takes this exact shape (MALFORMED_REQUEST, NO_ADAPTER_AVAILABLE,
+// ADAPTER_THREW, MALFORMED_RUN_SHAPE, AMBIGUOUS_JOB_IDENTITY, WRONG_*,
+// SOURCE_UNREACHABLE): an uppercase code, bounded well under 200 chars (the
+// downstream Shape A bound). An adapter-supplied reason that does not match
+// this shape is untrusted, unbounded free text and is normalized to the
+// fixed fallback rather than published as-is.
+const FETCH_FAILURE_REASON_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const DEFAULT_FETCH_FAILURE_REASON = "SOURCE_UNREACHABLE";
+
+/**
+ * Corrective C7 (W4-C6R-DEV-L1): the ONE place an adapter-supplied reason
+ * string is ever accepted -- always bounded, always canonical-code-shaped,
+ * deterministic, never a caller-text echo beyond the fixed pattern above.
+ *
+ * It also rejects any adapter-supplied reason that happens to start with
+ * `WRONG_`, falling back to the default instead of passing it through: an
+ * adapter reporting `{ok: false, reason: "WRONG_SHA"}` (a genuine fetch
+ * failure, never having reached the identity comparisons below) would
+ * otherwise pass canonical-shape validation and be published verbatim,
+ * letting adapter-chosen text impersonate the four WRONG_* codes this
+ * function's own callers reserve exclusively for an internally PROVEN
+ * identity mismatch (a successfully fetched, fully validated run whose
+ * fields were actually compared against the request). Without this
+ * exclusion, that adapter text would reach `stages/1f/ci-evidence.js`'s
+ * `reason.startsWith("WRONG_")` classification check and be reported as
+ * FAIL ("CI definitively ran against the wrong commit") when the truth is
+ * merely "the run could not be fetched at all" (INCOMPLETE) -- the record's
+ * meaning would misrepresent what was actually established.
+ */
+function normalizeFetchFailureReason(reason) {
+  if (typeof reason !== "string" || !FETCH_FAILURE_REASON_PATTERN.test(reason)) return DEFAULT_FETCH_FAILURE_REASON;
+  if (reason.startsWith("WRONG_")) return DEFAULT_FETCH_FAILURE_REASON;
+  return reason;
+}
 
 function isGithubCiAdapter(adapter) {
   return isPlainObject(adapter) && typeof adapter.fetchRun === "function";
 }
 
 /**
- * resolveGithubCiAdapter(input) -- same resolution pattern as
- * stages/1a/git-adapter.js#resolveGitAdapter(): an already-valid injected
- * adapter wins; otherwise a real one is built from trusted config; otherwise
- * resolution fails and the caller reports INCOMPLETE (never fabricates evidence).
+ * resolveGithubCiAdapter(input) -- same resolution SEAM
+ * stages/1a/git-adapter.js#resolveGitAdapter() establishes for its own stage,
+ * narrowed to what this module actually implements: an already-valid
+ * injected adapter wins; otherwise resolution fails (`{ok:false}`) and the
+ * caller reports `NO_ADAPTER_AVAILABLE` / INCOMPLETE (never fabricates
+ * evidence). Corrective C7 (W4-C6R-INFO-2): there is no "otherwise a real
+ * one is built from trusted config" branch -- unlike `resolveGitAdapter()`,
+ * this function never constructs a live adapter from configuration, because
+ * no live GitHub adapter implementation exists in this module (see the file
+ * header).
  */
 function resolveGithubCiAdapter(input) {
   if (isPlainObject(input) && isGithubCiAdapter(input.githubCi)) return { ok: true, adapter: input.githubCi };
@@ -117,9 +173,13 @@ function validateRunEvidence(raw) {
  * fetchValidatedRun({ adapter | githubCi, repository, workflowPath, headSha, event })
  *   -> Promise<{ ok: true, run } | { ok: false, reason }>
  *
- * The single entry point every later WP uses. Resolves the adapter (injected
- * or real), calls it, and validates the result -- never returns an
- * unvalidated shape to a caller.
+ * The single entry point every later WP uses. Resolves the INJECTED adapter
+ * (Corrective C7, W4-C6R-INFO-2: there is no "or real" branch -- see
+ * resolveGithubCiAdapter()'s own doc comment), calls it, and validates the
+ * result -- never returns an unvalidated shape to a caller. Every `reason`
+ * this function can return is either produced internally (a fixed,
+ * canonical label) or the adapter's own reason string passed through
+ * normalizeFetchFailureReason() -- never raw, unbounded adapter text.
  */
 async function fetchValidatedRun(input) {
   if (!isPlainObject(input)) return { ok: false, reason: "MALFORMED_REQUEST" };
@@ -136,8 +196,8 @@ async function fetchValidatedRun(input) {
     return { ok: false, reason: "ADAPTER_THREW" };
   }
   if (!isPlainObject(fetched) || fetched.ok !== true) {
-    const reason = isPlainObject(fetched) && typeof fetched.reason === "string" ? fetched.reason : "SOURCE_UNREACHABLE";
-    return { ok: false, reason };
+    const rawReason = isPlainObject(fetched) ? fetched.reason : undefined;
+    return { ok: false, reason: normalizeFetchFailureReason(rawReason) };
   }
   const validated = validateRunEvidence(fetched.run);
   if (!validated.ok) return validated;
@@ -152,4 +212,4 @@ async function fetchValidatedRun(input) {
   return validated;
 }
 
-module.exports = { isGithubCiAdapter, resolveGithubCiAdapter, validateRunEvidence, fetchValidatedRun };
+module.exports = { isGithubCiAdapter, resolveGithubCiAdapter, validateRunEvidence, fetchValidatedRun, normalizeFetchFailureReason };

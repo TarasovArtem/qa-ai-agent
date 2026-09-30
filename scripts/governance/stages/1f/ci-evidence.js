@@ -213,17 +213,30 @@ async function collectCiEvidence(input) {
   // about the same record's validity; reusing required-jobs.js's own policy
   // validator (rather than a second, potentially divergent check here) keeps
   // that agreement structural, not coincidental.
+  //
+  // CORRECTIVE C7 (W4-C6R-DEV-L2): `policyCheck.requiredJobs` is now a
+  // FROZEN SNAPSHOT `validateRequiredJobsPolicy()` took by a single read of
+  // the caller's array -- every use below reads ONLY this snapshot, never
+  // `input.requiredJobs` again. Without this, a caller-held reference to the
+  // original array (or a getter-backed element) could be mutated during the
+  // `await resolvedAdapter.adapter.fetchDetermination()` call further below
+  // (reachable whenever the run shows a rerun), so the job set actually
+  // checked against the run (via checkRequiredJobs(), synchronously right
+  // after validation) could differ from the job set later stored in the
+  // record and hashed into the CI-run evidence digest -- a classification
+  // computed against one job set, published against another.
   const policyCheck = validateRequiredJobsPolicy(input.requiredJobs);
   if (!policyCheck.ok) {
     return invalidInput(subject, `requiredJobs must be a valid, base-anchored policy list: ${policyCheck.reason}`);
   }
+  const requiredJobs = policyCheck.requiredJobs;
   // Corrective C3 (W4-C2R-DEV-M2): from this point on a completed, validated run
   // always contributes a canonical CI-run externalEvidence entry (design section
   // 25a), which requires a trusted collection clock -- never a fabricated or
   // non-deterministic default.
   const collectedAt = collectedAtOf(input.now);
   if (collectedAt === null) return invalidInput(subject, "now (a Date or bounded ISO string collection clock) is required to record CI-run evidence");
-  const requiredJobCheck = checkRequiredJobs({ run, requiredJobs: input.requiredJobs });
+  const requiredJobCheck = checkRequiredJobs({ run, requiredJobs });
 
   const hadRerun = run.attempt > 1 || run.attemptHistory.length > 0;
   // Corrective C2 (W4-SEC-H1): an adapter response is untrusted channel data and
@@ -250,7 +263,7 @@ async function collectCiEvidence(input) {
   const failed = requiredJobCheck.ok ? [...requiredJobCheck.failed].sort() : [];
   const pending = requiredJobCheck.ok ? [...requiredJobCheck.pending].sort() : [];
   const skipped = requiredJobCheck.ok ? [...requiredJobCheck.skipped].sort() : [];
-  const requiredJobsSorted = [...input.requiredJobs].sort();
+  const requiredJobsSorted = [...requiredJobs].sort();
 
   const record = ciRecord(subject, classified, {
     classification: classified.classification, repository: run.repository, workflowPath: input.workflowPath, runId: run.runId,

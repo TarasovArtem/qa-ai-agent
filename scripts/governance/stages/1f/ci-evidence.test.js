@@ -99,11 +99,53 @@ test("an unreachable/malformed CI source is INCOMPLETE, never coerced to success
   assert.equal(r.records[0].status, "INCOMPLETE");
 });
 
+// Corrective C7 (W4-C6R-DEV-L1, end-to-end): a buggy or malicious adapter
+// cannot manufacture the FAIL-mapped outcome the three tests above establish
+// for a GENUINE wrong-identity run by simply claiming a WRONG_* reason
+// string in an ordinary fetch-failure response -- ci-run.js's
+// normalizeFetchFailureReason() (Corrective C7) strips exactly that
+// impersonation before this module ever sees the reason, so the classifier's
+// own `reason.startsWith("WRONG_")` test can never be fooled by adapter text.
+test("C7-L1: an adapter claiming a spoofed WRONG_SHA reason in an ordinary fetch-failure response (never having actually fetched or compared a run) is classified INCOMPLETE, not FAIL -- the WRONG_* signal cannot be manufactured by adapter text", async () => {
+  const r = await collectCiEvidence(baseInput({ adapter: adapter({ ok: false, reason: "WRONG_SHA" }) }));
+  assert.equal(r.records[0].status, "INCOMPLETE");
+  assert.equal(r.records[0].observed.reason, "SOURCE_UNREACHABLE");
+});
+
 test("a rerun with no determination candidate resolves to HUMAN_REVIEW_REQUIRED, never an automatic pass", async () => {
   const run = rawRun({ attempt: 2, attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Cypress - chrome"] }] });
   const r = await collectCiEvidence(baseInput({ adapter: adapter(run) }));
   assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
   assertOnlyCiRunEvidence(r.externalEvidence);
+});
+
+// Corrective C7 (W4-C6R-DEV-L2, end-to-end TOCTOU reproduction): BEFORE this
+// corrective, `input.requiredJobs` was read once (synchronously) to run
+// checkRequiredJobs() against the fetched run, then read AGAIN (after the
+// conditional `await resolvedAdapter.adapter.fetchDetermination()` a rerun
+// triggers) to build the stored record and the CI-run evidence digest. A
+// caller whose `requiredJobs` was a getter -- or who held a mutable
+// reference and mutated it during that await window -- could make the job
+// set actually CHECKED against the run differ from the job set actually
+// PUBLISHED and hashed. This test uses a getter that returns a fresh copy
+// each time and counts invocations: a fix that re-reads the input after the
+// await calls the getter twice; the current single-snapshot fix
+// (validateRequiredJobsPolicy() takes ONE read and every later use consumes
+// that same frozen snapshot) calls it exactly once.
+test("C7-L2: requiredJobs is read exactly ONCE by collectCiEvidence(), even when a rerun forces an await (fetchDetermination) between the required-job check and the record/digest construction -- no re-read TOCTOU window", async () => {
+  let reads = 0;
+  const input = baseInput({
+    adapter: adapter(rerunRun()),
+    determinationAdapter: { fetchDetermination: async () => { await Promise.resolve(); return { ok: false }; } },
+  });
+  Object.defineProperty(input, "requiredJobs", {
+    enumerable: true,
+    get() { reads += 1; return [...REQUIRED]; },
+  });
+  const r = await collectCiEvidence(input);
+  assert.equal(reads, 1, "requiredJobs must be read exactly once, before the await, never re-read after it");
+  assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(r.records[0].observed.requiredJobs, [...REQUIRED].sort());
 });
 
 // ---------------------------------------------------------------- Corrective C1 (W4-SEC-H1): determination adapter seam
@@ -446,7 +488,17 @@ test("SEC-C2-28: no combination of injected adapter behavior reaches PASS_AFTER_
 // builder must agree about the same record's validity.
 // ======================================================================
 
-function assertMalformedRequiredJobsRejected(requiredJobs, label) {
+// Corrective C7 (AQA-INFO-3c): this helper used to assert only the generic
+// outcome.status ("CONFIGURATION_ERROR") -- which every one of these cases
+// already shares, so it could not distinguish "rejected for the right
+// reason" from "rejected for ANY reason, including a wrong one, or an
+// unrelated later failure that happens to share the same status". It now
+// also asserts the SPECIFIC canonical reason code
+// (required-jobs.js#validateRequiredJobsPolicy()'s own
+// MALFORMED_REQUIRED_JOB_POLICY / DUPLICATE_REQUIRED_JOB_NAME) appears in
+// outcome.detail, so each test actually proves the boundary check fired for
+// the case it claims to cover.
+function assertMalformedRequiredJobsRejected(requiredJobs, expectedReason, label) {
   return (async () => {
     let r;
     try {
@@ -456,39 +508,40 @@ function assertMalformedRequiredJobsRejected(requiredJobs, label) {
     }
     assert.equal(r.records.length, 0, `${label}: no forged successful CI record`);
     assert.equal(r.outcome.status, "CONFIGURATION_ERROR", label);
+    assert.match(r.outcome.detail, new RegExp(expectedReason), `${label}: expected reason ${expectedReason}, got: ${r.outcome.detail}`);
     assert.deepEqual(r.externalEvidence, [], `${label}: no CI_RUN externalEvidence`);
   })();
 }
 
 test("C6-INFO2-01: requiredJobs missing (undefined) is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(undefined, "missing");
+  await assertMalformedRequiredJobsRejected(undefined, "MALFORMED_REQUIRED_JOB_POLICY", "missing");
 });
 test("C6-INFO2-02: requiredJobs null is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(null, "null");
+  await assertMalformedRequiredJobsRejected(null, "MALFORMED_REQUIRED_JOB_POLICY", "null");
 });
 test("C6-INFO2-03: requiredJobs as a number is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(5, "number");
+  await assertMalformedRequiredJobsRejected(5, "MALFORMED_REQUIRED_JOB_POLICY", "number");
 });
 test("C6-INFO2-04: requiredJobs as a string is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected("Unit tests", "string");
+  await assertMalformedRequiredJobsRejected("Unit tests", "MALFORMED_REQUIRED_JOB_POLICY", "string");
 });
 test("C6-INFO2-05: requiredJobs as an empty array is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected([], "empty array");
+  await assertMalformedRequiredJobsRejected([], "MALFORMED_REQUIRED_JOB_POLICY", "empty array");
 });
 test("C6-INFO2-06: requiredJobs containing a non-string value is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(["Unit tests", 42], "non-string entry");
+  await assertMalformedRequiredJobsRejected(["Unit tests", 42], "MALFORMED_REQUIRED_JOB_POLICY", "non-string entry");
 });
 test("C6-INFO2-07: requiredJobs containing an empty job name is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(["Unit tests", ""], "empty name");
+  await assertMalformedRequiredJobsRejected(["Unit tests", ""], "MALFORMED_REQUIRED_JOB_POLICY", "empty name");
 });
 test("C6-INFO2-08: requiredJobs containing a name longer than 200 characters is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(["Unit tests", "x".repeat(201)], "oversized name");
+  await assertMalformedRequiredJobsRejected(["Unit tests", "x".repeat(201)], "MALFORMED_REQUIRED_JOB_POLICY", "oversized name");
 });
 test("C6-INFO2-09: requiredJobs containing more than 256 entries is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(Array.from({ length: 257 }, (_, i) => `job-${i}`), "too many entries");
+  await assertMalformedRequiredJobsRejected(Array.from({ length: 257 }, (_, i) => `job-${i}`), "MALFORMED_REQUIRED_JOB_POLICY", "too many entries");
 });
 test("C6-INFO2-10: requiredJobs containing duplicate names is rejected at the collector boundary", async () => {
-  await assertMalformedRequiredJobsRejected(["Unit tests", "Unit tests"], "duplicate names");
+  await assertMalformedRequiredJobsRejected(["Unit tests", "Unit tests"], "DUPLICATE_REQUIRED_JOB_NAME", "duplicate names");
 });
 
 test("C6-INFO2-11: a valid policy with a missing CI job remains a legitimate INCOMPLETE classification", async () => {
@@ -517,6 +570,18 @@ test("C6-INFO2-14: a valid completed rerun without accepted determination remain
   assertOnlyCiRunEvidence(r.externalEvidence);
 });
 
+// Corrective C7 (AQA-INFO-3b): this test's name promises a "cross-module
+// integration" check, but originally only asserted the collector-side
+// precondition (0 records) for the malformed cases -- it imported
+// buildReport() and never called it, so it never actually demonstrated
+// report.js's side of the agreement. It now does both: the malformed cases
+// still assert that the collector itself already refuses to produce a
+// record (so there is nothing malformed left for buildReport() to be handed
+// in the first place -- report.js is never even reached with a schema-
+// mismatched record), AND a positive control feeds a VALID collector output
+// through buildReport() end to end, confirming the two modules actually do
+// agree on what a legitimate record looks like, not merely that the negative
+// path never reaches the second module.
 test("C6-INFO2-15: no malformed requiredJobs input can produce a completed-run record plus externalEvidence that report.js would reject as a schema mismatch (cross-module integration)", async () => {
   const { buildReport } = require("./report");
   const trustedContext = {
@@ -529,13 +594,30 @@ test("C6-INFO2-15: no malformed requiredJobs input can produce a completed-run r
   };
   const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
   const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+
+  // Negative cases: the collector's own boundary rejects the malformed
+  // policy before any record or externalEvidence exists -- buildReport()
+  // is never reached with a schema-mismatched record because it is never
+  // reached at all.
   for (const requiredJobs of [["Unit tests", "Unit tests"], Array.from({ length: 300 }, (_, i) => `job-${i}`), ["Unit tests", ""]]) {
     const ci = await collectCiEvidence(baseInput({ requiredJobs }));
     assert.equal(ci.records.length, 0, JSON.stringify(requiredJobs));
-    // Since the collector itself already refused to produce a record, there is
-    // nothing malformed left for buildReport() to be handed in the first place --
-    // this IS the fix: report.js is never even reached with a schema-mismatched record.
+    assert.deepEqual(ci.externalEvidence, [], JSON.stringify(requiredJobs));
   }
+
+  // Positive control: a VALID collector output, folded into buildReport()
+  // alongside the other required Phase 2 records, actually reaches READY --
+  // proving report.js accepts exactly what the collector legitimately
+  // produces, not merely that malformed input never gets that far.
+  const ci = await collectCiEvidence(baseInput());
+  assert.equal(ci.records[0].observed.classification, "CLEAN_FIRST_PASS");
+  const report = buildReport({
+    subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: ci.externalEvidence,
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...ci.records],
+  });
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.equal(report.report.readiness.state, "READY");
+  assert.equal(report.report.ci.classification, "CLEAN_FIRST_PASS");
 });
 
 test("C6-INFO2-16: valid requiredJobs names at the allowed length (200 chars) and count (256 entries) bounds remain supported", async () => {
