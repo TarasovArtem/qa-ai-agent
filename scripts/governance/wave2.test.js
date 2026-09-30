@@ -82,8 +82,8 @@ test("W2: 1C and 1D never call Git, read a file or independently re-parse Markdo
   }
 });
 
-test("W2: no 1E, 1F, 1G or GOV-VERIFY-1 residue capability exists (delta-review, CI evidence, merge-gate facts)", () => {
-  for (const name of ["computeDeltaReview", "collectCiEvidence", "buildReport", "computeFingerprints", "verifyMergeGate", "getBranchProtection", "computePackDiff"]) assert.equal(name in g, false, name);
+test("W2: no 1G or GOV-VERIFY-1 residue capability exists (merge-gate facts) -- computeDeltaReview/collectCiEvidence/buildReport are intentionally excluded: Wave 3 (1E) and Wave 4 (1F) add them; see wave3.test.js for the Wave 3 boundary", () => {
+  for (const name of ["computeFingerprints", "verifyMergeGate", "getBranchProtection", "computePackDiff"]) assert.equal(name in g, false, name);
   for (const file of ["stages/1c/config.js", "stages/1c/evidence.js", "stages/1d/config.js", "stages/1d/consistency.js"]) {
     const text = fs.readFileSync(nodePath.join(__dirname, file), "utf8");
     assert.equal(/PRESERVATION_CHECK_ONLY|DEEP_REVIEW_REQUIRED|PACK_DIFF|BRANCH_PROTECTION|SAFE_TO_MERGE|CI_EXACT_SHA|chooseReviewClass/.test(text), false, file);

@@ -8,8 +8,11 @@
  * matcher internals. Wave 0 is the shared kernel; Wave 1 added the six stage
  * interfaces named for 1A and 1B in section 18 (getGitIdentity, getChangedFiles,
  * checkScope, scanSecrets, parseMarkdown, checkReferences); Wave 2 adds the two
- * named for 1C and 1D (checkEvidenceModel, checkConsistency). There is still no
- * CI-evidence, delta-review or report-writing code (1E..1G are not implemented).
+ * named for 1C and 1D (checkEvidenceModel, checkConsistency); Wave 3 adds the
+ * one named for 1E (computeDeltaReview); Wave 4 adds the two named for 1F
+ * (collectCiEvidence, buildReport) -- Stage 1F is implemented here but not yet
+ * merged or post-merge certified. Stage 1G (independent framework validation)
+ * is not implemented and is not code.
  */
 
 "use strict";
@@ -25,6 +28,7 @@ const {
 } = require("./kernel/validation");
 const { validateGraph } = require("./kernel/graph");
 const { aggregate, checkDomainResultCompleteness, exitCodeFor } = require("./kernel/readiness");
+const { revalidateEvidence } = require("./kernel/revalidation");
 const { validateManifest, parseManifestText, parseManifestBytes } = require("./kernel/manifest");
 const { lexicalResolveWithin, resolveWithinRoot } = require("./safety/path");
 const { createProcessRunner, describeProcessResult } = require("./safety/process");
@@ -38,6 +42,9 @@ const { parseMarkdown } = require("./stages/1b/markdown");
 const { checkReferences } = require("./stages/1b/check");
 const { checkEvidenceModel } = require("./stages/1c/evidence");
 const { checkConsistency } = require("./stages/1d/consistency");
+const { computeDeltaReview } = require("./stages/1e/delta-review");
+const { collectCiEvidence } = require("./stages/1f/ci-evidence");
+const { buildReport } = require("./stages/1f/report");
 
 module.exports = Object.freeze({
   // shared frozen contracts
@@ -52,6 +59,7 @@ module.exports = Object.freeze({
   aggregate,
   checkDomainResultCompleteness,
   exitCodeFor,
+  revalidateEvidence,
   validateGraph,
   validateManifest,
   parseManifestText,
@@ -83,4 +91,9 @@ module.exports = Object.freeze({
   checkEvidenceModel,
   // Wave 2 / 1D risk / source / method consistency (consumes 1B structure and 1C records)
   checkConsistency,
+  // Wave 3 / 1E delta review and protected-input fingerprints (consumes the graph, 1A identity, 1B-1D records)
+  computeDeltaReview,
+  // Wave 4 / 1F CI evidence and machine-readable reporting (consumes 1A identity and GitHub run metadata; buildReport() aggregates every stage's records via the Wave 0 kernel)
+  collectCiEvidence,
+  buildReport,
 });
