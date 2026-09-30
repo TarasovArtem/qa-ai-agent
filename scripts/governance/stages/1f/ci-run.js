@@ -16,10 +16,20 @@
  *     -> Promise<{ ok: true, run: <raw provider shape> } | { ok: false, reason }>
  *
  * The deterministic suite never touches the network: it always injects a
- * fixture adapter. A live adapter (built on the Wave 0 process runner, argument
- * arrays only, exercised only by its own separately labeled, non-required test)
- * is provided by createGithubCliAdapter() for actual use, but nothing in this
- * module or its consumers requires it to run.
+ * fixture adapter satisfying the contract above. CORRECTIVE C6 (W4-C4R-INFO-4):
+ * this module does NOT implement or provide a live GitHub adapter today --
+ * there is no `createGithubCliAdapter()` (or equivalent) anywhere in this
+ * repository, and no network call, subprocess invocation or GitHub-specific
+ * code exists in `stages/1f/**` (see `wave4.test.js`'s own source-grep check
+ * for this). `isGithubCiAdapter()`/`resolveGithubCiAdapter()` below only
+ * define and resolve the INJECTABLE contract; an adapter satisfying it is
+ * exactly as trustworthy as whatever constructed it, and nothing here proves
+ * -- or claims -- that any given adapter is genuinely backed by an
+ * authenticated GitHub connection. A real, operational live adapter is a
+ * separately authorized, separately reviewed implementation (see the design's
+ * D5 deferral and the Wave 4 corrective reports' own "D4/D5 live provider:
+ * DEFERRED" disclosures); its future existence must not be inferred from this
+ * comment or from the presence of the injection seam itself.
  */
 
 "use strict";

@@ -323,3 +323,45 @@ for (const status of ["queued", "waiting", "in_progress"]) {
     assert.equal(report.report.ci.classification, "INCOMPLETE", status);
   });
 }
+
+// ======================================================================
+// Corrective C6 (W4-C4R-INFO-3): every real collector-produced shape A and
+// shape B record remains compatible with buildReport() -- exercised through
+// the actual collectCiEvidence() -> buildReport() composition, not a
+// report.js-only fixture, so the shape-A/B semantic guards added by this
+// corrective cannot silently reject an authentic collector output.
+// ======================================================================
+
+function fetchFailureAdapter(reason) {
+  return { fetchRun: async () => ({ ok: false, reason }) };
+}
+
+for (const reason of ["SOURCE_UNREACHABLE", "NOT_FOUND", "MALFORMED_RUN_SHAPE"]) {
+  test(`C6-INFO3-19: the real collector's fetch-failure output (${reason}) composes into a valid, NOT_READY Phase 2 report`, async () => {
+    const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: fetchFailureAdapter(reason), requiredJobs: REQUIRED, now: NOW });
+    assert.equal(ci.records[0].status, "INCOMPLETE");
+    assert.deepEqual(ci.externalEvidence, []);
+    const report = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
+    assert.equal(report.ok, true, reason);
+    assert.notEqual(report.report.readiness.state, "READY", reason);
+  });
+}
+
+test("C6-INFO3-19b: the real collector's wrong-identity fetch-failure output (FAIL) composes into a valid, NOT_READY Phase 2 report", async () => {
+  const wrongRepoAdapter = { fetchRun: async () => ({ ok: true, run: { repository: "someone-else/other-repo", workflowPath: WORKFLOW, runId: "1", event: "pull_request", headSha: subject.head, attempt: 1, status: "completed", jobs: [], attemptHistory: [] } }) };
+  const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: wrongRepoAdapter, requiredJobs: REQUIRED, now: NOW });
+  assert.equal(ci.records[0].status, "FAIL");
+  const report = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
+  assert.equal(report.ok, true);
+  assert.notEqual(report.report.readiness.state, "READY");
+});
+
+for (const status of ["queued", "waiting", "in_progress"]) {
+  test(`C6-INFO3-20: the real collector's ${status} output composes into a valid, NOT_READY Phase 2 report (reconfirms C4-L2 under the C6-INFO3 numbering, now against the added shape-B semantic guard)`, async () => {
+    const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: notCompletedRunAdapter(status), requiredJobs: REQUIRED, now: NOW });
+    assert.equal(ci.records[0].status, "INCOMPLETE");
+    const report = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
+    assert.equal(report.ok, true, status);
+    assert.equal(report.report.readiness.state, "NOT_READY", status);
+  });
+}

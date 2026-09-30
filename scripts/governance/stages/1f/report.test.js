@@ -941,7 +941,17 @@ test("C4-INFO-04: attempt 2 cannot be CLEAN_FIRST_PASS (pre-existing W4-C2R-INFO
 
 const stagePassRecords = () => [identity(), genericRecord("1B.MARKDOWN", "1B", "PASS"), genericRecord("1C.EVIDENCE", "1C", "PASS"), genericRecord("1D.CONSISTENCY", "1D", "PASS"), genericRecord("1E.DELTA", "1E", "PASS")];
 const phase2WithStages = (ci, externalEvidence) => buildReport(phase2Input({ records: [...stagePassRecords(), ci], externalEvidence }));
-const PASS_GUARD_REASON = /^invalid 1F\.CI record: a PASS-mapped classification requires the complete CI-run evidence contract$/;
+// Corrective C6 (W4-C4R-INFO-3): a shape-A/B record now also carries its OWN,
+// more specific classification guard (added in report.js's Shape A/B
+// semantic-consistency block), which fires BEFORE the older generic
+// "PASS-mapped classification requires the complete CI-run evidence
+// contract" guard these tests originally asserted verbatim. Both guards
+// independently prevent the exact same outcome (a pre-completion PASS claim
+// reaching READY) -- the new one is a strict superset for shape A/B (it
+// rejects EVERY non-FAIL/non-INCOMPLETE classification, not just PASS-mapped
+// ones), so accepting either message preserves this test's mutation-killing
+// property against either guard being removed while the other still stands.
+const PASS_GUARD_REASON = /^invalid 1F\.CI record: (a PASS-mapped classification requires the complete CI-run evidence contract|a pre-completion fetch-failure record can only classify FAIL or INCOMPLETE|a pre-completion not-yet-completed record can only classify INCOMPLETE)$/;
 
 function assertPassGuardRejection(observed, label) {
   let r;
@@ -991,4 +1001,119 @@ test("C5-AQA-L1-04 (positive control): a pre-run/fetch-failure CI record correct
   assert.equal(r.report.overallStatus, "INCOMPLETE");
   assert.equal(r.report.readiness.state, "NOT_READY");
   assert.deepEqual(r.report.externalEvidence, []);
+});
+
+// ======================================================================
+// Corrective C6 (W4-C4R-INFO-3): Shape A / Shape B semantic consistency.
+// Matching a shape by KEY SET alone was not enough -- a record could match
+// shape A or B while claiming a classification/reasonCode combination the
+// real collector (stages/1f/ci-evidence.js) never produces for that shape
+// (e.g. shape A + HUMAN_REVIEW_REQUIRED), or carry an unrelated CI-run
+// externalEvidence entry despite representing no completed, pinned run.
+// None of these could themselves reach READY (contract.status still had to
+// match the classification), but they misrepresented collector semantics.
+// ======================================================================
+
+function fixedEvidenceEntry() {
+  return { sourceObjectId: "ci-run:o/r:99", sourceVersion: "1", contentDigest: "a".repeat(64), collectedAt: "t", immutability: "MUTABLE" };
+}
+
+test("C6-INFO3-01: shape A with an authorized INCOMPLETE fetch-failure result is accepted as NOT_READY", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: false, reason: "SOURCE_UNREACHABLE" }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "NOT_READY");
+});
+
+test("C6-INFO3-02: shape A with a valid wrong-identity FAIL result is accepted as NOT_READY", () => {
+  const r = phase2WithStages(ciRecord({ classification: "FAIL", collected: false, reason: "WRONG_REPOSITORY" }, { status: "FAIL", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, true);
+  assert.notEqual(r.report.readiness.state, "READY");
+});
+
+test("C6-INFO3-03: shape A with HUMAN_REVIEW_REQUIRED is rejected (the real collector never produces this shape/classification combination)", () => {
+  // record.status must equal HUMAN_REVIEW_REQUIRED to satisfy the outer
+  // classification-contract check and actually reach the shape-A semantic guard.
+  const r = phase2WithStages(ciRecord({ classification: "HUMAN_REVIEW_REQUIRED", collected: false, reason: "SOURCE_UNREACHABLE" }, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "CI_UNEXPLAINED_RERUN" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /can only classify FAIL or INCOMPLETE/);
+});
+
+test("C6-INFO3-04: shape A with a malformed (non-string) reason is rejected", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: false, reason: 42 }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /fetch-failure reason is malformed/);
+});
+
+test("C6-INFO3-05: shape A with an inconsistent reasonCode (not CI_NOT_COLLECTED) is rejected", () => {
+  const r = phase2WithStages(ciRecord({ classification: "FAIL", collected: false, reason: "WRONG_REPOSITORY" }, { status: "FAIL", reasonCode: "CI_REQUIRED_JOB_FAILED" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /must carry reasonCode CI_NOT_COLLECTED/);
+});
+
+for (const status of ["queued", "waiting", "in_progress"]) {
+  test(`C6-INFO3-06/07/08: shape B ${status} + INCOMPLETE is accepted`, () => {
+    const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: true, status }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+    assert.equal(r.ok, true, status);
+    assert.equal(r.report.readiness.state, "NOT_READY", status);
+  });
+}
+
+test("C6-INFO3-09: shape B + FAIL is rejected", () => {
+  const r = phase2WithStages(ciRecord({ classification: "FAIL", collected: true, status: "in_progress" }, { status: "FAIL", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /can only classify INCOMPLETE/);
+});
+
+test("C6-INFO3-10: shape B + HUMAN_REVIEW_REQUIRED is rejected", () => {
+  const r = phase2WithStages(ciRecord({ classification: "HUMAN_REVIEW_REQUIRED", collected: true, status: "in_progress" }, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "CI_UNEXPLAINED_RERUN" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /can only classify INCOMPLETE/);
+});
+
+test("C6-INFO3-11: shape B + PASS is rejected (pre-existing PASS-guard coverage, reconfirmed under the C6-INFO3 numbering)", () => {
+  assertPassGuardRejection({ classification: "CLEAN_FIRST_PASS", collected: true, status: "queued" }, "shape B PASS");
+});
+
+test("C6-INFO3-12: shape B with an unsupported status is rejected (matches neither shape B nor any other permissible shape)", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: true, status: "cancelled" }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), []);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /does not match a permissible shape|run-evidence fields are incomplete/);
+});
+
+test("C6-INFO3-13: shape A with unrelated CI_RUN externalEvidence is rejected", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: false, reason: "SOURCE_UNREACHABLE" }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), [fixedEvidenceEntry()]);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /cannot carry CI-run externalEvidence/);
+});
+
+test("C6-INFO3-14: shape B with unrelated CI_RUN externalEvidence is rejected", () => {
+  const r = phase2WithStages(ciRecord({ classification: "INCOMPLETE", collected: true, status: "queued" }, { status: "INCOMPLETE", reasonCode: "CI_NOT_COLLECTED" }), [fixedEvidenceEntry()]);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /cannot carry CI-run externalEvidence/);
+});
+
+test("C6-INFO3-15: a correct completed CLEAN_FIRST_PASS record continues to reach READY with its matching externalEvidence", () => {
+  const o = runObserved();
+  const r = phase2WithStages(ciRecord(o), [runEvidenceFor(o)]);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "READY");
+});
+
+test("C6-INFO3-16: a completed FAIL record remains FAIL", () => {
+  const o = runObserved({ classification: "FAIL", failed: ["Unit tests"] });
+  const r = phase2WithStages(ciRecord(o, { status: "FAIL", reasonCode: "CI_REQUIRED_JOB_FAILED" }), [runEvidenceFor(o)]);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.overallStatus, "FAIL");
+});
+
+test("C6-INFO3-17: a completed unexplained rerun remains HUMAN_REVIEW_REQUIRED", () => {
+  const o = runObserved({ classification: "HUMAN_REVIEW_REQUIRED", attempt: 2, attemptHistory: [{ attempt: 1, conclusion: "failure", failedJobs: ["Unit tests"] }] });
+  const r = phase2WithStages(ciRecord(o, { status: "HUMAN_REVIEW_REQUIRED", reasonCode: "CI_UNEXPLAINED_RERUN" }), [runEvidenceFor(o)]);
+  assert.equal(r.ok, true);
+  assert.equal(r.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+});
+
+test("C6-INFO3-18: a pre-completion record with a PASS claim cannot reach READY (both shape A and shape B)", () => {
+  assertPassGuardRejection({ classification: "CLEAN_FIRST_PASS", collected: false, reason: "SOURCE_UNREACHABLE" }, "shape A PASS claim");
+  assertPassGuardRejection({ classification: "CLEAN_FIRST_PASS", collected: true, status: "queued" }, "shape B PASS claim");
 });

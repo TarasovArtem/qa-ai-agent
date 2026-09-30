@@ -434,3 +434,116 @@ test("SEC-C2-28: no combination of injected adapter behavior reaches PASS_AFTER_
     assert.notEqual(r.records[0].status, "PASS");
   }
 });
+
+// ======================================================================
+// Corrective C6 (W4-C4R-INFO-2): requiredJobs policy validation at the
+// collector's own boundary, reusing required-jobs.js's own policy validator
+// (stages/1f/required-jobs.js#validateRequiredJobsPolicy()) rather than a
+// second, weaker, divergent check. Every invalid case below used to reach
+// classifyCiEvidence() (INCOMPLETE) and construct a full CI-run record plus
+// externalEvidence entry that stages/1f/report.js's stricter run-evidence
+// validation would then reject as malformed -- the collector and the report
+// builder must agree about the same record's validity.
+// ======================================================================
+
+function assertMalformedRequiredJobsRejected(requiredJobs, label) {
+  return (async () => {
+    let r;
+    try {
+      r = await collectCiEvidence(baseInput({ requiredJobs }));
+    } catch (err) {
+      assert.fail(`${label}: collectCiEvidence() threw instead of a canonical rejection: ${err && err.message}`);
+    }
+    assert.equal(r.records.length, 0, `${label}: no forged successful CI record`);
+    assert.equal(r.outcome.status, "CONFIGURATION_ERROR", label);
+    assert.deepEqual(r.externalEvidence, [], `${label}: no CI_RUN externalEvidence`);
+  })();
+}
+
+test("C6-INFO2-01: requiredJobs missing (undefined) is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(undefined, "missing");
+});
+test("C6-INFO2-02: requiredJobs null is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(null, "null");
+});
+test("C6-INFO2-03: requiredJobs as a number is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(5, "number");
+});
+test("C6-INFO2-04: requiredJobs as a string is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected("Unit tests", "string");
+});
+test("C6-INFO2-05: requiredJobs as an empty array is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected([], "empty array");
+});
+test("C6-INFO2-06: requiredJobs containing a non-string value is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(["Unit tests", 42], "non-string entry");
+});
+test("C6-INFO2-07: requiredJobs containing an empty job name is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(["Unit tests", ""], "empty name");
+});
+test("C6-INFO2-08: requiredJobs containing a name longer than 200 characters is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(["Unit tests", "x".repeat(201)], "oversized name");
+});
+test("C6-INFO2-09: requiredJobs containing more than 256 entries is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(Array.from({ length: 257 }, (_, i) => `job-${i}`), "too many entries");
+});
+test("C6-INFO2-10: requiredJobs containing duplicate names is rejected at the collector boundary", async () => {
+  await assertMalformedRequiredJobsRejected(["Unit tests", "Unit tests"], "duplicate names");
+});
+
+test("C6-INFO2-11: a valid policy with a missing CI job remains a legitimate INCOMPLETE classification", async () => {
+  const run = rawRun({ jobs: [{ name: "Unit tests", status: "completed", conclusion: "success" }] });
+  const r = await collectCiEvidence(baseInput({ adapter: adapter(run) }));
+  assert.equal(r.records[0].status, "INCOMPLETE");
+  assertOnlyCiRunEvidence(r.externalEvidence);
+});
+
+test("C6-INFO2-12: a valid policy with a failed required job remains FAIL", async () => {
+  const run = rawRun({ jobs: [{ name: "Unit tests", status: "completed", conclusion: "success" }, { name: "Cypress - chrome", status: "completed", conclusion: "failure" }] });
+  const r = await collectCiEvidence(baseInput({ adapter: adapter(run) }));
+  assert.equal(r.records[0].status, "FAIL");
+  assertOnlyCiRunEvidence(r.externalEvidence);
+});
+
+test("C6-INFO2-13: a valid complete first pass remains CLEAN_FIRST_PASS", async () => {
+  const r = await collectCiEvidence(baseInput());
+  assert.equal(r.records[0].observed.classification, "CLEAN_FIRST_PASS");
+  assertOnlyCiRunEvidence(r.externalEvidence);
+});
+
+test("C6-INFO2-14: a valid completed rerun without accepted determination remains HUMAN_REVIEW_REQUIRED", async () => {
+  const r = await collectCiEvidence(baseInput({ adapter: adapter(rerunRun()) }));
+  assert.equal(r.records[0].status, "HUMAN_REVIEW_REQUIRED");
+  assertOnlyCiRunEvidence(r.externalEvidence);
+});
+
+test("C6-INFO2-15: no malformed requiredJobs input can produce a completed-run record plus externalEvidence that report.js would reject as a schema mismatch (cross-module integration)", async () => {
+  const { buildReport } = require("./report");
+  const trustedContext = {
+    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
+    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
+    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
+    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
+    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
+    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
+  };
+  const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
+  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  for (const requiredJobs of [["Unit tests", "Unit tests"], Array.from({ length: 300 }, (_, i) => `job-${i}`), ["Unit tests", ""]]) {
+    const ci = await collectCiEvidence(baseInput({ requiredJobs }));
+    assert.equal(ci.records.length, 0, JSON.stringify(requiredJobs));
+    // Since the collector itself already refused to produce a record, there is
+    // nothing malformed left for buildReport() to be handed in the first place --
+    // this IS the fix: report.js is never even reached with a schema-mismatched record.
+  }
+});
+
+test("C6-INFO2-16: valid requiredJobs names at the allowed length (200 chars) and count (256 entries) bounds remain supported", async () => {
+  const namesAtBound = Array.from({ length: 256 }, (_, i) => `job-${String(i).padStart(3, "0")}-${"x".repeat(192)}`); // each exactly 200 chars, all unique
+  assert.equal(new Set(namesAtBound.map((n) => n.length)).size, 1);
+  assert.equal(namesAtBound[0].length, 200);
+  const run = rawRun({ jobs: namesAtBound.map((name) => ({ name, status: "completed", conclusion: "success" })) });
+  const r = await collectCiEvidence(baseInput({ adapter: adapter(run), requiredJobs: namesAtBound }));
+  assert.equal(r.records[0].status, "PASS");
+  assert.equal(r.records[0].observed.classification, "CLEAN_FIRST_PASS");
+});

@@ -273,6 +273,32 @@ function validateCollectedCiRecord(record, subject, externalEvidence, trustedCon
       ? "the 1F.CI record's run-evidence fields are incomplete or contain unexpected fields"
       : "the 1F.CI record's observed evidence does not match a permissible shape (pre-completion fetch-failure, pre-completion not-yet-completed, or completed-run)";
   }
+
+  // Corrective C6 (W4-C4R-INFO-3): matching shape A or B by KEY SET alone was
+  // not enough -- the real collector (stages/1f/ci-evidence.js#collectCiEvidence())
+  // only ever produces shape A with classification FAIL or INCOMPLETE (never
+  // HUMAN_REVIEW_REQUIRED; PASS-mapped classifications are already excluded
+  // above) and reasonCode CI_NOT_COLLECTED, and shape B with classification
+  // INCOMPLETE and reasonCode CI_NOT_COLLECTED. A record claiming a shape the
+  // collector recognizes but a classification/reasonCode combination it never
+  // produces for that shape misrepresents collector semantics even though it
+  // could never itself reach READY. Neither shape represents a completed,
+  // pinned run, so neither may carry a CI-run externalEvidence entry either --
+  // an unrelated one attached to a pre-completion record is rejected, never
+  // silently ignored (design section 25a: evidence sources are never
+  // ambiguous about what they represent).
+  if (isShapeA) {
+    if (o.classification !== "FAIL" && o.classification !== "INCOMPLETE") return "a pre-completion fetch-failure record can only classify FAIL or INCOMPLETE";
+    if (record.reasonCode !== REASON.CI_NOT_COLLECTED) return "a pre-completion fetch-failure record must carry reasonCode CI_NOT_COLLECTED";
+    if (!isBoundedString(o.reason, 200)) return "the 1F.CI record's fetch-failure reason is malformed";
+    if (externalEvidence.some((e) => isCiRunSourceObjectId(e.sourceObjectId))) return "a pre-completion record cannot carry CI-run externalEvidence -- there is no completed run to pin";
+  }
+  if (isShapeB) {
+    if (o.classification !== "INCOMPLETE") return "a pre-completion not-yet-completed record can only classify INCOMPLETE";
+    if (record.reasonCode !== REASON.CI_NOT_COLLECTED) return "a pre-completion not-yet-completed record must carry reasonCode CI_NOT_COLLECTED";
+    if (externalEvidence.some((e) => isCiRunSourceObjectId(e.sourceObjectId))) return "a pre-completion record cannot carry CI-run externalEvidence -- there is no completed run to pin";
+  }
+
   // Every PASS-mapped classification (CLEAN_FIRST_PASS, and in a future
   // configuration PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN) requires the complete
   // CI-run evidence contract -- never merely "some run-evidence field was

@@ -15,6 +15,15 @@
  * policy). This module does not hard-code any specific job set: callers
  * supply their own policy-derived list, so no particular workflow's job
  * names become permanent Stage 1F policy.
+ *
+ * CORRECTIVE C6 (W4-C4R-INFO-2): `validateRequiredJobsPolicy()` below is the
+ * ONE canonical validator of the policy list itself (bounds, string shape,
+ * duplicates), factored out of `checkRequiredJobs()` so a caller that needs
+ * to reject a malformed policy BEFORE it has a run to check it against --
+ * `stages/1f/ci-evidence.js#collectCiEvidence()`, at its own input boundary
+ * -- can reuse the exact same rule set rather than re-implementing a second,
+ * potentially divergent one. `checkRequiredJobs()`'s own behavior and return
+ * shape are unchanged; it now simply calls the extracted function.
  */
 
 "use strict";
@@ -24,6 +33,26 @@ const { isPlainObject } = require("../../kernel/validation");
 const MAX_REQUIRED_JOBS = 256;
 const SUCCESS_LIKE = new Set(["success"]);
 const SKIPPED_LIKE = new Set(["skipped"]);
+
+/**
+ * validateRequiredJobsPolicy(requiredJobs) -- the policy-list-only half of
+ * checkRequiredJobs()'s validation: non-empty, bounded (<=256), every entry a
+ * non-empty string (<=200 chars), no duplicates. Never inspects a run. Returns
+ * `{ok:true, requiredJobs}` (the same array, not copied -- callers that need
+ * an isolated copy make one) or `{ok:false, reason}` with the exact same
+ * reason strings `checkRequiredJobs()` has always returned for these cases
+ * (`MALFORMED_REQUIRED_JOB_POLICY`, `DUPLICATE_REQUIRED_JOB_NAME`).
+ */
+function validateRequiredJobsPolicy(requiredJobs) {
+  if (!Array.isArray(requiredJobs) || requiredJobs.length === 0 || requiredJobs.length > MAX_REQUIRED_JOBS) {
+    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
+  }
+  if (!requiredJobs.every((n) => typeof n === "string" && n.length > 0 && n.length <= 200)) {
+    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
+  }
+  if (new Set(requiredJobs).size !== requiredJobs.length) return { ok: false, reason: "DUPLICATE_REQUIRED_JOB_NAME" };
+  return { ok: true, requiredJobs };
+}
 
 /**
  * checkRequiredJobs({ run, requiredJobs })
@@ -48,14 +77,9 @@ function checkRequiredJobs(input) {
   if (!isPlainObject(input) || !isPlainObject(input.run) || !Array.isArray(input.run.jobs)) {
     return { ok: false, reason: "MALFORMED_RUN" };
   }
-  const requiredJobs = input.requiredJobs;
-  if (!Array.isArray(requiredJobs) || requiredJobs.length === 0 || requiredJobs.length > MAX_REQUIRED_JOBS) {
-    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
-  }
-  if (!requiredJobs.every((n) => typeof n === "string" && n.length > 0 && n.length <= 200)) {
-    return { ok: false, reason: "MALFORMED_REQUIRED_JOB_POLICY" };
-  }
-  if (new Set(requiredJobs).size !== requiredJobs.length) return { ok: false, reason: "DUPLICATE_REQUIRED_JOB_NAME" };
+  const policy = validateRequiredJobsPolicy(input.requiredJobs);
+  if (!policy.ok) return policy;
+  const requiredJobs = policy.requiredJobs;
 
   const byName = new Map(input.run.jobs.map((j) => [j.name, j]));
   const missing = [], failed = [], pending = [], skipped = [], succeeded = [];
@@ -72,4 +96,4 @@ function checkRequiredJobs(input) {
   return { ok: true, complete, allSucceeded, missing, failed, pending, skipped, succeeded };
 }
 
-module.exports = { checkRequiredJobs };
+module.exports = { checkRequiredJobs, validateRequiredJobsPolicy, MAX_REQUIRED_JOBS };

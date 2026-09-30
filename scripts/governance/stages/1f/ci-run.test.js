@@ -181,3 +181,18 @@ test("five repeated fetches of an identical fixture are deterministic", async ()
   for (let i = 0; i < 5; i++) outs.push(JSON.stringify(await fetchValidatedRun({ ...request(), adapter: adapter(validRun()) })));
   assert.equal(new Set(outs).size, 1);
 });
+
+// ---------------------------------------------------------------- Corrective C6 (W4-C4R-INFO-4): no stale live-provider claim
+
+test("W4-C4R-INFO-4: the module header no longer claims a live GitHub adapter is provided for actual use, and explicitly states none is implemented", () => {
+  const fs = require("node:fs");
+  const text = fs.readFileSync(__filename.replace(/\.test\.js$/, ".js"), "utf8");
+  // The stale claim this corrective removes: that createGithubCliAdapter()
+  // (or an equivalent) is PROVIDED / EXISTS for actual use. A mention of the
+  // name in a NEGATIVE disclaimer ("there is no createGithubCliAdapter()")
+  // is the corrected state, not the stale claim, so this checks the specific
+  // stale phrasing is gone rather than blanket-forbidding the identifier.
+  assert.equal(/is provided by .*createGithubCliAdapter/i.test(text), false);
+  assert.equal(/createGithubCliAdapter\(\) for actual use/.test(text), false);
+  assert.equal(/does NOT implement or provide a live GitHub adapter/.test(text), true);
+});

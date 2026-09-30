@@ -55,7 +55,7 @@ const { isPlainObject } = require("../../kernel/validation");
 const { validateResultRecord, canonicalJson } = require("../../kernel/results");
 const { isValidSubject, safe } = require("../common");
 const { fetchValidatedRun } = require("./ci-run");
-const { checkRequiredJobs } = require("./required-jobs");
+const { checkRequiredJobs, validateRequiredJobsPolicy } = require("./required-jobs");
 const { qualifyDetermination, resolveDeterminationAdapter } = require("./determination");
 const { classifyCiEvidence, CLASSIFICATION_CONTRACT } = require("./ci-classify");
 
@@ -203,8 +203,19 @@ async function collectCiEvidence(input) {
     return deepFreeze({ subject, records: [record], outcome: null, externalEvidence: [] });
   }
 
-  if (!Array.isArray(input.requiredJobs) || input.requiredJobs.length === 0) {
-    return invalidInput(subject, "requiredJobs must be a non-empty, base-anchored policy list");
+  // Corrective C6 (W4-C4R-INFO-2): the collector's own boundary check used to
+  // accept anything checkRequiredJobs() would later reject as a malformed
+  // policy (too many entries, non-string names, empty names, oversized
+  // names, duplicates) -- letting execution continue to classify (INCOMPLETE)
+  // and build a full CI-run record and externalEvidence entry that
+  // stages/1f/report.js's own, stricter run-evidence validation would then
+  // reject as malformed. The collector and the report builder must agree
+  // about the same record's validity; reusing required-jobs.js's own policy
+  // validator (rather than a second, potentially divergent check here) keeps
+  // that agreement structural, not coincidental.
+  const policyCheck = validateRequiredJobsPolicy(input.requiredJobs);
+  if (!policyCheck.ok) {
+    return invalidInput(subject, `requiredJobs must be a valid, base-anchored policy list: ${policyCheck.reason}`);
   }
   // Corrective C3 (W4-C2R-DEV-M2): from this point on a completed, validated run
   // always contributes a canonical CI-run externalEvidence entry (design section
