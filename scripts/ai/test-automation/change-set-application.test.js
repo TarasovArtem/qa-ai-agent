@@ -9,7 +9,7 @@ const crypto = require("node:crypto");
 
 const { buildGeneratedChangeSet, computeDigest: gcsComputeDigest, LABEL_FILE_CONTENT } = require("./generated-change-set");
 const { buildGeneratedChangeSetReviewPackage, recomputeReviewPackageDigest, DIGEST_LABEL_TARGET, DIGEST_LABEL_TARGET_CONTENT } = require("./generated-change-set-review-package");
-const { buildGeneratedChangeSetReviewRecord, recomputeReviewRecordDigest } = require("./generated-change-set-review-record");
+const { buildGeneratedChangeSetReviewRecord, recomputeReviewRecordDigest, validateApprovedGeneratedChangeSetReview } = require("./generated-change-set-review-record");
 const { computeDigest: reviewComputeDigest } = require("./generated-change-set-review-canonical");
 const {
   MAX_ACTUAL_FILE_BYTES,
@@ -1973,5 +1973,48 @@ test("RP-32 FAIL: approval metadata does not match applied content - reviewTarge
   const res = apply(root, chain, { reviewPackage: forged, reviewRecord: rec.reviewRecord });
   rp32AssertZeroWrites(root, res);
   assert.equal(res.errors[0].path, "$.reviewPackage.reviewTargets");
+  cleanup(root);
+});
+
+// --- RP-32 F-1: exactly one APPROVE decision per applied change -----------
+//
+// A self-digested record (status APPROVED, recordDigest recomputed) that is
+// otherwise fully valid - it still passes the #23E gate - but carries more
+// than one decision for the same review target. The extra decision is
+// appended AFTER the genuine APPROVE, so only the "exactly one" check (not
+// the "first match is APPROVE" check) can reject it.
+function rp32RecordWithExtraDecision(chain, extraDecision) {
+  const forged = rp32MutableCopy(chain.reviewRecord);
+  forged.decisions.push({ ...forged.decisions[0], ...extraDecision });
+  delete forged.recordDigest;
+  forged.recordDigest = recomputeReviewRecordDigest(forged);
+  const gate = validateApprovedGeneratedChangeSetReview(chain.reviewPackage, forged, { expectedProjectId: "proj-1" });
+  assert.equal(gate.ok, true, `fixture must be otherwise valid: ${JSON.stringify(gate.errors)}`);
+  assert.equal(forged.status, "APPROVED");
+  return forged;
+}
+
+function rp32AssertRejectedByDecisionUniqueness(root, res) {
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors.length, 1, JSON.stringify(res.errors));
+  assert.equal(res.errors[0].path, "$.reviewRecord.decisions");
+  assert.match(res.errors[0].message, /^\$\.reviewPackage\.reviewTargets\[0\] has no single APPROVE decision/);
+}
+
+test("RP-32 F-1 FAIL: contradictory APPROVE + REJECT decisions for the same review target (self-consistent record, status APPROVED) -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const forgedRecord = rp32RecordWithExtraDecision(chain, { decision: "REJECT", reason: "do not apply" });
+  const res = apply(root, chain, { reviewRecord: forgedRecord });
+  rp32AssertRejectedByDecisionUniqueness(root, res);
+  cleanup(root);
+});
+
+test("RP-32 F-1 FAIL: duplicate APPROVE decisions for the same review target (self-consistent record) -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const forgedRecord = rp32RecordWithExtraDecision(chain, {});
+  const res = apply(root, chain, { reviewRecord: forgedRecord });
+  rp32AssertRejectedByDecisionUniqueness(root, res);
   cleanup(root);
 });
