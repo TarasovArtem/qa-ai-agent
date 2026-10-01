@@ -10,9 +10,10 @@
  * checkScope, scanSecrets, parseMarkdown, checkReferences); Wave 2 adds the two
  * named for 1C and 1D (checkEvidenceModel, checkConsistency); Wave 3 adds the
  * one named for 1E (computeDeltaReview); Wave 4 adds the two named for 1F
- * (collectCiEvidence, buildReport) -- Stage 1F is implemented here but not yet
- * merged or post-merge certified. Stage 1G (independent framework validation)
- * is not implemented and is not code.
+ * (collectCiEvidence, buildReport) -- Stage 1F is merged on main (PR #196) with
+ * post-merge certification evidence reported; GOV-AUTO-1 as a whole is not yet
+ * complete. Stage 1G (independent framework validation) is not implemented and
+ * is not code.
  */
 
 "use strict";
