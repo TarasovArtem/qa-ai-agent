@@ -267,6 +267,23 @@ test("STATUS TAMPERING: a CHANGES_REQUESTED record with status hand-flipped to A
   assert.equal(gate.ok, false);
 });
 
+test("RP-32: a getter-backed status (CHANGES_REQUESTED on its first read, APPROVED afterwards) cannot pass the gate - every check reads one frozen snapshot", () => {
+  const { reviewPackage } = buildValidReviewPackage();
+  const decisions = allApproveDecisions(reviewPackage);
+  decisions[0] = { ...decisions[0], decision: "REQUEST_CHANGES", reason: "x" };
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "reviewer-1", reviewedAt: REVIEWED_AT, decisions });
+  assert.equal(recResult.reviewRecord.status, "CHANGES_REQUESTED");
+  const hostile = {};
+  let reads = 0;
+  for (const [k, v] of Object.entries(recResult.reviewRecord)) {
+    if (k === "status") Object.defineProperty(hostile, k, { enumerable: true, get: () => (++reads === 1 ? v : "APPROVED") });
+    else hostile[k] = v;
+  }
+  const gate = validateApprovedGeneratedChangeSetReview(reviewPackage, hostile, {});
+  assert.equal(gate.ok, false);
+  assert.equal(reads, 1);
+});
+
 // --- approval gate: stale / replay protection --------------------------------
 
 test("STALE APPROVAL: an approved record does not approve a package built from a different (but same-shaped) GeneratedChangeSet", () => {

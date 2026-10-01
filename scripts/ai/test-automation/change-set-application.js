@@ -36,6 +36,11 @@
  *     must be digest-identical (changeSetDigest) to the one the approved
  *     review package was built from - a differently-content changeset with
  *     the same id/path never reaches the mutation phase.
+ *   - RP-32: the change set, review package and review record are each
+ *     read exactly once into a deep-frozen snapshot before any validation;
+ *     validation and writing both consume only those snapshots, and every
+ *     written change must equal (and digest-match) the review target its
+ *     APPROVE decision was recorded for - approved bytes == applied bytes.
  *   - The ACTUAL filesystem is authoritative at apply time, never the
  *     historical AutomationRepositoryContext a plan/change-set happened to
  *     be built from (see generated-change-set.js's own "CREATE/MODIFY
@@ -162,6 +167,8 @@ const {
   LABEL_FILE_CONTENT,
 } = require("./generated-change-set");
 const { validateApprovedGeneratedChangeSetReview } = require("./generated-change-set-review-record");
+const { DIGEST_LABEL_TARGET, DIGEST_LABEL_TARGET_CONTENT } = require("./generated-change-set-review-package");
+const { computeDigest: computeReviewDigest } = require("./generated-change-set-review-canonical");
 const {
   isValidTimestamp,
   snapshotOwnData,
@@ -675,6 +682,59 @@ function rollbackModify(realRoot, relPath, targetAbs, writtenContent, originalCo
   return { ok: true };
 }
 
+// RP-32 (closes N-15): binds every change that is about to be written to
+// the exact review target a human approved. Called only with frozen
+// snapshots that have already passed #23D/#23E validation. Digests are
+// recomputed with #23E's own canonical primitives and labels - never a
+// second implementation. Returns a deterministic error list (empty = bound)
+// naming the first mismatching field per change, as evidence of the
+// mismatch.
+function verifyApprovedChangeBinding(changes, reviewTargets, decisions) {
+  if (!Array.isArray(changes) || !Array.isArray(reviewTargets) || !Array.isArray(decisions) || reviewTargets.length !== changes.length) {
+    return [err("$.reviewPackage.reviewTargets", ERROR_CODES.INVALID_REFERENCE, "reviewPackage.reviewTargets does not correspond one-to-one to generatedChangeSet.changes")];
+  }
+  const errors = [];
+  for (let i = 0; i < changes.length; i += 1) {
+    const change = changes[i];
+    const target = reviewTargets[i];
+    const entryPath = `$.reviewPackage.reviewTargets[${i}]`;
+    if (!isPlainObjectLike(target)) {
+      errors.push(err(entryPath, ERROR_CODES.INVALID_REFERENCE, `${entryPath} is not a review target`));
+      continue;
+    }
+    const mismatchedField = ["operation", "path", "baseContentDigest"].find((key) => target[key] !== change[key]) || (target.proposedContent !== change.content ? "proposedContent" : null);
+    if (mismatchedField !== null) {
+      errors.push(err(`${entryPath}.${mismatchedField}`, ERROR_CODES.INVALID_REFERENCE, `${entryPath}.${mismatchedField} does not match the change being applied (approved content differs from applied content)`));
+      continue;
+    }
+    let freshContentDigest;
+    let freshTargetDigest;
+    try {
+      freshContentDigest = computeReviewDigest(DIGEST_LABEL_TARGET_CONTENT, change.content);
+      freshTargetDigest = computeReviewDigest(DIGEST_LABEL_TARGET, {
+        operation: change.operation,
+        path: change.path,
+        purpose: target.purpose,
+        baseContentDigest: change.baseContentDigest,
+        existingContent: target.existingContent,
+        proposedContent: change.content,
+      });
+    } catch {
+      freshContentDigest = null;
+      freshTargetDigest = null;
+    }
+    if (freshContentDigest === null || freshContentDigest !== target.proposedContentDigest || freshTargetDigest !== target.targetDigest) {
+      errors.push(err(`${entryPath}.targetDigest`, ERROR_CODES.INVALID_VALUE, `${entryPath} digests do not match the content being applied`));
+      continue;
+    }
+    const matching = decisions.filter((d) => isPlainObjectLike(d) && d.operation === change.operation && d.path === change.path && d.targetDigest === freshTargetDigest);
+    if (matching.length !== 1 || matching[0].decision !== "APPROVE") {
+      errors.push(err(`$.reviewRecord.decisions`, ERROR_CODES.INVALID_REFERENCE, `${entryPath} has no single APPROVE decision bound to the content being applied`));
+    }
+  }
+  return errors;
+}
+
 /**
  * Applies an already #23E-APPROVED GeneratedChangeSet to the real
  * repository filesystem beneath `repositoryRoot`, after independently
@@ -706,21 +766,16 @@ function rollbackModify(realRoot, relPath, targetAbs, writtenContent, originalCo
 function applyApprovedGeneratedChangeSet(input) {
   const { expectedProjectId, repositoryRoot, automationPlan, repositoryContext, generatedChangeSet, reviewPackage, reviewRecord, appliedAt } = isPlainObjectLike(input) ? input : {};
 
-  // Phase 2 (mission ordering): the #23E approval gate is the cheapest,
-  // most authority-critical check - it never touches the filesystem, so it
-  // runs before repositoryRoot is even inspected.
-  const approval = validateApprovedGeneratedChangeSetReview(reviewPackage, reviewRecord, { expectedProjectId });
-  if (!approval.ok) {
-    return { ok: false, errors: approval.errors, appliedChangeSetRecord: null };
-  }
-
-  // Phase 1 (re-verify): the fresh generatedChangeSet must itself pass
-  // #23D's own unmodified validation against the supplied plan/context.
-  const changeSetValidation = validateGeneratedChangeSet({ automationPlan, repositoryContext, generatedChangeSet, expectedProjectId });
-  if (!changeSetValidation.ok) {
-    return { ok: false, errors: changeSetValidation.errors, appliedChangeSetRecord: null };
-  }
-
+  // RP-32 (closes N-15): every caller-supplied artifact is read EXACTLY
+  // ONCE, into a deep-frozen own-data snapshot, BEFORE any validation runs.
+  // Every check below - and every byte written in Phase 7 - reads only these
+  // snapshots, never the caller's objects again. Validating the caller's
+  // object and then re-reading it (as before) let a getter/Proxy/nested
+  // accessor return approved content to the validators and different
+  // content to the writer; a frozen data-only snapshot cannot change
+  // between "validated" and "applied". An unreadable input (throwing
+  // getter/trap, cycle, non-plain value) snapshots to null and is rejected
+  // by the validators below with zero writes.
   let changeSetSnapshot;
   let reviewPackageSnapshot;
   let reviewRecordSnapshot;
@@ -730,6 +785,22 @@ function applyApprovedGeneratedChangeSet(input) {
     reviewRecordSnapshot = deepFreeze(snapshotOwnData(reviewRecord));
   } catch {
     return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "inputs could not be read")], appliedChangeSetRecord: null };
+  }
+
+  // Phase 2 (mission ordering): the #23E approval gate is the cheapest,
+  // most authority-critical check - it never touches the filesystem, so it
+  // runs before repositoryRoot is even inspected.
+  const approval = validateApprovedGeneratedChangeSetReview(reviewPackageSnapshot, reviewRecordSnapshot, { expectedProjectId });
+  if (!approval.ok) {
+    return { ok: false, errors: approval.errors, appliedChangeSetRecord: null };
+  }
+
+  // Phase 1 (re-verify): the frozen generatedChangeSet snapshot must itself
+  // pass #23D's own unmodified validation against the supplied plan/context
+  // (which recomputes changeSetDigest over the snapshot's actual content).
+  const changeSetValidation = validateGeneratedChangeSet({ automationPlan, repositoryContext, generatedChangeSet: changeSetSnapshot, expectedProjectId });
+  if (!changeSetValidation.ok) {
+    return { ok: false, errors: changeSetValidation.errors, appliedChangeSetRecord: null };
   }
 
   // Exact-content binding (Section 81/128/129/132): the changeset about to
@@ -742,6 +813,19 @@ function applyApprovedGeneratedChangeSet(input) {
       errors: [err("$.generatedChangeSet.changeSetDigest", ERROR_CODES.INVALID_REFERENCE, "generatedChangeSet does not match the exact content that was reviewed and approved (stale or mismatched proposal)")],
       appliedChangeSetRecord: null,
     };
+  }
+
+  // RP-32: per-change approval binding. The changeSetDigest cross-check
+  // above binds the package's stored digest field, but a self-digested
+  // package can still SHOW the reviewer different targets than that field
+  // names. Every change about to be written must therefore equal, field
+  // for field, the review target at the same index, that target must match
+  // its own recomputed content/target digests, and the record must carry an
+  // APPROVE decision for exactly that target - so the bytes written are the
+  // bytes approved, never merely bytes some approved package refers to.
+  const bindingErrors = verifyApprovedChangeBinding(changeSetSnapshot.changes, reviewPackageSnapshot.reviewTargets, reviewRecordSnapshot.decisions);
+  if (bindingErrors.length > 0) {
+    return { ok: false, errors: bindingErrors, appliedChangeSetRecord: null };
   }
 
   if (!isValidTimestamp(appliedAt)) {
