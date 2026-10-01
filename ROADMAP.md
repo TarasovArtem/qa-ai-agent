@@ -429,15 +429,20 @@ permission to duplicate anything: shared
 Git-identity, diff-scope and CI-evidence facts must come from the `GOV-AUTO-1`
 `1A`/`1F` interfaces. Since Wave 1 was merged and post-merge certified (PR #190; see
 [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence)) the `1A` interfaces exist on
-`main` and must be consumed, while the `1F` interfaces do not yet exist, so the
-CI-evidence portion of `GOV-VERIFY-1` still waits on that technical dependency rather
-than reimplementing it. `GOV-VERIFY-1` is not fully unblocked and remains tracked, is not cancelled and is not absorbed; this
+`main` and must be consumed. Since Wave 4 was merged and post-merge certified (PR #196;
+see [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)) the `1F` interfaces
+(`collectCiEvidence()`, `buildReport()`) also exist on `main`, so the CI-evidence
+portion of `GOV-VERIFY-1` must consume them rather than reimplement them -- that
+technical interface dependency is satisfied. Interface availability is not
+operational availability: `1F` reaches GitHub only through an injectable adapter
+seam, and no live, authenticated GitHub CI-evidence adapter exists on `main`.
+`GOV-VERIFY-1` remains tracked, is not started by this, is not cancelled and is not absorbed; this
 entry's constraints and tracked status are otherwise unchanged.
 
 ### GOV-AUTO-1 — Governance Pre-Review Framework (next active gate)
 
 ```text
-GOV-AUTO-1:      ACTIVE  (implementation started; Waves 0-3 merged + certified; Waves 4-5
+GOV-AUTO-1:      ACTIVE  (implementation started; Waves 0-4 merged + certified; Wave 5
                  NOT_STARTED; overall stage NOT COMPLETE_ON_MAIN)
 Design:          design/reconciliation MERGED + POST-MERGE CERTIFIED
                  (docs/gov-auto-1-design-reconciliation-v1.md; PR #185; see §8 evidence)
@@ -446,8 +451,9 @@ Wave 0:          MERGED + POST-MERGE CERTIFIED  (PR #188; see §8 Wave 0 evidenc
 Wave 1:          MERGED + POST-MERGE CERTIFIED  (1A + 1B; PR #190; see §8 Wave 1 evidence)
 Wave 2:          MERGED + POST-MERGE CERTIFIED  (1C + 1D; PR #192; see §8 Wave 2 evidence)
 Wave 3:          MERGED + POST-MERGE CERTIFIED  (1E; PR #194; see §8 Wave 3 evidence)
-Waves 4-5:       NOT_STARTED  (Wave 4: 1F -- next governed implementation step; Wave 5: 1G)
-Sub-stages:      1A, 1B, 1C, 1D, 1E -- MERGED + POST-MERGE CERTIFIED; 1F, 1G -- NOT_STARTED
+Wave 4:          MERGED + POST-MERGE CERTIFIED  (1F; PR #196; see §8 Wave 4 evidence)
+Wave 5:          NOT_STARTED  (1G -- next governed implementation step)
+Sub-stages:      1A, 1B, 1C, 1D, 1E, 1F -- MERGED + POST-MERGE CERTIFIED; 1G -- NOT_STARTED
 Classification:  HEAVY
 Position:        after AISEC-3 (COMPLETE_ON_MAIN), before AISEC-4 (see §7, §8)
 Principle:       Machine checks facts. Humans review meaning.
@@ -485,10 +491,20 @@ own public interface), reviewed under the required `HEAVY` review lifecycle
 gate (review independence LIMITED -- separate implementation/review sessions,
 same-session Senior/Security role separation; four corrective cycles before
 final exact-head approval), human-authorized, merged and post-merge certified
-(PR #194; see [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence)). The
-framework is **not** yet operational end to end: `1F`-`1G` are all
-`NOT_STARTED`, and **Wave 4** (`1F`) is the next governed implementation step
-(`NOT_STARTED`). Capability
+(PR #194; see [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence)). So is
+**Wave 4** (`1F` CI evidence and machine-readable reporting: `collectCiEvidence()`,
+`buildReport()`, deterministic `pre-review.md` rendering, a two-phase CLI and the
+kernel-owned `revalidateEvidence()`, all behind injectable adapter seams with no
+live GitHub adapter), reviewed under the required `HEAVY` review lifecycle gate
+(review independence LIMITED -- separate implementation/review AI sessions; nine
+corrective cycles before final exact-head approval), human-authorized, merged and
+post-merge certified (PR #196; see [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)).
+Wave 4 merged with one owner-accepted deferred finding, `W4-C2-SEC-M1`
+(`DEFERRED`, non-blocking, **not** closed); the privileged
+`PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` path stays fail-closed until its trust
+prerequisites are separately delivered. The framework is **not** yet operational
+end to end: `1G` is `NOT_STARTED`, and **Wave 5** (`1G`) is the next governed
+implementation step (`NOT_STARTED`). Capability
 arrives incrementally, so `GOV-AUTO-1` is `ACTIVE` and **not** `COMPLETE_ON_MAIN`.
 **Status term.** `ACTIVE` is used in the repository's existing sense (a stage or
 gate is `ACTIVE` from the start of implementation until its own closure proof
@@ -660,8 +676,11 @@ conditioned on the ROADMAP synchronization recording this decision being itself 
 satisfied (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)), so the design-reconciliation
 governance pause is satisfied, but that is not permission to duplicate anything: shared facts must come from `1A`/`1F`: the `1A` interfaces now exist on `main`
 (Wave 1 merged and post-merge certified), so that shared dependency is satisfied and they
-must be consumed; the `1F` interfaces do not yet exist, so the CI-evidence overlap remains a
-technical dependency on them, and non-overlapping
+must be consumed; the `1F` interfaces now also exist on `main` (Wave 4 merged and
+post-merge certified), so the CI-evidence technical interface dependency is satisfied and
+they must be consumed too -- no second CI-evidence collector may be built (no live,
+authenticated GitHub CI-evidence adapter exists yet behind `1F`'s injectable seam;
+interface availability is not operational availability), and non-overlapping
 merge-specific residue stays `GOV-VERIFY-1`-owned. **Verdict-model
 compatibility:** `GOV-VERIFY-1`'s discrete evidence fields (for example
 `BASE_MATCH`, `HEAD_MATCH`, `TREE_MATCH`, `CI_EXACT_SHA`) stay the canonical
@@ -966,8 +985,8 @@ not reopened; `AISEC-4` remains `NOT_STARTED` with its own scope unchanged; the
 `AISEC-4` because a deterministic pre-review framework supports every later
 security, memory and autonomy gate. Since this decision was recorded, the
 `GOV-AUTO-1` design/reconciliation has been merged and post-merge certified (see
-[GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence)), and `GOV-AUTO-1` implementation has begun with Wave 0, Wave 1, Wave 2 and Wave 3, each merged and
-post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence) and [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence)); Waves 4-5 remain `NOT_STARTED` and `GOV-AUTO-1` is not `COMPLETE_ON_MAIN`.
+[GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence)), and `GOV-AUTO-1` implementation has begun with Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4, each merged and
+post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)); Wave 5 remains `NOT_STARTED` and `GOV-AUTO-1` is not `COMPLETE_ON_MAIN`.
 `AISEC-4` remains `NOT_STARTED`, and the decision itself and the `MEM`/`RAG`/`LEARN`
 order are unchanged.
 
@@ -993,7 +1012,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  CONFORMANCE-INTEGRATION-CHECK (PASS)
   →  Architecture Conformance Gate (COMPLETE_ON_MAIN)
        [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
-  →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)  →  GOV-AUTO-1 (design/reconciliation MERGED + CERTIFIED; roadmap sync CERTIFIED_ON_MAIN; implementation ACTIVE -- Waves 0-3 MERGED + POST-MERGE CERTIFIED, Wave 4 = next governed step, NOT_STARTED; NOT COMPLETE_ON_MAIN)  →  AISEC-4 .. AISEC-7
+  →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)  →  GOV-AUTO-1 (design/reconciliation MERGED + CERTIFIED; roadmap sync CERTIFIED_ON_MAIN; implementation ACTIVE -- Waves 0-4 MERGED + POST-MERGE CERTIFIED, Wave 5 = next governed step, NOT_STARTED; NOT COMPLETE_ON_MAIN)  →  AISEC-4 .. AISEC-7
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
   →  MEM-7 .. MEM-9
@@ -1197,8 +1216,8 @@ roadmap-designated next active gate, with `AISEC-4` following it -- an
 authorization-level designation only. Its design/reconciliation has since been
 merged and post-merge certified (see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence)); the ROADMAP synchronization recording that
 design has itself been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (PR #186; see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)),
-and Wave 0, Wave 1, Wave 2 and Wave 3 have since been merged and post-merge certified (PR #188, PR #190, PR #192 and PR #194; see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence) and [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence)), so `GOV-AUTO-1`
-is `ACTIVE`: Wave 4 (`1F`) is now the next governed
+and Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4 have since been merged and post-merge certified (PR #188, PR #190, PR #192, PR #194 and PR #196; see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)), so `GOV-AUTO-1`
+is `ACTIVE`: Wave 5 (`1G`) is now the next governed
 implementation step and remains `NOT_STARTED`. `D-1` and
 `D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
 execution is started or activated by this state.
@@ -2429,6 +2448,146 @@ lifecycle record: it changes no architecture, ownership, readiness semantics,
 review rule or stage order, starts no `1F`, `1G`, `GOV-VERIFY-1` or `AISEC-4`
 work, and no runtime, public API or package surface change accompanies it.
 
+### GOV-AUTO-1 Wave 4 evidence
+
+```text
+GOV-AUTO-1 WAVE 4:                 MERGED + POST-MERGE CERTIFIED  (1F)
+GOV-AUTO-1 IMPLEMENTATION:         ACTIVE  (Wave 5 NOT_STARTED;
+                                   overall stage NOT COMPLETE_ON_MAIN)
+Scope:             scripts/governance/** only (26 files, +6911/-9); no
+                   package.json / package-lock.json change; no workflow or
+                   branch-protection change; no supported package surface
+                   change (npm pack --dry-run: 45 entries, 0 governance files)
+
+Wave 4 PR:         #196   (merged 2026-09-30T19:18:28Z)
+authorized HEAD:   762a09e6e355075cbc1a7d67d7f5a458147304df  (Corrective C9)
+authorized TREE:   a8abc923507d50eae0318fa7e95748a9ea523af5
+authorized base:   bbe8cdf355175d650caf4b87a85c8921113f7492
+merge SHA:         aecc332abb064b8b3e670dec0d6d0f4072f337c9
+merge method:      STANDARD_TWO_PARENT (merge TREE == authorized TREE)
+                   parent1 bbe8cdf355175d650caf4b87a85c8921113f7492
+                   parent2 762a09e6e355075cbc1a7d67d7f5a458147304df
+pre-merge CI:      run 36754982971 (event pull_request, exact authorized HEAD) --
+                   attempt 1, 7/7 SUCCESS, CLEAN_FIRST_PASS
+post-merge CI:     run 36764753507 (event push, exact merge SHA) --
+                   attempt 1, 7/7 SUCCESS, CLEAN_FIRST_PASS
+post-merge certification: PASS -- as reported by the separate post-merge
+                   certification mission; the identities and both CI runs
+                   above are independently observable GitHub metadata. That
+                   mission ran in the same AI session as merge execution;
+                   docs/governance-process-v3.md requires review independence
+                   and separation of merge authorization from merge
+                   execution, and states no separate-certifier requirement.
+                   PR #196's body predates certification and still reads
+                   "Post-merge certification: NOT PERFORMED"; this record is
+                   the canonical certification record.
+
+review class:      HEAVY (Senior Software Developer review + Security review)
+review history:    original implementation; independent review CHANGES_REQUESTED
+                   (W4-SEC-H1 HIGH, W4-DEV-M1, W4-DEV-L1); Correctives C1-C9,
+                   each followed by an independent re-review (C1-C4 and C6-C8
+                   CHANGES_REQUESTED; C5, a test-only corrective, APPROVED
+                   with INFO findings carried open; those were then closed by
+                   C6); C9 exact-head re-review APPROVED
+findings:          every finding raised by the original review and the C1-C8
+                   re-reviews (W4-SEC-H1 through W4-C8R-DEV-L1, as enumerated
+                   in PR #196) CLOSED; separately, W4-C2-SEC-M1 (registered by
+                   the implementer at Corrective C2) is DEFERRED, not closed
+                   (see below)
+final review:      APPROVED at exact HEAD 762a09e / TREE a8abc92 (open
+                   BLOCKER 0, HIGH 0, MEDIUM 0, LOW 0, INFO 0 among current
+                   in-scope review findings)
+reported validation (final C9 review, Node v22.23.3):
+                   Stage 1F 412/412 PASS; governance 1212 total / 1211 PASS /
+                   0 FAIL / 1 SKIP; full unit 5355 total / 5346 PASS / 0 FAIL /
+                   9 SKIP; npm pack --dry-run 45 entries, 0 governance files
+reported validation (post-merge certification mission, Node v24 -- outside
+                   the supported Node 22 engine range; a focused run, not a
+                   repeated full Node 22 unit run):
+                   focused post-merge tests 445/445 PASS; governance 1211 PASS /
+                   0 FAIL / 1 SKIP
+review independence: LIMITED -- separate implementation/review AI sessions;
+                   no independent human reviewer claimed. PR #196 carries no
+                   formal GitHub review submission; the independent reviews
+                   existed as conversational review reports. Repository branch
+                   protection required zero approving reviews, so this did not
+                   block the merge; the distinction is recorded here, not elided.
+merge authorization: exact HEAD + exact TREE + exact base, by the project owner
+                   (recorded on PR #196); merge executed in a separate, later
+                   mission
+
+W4-C2-SEC-M1:      DEFERRED -- NON-BLOCKING for Stage 1F -- NOT CLOSED
+                   (machine-collected failureSignature binding and normalization
+                   for justified same-head CI reruns; registered at Corrective
+                   C2 with an initial MEDIUM grade that was never independently
+                   confirmed or re-graded; owner disposition recorded on PR #196)
+binding condition: PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN stays structurally
+                   unreachable: UNMET_TRUST_PREREQUISITES non-empty; no
+                   operational determination authority; fail-closed rejection of
+                   fabricated privileged PASS evidence -- until every trust
+                   prerequisite is implemented, reviewed, merged and certified
+                   under its own authorized gate
+other deferred dependencies (all DEFERRED, none implemented by Wave 4;
+                   mocked interfaces and schemas are not operational capability):
+                   D4-A live authenticated determination provider; Stage 1A
+                   base-anchored authorizedDeterminers policy and its
+                   determinationMode / ownerAccountId extension; comment
+                   edit-history / immutability qualification; independent
+                   acceptance anchor; contributor-set provenance; live GitHub
+                   CI-evidence adapter (1F has only an injectable seam); live
+                   CI re-fetch at decision time; operational CLI / bootstrap
+                   integration
+
+WAVE 4 CODE (1F) PRESENT ON MAIN:          YES
+FULL GOV-AUTO PRE-REVIEW CAPABILITY:       NOT YET COMPLETE
+1A / 1B / 1C / 1D / 1E / 1F:   MERGED + POST-MERGE CERTIFIED
+Wave 5:                        NOT_STARTED  (1G; next governed implementation step)
+1G:                            NOT_STARTED
+GOV-VERIFY-1 shared 1A dependency:                          SATISFIED
+GOV-VERIFY-1 1F (CI-evidence) technical interface dependency:  SATISFIED
+GOV-VERIFY-1 live CI-evidence provider:  NOT ESTABLISHED (injectable seam only)
+GOV-VERIFY-1:                  tracked; not started by this record
+AISEC-4:                       NOT_STARTED
+Type & Schema Boundary Audit:  distinct future gate (not satisfied by Wave 4)
+```
+
+Wave 4 was reviewed under the required `HEAVY` review lifecycle gate across
+nine corrective cycles before final exact-head approval. The original
+implementation's independent review found a HIGH finding (`W4-SEC-H1`, a false
+`PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` reachable through the public
+`collectCiEvidence()` interface from a caller-fabricated determination
+identity and policy) plus a MEDIUM and a LOW development finding. Corrective C1's
+fix proved incomplete on re-review; Corrective C2 closed `W4-SEC-H1` by moving
+every determination behind a collector-side qualification boundary that grants
+no authority from the adapter and has no acceptance branch while any trust
+prerequisite is unmet. Correctives C3-C9 then closed a sequence of MEDIUM, LOW
+and INFO findings in report completeness, missing-CI false-`READY` prevention,
+run-evidence completeness, input snapshotting and `requiredJobs` validation;
+the C9 exact-head re-review returned `APPROVED`. It delivers on `main`: for
+`1F`, `collectCiEvidence()` and `buildReport()` (the two approved public
+interfaces), the CI classification decision table, required-job completeness,
+deterministic `pre-review.md` rendering and a two-phase CLI; and the
+kernel-owned `revalidateEvidence()`. Every GitHub access is behind an
+injectable adapter seam: there is no live GitHub adapter, no workflow file and
+no branch-protection change. It contains no `1G` capability (independent
+framework validation) and no `GOV-VERIFY-1` residue.
+
+"Zero open current in-scope review findings" is not "no remaining technical or
+security debt": `W4-C2-SEC-M1` and the deferred dependencies above stay open,
+tracked and fail-closed, and this record neither closes nor schedules them.
+
+`1A` remains the canonical owner of shared Git identity, diff scope and
+trusted base/policy context facts and `1F` of shared CI-run evidence (Model A
+-- Composition); Wave 4 delivers the `1F` interfaces, so `GOV-VERIFY-1`'s
+`1F` technical interface dependency is now satisfied and it must consume them
+rather than build a second CI-evidence collector, while a live, authenticated
+CI-evidence provider is still not operationally established. Wave 5 (`1G`
+independent framework validation) is the next governed implementation step
+and has not begun. This is a factual lifecycle record: it changes no
+architecture, ownership, readiness semantics, review rule or stage order,
+starts no `1G`, `GOV-VERIFY-1` or `AISEC-4` work, and no runtime, public API
+or package surface change accompanies it.
+
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
 ```text
@@ -2446,7 +2605,7 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   closure evidence](#aisec-2-closure-evidence) in §8. `AISEC-3` -- Tool /
   Privilege / Credential Boundary Analysis -- is now also closed on `main`;
   see [AISEC-3 closure evidence](#aisec-3-closure-evidence) in §8. Per §15,
-  `GOV-AUTO-1` (inserted before `AISEC-4` by a later owner decision, §7) is `ACTIVE` and precedes `AISEC-4`; its design/reconciliation, Wave 0, Wave 1, Wave 2 and Wave 3 are merged and post-merge certified (see §8), while Waves 4-5 of `GOV-AUTO-1` and `AISEC-4` execution have not begun)
+  `GOV-AUTO-1` (inserted before `AISEC-4` by a later owner decision, §7) is `ACTIVE` and precedes `AISEC-4`; its design/reconciliation, Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4 are merged and post-merge certified (see §8), while Wave 5 of `GOV-AUTO-1` and `AISEC-4` execution have not begun)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -2944,9 +3103,9 @@ evidence](#aisec-1-closure-evidence) in §8), and so have `AISEC-2` (see
 is now `ACTIVE` (inserted before `AISEC-4`; see [§7](#7-owner-phase-order-decision)): its
 design/reconciliation is merged and post-merge certified -- see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) --
 the ROADMAP synchronization recording that design has been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)),
-and Wave 0, Wave 1, Wave 2 and Wave 3 have been merged and post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence) and [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence)).
-`GOV-AUTO-1` is not `COMPLETE_ON_MAIN`: Wave 4 (`1F`) is the next governed
-implementation step and remains `NOT_STARTED`, Wave 5 remains `NOT_STARTED`, and
+and Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4 have been merged and post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)).
+`GOV-AUTO-1` is not `COMPLETE_ON_MAIN`: Wave 5 (`1G`) is the next governed
+implementation step and remains `NOT_STARTED`, and
 `AISEC-4` execution has not begun (`NOT_STARTED`); `GOV-AUTO-1` implementation still
 precedes `AISEC-4`; see
 [§6](#gov-auto-1--governance-pre-review-framework-next-active-gate) and
