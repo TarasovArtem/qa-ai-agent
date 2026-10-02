@@ -2642,6 +2642,75 @@ closure record makes no claim that it is fixed. AT-07/TB-01 approval
 authenticity — who or what made an approval decision — is likewise unchanged
 and outside N-15 closure.
 
+
+### N-21 closure evidence
+
+```text
+finding:             N-21 — Human Review Presentation Integrity
+closure path:        B_CONTROLLED_V1_RESTRICTION
+status:              CLOSED_ON_MAIN
+restriction PR:      #204
+restriction merge:   02ebc544dbbf5327f5fd66303025d76439277475
+restriction CI:      run 36999873684 — PASS (7/7, attempt 1, exact merge SHA,
+                     event push)
+final review:        APPROVED_C3_INTEGRATED_HEAVY_PR203
+approved HEAD:       1660a47424377c83cb7c54be375f11684754fe6d
+approved TREE:       8163feff1a690db5e090f83f2340a1c5f0962c8f
+apply-time merge PR: #203
+apply-time merge:    395f3fd551ebe6fac4c15a103ab99f9d2e3ed8ee
+apply-time CI:       run 37008663706 — PASS (7/7, attempt 1, exact merge SHA,
+                     event push)
+
+Option A:            NOT IMPLEMENTED
+R-5 return trigger:  NONE TRIGGERED at closure-readiness certification
+```
+
+This is **canonical lifecycle closure synchronization only** for N-21 under
+the Product Owner-approved `B_CONTROLLED_V1_RESTRICTION` path. It records the
+already reviewed and certified Controlled-v1 restriction plus the independently
+reviewed, merged and post-merge-certified apply-time package-integrity
+corrective. This proposed `CLOSED_ON_MAIN` state becomes authoritative only
+after this ROADMAP/SECURITY closure-sync change itself completes independent
+`HEAVY` review, standard two-parent merge and fresh post-merge `push`
+certification on the exact merge SHA.
+
+The current supported surface has no supported repository-owned #23E review
+UI, CLI, renderer, workflow or public export, and
+`scripts/ai/test-automation/` remains excluded from the published package
+surface. None of the canonical R-5 mandatory return triggers has occurred.
+Option A is therefore still **not implemented** and is not required for this
+Controlled-v1 finding closure because R-4 continues to prohibit activation
+until Option A and the required AT-07 work exist.
+
+`FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` remains **OPEN** after N-21
+finding closure. R-1 through R-5 remain the mandatory future activation
+boundary: any R-5 return trigger requires renewed security design and Option A
+before activation. Closing the finding does not weaken, satisfy or remove that
+future guard and does not claim that a trusted reviewer presentation surface
+exists.
+
+Issue #202 acceptance criteria AC1-AC4 are satisfied by the certified
+restriction/apply-time evidence. The distinct Product Owner closure-decision
+portion of AC5 is approved by `OD-N21-CLOSE`; canonical AC5/lifecycle
+completion is effective only when this closure-sync change itself is reviewed,
+merged and post-merge certified. Issue #202 remains open until a separate
+post-certification metadata-truth mission updates and closes it.
+
+N-15 remains `CLOSED_ON_MAIN` and is not reopened. The #22F
+`validateApprovedTestDesignReview()` boundary remains separately scoped and is
+not closed or represented as fixed here. AT-07/TB-01 reviewer/decision
+authenticity remains separately owned and unresolved by N-21 closure.
+
+Issue #199 / PM-P0-02 still owns the outstanding release-dependency-matrix
+follow-up for N-21; this closure does not silently satisfy or remove that
+tracking task.
+
+Earlier references that described N-21 as `OPEN` are point-in-time historical
+records. Once this closure-sync lifecycle completes, this block is the
+authoritative N-21 lifecycle record; the open
+`FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` remains separately authoritative
+for future activation.
+
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
 ```text
