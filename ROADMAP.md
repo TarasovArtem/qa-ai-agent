@@ -2588,6 +2588,60 @@ architecture, ownership, readiness semantics, review rule or stage order,
 starts no `1G`, `GOV-VERIFY-1` or `AISEC-4` work, and no runtime, public API
 or package surface change accompanies it.
 
+
+### N-15 closure evidence
+
+```text
+finding:          N-15
+corrective:       RP-32 — Approval Boundary Hardening
+status:           CLOSED_ON_MAIN
+implementation:   8f68cc85033bad1f62c13877c91fc044cee96fc1
+F-1 corrective:  3f0d9c6451b741010281997cf32173f04c43475a
+final review:     APPROVED_C3_INTEGRATED_HEAVY_PR203
+approved HEAD:   1660a47424377c83cb7c54be375f11684754fe6d
+approved TREE:   8163feff1a690db5e090f83f2340a1c5f0962c8f
+merge PR:        #203
+merge SHA:       395f3fd551ebe6fac4c15a103ab99f9d2e3ed8ee
+post-merge CI:   run 37008663706 — PASS (7/7, attempt 1, exact merge SHA,
+                 event push)
+
+N-15 invariant:  approved bytes == applied bytes
+F-1:             CLOSED_ON_MAIN — every applied target requires exactly one
+                 APPROVE decision bound to the exact approved target
+```
+
+This is **canonical lifecycle closure synchronization only** for N-15. It
+records the already independently reviewed, merged and post-merge-certified
+RP-32/N-15 implementation; it is not new technical implementation and does not
+repeat or replace the security review. This `CLOSED_ON_MAIN` record becomes
+authoritative only after this ROADMAP-only closure-sync change itself completes
+its required `LIGHT` independent review, merge and post-merge certification.
+
+The certified implementation reads the caller-supplied change set, review
+package and review record once into owned, frozen snapshots before validation
+and consumption, binds each applied target to the approved operation, path,
+base digest, proposed content, proposed-content digest and target digest, and
+requires exactly one matching `APPROVE` decision before filesystem access.
+The F-1 contradictory/duplicate-approval gap is covered by regression tests
+and is resolved on `main`.
+
+PR #201 was **not** directly merged through a separate PR #201 merge mission.
+GitHub automatically marked PR #201 merged/closed after PR #203 made its RP-32
+commits reachable from `main`; PR #203 is the governed merge that carried the
+reviewed integrated lineage to `main`.
+
+N-21 ([Issue #202](https://github.com/TarasovArtem/qa-ai-agent/issues/202))
+remains **OPEN** as a separate finding. Its reviewer-visible presentation
+provenance scope is distinct from N-15's approval-to-application invariant and
+does not block N-15 closure. This record does not close, re-grade or otherwise
+change N-21.
+
+The corresponding #22F approval-boundary behavior in
+`validateApprovedTestDesignReview()` remains outside N-15/RP-32 scope; this
+closure record makes no claim that it is fixed. AT-07/TB-01 approval
+authenticity — who or what made an approval decision — is likewise unchanged
+and outside N-15 closure.
+
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
 ```text
