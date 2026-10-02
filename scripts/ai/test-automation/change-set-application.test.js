@@ -2221,6 +2221,18 @@ test("N21 snapshot: getter-backed context (forged MODIFY evidence on first read,
   cleanup(root);
 });
 
+test("N21 snapshot: getter-backed context (honest on first read, forged MODIFY evidence afterwards) is read once and applied as the honest state", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const forgedEvidence = chain.context.repositoryEvidence.map((e) => (e.evidenceRef.location === RP32_EXISTING ? { ...e, content: "describe('new', () => {});" } : e));
+  const repositoryContext = rp32WithAccessor(chain.context, "repositoryEvidence", (n, original) => (n === 1 ? original : forgedEvidence), counter);
+  const res = apply(root, chain, { repositoryContext });
+  assert.equal(counter.reads, 1, "repositoryContext.repositoryEvidence must be read exactly once; the package rebuild must reuse the snapshot");
+  rp32AssertAppliedEqualsApproved(root, res, chain.reviewPackage);
+  cleanup(root);
+});
+
 test("N21 snapshot: Proxy-backed plan (honest on first get, forged purpose afterwards) is read once and applied as the honest state", () => {
   const root = makeRootWithExisting();
   const chain = buildChain();
