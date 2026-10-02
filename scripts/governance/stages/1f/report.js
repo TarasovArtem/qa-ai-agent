@@ -78,11 +78,13 @@
 
 "use strict";
 
-const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
-const { isPlainObject } = require("../../kernel/validation");
+const { REASON, STATUS, RANGE_MODES, deepFreeze } = require("../../kernel/contracts");
+const { isPlainObject, validateCapabilityId, validateFrameworkMetadata } = require("../../kernel/validation");
 const { aggregate } = require("../../kernel/readiness");
 const { validateResultRecord, cloneJson } = require("../../kernel/results");
+const { DOMAIN_ID } = require("../../kernel/graph");
 const { isValidSubject, sameSubject } = require("../common");
+const { isValidBranchName } = require("../1a/trusted-context");
 const { CLASSIFICATION_CONTRACT } = require("./ci-classify");
 const { UNMET_TRUST_PREREQUISITES } = require("./determination");
 const { ciRunSourceObjectId, isCiRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
@@ -96,6 +98,108 @@ const MAX_EXTERNAL_EVIDENCE = 256;
 const MAX_CAPABILITY_IDS = 256;
 const IMMUTABILITY_VALUES = new Set(["MUTABLE", "VERIFIED_PROVIDER", "VERIFIED_CRYPTO"]);
 const SUPPORTED_REPORT_SCHEMA_VERSIONS = [1];
+const REVIEW_CLASSES = ["LIGHT", "HEAVY"];
+const MAX_PARENTS = 8;
+
+// Corrective C1 (1G M1): the results every report must contain before it can be
+// READY. This is framework contract state, not caller input: each ID is a record
+// the named stage always emits once it has run for the subject (a run that stops
+// early already emits a non-PASS record, so a missing ID here only adds an
+// INCOMPLETE). Per-domain 1E results are required through 1E.DELTA.DOMAIN_SET,
+// the 1E-owned statement of which domains the run reports on. Records whose IDs
+// depend on the effective policy (1B.REFERENCES.<family>) are not enumerable
+// here and are covered by aggregation of whatever 1B emitted.
+const REQUIRED_CHECK_IDS = deepFreeze({
+  COMMON: [
+    "1A.IDENTITY.INVOCATION", "1A.IDENTITY.HEAD", "1A.IDENTITY.BASE",
+    "1A.POLICY.ROOT", "1A.POLICY.ANCHOR", "1A.POLICY.CURRENT", "1A.POLICY.CAPABILITIES", "1A.POLICY.GATE_ANCHOR",
+    "1A.TARGET.PROTECTED",
+    "1A.DIFF.CHANGED_FILES", "1A.DIFF.PLATFORM_AGREEMENT",
+    "1A.SCOPE.PROPOSAL", "1A.SCOPE.FORBIDDEN", "1A.SCOPE.ALLOWED", "1A.SCOPE.PROTECTED",
+    "1A.SECRETS.SCAN", "1A.SECRETS.SUPPRESSIONS",
+    "1B.MARKDOWN.FILES", "1B.MARKDOWN.FENCES", "1B.MARKDOWN.TABLES", "1B.MARKDOWN.HEADINGS", "1B.MARKDOWN.ANCHORS", "1B.MARKDOWN.LINKS",
+    "1C.EVIDENCE.CONFIG", "1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING", "1C.EVIDENCE.ROW_INDEX",
+    "1D.CONSISTENCY.CONFIG", "1D.CONSISTENCY.COUNTS", "1D.CONSISTENCY.TAXONOMY", "1D.CONSISTENCY.METHOD",
+    "1E.DELTA.DOMAIN_SET",
+    "1F.CI",
+  ],
+  PR_REVIEW: ["1A.IDENTITY.TARGET_TIP", "1A.IDENTITY.RANGE", "1A.IDENTITY.EXPECTED_BASE", "1A.IDENTITY.WORKFLOW_ANCHOR"],
+  POST_MERGE: ["1A.IDENTITY.MERGE_ON_TARGET", "1A.IDENTITY.TOPOLOGY", "1A.IDENTITY.MERGED_HEAD"],
+});
+// Check IDs buildReport() itself contributes; a caller-supplied record may not claim them.
+const RESERVED_CHECK_ID = /^1F\.(CONTEXT\.|COMPLETENESS\.)/;
+
+function requiredCheckIds(mode) {
+  return [...REQUIRED_CHECK_IDS.COMMON, ...REQUIRED_CHECK_IDS[mode]];
+}
+
+function reportRecord(subject, checkId, status, reasonCode, detail, observed) {
+  const record = { checkId, ownerStage: "1F", status, subject, observed, expected: null, reasonCode, detail, evidenceRefs: [] };
+  const checked = validateResultRecord(record);
+  if (!checked.ok) throw new Error(`internal error: invalid ${checkId} record: ${checked.problems.join("; ")}`);
+  return checked.record;
+}
+
+/**
+ * Corrective C1 (1G M2): the execution context is folded into the SAME aggregation
+ * as one record, so only a platform-authenticated run executed from the resolved
+ * target tip can be READY (design section 14 rule 8 and "No self-validation";
+ * manual mode). Head-executed output is advisory (INCOMPLETE, so NOT_READY); an
+ * operator-supplied invocation is at best HUMAN_REVIEW_REQUIRED. Phase 1 is
+ * already INCOMPLETE through its CI_NOT_COLLECTED record. The executed commit was
+ * cross-checked against executedFrom before this point, so TARGET_TIP here means
+ * executedCommit === resolvedTargetTip.
+ */
+function executionContextRecord(subject, tc) {
+  const observed = { executedFrom: tc.executedFrom, invocationTrust: tc.invocationTrust, phase: tc.phase, executedCommit: tc.executedCommit, resolvedTargetTip: tc.resolvedTargetTip };
+  if (tc.executedFrom !== "TARGET_TIP") {
+    return reportRecord(subject, "1F.CONTEXT.EXECUTION", STATUS.INCOMPLETE, REASON.EXECUTION_NOT_FROM_TARGET_TIP, "the report was produced by head-executed framework code: advisory only, never READY", observed);
+  }
+  if (tc.invocationTrust !== "PLATFORM_AUTHENTICATED") {
+    return reportRecord(subject, "1F.CONTEXT.EXECUTION", STATUS.HUMAN_REVIEW_REQUIRED, REASON.OPERATOR_INVOCATION, "operator-supplied invocation: at best human review, never READY", observed);
+  }
+  return reportRecord(subject, "1F.CONTEXT.EXECUTION", STATUS.PASS, REASON.OK, "platform-authenticated invocation executed from the resolved target tip", observed);
+}
+
+/**
+ * Cross-field validation of the trusted context against the report subject
+ * (Corrective C1, 1G L3/M2). Returns null when consistent, else the reason.
+ */
+function trustedContextContradiction(tc, subject) {
+  if (tc.headSha !== subject.head) return "trustedContext.headSha does not match the subject";
+  if (tc.mode !== subject.range.mode) return "trustedContext.mode does not match the subject range mode";
+  if (tc.base !== subject.base || subject.range.from !== subject.base || subject.range.to !== subject.head) return "trustedContext.base does not match the subject base and range";
+  if (tc.executedFrom === "TARGET_TIP" && tc.executedCommit !== tc.resolvedTargetTip) return "executedFrom is TARGET_TIP but executedCommit is not the resolved target tip";
+  if (tc.executedFrom === "HEAD" && tc.executedCommit !== subject.head) return "executedFrom is HEAD but executedCommit is not the reviewed head";
+  return null;
+}
+
+/**
+ * The enabled-domain set the report must contain results for (Corrective C1, 1G
+ * M1), taken from the 1E-owned 1E.DELTA.DOMAIN_SET record. A caller-supplied
+ * expectedDomainIds may restate that set but can never narrow or replace it.
+ * Returns { ok, ids } (ids null when 1E's record is absent; its absence is itself
+ * a missing required result) or { ok:false, reason }.
+ */
+function requiredDomainIds(records, subject, callerIds) {
+  const sets = records.filter((r) => isPlainObject(r) && r.checkId === "1E.DELTA.DOMAIN_SET");
+  let ids = null;
+  if (sets.length === 1) {
+    const r = sets[0];
+    const list = isPlainObject(r.observed) ? r.observed.domainIds : undefined;
+    if (r.ownerStage !== "1E" || r.status !== STATUS.PASS || !sameSubject(r.subject, subject) || !Array.isArray(list) || list.length > 256 ||
+        !list.every((id) => typeof id === "string" && DOMAIN_ID.test(id)) || new Set(list).size !== list.length) {
+      return { ok: false, reason: "the 1E.DELTA.DOMAIN_SET record is malformed" };
+    }
+    ids = [...list].sort();
+  }
+  if (callerIds !== undefined) {
+    if (!Array.isArray(callerIds)) return { ok: false, reason: "expectedDomainIds must be an array" };
+    if (ids !== null && JSON.stringify([...callerIds].sort()) !== JSON.stringify(ids)) return { ok: false, reason: "expectedDomainIds differs from the 1E-reported domain set (it can never narrow it)" };
+    if (ids === null) ids = callerIds;
+  }
+  return { ok: true, ids };
+}
 
 function invalidInput(detail) {
   return deepFreeze({ ok: false, report: null, reason: detail });
@@ -347,7 +451,10 @@ function validateCollectedCiRecord(record, subject, externalEvidence, trustedCon
     // authentication -- trustedContext itself is caller-assembled input,
     // validated only for shape by isValidTrustedContext() above.
     if (o.repository !== trustedContext.repositoryId) return "the 1F.CI record's repository does not match trustedContext.repositoryId";
-    if (o.event !== trustedContext.eventType) return "the 1F.CI record's event does not match trustedContext.eventType";
+    // Corrective C1 (1G L3): the CI event proves the claim the mode makes
+    // (pull_request for PR review, push for post-merge certification; design
+    // section 25 rule 3), whatever invoked the collector.
+    if (o.event !== expectedEventType(trustedContext.mode, "PLATFORM_AUTHENTICATED")) return "the 1F.CI record's event does not match the event trustedContext.mode requires";
 
     // The record's `subject` (already checked equal to the report's subject
     // above) is the sole HEAD authority; the digest below binds to
@@ -438,6 +545,12 @@ function isBoundedString(v, max) {
   return typeof v === "string" && v.length > 0 && v.length <= max;
 }
 
+/** The event a trusted invocation must carry (the same rule as stages/1a/trusted-context.js). */
+function expectedEventType(mode, invocationTrust) {
+  if (invocationTrust === "OPERATOR_SUPPLIED") return "manual";
+  return mode === "PR_REVIEW" ? "pull_request" : "push";
+}
+
 function isValidTrustedContext(tc) {
   if (!isPlainObject(tc)) return false;
   const keys = Object.keys(tc).sort().join(",");
@@ -449,11 +562,13 @@ function isValidTrustedContext(tc) {
     "workflowBlobSha", "workflowIdentity",
   ].sort().join(",");
   if (keys !== expected) return false;
-  if (typeof tc.mode !== "string") return false;
+  // Corrective C1 (1G L3): enumerated and cross-field values are validated with the
+  // same rules 1A applies to the trusted invocation context, never as free strings.
+  if (typeof tc.mode !== "string" || !RANGE_MODES.includes(tc.mode)) return false;
   if (!TRUST.includes(tc.invocationTrust)) return false;
   if (typeof tc.provider !== "string" || tc.provider.length === 0) return false;
   if (typeof tc.repositoryId !== "string" || !REPOSITORY_ID.test(tc.repositoryId)) return false;
-  if (typeof tc.eventType !== "string" || tc.eventType.length === 0) return false;
+  if (tc.eventType !== expectedEventType(tc.mode, tc.invocationTrust)) return false;
   if (typeof tc.targetRefName !== "string" || tc.targetRefName.length === 0) return false;
   if (typeof tc.resolvedTargetTip !== "string" || !SHA40.test(tc.resolvedTargetTip)) return false;
   if (tc.suppliedTargetSha !== null && (typeof tc.suppliedTargetSha !== "string" || !SHA40.test(tc.suppliedTargetSha))) return false;
@@ -468,10 +583,14 @@ function isValidTrustedContext(tc) {
   if (tc.rootPolicyDigest !== null && !isBoundedString(tc.rootPolicyDigest, 128)) return false;
   if (tc.basePolicyDigest !== null && !isBoundedString(tc.basePolicyDigest, 128)) return false;
   if (!EXECUTED_FROM.includes(tc.executedFrom)) return false;
-  if (typeof tc.frameworkVersion !== "string" || tc.frameworkVersion.length === 0) return false;
-  if (!Array.isArray(tc.targetSupportedCapabilities) || tc.targetSupportedCapabilities.length > MAX_CAPABILITY_IDS || !tc.targetSupportedCapabilities.every((c) => typeof c === "string")) return false;
-  if (!Array.isArray(tc.targetSupportedSchemaVersions)) return false;
-  if (!Array.isArray(tc.requiredCapabilities) || tc.requiredCapabilities.length > MAX_CAPABILITY_IDS || !tc.requiredCapabilities.every((c) => typeof c === "string")) return false;
+  // frameworkVersion, targetSupportedCapabilities (capability-id@major, no duplicate)
+  // and targetSupportedSchemaVersions ({minSupported, maxSupported}, min <= max) are
+  // target framework metadata: validated by the one canonical kernel validator.
+  if (!Array.isArray(tc.targetSupportedCapabilities) || tc.targetSupportedCapabilities.length > MAX_CAPABILITY_IDS) return false;
+  const metadata = validateFrameworkMetadata({ frameworkVersion: tc.frameworkVersion, supportedCapabilities: tc.targetSupportedCapabilities, supportedSchemaVersions: tc.targetSupportedSchemaVersions });
+  if (!metadata.ok) return false;
+  if (!Array.isArray(tc.requiredCapabilities) || tc.requiredCapabilities.length > MAX_CAPABILITY_IDS) return false;
+  if (!tc.requiredCapabilities.every((c) => validateCapabilityId(c).ok) || new Set(tc.requiredCapabilities).size !== tc.requiredCapabilities.length) return false;
   if (tc.phase !== 1 && tc.phase !== 2) return false;
   if (typeof tc.collectorRunId !== "string" || tc.collectorRunId.length === 0) return false;
   return typeof tc.executedCommit === "string" && SHA40.test(tc.executedCommit);
@@ -521,7 +640,9 @@ function isValidManifestProvenance(m) {
  *   domainsProjection    optional -- when supplied, checked against the 1E domain
  *                        records inside `records` via kernel.aggregate()'s own
  *                        checkDomainResultCompleteness(); a mismatch fails the report
- *   expectedDomainIds    the enabled-domain-id set aggregate() checks completeness against
+ *   expectedDomainIds    optional restatement of the enabled-domain set; the required set
+ *                        always comes from the 1E-owned 1E.DELTA.DOMAIN_SET record and
+ *                        this value must equal it (Corrective C1, 1G M1)
  *   ci                   `{state: "NOT_COLLECTED"}` for Phase 1, or omitted when the
  *                        collected 1F.CI record is already present in `records`
  *
@@ -552,14 +673,32 @@ function buildReport(rawInput) {
   const subject = input.subject;
   if (!isPlainObject(input.tool) || typeof input.tool.name !== "string" || typeof input.tool.version !== "string") return invalidInput("tool must be { name, version }");
   if (!isValidTrustedContext(input.trustedContext)) return invalidInput("trustedContext is malformed or incomplete");
-  if (input.trustedContext.headSha !== subject.head) return invalidInput("trustedContext.headSha does not match the subject");
+  const contradiction = trustedContextContradiction(input.trustedContext, subject);
+  if (contradiction !== null) return invalidInput(contradiction);
+  // Corrective C1 (1G L3): generatedFor's caller-supplied identity fields are
+  // validated, never copied blindly (a branch name is author-controlled text).
+  if (input.parents !== undefined && (!Array.isArray(input.parents) || input.parents.length > MAX_PARENTS || !input.parents.every((p) => typeof p === "string" && SHA40.test(p)))) {
+    return invalidInput("parents must be a bounded array of full lowercase 40-hex SHAs");
+  }
+  if (input.branch !== undefined && input.branch !== "" && !isValidBranchName(input.branch)) return invalidInput("branch must be a valid branch name");
   if (!Array.isArray(input.externalEvidence) || input.externalEvidence.length > MAX_EXTERNAL_EVIDENCE || !input.externalEvidence.every(isValidExternalEvidenceEntry)) {
     return invalidInput("externalEvidence must be a bounded array of canonical entries");
   }
   if (!isValidManifestProvenance(input.manifest)) return invalidInput("manifest provenance is malformed or incomplete");
-  if (typeof input.reviewClass !== "string" || input.reviewClass.length === 0) return invalidInput("reviewClass is required");
+  if (!REVIEW_CLASSES.includes(input.reviewClass)) return invalidInput("reviewClass must be LIGHT or HEAVY");
   if (!Array.isArray(input.changedFiles) || !input.changedFiles.every((f) => typeof f === "string")) return invalidInput("changedFiles must be an array of strings");
   if (!Array.isArray(input.records)) return invalidInput("records must be an array");
+  if (input.records.some((r) => isPlainObject(r) && typeof r.checkId === "string" && RESERVED_CHECK_ID.test(r.checkId))) {
+    return invalidInput("records[] claims a check ID that only buildReport() itself contributes");
+  }
+  // Corrective C1 (1G L2/L3): the changed-file comparison must have run under the
+  // same invocation trust as the report's trusted context.
+  const agreement = input.records.filter((r) => isPlainObject(r) && r.checkId === "1A.DIFF.PLATFORM_AGREEMENT");
+  if (agreement.some((r) => isPlainObject(r.observed) && Object.hasOwn(r.observed, "invocationTrust") && r.observed.invocationTrust !== input.trustedContext.invocationTrust)) {
+    return invalidInput("the 1A changed-file comparison ran under a different invocation trust than trustedContext");
+  }
+  const domainSet = requiredDomainIds(input.records, subject, input.expectedDomainIds);
+  if (!domainSet.ok) return invalidInput(domainSet.reason);
 
   const ci = input.ci === undefined ? null : input.ci;
   if (ci !== null && (!isPlainObject(ci) || ci.state !== "NOT_COLLECTED")) return invalidInput("ci must be omitted or exactly { state: \"NOT_COLLECTED\" } for a Phase 1 report");
@@ -602,10 +741,20 @@ function buildReport(rawInput) {
   // STORED in the envelope, without becoming a record `aggregate()` actually
   // sees, would let an otherwise-all-PASS Phase 1 report reach READY -- the
   // exact failure this record exists to prevent.
-  const aggregateInput = ci !== null ? [...input.records, ciNotCollectedRecord(subject)] : input.records;
+  const suppliedRecords = ci !== null ? [...input.records, ciNotCollectedRecord(subject)] : input.records;
+
+  // Corrective C1 (1G M1): every required result must be present as an actual
+  // record; a missing one is an INCOMPLETE record in the same aggregation, so a
+  // report with, e.g., only an identity record and a CI record can never be READY.
+  // A required result that is NOT_APPLICABLE counts only through the kernel's own
+  // applicability-proof rule; a duplicate is the kernel's DUPLICATE_CHECK_ID error.
+  const present = new Set(suppliedRecords.filter((r) => isPlainObject(r) && typeof r.checkId === "string").map((r) => r.checkId));
+  const missing = requiredCheckIds(subject.range.mode).filter((id) => !present.has(id));
+  const completenessRecords = missing.map((id) => reportRecord(subject, `1F.COMPLETENESS.${id}`, STATUS.INCOMPLETE, REASON.REQUIRED_RESULT_MISSING, "a result this report requires is missing", { missingCheckId: id }));
+  const aggregateInput = [...suppliedRecords, executionContextRecord(subject, input.trustedContext), ...completenessRecords];
 
   const agg = aggregate(aggregateInput, {
-    expectedDomainIds: input.expectedDomainIds,
+    expectedDomainIds: domainSet.ids === null ? undefined : domainSet.ids,
     domainsProjection: input.domainsProjection,
   });
 
@@ -660,4 +809,4 @@ function buildReport(rawInput) {
   return deepFreeze({ ok: true, report: deepFreeze(report) });
 }
 
-module.exports = { buildReport, isValidTrustedContext, isValidExternalEvidenceEntry, isValidManifestProvenance, SUPPORTED_REPORT_SCHEMA_VERSIONS };
+module.exports = { buildReport, isValidTrustedContext, isValidExternalEvidenceEntry, isValidManifestProvenance, SUPPORTED_REPORT_SCHEMA_VERSIONS, REQUIRED_CHECK_IDS };

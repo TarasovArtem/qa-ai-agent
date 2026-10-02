@@ -180,3 +180,43 @@ function fakeAdapter(overrides = {}) {
 }
 
 module.exports.fakeAdapter = fakeAdapter;
+
+// ---------------------------------------------------------------------------------
+// Wave 5 / Stage 1G Corrective C1 builders (still test-only).
+
+/**
+ * A report trustedContext that is valid and authoritative for `subject`: a
+ * platform-authenticated Phase 2 run executed from the resolved target tip
+ * (design section 14 rule 8), with canonical D15 target metadata. Tests override
+ * single fields to probe one property at a time.
+ */
+function reportContext(subject, overrides = {}) {
+  const tip = "b".repeat(40);
+  return {
+    mode: subject.range.mode, invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: "TarasovArtem/qa-ai-agent",
+    eventType: subject.range.mode === "PR_REVIEW" ? "pull_request" : "push", targetRefName: "main", resolvedTargetTip: tip, suppliedTargetSha: null,
+    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
+    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
+    executedFrom: "TARGET_TIP", frameworkVersion: "0.5.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: { minSupported: 1, maxSupported: 1 },
+    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: tip,
+    ...overrides,
+  };
+}
+
+/**
+ * One PASS record for every result buildReport() requires except 1F.CI (taken from
+ * the report module's own REQUIRED_CHECK_IDS, so the fixture can never drift from
+ * the contract), plus the 1E domain-set record for `domainIds`.
+ */
+function requiredRecords(subject, { domainIds = [] } = {}) {
+  const { REQUIRED_CHECK_IDS } = require("./stages/1f/report");
+  const ids = [...REQUIRED_CHECK_IDS.COMMON, ...REQUIRED_CHECK_IDS[subject.range.mode]].filter((id) => id !== "1F.CI");
+  return ids.map((checkId) => ({
+    checkId, ownerStage: checkId.slice(0, 2), status: "PASS", subject,
+    observed: checkId === "1E.DELTA.DOMAIN_SET" ? { domainIds: [...domainIds].sort() } : {},
+    expected: null, reasonCode: "OK", detail: "", evidenceRefs: [],
+  }));
+}
+
+module.exports.reportContext = reportContext;
+module.exports.requiredRecords = requiredRecords;

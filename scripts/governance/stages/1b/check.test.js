@@ -316,7 +316,7 @@ test("W1 1B composition: 1B consumes 1A's frozen changed-file set, never runs Gi
   let gitCalls = 0;
   const spy = fakeAdapter({ diffNames: async () => { gitCalls += 1; return { ok: true, value: { paths: ["docs/OTHER.md"], invalid: 0 } }; } });
   const files = ["docs/a.md"];
-  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: files, invalid: 0 } }) }), invocationTrust: "OPERATOR_SUPPLIED", platformFiles: null });
+  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: files, invalid: 0 } }) }), identity: { established: true, subject, identity: { mode: subject.range.mode, invocationTrust: "OPERATOR_SUPPLIED" } }, platformFiles: null });
   assert.equal(changed.complete, true);
   const before = JSON.stringify(changed);
   const reader = fakeReader({ "docs/a.md": "# A\n[x](gone.md)\n", "docs/OTHER.md": "[y](gone.md)\n" });
@@ -331,7 +331,7 @@ test("W1 1B composition: 1B consumes 1A's frozen changed-file set, never runs Gi
 });
 
 test("W1 1B composition: the subject is identical across stages and the combined records aggregate through the Wave 0 kernel", async () => {
-  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: ["docs/a.md"], invalid: 0 } }) }), invocationTrust: "OPERATOR_SUPPLIED", platformFiles: null });
+  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: ["docs/a.md"], invalid: 0 } }) }), identity: { established: true, subject, identity: { mode: subject.range.mode, invocationTrust: "OPERATOR_SUPPLIED" } }, platformFiles: null });
   const b = await g.checkReferences({ subject, changedFiles: changed, policy: policyOf(), reader: fakeReader({ "docs/a.md": "# A\n" }) });
   const s = g.checkScope({ subject, changedFiles: changed, policy: policyOf() });
   const secrets = await g.scanSecrets({ subject, changedFiles: changed, policy: policyOf(), reader: fakeReader({ "docs/a.md": "# A\n" }), now: "2026-06-01" });

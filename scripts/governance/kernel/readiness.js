@@ -127,9 +127,14 @@ function aggregate(records, options = {}) {
       : overallStatus === STATUS.HUMAN_REVIEW_REQUIRED ? READINESS.HUMAN_REVIEW_REQUIRED
         : READINESS.NOT_READY;
 
+  // Design section 23: readiness carries `reasons[]`, derived only from the records:
+  // the sorted, distinct reason codes of the records that decided the dominant
+  // status (empty exactly when the state is READY).
+  const reasons = state === READINESS.READY ? [] : [...new Set(all.filter((r) => r.status === overallStatus).map((r) => r.reasonCode))].sort();
+
   return deepFreeze({
     overallStatus,
-    readiness: { state, dominantStatus: overallStatus, counts },
+    readiness: { state, dominantStatus: overallStatus, reasons, counts },
     counts,
     humanReviewRequired: all.filter((r) => r.status === STATUS.HUMAN_REVIEW_REQUIRED).map((r) => r.checkId),
     records: valid,

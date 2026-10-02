@@ -18,10 +18,14 @@ const invalid = (tree, label) => {
 };
 const suppression = (o = {}) => ({ ruleId: "GITHUB_TOKEN", path: "docs/example.md", lineStart: null, lineEnd: null, classification: "DOCUMENTED_PLACEHOLDER", reason: "documented placeholder token", reviewRef: "PR #1", fingerprint: "f".repeat(64), expires: "2030-01-01", ...o });
 
-test("W1 policy: framework metadata for Wave 1 is valid and lists exactly the two new capabilities", () => {
+test("W1 policy: framework metadata is valid and lists exactly the canonical D15 stage capabilities (Corrective C1, 1G L4)", () => {
   const r = validateFrameworkMetadata(FRAMEWORK_METADATA);
   assert.equal(r.ok, true);
-  assert.deepEqual([...FRAMEWORK_METADATA.supportedCapabilities], ["repository-preflight@1", "markdown-reference-integrity@1"]);
+  assert.equal(FRAMEWORK_METADATA.frameworkVersion, "0.5.0");
+  assert.deepEqual([...FRAMEWORK_METADATA.supportedCapabilities], [
+    "repository-preflight@1", "markdown-reference-integrity@1", "evidence-provenance-validation@1",
+    "risk-source-method-consistency@1", "dependency-aware-delta@1", "ci-evidence-reporting@1",
+  ]);
   assert.deepEqual({ ...FRAMEWORK_METADATA.supportedSchemaVersions }, { minSupported: 1, maxSupported: 1 });
 });
 

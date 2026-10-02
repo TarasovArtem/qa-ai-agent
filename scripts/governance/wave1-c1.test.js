@@ -108,7 +108,7 @@ test("W1-SEC-M2: a head-controlled .gitmodules (ignore = all) cannot hide a gitl
 
     // Through the public interface, and it then lands in the forbidden scope domain.
     const subject = { head: moved, tree: repo.tree(moved), base: added, range: { mode: "PR_REVIEW", from: added, to: moved } };
-    const files = await g.getChangedFiles({ subject, ...gitOptions(repo), invocationTrust: "OPERATOR_SUPPLIED" });
+    const files = await g.getChangedFiles({ subject, ...gitOptions(repo), identity: { established: true, subject, identity: { mode: "PR_REVIEW", invocationTrust: "OPERATOR_SUPPLIED" } } });
     assert.deepEqual([...files.files], ["secrets/evil"]);
     const scope = await g.checkScope({ subject, changedFiles: files, policy: basePolicy() });
     assert.equal(scope.records.find((r) => r.checkId === "1A.SCOPE.FORBIDDEN").status, "FAIL");

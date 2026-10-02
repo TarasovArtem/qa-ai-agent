@@ -30,7 +30,7 @@ async function pipeline(repo, head, { ctx = {}, extra = {}, scopeProposal, headS
   const trustedContext = prContext(head, { workflow: { path: WORKFLOW, sha: head }, ...ctx });
   const identity = await g.getGitIdentity({ trustedContext, ...common, ...extra });
   assert.equal(identity.established, true);
-  const changed = await g.getChangedFiles({ subject: identity.subject, invocationTrust: trustedContext.invocationTrust, platformFiles: trustedContext.platformFiles, ...common });
+  const changed = await g.getChangedFiles({ subject: identity.subject, identity, platformFiles: trustedContext.platformFiles, ...common });
   const scope = g.checkScope({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, headProposal: scopeProposal });
   const secrets = await g.scanSecrets({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, headSuppressions, now: NOW, ...common });
   const markdown = await g.checkReferences({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, ...common });
@@ -296,9 +296,12 @@ test("W1 boundary: the package surface is unchanged (governance is not published
   assert.deepEqual(Object.keys(pkg.exports).sort(), [".", "./destinations/azure-devops", "./package.json", "./providers/azure-devops", "./providers/jira"]);
 });
 
-test("W1 boundary: framework capability metadata lists exactly the Wave 1 capabilities on top of the Wave 0 kernel", () => {
+test("W1 boundary: framework capability metadata keeps the Wave 1 capabilities first, in canonical D15 stage order", () => {
+  // Corrective C1 (1G L4): the metadata now lists every implemented stage capability
+  // (design decision D15); the Wave 1 identities are unchanged and still lead.
   const { FRAMEWORK_METADATA, CAPABILITY_REPOSITORY_PREFLIGHT, CAPABILITY_MARKDOWN_REFERENCE_INTEGRITY } = require("./framework-metadata");
-  assert.deepEqual([...FRAMEWORK_METADATA.supportedCapabilities], [CAPABILITY_REPOSITORY_PREFLIGHT, CAPABILITY_MARKDOWN_REFERENCE_INTEGRITY]);
+  assert.deepEqual([...FRAMEWORK_METADATA.supportedCapabilities].slice(0, 2), [CAPABILITY_REPOSITORY_PREFLIGHT, CAPABILITY_MARKDOWN_REFERENCE_INTEGRITY]);
+  assert.equal(FRAMEWORK_METADATA.supportedCapabilities.length, 6);
   assert.equal(g.validateFrameworkMetadata(FRAMEWORK_METADATA).ok, true);
   for (const id of FRAMEWORK_METADATA.supportedCapabilities) assert.equal(g.validateCapabilityId(id).ok, true, id);
 });
