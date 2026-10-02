@@ -2251,3 +2251,19 @@ test("N21 snapshot: Proxy-backed plan (honest on first get, forged purpose after
   assert.equal(reads, 1, "automationPlan.plannedChanges must be read exactly once");
   cleanup(root);
 });
+
+test("N21 snapshot: getter-backed reviewPackage.packageDigest (forged approved digest on first read, canonical afterwards) is read once and rejected before any filesystem access, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  // A forged-purpose package that a genuine record APPROVEs and the #23E gate
+  // accepts, so only the N-21 rebuild-and-compare can reject it.
+  const forged = n21ForgedApprovedChain(chain, (p) => { p.reviewTargets[N21_MODIFY].purpose = "Formatting only."; });
+  const counter = { reads: 0 };
+  const reviewPackage = rp32WithAccessor(forged.reviewPackage, "packageDigest", (n, original) => (n === 1 ? original : chain.reviewPackage.packageDigest), counter);
+  const { result: res, calls } = n21WithFsSpy(() => apply(root, chain, { reviewPackage, reviewRecord: forged.reviewRecord }));
+  assert.equal(counter.reads, 1, "reviewPackage.packageDigest must be read exactly once; the N-21 comparison must use the snapshot");
+  assert.deepEqual(calls, [], "rejection must happen before any filesystem access");
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.reviewPackage", "rejected at the N-21 package-integrity boundary");
+  cleanup(root);
+});
