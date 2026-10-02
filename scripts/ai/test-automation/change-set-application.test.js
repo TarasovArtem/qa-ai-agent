@@ -2093,7 +2093,7 @@ function n21AssertRejectedBeforeFs(root, chain, forged) {
   rp32AssertZeroWrites(root, res);
   assert.equal(res.errors.length, 1, JSON.stringify(res.errors));
   assert.equal(res.errors[0].path, "$.reviewPackage");
-  assert.match(res.errors[0].message, /^reviewPackage is not the review package derived from the validated/);
+  assert.match(res.errors[0].message, /^approved reviewPackage is not the canonical package derived from the validated/);
 }
 
 const N21_MODIFY = 1; // buildChain(): reviewTargets[0] is CREATE, [1] is MODIFY
