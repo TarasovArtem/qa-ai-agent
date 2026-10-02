@@ -45,9 +45,9 @@
  *     sufficient. The plan and context are snapshotted the same way, and
  *     the approved review package must be digest-identical to the package
  *     #23E's own builder derives from those snapshots and the change set -
- *     so the purpose, before-state, plan metadata and every other field a
- *     reviewer was shown come from the authoritative inputs, and no
- *     unsupported extra field is accepted. A mismatch is rejected before
+ *     so the approved package's purpose, before-state, plan metadata and
+ *     every other canonical field come from the authoritative inputs, and
+ *     no unsupported extra field is accepted. A mismatch is rejected before
  *     any filesystem access.
  *   - The ACTUAL filesystem is authoritative at apply time, never the
  *     historical AutomationRepositoryContext a plan/change-set happened to
@@ -831,8 +831,8 @@ function applyApprovedGeneratedChangeSet(input) {
 
   // RP-32: per-change approval binding. The changeSetDigest cross-check
   // above binds the package's stored digest field, but a self-digested
-  // package can still SHOW the reviewer different targets than that field
-  // names. Every change about to be written must therefore equal, field
+  // package can still carry review targets that differ from the change set
+  // named by that field. Every change about to be written must therefore equal, field
   // for field, the review target at the same index, that target must match
   // its own recomputed content/target digests, and the record must carry an
   // APPROVE decision for exactly that target - so the bytes written are the
@@ -843,9 +843,9 @@ function applyApprovedGeneratedChangeSet(input) {
   }
 
   // N-21: review-package integrity. The binding above proves approved bytes
-  // == applied bytes, but a self-digested package can still SHOW the
-  // reviewer a forged purpose, before-state, plan metadata or extra claims
-  // around those bytes. The package is therefore rebuilt with #23E's own,
+  // == applied bytes, but a self-digested approved package can still carry
+  // a forged purpose, before-state, plan metadata or extra claims around
+  // those bytes. The package is therefore rebuilt with #23E's own,
   // unmodified builder from the same plan/context/changeSet snapshots this
   // function validates and applies, and must be digest-identical to the
   // approved package - the full canonical package (every key, at every
@@ -861,7 +861,7 @@ function applyApprovedGeneratedChangeSet(input) {
   if (rebuiltPackage === null || !rebuiltPackage.ok || rebuiltPackage.reviewPackage.packageDigest !== reviewPackageSnapshot.packageDigest) {
     return {
       ok: false,
-      errors: [err("$.reviewPackage", ERROR_CODES.INVALID_REFERENCE, "reviewPackage is not the review package derived from the validated automationPlan/repositoryContext/generatedChangeSet (the reviewed presentation differs from the authoritative inputs)")],
+      errors: [err("$.reviewPackage", ERROR_CODES.INVALID_REFERENCE, "approved reviewPackage is not the canonical package derived from the validated automationPlan/repositoryContext/generatedChangeSet (the approved package differs from the authoritative inputs)")],
       appliedChangeSetRecord: null,
     };
   }
