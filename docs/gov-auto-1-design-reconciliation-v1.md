@@ -732,8 +732,8 @@ bootstrap transition is stated explicitly, not left to inference.
   declares `frameworkVersion`, an explicit `supportedCapabilities[]` and an
   explicit, required and validated `supportedSchemaVersions` range (see the target range contract below). The gate manifest and base policy
   declare `schemaVersion` and `requiredCapabilities[]`. A capability identity
-  includes its semantic version: `capability-id@major` (for example
-  `dependency-aware-delta@1`), matching `^[a-z][a-z0-9-]{1,63}@[1-9][0-9]{0,3}$`.
+  includes its semantic version: `capability-id@major` (for example `dependency-aware-delta@1`, the canonical `1E` identity; the canonical stage
+  capabilities and `frameworkVersion` are fixed in [§27](#27-design-decisions-d1-d14)), matching `^[a-z][a-z0-9-]{1,63}@[1-9][0-9]{0,3}$`.
   A requirement `X@n` is satisfied only by the exact identity `X@n` listed in
   `supportedCapabilities[]`: a name-only match never satisfies a requirement,
   `X@1` does not satisfy `X@2`, and a target that supports several majors lists
@@ -1352,6 +1352,50 @@ certification wherever pre-merge evidence is reused.
 | D12 | JSON canonical, Markdown derived, report `schemaVersion` mandatory, unknown report version fails (manifest `schemaVersion` follows the separate [§14](#14-manifest-ownership-trust-anchor-and-authority) contract) | Precedent: `branch-inventory.js` schema versioning | Best-effort reading of newer schemas | Schema changes are reviewed versions |
 | D13 | Evidence bound to (`head`,`tree`,`base`) from Git and to the trusted invocation and root policy digest; existing reports and cached CI never trusted; externally mutable evidence carries object ID, version, digest, `collectedAt` and `immutability` (mutable by default; only provider- or cryptographically verified immutability skips re-fetch) and is re-verified at review consumption, merge authorization and reuse in certification (`STALE_EVIDENCE` is `INCOMPLETE`) | Stale/borrowed CI is a recorded failure mode in this repository's history; comments can be edited after collection; a configured immutability flag proves nothing | Trusting a committed report; treating a report as indefinitely authoritative; assuming comments or configured flags are immutable | Reports are regenerated per head; every finalized report carries `requiresRevalidation: true` |
 | D14 | Public interface limited to ownership-matrix APIs plus kernel; waves 0-5; the framework's readiness is informational and never a merge gate; bootstrap is explicit (`FIRST_INTRODUCTION`, `CAPABILITY_LAG`), capability detection uses explicit identifiers, the head never validates itself, and the framework's effectiveness expands monotonically with certified merges; Type & Schema Audit and `AISEC-4` remain separate | Prevents a second source of truth; avoids a bootstrap deadlock | Exposing internals; folding the audit into `1G`; requiring `READY` to merge the first implementation | Interface additions need a reviewed matrix change; a required-check rollout needs a bootstrap exemption; capabilities are semantically versioned (`id@major`) and a name-only match never satisfies a requirement |
+
+**Canonical stage capabilities and framework version (Stage 1G L4 design
+decision).** This refines the capability declaration and versioning rule of
+[§14](#14-manifest-ownership-trust-anchor-and-authority) (framework
+availability); every rule stated there is unchanged. The executable stages
+declare exactly these stage-level capability identities, in this canonical
+declaration order (stage order, for deterministic human-readable metadata;
+matching stays exact set membership of `capability-id@major`):
+
+| Stage | Capability identity | Semantics |
+|---|---|---|
+| `1A` | `repository-preflight@1` | Git/repository identity, changed-file scope, secret scanning and the associated repository preflight facts owned by `1A` |
+| `1B` | `markdown-reference-integrity@1` | Markdown structural integrity and reference-integrity facts owned by `1B` |
+| `1C` | `evidence-provenance-validation@1` | Evidence-class/provenance validation, weakest-premise and related evidence-model checks owned by `1C` |
+| `1D` | `risk-source-method-consistency@1` | Risk/source/research-method consistency checks owned by `1D` |
+| `1E` | `dependency-aware-delta@1` | Domain delta review, dependency-aware invalidation and canonical fingerprints owned by `1E` |
+| `1F` | `ci-evidence-reporting@1` | CI evidence collection/classification and canonical pre-review report assembly owned by `1F` |
+
+These are **stage capability identities**, not one identity per exported
+function: they add no fact owner to [§6](#6-capability-ownership-matrix) and do
+not change the public interfaces of [§18](#18-sub-stage-ownership-map) and
+[§21](#21-public-versus-internal-api-boundary). `dependency-aware-delta@1` is
+the canonical `1E` capability identity, not only a syntax example. All six are
+major `@1`: the implemented `1A`-`1F` semantics are their first canonical
+semantics, and corrective hardening within those contracts does not mint a new
+major; a later breaking semantic change requires a separately reviewed design
+decision and a new major, never inferred from a code diff. Capability-major
+correctness remains governance-enforced, as in §14. Stage `1G` is
+non-executable independent validation and has **no** capability identity.
+
+`frameworkVersion` is a human-governed framework release identity, **not** a
+compatibility mechanism: no consumer may infer support for any capability from
+`frameworkVersion` (for example "version >= N"); compatibility is decided only
+by exact `capability-id@major` membership in `supportedCapabilities[]` read
+from target-tip metadata, together with the separately validated
+`supportedSchemaVersions` contract of §14. The truthful metadata for the
+implemented framework through executable Wave 4 (`1A`-`1F`) is
+`frameworkVersion = "0.5.0"` with the six identities above and
+`supportedSchemaVersions` `{minSupported: 1, maxSupported: 1}` (unchanged; this
+decision changes neither the manifest nor the report schema). `0.5.0` is an
+explicit assignment, not a claim that `0.3.0` or `0.4.0` was ever released as
+repository metadata. Afterwards, compatible fixes and internal hardening may
+advance the patch version and backward-compatible capability additions the
+minor version; version correctness remains governance-enforced.
 
 ## 28. Non-goals and status boundaries
 
