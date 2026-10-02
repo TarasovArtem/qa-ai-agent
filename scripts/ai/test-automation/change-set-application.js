@@ -41,6 +41,14 @@
  *     validation and writing both consume only those snapshots, and every
  *     written change must equal (and digest-match) the review target its
  *     APPROVE decision was recorded for - approved bytes == applied bytes.
+ *   - N-21: approved bytes == applied bytes is necessary but not
+ *     sufficient. The plan and context are snapshotted the same way, and
+ *     the approved review package must be digest-identical to the package
+ *     #23E's own builder derives from those snapshots and the change set -
+ *     so the purpose, before-state, plan metadata and every other field a
+ *     reviewer was shown come from the authoritative inputs, and no
+ *     unsupported extra field is accepted. A mismatch is rejected before
+ *     any filesystem access.
  *   - The ACTUAL filesystem is authoritative at apply time, never the
  *     historical AutomationRepositoryContext a plan/change-set happened to
  *     be built from (see generated-change-set.js's own "CREATE/MODIFY
@@ -167,7 +175,7 @@ const {
   LABEL_FILE_CONTENT,
 } = require("./generated-change-set");
 const { validateApprovedGeneratedChangeSetReview } = require("./generated-change-set-review-record");
-const { DIGEST_LABEL_TARGET, DIGEST_LABEL_TARGET_CONTENT } = require("./generated-change-set-review-package");
+const { DIGEST_LABEL_TARGET, DIGEST_LABEL_TARGET_CONTENT, buildGeneratedChangeSetReviewPackage } = require("./generated-change-set-review-package");
 const { computeDigest: computeReviewDigest } = require("./generated-change-set-review-canonical");
 const {
   isValidTimestamp,
@@ -775,11 +783,17 @@ function applyApprovedGeneratedChangeSet(input) {
   // content to the writer; a frozen data-only snapshot cannot change
   // between "validated" and "applied". An unreadable input (throwing
   // getter/trap, cycle, non-plain value) snapshots to null and is rejected
-  // by the validators below with zero writes.
+  // by the validators below with zero writes. N-21: the plan and context are
+  // snapshotted the same way, so #23D revalidation and the review-package
+  // rebuild below observe one and the same plan/context state.
+  let planSnapshot;
+  let contextSnapshot;
   let changeSetSnapshot;
   let reviewPackageSnapshot;
   let reviewRecordSnapshot;
   try {
+    planSnapshot = deepFreeze(snapshotOwnData(automationPlan));
+    contextSnapshot = deepFreeze(snapshotOwnData(repositoryContext));
     changeSetSnapshot = deepFreeze(snapshotOwnData(generatedChangeSet));
     reviewPackageSnapshot = deepFreeze(snapshotOwnData(reviewPackage));
     reviewRecordSnapshot = deepFreeze(snapshotOwnData(reviewRecord));
@@ -798,7 +812,7 @@ function applyApprovedGeneratedChangeSet(input) {
   // Phase 1 (re-verify): the frozen generatedChangeSet snapshot must itself
   // pass #23D's own unmodified validation against the supplied plan/context
   // (which recomputes changeSetDigest over the snapshot's actual content).
-  const changeSetValidation = validateGeneratedChangeSet({ automationPlan, repositoryContext, generatedChangeSet: changeSetSnapshot, expectedProjectId });
+  const changeSetValidation = validateGeneratedChangeSet({ automationPlan: planSnapshot, repositoryContext: contextSnapshot, generatedChangeSet: changeSetSnapshot, expectedProjectId });
   if (!changeSetValidation.ok) {
     return { ok: false, errors: changeSetValidation.errors, appliedChangeSetRecord: null };
   }
@@ -826,6 +840,30 @@ function applyApprovedGeneratedChangeSet(input) {
   const bindingErrors = verifyApprovedChangeBinding(changeSetSnapshot.changes, reviewPackageSnapshot.reviewTargets, reviewRecordSnapshot.decisions);
   if (bindingErrors.length > 0) {
     return { ok: false, errors: bindingErrors, appliedChangeSetRecord: null };
+  }
+
+  // N-21: review-package integrity. The binding above proves approved bytes
+  // == applied bytes, but a self-digested package can still SHOW the
+  // reviewer a forged purpose, before-state, plan metadata or extra claims
+  // around those bytes. The package is therefore rebuilt with #23E's own,
+  // unmodified builder from the same plan/context/changeSet snapshots this
+  // function validates and applies, and must be digest-identical to the
+  // approved package - the full canonical package (every key, at every
+  // level) as the builder defines it, never a selected-field comparison.
+  // The #23E gate above already proved the supplied packageDigest matches
+  // the supplied package's own content.
+  let rebuiltPackage;
+  try {
+    rebuiltPackage = buildGeneratedChangeSetReviewPackage({ automationPlan: planSnapshot, repositoryContext: contextSnapshot, generatedChangeSet: changeSetSnapshot, expectedProjectId });
+  } catch {
+    rebuiltPackage = null;
+  }
+  if (rebuiltPackage === null || !rebuiltPackage.ok || rebuiltPackage.reviewPackage.packageDigest !== reviewPackageSnapshot.packageDigest) {
+    return {
+      ok: false,
+      errors: [err("$.reviewPackage", ERROR_CODES.INVALID_REFERENCE, "reviewPackage is not the review package derived from the validated automationPlan/repositoryContext/generatedChangeSet (the reviewed presentation differs from the authoritative inputs)")],
+      appliedChangeSetRecord: null,
+    };
   }
 
   if (!isValidTimestamp(appliedAt)) {
