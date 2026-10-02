@@ -408,7 +408,21 @@ function recomputeReviewRecordDigest(reviewRecord) {
  * of what it does NOT mean. It grants no filesystem, Git, or execution
  * authority whatsoever.
  */
-function validateApprovedGeneratedChangeSetReview(reviewPackage, reviewRecord, { expectedProjectId } = {}) {
+function validateApprovedGeneratedChangeSetReview(reviewPackageInput, reviewRecordInput, { expectedProjectId } = {}) {
+  // RP-32 (closes N-15): every check below - the digest recomputations AND
+  // the later packageDigest/projectId/status reads - runs against ONE
+  // deep-frozen own-data snapshot per input, so a getter/Proxy cannot show
+  // the digest check one record and the status check another. An
+  // unreadable input snapshots to null and is rejected as INVALID_TYPE.
+  let reviewPackage;
+  let reviewRecord;
+  try {
+    reviewPackage = deepFreeze(snapshotOwnData(reviewPackageInput));
+    reviewRecord = deepFreeze(snapshotOwnData(reviewRecordInput));
+  } catch {
+    reviewPackage = null;
+    reviewRecord = null;
+  }
   if (!isPlainObject(reviewPackage) || reviewPackage.kind !== "GeneratedChangeSetReviewPackage" || reviewPackage.schemaVersion !== 1) {
     return { ok: false, errors: [err("$.reviewPackage", ERROR_CODES.INVALID_TYPE, "$.reviewPackage must be a valid GeneratedChangeSetReviewPackage v1")] };
   }

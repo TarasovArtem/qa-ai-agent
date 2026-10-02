@@ -8,8 +8,9 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 
 const { buildGeneratedChangeSet, computeDigest: gcsComputeDigest, LABEL_FILE_CONTENT } = require("./generated-change-set");
-const { buildGeneratedChangeSetReviewPackage } = require("./generated-change-set-review-package");
-const { buildGeneratedChangeSetReviewRecord } = require("./generated-change-set-review-record");
+const { buildGeneratedChangeSetReviewPackage, recomputeReviewPackageDigest, DIGEST_LABEL_TARGET, DIGEST_LABEL_TARGET_CONTENT } = require("./generated-change-set-review-package");
+const { buildGeneratedChangeSetReviewRecord, recomputeReviewRecordDigest, validateApprovedGeneratedChangeSetReview } = require("./generated-change-set-review-record");
+const { computeDigest: reviewComputeDigest } = require("./generated-change-set-review-canonical");
 const {
   MAX_ACTUAL_FILE_BYTES,
   resolveRepositoryRoot,
@@ -1744,3 +1745,525 @@ test("CS2-C1 CREATE: repositoryRoot itself replaced with a NEW ordinary director
   cleanup(root);
 });
 
+
+// --- RP-32 (closes N-15): approved bytes == applied bytes -------------------
+//
+// Every #23F input is read once into a frozen snapshot before validation, and
+// every written change must equal the review target its APPROVE decision was
+// recorded for. These tests prove the invariant from the outside: what lands
+// on disk is either nothing, or exactly the approved reviewTargets content.
+
+const RP32_NEW = "cypress/e2e/tests/new_spec.cy.js";
+const RP32_EXISTING = "cypress/e2e/tests/existing_spec.cy.js";
+const RP32_UNAPPROVED = "/* UNAPPROVED */ describe('evil', () => {});";
+
+function rp32MutableCopy(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+// Replaces `key` on a plain copy of `obj` with an accessor whose n-th read
+// returns valueForRead(n, original); counts reads in `counter.reads`.
+function rp32WithAccessor(obj, key, valueForRead, counter = { reads: 0 }) {
+  const copy = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === key) {
+      Object.defineProperty(copy, k, { enumerable: true, configurable: true, get: () => valueForRead(++counter.reads, v) });
+    } else {
+      copy[k] = v;
+    }
+  }
+  return copy;
+}
+
+function rp32AssertZeroWrites(root, res) {
+  assert.equal(res.ok, false);
+  assert.equal(res.appliedChangeSetRecord, null);
+  assert.ok(Array.isArray(res.errors) && res.errors.length > 0, "a rejection must carry deterministic error evidence");
+  assert.equal(fs.existsSync(path.join(root, RP32_NEW)), false, "CREATE target must not be written");
+  assert.equal(fs.readFileSync(path.join(root, RP32_EXISTING), "utf8"), OLD_CONTENT, "MODIFY target must be untouched");
+}
+
+// The invariant itself: every byte on disk is the approved proposedContent,
+// and the AppliedChangeSetRecord's afterDigest describes exactly those bytes.
+function rp32AssertAppliedEqualsApproved(root, res, reviewPackage) {
+  assert.equal(res.ok, true, JSON.stringify(res.errors));
+  assert.equal(res.appliedChangeSetRecord.status, "APPLIED");
+  for (const target of reviewPackage.reviewTargets) {
+    const onDisk = fs.readFileSync(path.join(root, target.path), "utf8");
+    assert.equal(onDisk, target.proposedContent, `${target.path}: applied bytes must equal approved bytes`);
+    const entry = res.appliedChangeSetRecord.changes.find((c) => c.path === target.path);
+    assert.equal(entry.afterDigest, gcsComputeDigest(LABEL_FILE_CONTENT, target.proposedContent));
+  }
+}
+
+// Forges a package whose reviewTargets[0] SHOWS `shownContent` to the
+// reviewer while its changeSetDigest still names the real change set. Every
+// digest is recomputed so the package is fully self-consistent.
+function rp32ForgePackageShowing(reviewPackage, shownContent) {
+  const t = reviewPackage.reviewTargets[0];
+  const targetContent = { operation: t.operation, path: t.path, purpose: t.purpose, baseContentDigest: t.baseContentDigest, existingContent: t.existingContent, proposedContent: shownContent };
+  const forgedTarget = {
+    ...t,
+    proposedContent: shownContent,
+    proposedContentDigest: reviewComputeDigest(DIGEST_LABEL_TARGET_CONTENT, shownContent),
+    targetDigest: reviewComputeDigest(DIGEST_LABEL_TARGET, targetContent),
+  };
+  const forged = { ...reviewPackage, reviewTargets: [forgedTarget, ...reviewPackage.reviewTargets.slice(1)] };
+  forged.packageDigest = recomputeReviewPackageDigest(forged);
+  return forged;
+}
+
+function rp32ApproveAll(reviewPackage) {
+  return buildGeneratedChangeSetReviewRecord({
+    reviewPackage,
+    reviewerId: "reviewer-1",
+    reviewedAt: "2026-08-28T10:00:00.000Z",
+    decisions: reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" })),
+  });
+}
+
+test("RP-32 PASS: an unchanged approved chain applies, and applied bytes equal approved bytes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  rp32AssertAppliedEqualsApproved(root, apply(root, chain), chain.reviewPackage);
+  cleanup(root);
+});
+
+test("RP-32 PASS: unchanged MUTABLE plain copies of every approved artifact (e.g. deserialized) still apply - snapshotting rejects nothing honest", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const res = apply(root, chain, {
+    generatedChangeSet: rp32MutableCopy(chain.generatedChangeSet),
+    reviewPackage: rp32MutableCopy(chain.reviewPackage),
+    reviewRecord: rp32MutableCopy(chain.reviewRecord),
+  });
+  rp32AssertAppliedEqualsApproved(root, res, chain.reviewPackage);
+  cleanup(root);
+});
+
+test("RP-32 FAIL: generatedChangeSet mutated after approval (changes reference replaced, stored changeSetDigest kept) -> rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const mutated = rp32MutableCopy(chain.generatedChangeSet);
+  mutated.changes = [{ ...mutated.changes[0], content: RP32_UNAPPROVED }, mutated.changes[1]];
+  const res = apply(root, chain, { generatedChangeSet: mutated });
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.generatedChangeSet.changeSetDigest");
+  cleanup(root);
+});
+
+test("RP-32 FAIL: getter-backed generatedChangeSet.changes that yields unapproved content -> rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const hostile = rp32WithAccessor(chain.generatedChangeSet, "changes", (_n, v) => [{ ...v[0], content: RP32_UNAPPROVED }, v[1]]);
+  rp32AssertZeroWrites(root, apply(root, chain, { generatedChangeSet: hostile }));
+  cleanup(root);
+});
+
+test("RP-32 FAIL->BOUND: getter flipping generatedChangeSet.changes to unapproved content AFTER its first read (N-15 V1) is read exactly once - only approved bytes can reach disk", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const hostile = rp32WithAccessor(chain.generatedChangeSet, "changes", (n, v) => (n === 1 ? v : [{ ...v[0], content: RP32_UNAPPROVED }, v[1]]), counter);
+  const res = apply(root, chain, { generatedChangeSet: hostile });
+  assert.equal(counter.reads, 1, "the caller's object must be read exactly once (snapshot), never again after validation");
+  rp32AssertAppliedEqualsApproved(root, res, chain.reviewPackage);
+  cleanup(root);
+});
+
+test("RP-32 FAIL->BOUND: Proxy-backed generatedChangeSet flipping `changes` after the first read (N-15 V3) - only approved bytes can reach disk", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  let reads = 0;
+  const prox = new Proxy({ ...chain.generatedChangeSet }, {
+    get(t, k, r) {
+      if (k === "changes") {
+        reads += 1;
+        return reads === 1 ? t.changes : [{ ...t.changes[0], content: RP32_UNAPPROVED }, t.changes[1]];
+      }
+      return Reflect.get(t, k, r);
+    },
+  });
+  const res = apply(root, chain, { generatedChangeSet: prox });
+  assert.equal(reads, 1);
+  rp32AssertAppliedEqualsApproved(root, res, chain.reviewPackage);
+  cleanup(root);
+});
+
+test("RP-32 FAIL: nested in-place mutation after approval (changes[1].content edited, every stored digest kept) -> rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const mutated = rp32MutableCopy(chain.generatedChangeSet);
+  mutated.changes[1].content = RP32_UNAPPROVED;
+  rp32AssertZeroWrites(root, apply(root, chain, { generatedChangeSet: mutated }));
+  cleanup(root);
+});
+
+test("RP-32 FAIL: nested reference mutation after approval (changes[0] element object swapped) -> rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const mutated = rp32MutableCopy(chain.generatedChangeSet);
+  mutated.changes[0] = { operation: "CREATE", path: RP32_NEW, baseContentDigest: null, content: RP32_UNAPPROVED };
+  rp32AssertZeroWrites(root, apply(root, chain, { generatedChangeSet: mutated }));
+  cleanup(root);
+});
+
+test("RP-32 FAIL->BOUND: nested accessor on changes[1].content flipping after its first read in a two-file batch (N-15 V4/V6) - no mixed-provenance batch, only approved bytes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const el = rp32WithAccessor(chain.generatedChangeSet.changes[1], "content", (n, v) => (n === 1 ? v : RP32_UNAPPROVED), counter);
+  const res = apply(root, chain, { generatedChangeSet: { ...chain.generatedChangeSet, changes: [chain.generatedChangeSet.changes[0], el] } });
+  assert.equal(counter.reads, 1);
+  rp32AssertAppliedEqualsApproved(root, res, chain.reviewPackage);
+  cleanup(root);
+});
+
+test("RP-32 FAIL: Proxy with a throwing ownKeys trap -> rejected without throwing, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const prox = new Proxy({ ...chain.generatedChangeSet }, { ownKeys() { throw new Error("hostile trap"); } });
+  let res;
+  assert.doesNotThrow(() => { res = apply(root, chain, { generatedChangeSet: prox }); });
+  rp32AssertZeroWrites(root, res);
+  cleanup(root);
+});
+
+test("RP-32 FAIL: reviewRecord.status getter CHANGES_REQUESTED on first read, APPROVED afterwards (N-15 V2) -> rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain({ decisionOverride: (d) => { d[0] = { ...d[0], decision: "REQUEST_CHANGES", reason: "x" }; return d; } });
+  assert.equal(chain.reviewRecord.status, "CHANGES_REQUESTED");
+  const hostile = rp32WithAccessor(chain.reviewRecord, "status", (n, v) => (n === 1 ? v : "APPROVED"));
+  rp32AssertZeroWrites(root, apply(root, chain, { reviewRecord: hostile }));
+  cleanup(root);
+});
+
+test("RP-32 FAIL: approval metadata does not match applied content - a self-consistent package SHOWS the reviewer other bytes than its changeSetDigest names -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const forgedPackage = rp32ForgePackageShowing(chain.reviewPackage, "describe('what the reviewer saw', () => {});");
+  assert.equal(forgedPackage.changeSetDigest, chain.generatedChangeSet.changeSetDigest, "the stored-field cross-check alone cannot see this forgery");
+  const rec = rp32ApproveAll(forgedPackage);
+  assert.equal(rec.ok, true, JSON.stringify(rec.errors));
+  assert.equal(rec.reviewRecord.status, "APPROVED");
+  const res = apply(root, chain, { reviewPackage: forgedPackage, reviewRecord: rec.reviewRecord });
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.reviewPackage.reviewTargets[0].proposedContent");
+  cleanup(root);
+});
+
+test("RP-32 FAIL: approval metadata does not match applied content - record status claims APPROVED (self-consistent recordDigest) while the applied change's own decision is REJECT -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain({ decisionOverride: (d) => { d[0] = { ...d[0], decision: "REJECT", reason: "x" }; return d; } });
+  const forgedRecord = { ...chain.reviewRecord, status: "APPROVED" };
+  forgedRecord.recordDigest = recomputeReviewRecordDigest(forgedRecord);
+  const res = apply(root, chain, { reviewRecord: forgedRecord });
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.reviewRecord.decisions");
+  cleanup(root);
+});
+
+test("RP-32 FAIL: approval metadata does not match applied content - reviewTargets count differs from the changes being applied -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const forged = { ...chain.reviewPackage, reviewTargets: chain.reviewPackage.reviewTargets.slice(0, 1) };
+  forged.packageDigest = recomputeReviewPackageDigest(forged);
+  const rec = rp32ApproveAll(forged);
+  assert.equal(rec.ok, true, JSON.stringify(rec.errors));
+  const res = apply(root, chain, { reviewPackage: forged, reviewRecord: rec.reviewRecord });
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.reviewPackage.reviewTargets");
+  cleanup(root);
+});
+
+// --- RP-32 F-1: exactly one APPROVE decision per applied change -----------
+//
+// A self-digested record (status APPROVED, recordDigest recomputed) that is
+// otherwise fully valid - it still passes the #23E gate - but carries more
+// than one decision for the same review target. The extra decision is
+// appended AFTER the genuine APPROVE, so only the "exactly one" check (not
+// the "first match is APPROVE" check) can reject it.
+function rp32RecordWithExtraDecision(chain, extraDecision) {
+  const forged = rp32MutableCopy(chain.reviewRecord);
+  forged.decisions.push({ ...forged.decisions[0], ...extraDecision });
+  delete forged.recordDigest;
+  forged.recordDigest = recomputeReviewRecordDigest(forged);
+  const gate = validateApprovedGeneratedChangeSetReview(chain.reviewPackage, forged, { expectedProjectId: "proj-1" });
+  assert.equal(gate.ok, true, `fixture must be otherwise valid: ${JSON.stringify(gate.errors)}`);
+  assert.equal(forged.status, "APPROVED");
+  return forged;
+}
+
+function rp32AssertRejectedByDecisionUniqueness(root, res) {
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors.length, 1, JSON.stringify(res.errors));
+  assert.equal(res.errors[0].path, "$.reviewRecord.decisions");
+  assert.match(res.errors[0].message, /^\$\.reviewPackage\.reviewTargets\[0\] has no single APPROVE decision/);
+}
+
+test("RP-32 F-1 FAIL: contradictory APPROVE + REJECT decisions for the same review target (self-consistent record, status APPROVED) -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const forgedRecord = rp32RecordWithExtraDecision(chain, { decision: "REJECT", reason: "do not apply" });
+  const res = apply(root, chain, { reviewRecord: forgedRecord });
+  rp32AssertRejectedByDecisionUniqueness(root, res);
+  cleanup(root);
+});
+
+test("RP-32 F-1 FAIL: duplicate APPROVE decisions for the same review target (self-consistent record) -> fail closed, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const forgedRecord = rp32RecordWithExtraDecision(chain, {});
+  const res = apply(root, chain, { reviewRecord: forgedRecord });
+  rp32AssertRejectedByDecisionUniqueness(root, res);
+  cleanup(root);
+});
+
+// --- N-21: review-package integrity (presentation == authoritative inputs) --
+//
+// Approved bytes == applied bytes (RP-32) is necessary but not sufficient: a
+// self-digested package can keep every proposed byte genuine and still SHOW
+// the reviewer a forged purpose, before-state, plan metadata or extra claims.
+// Every forged package below carries the genuine proposed content, passes the
+// #23E gate, and is APPROVED by a genuine record builder call - so only the
+// N-21 rebuild-and-compare check can reject it.
+
+// Returns a self-digested copy of `reviewPackage` after `mutate(copy)`:
+// every target's targetDigest and the packageDigest are recomputed, exactly
+// as a forger would, so the package stays internally consistent.
+function n21ForgePackage(reviewPackage, mutate) {
+  const forged = rp32MutableCopy(reviewPackage);
+  mutate(forged);
+  for (const t of forged.reviewTargets) {
+    t.targetDigest = reviewComputeDigest(DIGEST_LABEL_TARGET, {
+      operation: t.operation,
+      path: t.path,
+      purpose: t.purpose,
+      baseContentDigest: t.baseContentDigest,
+      existingContent: t.existingContent,
+      proposedContent: t.proposedContent,
+    });
+  }
+  delete forged.packageDigest;
+  forged.packageDigest = recomputeReviewPackageDigest(forged);
+  return forged;
+}
+
+// Forges the package, approves it with the genuine #23E record builder, and
+// proves the pair is otherwise acceptable: the proposed bytes are untouched
+// and the #23E gate passes.
+function n21ForgedApprovedChain(chain, mutate) {
+  const reviewPackage = n21ForgePackage(chain.reviewPackage, mutate);
+  assert.notEqual(reviewPackage.packageDigest, chain.reviewPackage.packageDigest, "fixture must actually change the package");
+  reviewPackage.reviewTargets.forEach((t, i) => assert.equal(t.proposedContent, chain.reviewPackage.reviewTargets[i].proposedContent, "proposed bytes must stay genuine"));
+  const rec = rp32ApproveAll(reviewPackage);
+  assert.equal(rec.ok, true, `genuine record builder must accept the forged package: ${JSON.stringify(rec.errors)}`);
+  const gate = validateApprovedGeneratedChangeSetReview(reviewPackage, rec.reviewRecord, { expectedProjectId: "proj-1" });
+  assert.equal(gate.ok, true, `fixture must pass the #23E gate: ${JSON.stringify(gate.errors)}`);
+  return { reviewPackage, reviewRecord: rec.reviewRecord };
+}
+
+// Runs `fn` with every function on the shared `fs` module wrapped to record
+// its name, restoring the originals afterwards.
+function n21WithFsSpy(fn) {
+  const calls = [];
+  const originals = [];
+  for (const key of Object.keys(fs)) {
+    const desc = Object.getOwnPropertyDescriptor(fs, key);
+    if (!desc || typeof desc.value !== "function" || !desc.writable || /^[A-Z]/.test(key)) continue;
+    const original = desc.value;
+    originals.push([key, original]);
+    fs[key] = Object.assign(function (...args) {
+      calls.push(key);
+      return original.apply(this, args);
+    }, original);
+  }
+  try {
+    return { result: fn(), calls };
+  } finally {
+    for (const [key, original] of originals) fs[key] = original;
+  }
+}
+
+// Applies the forged chain under the fs spy and asserts the N-21 rejection:
+// exactly one deterministic error, no filesystem access at all, zero writes.
+function n21AssertRejectedBeforeFs(root, chain, forged) {
+  const { result: res, calls } = n21WithFsSpy(() => apply(root, chain, forged));
+  assert.deepEqual(calls, [], "rejection must happen before any filesystem access");
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors.length, 1, JSON.stringify(res.errors));
+  assert.equal(res.errors[0].path, "$.reviewPackage");
+  assert.match(res.errors[0].message, /^approved reviewPackage is not the canonical package derived from the validated/);
+}
+
+const N21_MODIFY = 1; // buildChain(): reviewTargets[0] is CREATE, [1] is MODIFY
+
+const N21_FORGERIES = [
+  {
+    name: "N21-T1 MODIFY false before-state: existingContent shown as already equal to the proposed bytes (diff looks like a no-op)",
+    mutate: (p) => { p.reviewTargets[N21_MODIFY].existingContent = p.reviewTargets[N21_MODIFY].proposedContent; },
+  },
+  {
+    name: "N21-T2 CREATE false before-state: a CREATE target shown as replacing an existing file",
+    mutate: (p) => { p.reviewTargets[0].existingContent = "describe('x', () => { /* already present */ });"; },
+  },
+  {
+    name: "N21-T3 forged purpose only",
+    mutate: (p) => { p.reviewTargets[N21_MODIFY].purpose = "Fix a typo in a comment."; },
+  },
+  {
+    name: "N21-T4a forged package-level plan metadata: automationPlanId",
+    mutate: (p) => { p.automationPlanId = "plan-reviewed-elsewhere"; },
+  },
+  {
+    name: "N21-T4b forged package-level plan metadata: framework",
+    mutate: (p) => { p.framework = "playwright"; },
+  },
+  {
+    name: "N21-T4c forged package-level plan metadata: automationPlanDigest",
+    mutate: (p) => { p.automationPlanDigest = `sha256:${"0".repeat(64)}`; },
+  },
+  {
+    name: "N21-T4d forged package-level context metadata: repositoryContextDigest",
+    mutate: (p) => { p.repositoryContextDigest = `sha256:${"1".repeat(64)}`; },
+  },
+  {
+    name: "N21-T5a invented package-level security assertion: securityReview PASSED",
+    mutate: (p) => { p.securityReview = "PASSED"; },
+  },
+  {
+    name: "N21-T5b invented target-level security assertion: verified true",
+    mutate: (p) => { p.reviewTargets[N21_MODIFY].verified = true; },
+  },
+  {
+    name: "N21-T6 multiple simultaneous presentation forgeries: purpose + MODIFY before-state + framework + securityReview",
+    mutate: (p) => {
+      p.reviewTargets[N21_MODIFY].purpose = "Formatting only.";
+      p.reviewTargets[N21_MODIFY].existingContent = p.reviewTargets[N21_MODIFY].proposedContent;
+      p.framework = "playwright";
+      p.securityReview = "PASSED";
+    },
+  },
+];
+
+for (const { name, mutate } of N21_FORGERIES) {
+  test(`${name} -> genuine bytes, #23E gate passes, rejected before any filesystem access (N21-T8), zero writes`, () => {
+    const root = makeRootWithExisting();
+    const chain = buildChain();
+    n21AssertRejectedBeforeFs(root, chain, n21ForgedApprovedChain(chain, mutate));
+    cleanup(root);
+  });
+}
+
+test("N21-T7 honest package control: the canonical package built from the trusted inputs applies (also from mutable deserialized plan/context copies)", () => {
+  for (const honestInputs of [{}, { automationPlan: rp32MutableCopy(buildChain().plan), repositoryContext: rp32MutableCopy(buildChain().context) }]) {
+    const root = makeRootWithExisting();
+    const chain = buildChain();
+    rp32AssertAppliedEqualsApproved(root, apply(root, chain, honestInputs), chain.reviewPackage);
+    cleanup(root);
+  }
+});
+
+test("N21-T8 control: the fs spy observes the honest path's filesystem access, so the zero-access assertions are not vacuous", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const { result: res, calls } = n21WithFsSpy(() => apply(root, chain));
+  assert.equal(res.ok, true, JSON.stringify(res.errors));
+  assert.ok(calls.length > 0, "the honest application must be observed touching the filesystem");
+  cleanup(root);
+});
+
+test("N21-T8 precedence: forged bytes AND forged purpose -> the RP-32 binding error is reported (binding runs first), zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const reviewPackage = n21ForgePackage(rp32ForgePackageShowing(chain.reviewPackage, RP32_UNAPPROVED), (p) => { p.reviewTargets[N21_MODIFY].purpose = "Formatting only."; });
+  const rec = rp32ApproveAll(reviewPackage);
+  assert.equal(rec.ok, true, JSON.stringify(rec.errors));
+  const res = apply(root, chain, { reviewPackage, reviewRecord: rec.reviewRecord });
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.reviewPackage.reviewTargets[0].proposedContent");
+  cleanup(root);
+});
+
+// Snapshot discipline: the plan/context are read exactly once, so a getter or
+// Proxy cannot show the package rebuild one state and #23D/the writer another.
+
+test("N21 snapshot: getter-backed plan (honest on first read, forged purpose afterwards) is read once and applied as the honest state", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const forgedPlanned = chain.plan.plannedChanges.map((c) => ({ ...c, purpose: "Formatting only." }));
+  const automationPlan = rp32WithAccessor(chain.plan, "plannedChanges", (n, original) => (n === 1 ? original : forgedPlanned), counter);
+  rp32AssertAppliedEqualsApproved(root, apply(root, chain, { automationPlan }), chain.reviewPackage);
+  assert.equal(counter.reads, 1, "automationPlan.plannedChanges must be read exactly once");
+  cleanup(root);
+});
+
+test("N21 snapshot: getter-backed plan (forged purpose on first read, honest afterwards) is read once and rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const forgedPlanned = chain.plan.plannedChanges.map((c) => ({ ...c, purpose: "Formatting only." }));
+  const automationPlan = rp32WithAccessor(chain.plan, "plannedChanges", (n, original) => (n === 1 ? forgedPlanned : original), counter);
+  rp32AssertZeroWrites(root, apply(root, chain, { automationPlan }));
+  assert.equal(counter.reads, 1, "automationPlan.plannedChanges must be read exactly once");
+  cleanup(root);
+});
+
+test("N21 snapshot: getter-backed context (forged MODIFY evidence on first read, honest afterwards) is read once and rejected, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const forgedEvidence = chain.context.repositoryEvidence.map((e) => (e.evidenceRef.location === RP32_EXISTING ? { ...e, content: "describe('new', () => {});" } : e));
+  const repositoryContext = rp32WithAccessor(chain.context, "repositoryEvidence", (n, original) => (n === 1 ? forgedEvidence : original), counter);
+  rp32AssertZeroWrites(root, apply(root, chain, { repositoryContext }));
+  assert.equal(counter.reads, 1, "repositoryContext.repositoryEvidence must be read exactly once");
+  cleanup(root);
+});
+
+test("N21 snapshot: getter-backed context (honest on first read, forged MODIFY evidence afterwards) is read once and applied as the honest state", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  const counter = { reads: 0 };
+  const forgedEvidence = chain.context.repositoryEvidence.map((e) => (e.evidenceRef.location === RP32_EXISTING ? { ...e, content: "describe('new', () => {});" } : e));
+  const repositoryContext = rp32WithAccessor(chain.context, "repositoryEvidence", (n, original) => (n === 1 ? original : forgedEvidence), counter);
+  const res = apply(root, chain, { repositoryContext });
+  assert.equal(counter.reads, 1, "repositoryContext.repositoryEvidence must be read exactly once; the package rebuild must reuse the snapshot");
+  rp32AssertAppliedEqualsApproved(root, res, chain.reviewPackage);
+  cleanup(root);
+});
+
+test("N21 snapshot: Proxy-backed plan (honest on first get, forged purpose afterwards) is read once and applied as the honest state", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  let reads = 0;
+  const forgedPlanned = chain.plan.plannedChanges.map((c) => ({ ...c, purpose: "Formatting only." }));
+  const automationPlan = new Proxy(rp32MutableCopy(chain.plan), {
+    get(target, key, receiver) {
+      if (key === "plannedChanges") {
+        reads += 1;
+        return reads === 1 ? target.plannedChanges : forgedPlanned;
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  rp32AssertAppliedEqualsApproved(root, apply(root, chain, { automationPlan }), chain.reviewPackage);
+  assert.equal(reads, 1, "automationPlan.plannedChanges must be read exactly once");
+  cleanup(root);
+});
+
+test("N21 snapshot: getter-backed reviewPackage.packageDigest (forged approved digest on first read, canonical afterwards) is read once and rejected before any filesystem access, zero writes", () => {
+  const root = makeRootWithExisting();
+  const chain = buildChain();
+  // A forged-purpose package that a genuine record APPROVEs and the #23E gate
+  // accepts, so only the N-21 rebuild-and-compare can reject it.
+  const forged = n21ForgedApprovedChain(chain, (p) => { p.reviewTargets[N21_MODIFY].purpose = "Formatting only."; });
+  const counter = { reads: 0 };
+  const reviewPackage = rp32WithAccessor(forged.reviewPackage, "packageDigest", (n, original) => (n === 1 ? original : chain.reviewPackage.packageDigest), counter);
+  const { result: res, calls } = n21WithFsSpy(() => apply(root, chain, { reviewPackage, reviewRecord: forged.reviewRecord }));
+  assert.equal(counter.reads, 1, "reviewPackage.packageDigest must be read exactly once; the N-21 comparison must use the snapshot");
+  assert.deepEqual(calls, [], "rejection must happen before any filesystem access");
+  rp32AssertZeroWrites(root, res);
+  assert.equal(res.errors[0].path, "$.reviewPackage", "rejected at the N-21 package-integrity boundary");
+  cleanup(root);
+});

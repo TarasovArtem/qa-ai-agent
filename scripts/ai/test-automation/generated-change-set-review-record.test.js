@@ -267,6 +267,56 @@ test("STATUS TAMPERING: a CHANGES_REQUESTED record with status hand-flipped to A
   assert.equal(gate.ok, false);
 });
 
+test("RP-32: a getter-backed status (CHANGES_REQUESTED on its first read, APPROVED afterwards) cannot pass the gate - every check reads one frozen snapshot", () => {
+  const { reviewPackage } = buildValidReviewPackage();
+  const decisions = allApproveDecisions(reviewPackage);
+  decisions[0] = { ...decisions[0], decision: "REQUEST_CHANGES", reason: "x" };
+  const recResult = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "reviewer-1", reviewedAt: REVIEWED_AT, decisions });
+  assert.equal(recResult.reviewRecord.status, "CHANGES_REQUESTED");
+  const hostile = {};
+  let reads = 0;
+  for (const [k, v] of Object.entries(recResult.reviewRecord)) {
+    if (k === "status") Object.defineProperty(hostile, k, { enumerable: true, get: () => (++reads === 1 ? v : "APPROVED") });
+    else hostile[k] = v;
+  }
+  const gate = validateApprovedGeneratedChangeSetReview(reviewPackage, hostile, {});
+  assert.equal(gate.ok, false);
+  assert.equal(reads, 1);
+});
+
+test("RP-32: a getter-backed reviewPackage.packageDigest cannot replay an approval across packages - the package is snapshotted once", () => {
+  const { plan, context, reviewPackage: packageA } = buildValidReviewPackage();
+  const recResultA = buildGeneratedChangeSetReviewRecord({ reviewPackage: packageA, reviewerId: "reviewer-1", reviewedAt: REVIEWED_AT, decisions: allApproveDecisions(packageA) });
+  assert.equal(recResultA.ok, true, JSON.stringify(recResultA.errors));
+
+  const driftedChanges = [
+    { operation: "CREATE", path: "cypress/e2e/tests/new_spec.cy.js", baseContentDigest: null, content: "describe('DIFFERENT', () => {});" },
+    { operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: gcsComputeDigest(LABEL_FILE_CONTENT, "describe('old', () => {});"), content: "describe('new', () => {});" },
+  ];
+  const builtB = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes: driftedChanges });
+  assert.equal(builtB.ok, true, JSON.stringify(builtB.errors));
+  const pkgResultB = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: builtB.generatedChangeSet, expectedProjectId: "proj-1" });
+  assert.equal(pkgResultB.ok, true, JSON.stringify(pkgResultB.errors));
+  const packageB = pkgResultB.reviewPackage;
+  assert.notEqual(packageB.packageDigest, packageA.packageDigest);
+
+  // Without the package-side snapshot, recomputation and the immediate
+  // self-digest check can observe package B, while a later replay check can
+  // be switched to package A's digest and incorrectly accept record A.
+  // Snapshotting must read this caller-controlled field once and reuse it.
+  const hostilePackageB = {};
+  let reads = 0;
+  for (const [k, v] of Object.entries(packageB)) {
+    if (k === "packageDigest") Object.defineProperty(hostilePackageB, k, { enumerable: true, get: () => (++reads <= 2 ? v : packageA.packageDigest) });
+    else hostilePackageB[k] = v;
+  }
+
+  const gate = validateApprovedGeneratedChangeSetReview(hostilePackageB, recResultA.reviewRecord, { expectedProjectId: "proj-1" });
+  assert.equal(gate.ok, false);
+  assert.equal(reads, 1, "reviewPackage.packageDigest must be read exactly once");
+  assert.ok(gate.errors.some((e) => e.path === "$.reviewRecord.packageDigest"), JSON.stringify(gate.errors));
+});
+
 // --- approval gate: stale / replay protection --------------------------------
 
 test("STALE APPROVAL: an approved record does not approve a package built from a different (but same-shaped) GeneratedChangeSet", () => {
