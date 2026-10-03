@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const nodePath = require("node:path");
 const g = require("./index");
-const { record, domainRecord } = require("./test-support");
+const { record, domainRecord, stagePlan } = require("./test-support");
 
 const MANIFESTS = nodePath.join(__dirname, "__fixtures__", "wave0", "manifests");
 const load = (name) => g.parseManifestText(fs.readFileSync(nodePath.join(MANIFESTS, name), "utf8"));
@@ -105,7 +105,8 @@ test("end to end: manifest -> graph -> domain results -> aggregation stays fail-
   const manifest = load("valid-minimal.json");
   assert.equal(manifest.valid, true);
   const expected = manifest.manifest.domains.filter((d) => d.enabled).map((d) => d.domainId);
-  const complete = g.aggregate([record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")], { expectedDomainIds: expected });
+  const all = [record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")];
+  const complete = g.aggregate(all, { ...stagePlan(all), expectedDomainIds: expected });
   assert.equal(complete.readiness.state, "READY");
   const partial = g.aggregate([record(), domainRecord("A_DOMAIN")], { expectedDomainIds: expected });
   assert.equal(partial.readiness.state, "NOT_READY");

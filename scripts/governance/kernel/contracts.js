@@ -222,6 +222,14 @@ const REASON = deepFreeze({
   CI_REQUIRED_JOB_INCOMPLETE: "CI_REQUIRED_JOB_INCOMPLETE",
   CI_REQUIRED_JOB_FAILED: "CI_REQUIRED_JOB_FAILED",
   CI_UNEXPLAINED_RERUN: "CI_UNEXPLAINED_RERUN",
+  // Wave 5 / Stage 1G Corrective C1: report completeness (M1) and execution
+  // authority (M2) of buildReport(). Additive only.
+  REQUIRED_RESULT_MISSING: "REQUIRED_RESULT_MISSING",
+  EXECUTION_NOT_FROM_TARGET_TIP: "EXECUTION_NOT_FROM_TARGET_TIP",
+  // Wave 5 / Stage 1G Corrective C2: kernel completeness context (R1) and
+  // target framework metadata provenance (R3). Additive only.
+  COMPLETENESS_CONTEXT_MISSING: "COMPLETENESS_CONTEXT_MISSING",
+  TARGET_METADATA_UNPROVEN: "TARGET_METADATA_UNPROVEN",
 });
 
 /**

@@ -239,6 +239,105 @@ function validRecordsFor(records, subject) {
   return out;
 }
 
+const MAX_PROPOSALS_REPORTED = 10;
+
+/**
+ * Corrective C1 (1G M4): the effective declaration of every domain is the
+ * base-anchored declaration plus head tightening only (design section 14,
+ * "effective = base protected values + head tightening + head non-protected
+ * additions"; overlay table "Domain definition"), with dependency edges merged
+ * per `toDomain` exactly as the design section 9 edge-merge table prescribes:
+ *
+ *   base K,          head K           -> K
+ *   base not MEANING, head MEANING    -> MEANING (tightening)
+ *   base MEANING,    head other kind  -> MEANING kept; loosening proposal
+ *   base DERIVED_VALUE <-> REFERENCE  -> CONFIGURATION_ERROR (lateral change)
+ *   base edge,       head absent      -> base edge kept; loosening proposal
+ *   base absent,     head edge        -> head edge added (tightening)
+ *
+ * protectedInputs are monotone (base selectors retained, head additions
+ * appended; a removed base selector is a loosening proposal), reviewModes are
+ * the intersection (a head mode the base does not allow is a loosening proposal),
+ * and ownerStage is the base value (a differing ownerStage is CONFIGURATION_ERROR).
+ * A loosening proposal is never applied: the base value stays in force and the
+ * domain is HUMAN_REVIEW_REQUIRED (GOVERNANCE_CONFIG) with the proposal recorded.
+ * derivedFrom is not a protected field (section 14) and is taken from the head; a
+ * head change to it is already a declaration change (DEEP_REVIEW_REQUIRED) and it
+ * can only add reasons, never lower a level. A domain enabled at base but absent
+ * or disabled at head keeps its existing DOMAIN_REMOVED HUMAN_REVIEW_REQUIRED
+ * result, and every retained base edge to it propagates that result.
+ *
+ * The merged graph is re-validated once (section 9): the union of two valid DAGs
+ * can contain a cycle, which is CONFIGURATION_ERROR. Returns
+ * { ok, byId, proposals, order } or { ok:false, reason }.
+ */
+function composeDomains(headGraph, baseGraph, reportedIds, headEnabledIds) {
+  const headById = new Map(headGraph.domains.map((d) => [d.domainId, d]));
+  const baseById = new Map(baseGraph ? baseGraph.domains.map((d) => [d.domainId, d]) : []);
+  const byId = new Map();
+  const proposals = new Map();
+  for (const id of [...headEnabledIds].sort()) {
+    const head = headById.get(id);
+    const base = baseById.get(id);
+    if (!base || !base.enabled) {
+      byId.set(id, head);
+      proposals.set(id, []);
+      continue;
+    }
+    if (base.ownerStage !== head.ownerStage) return { ok: false, reason: `the head changes the ownerStage of base-anchored domain ${id}` };
+    const notApplied = [];
+    const baseEdges = new Map(base.dependsOn.map((e) => [e.domain, e.kind]));
+    const headEdges = new Map(head.dependsOn.map((e) => [e.domain, e.kind]));
+    const dependsOn = [];
+    for (const edge of head.dependsOn) {
+      const baseKind = baseEdges.get(edge.domain);
+      if (baseKind === undefined || baseKind === edge.kind || edge.kind === "MEANING") dependsOn.push({ domain: edge.domain, kind: edge.kind });
+      else if (baseKind === "MEANING") {
+        dependsOn.push({ domain: edge.domain, kind: "MEANING" });
+        notApplied.push(`EDGE_KIND_LOWERED:${edge.domain}`);
+      } else return { ok: false, reason: `the head changes the dependency kind ${id} -> ${edge.domain} laterally (${baseKind} to ${edge.kind})` };
+    }
+    for (const edge of base.dependsOn) {
+      if (headEdges.has(edge.domain)) continue;
+      dependsOn.push({ domain: edge.domain, kind: edge.kind });
+      notApplied.push(`EDGE_REMOVED:${edge.domain}`);
+    }
+    const headInputs = new Set(head.protectedInputs);
+    const baseInputs = new Set(base.protectedInputs);
+    for (const selector of base.protectedInputs) if (!headInputs.has(selector)) notApplied.push(`PROTECTED_INPUT_REMOVED:${selector}`);
+    const protectedInputs = [...base.protectedInputs, ...head.protectedInputs.filter((s) => !baseInputs.has(s))];
+    for (const mode of head.reviewModes) if (!base.reviewModes.includes(mode)) notApplied.push(`REVIEW_MODE_ADDED:${mode}`);
+    const reviewModes = base.reviewModes.filter((m) => head.reviewModes.includes(m));
+    byId.set(id, { ...head, enabled: base.enabled, ownerStage: base.ownerStage, dependsOn, protectedInputs, reviewModes });
+    proposals.set(id, notApplied);
+  }
+
+  // Deterministic topological order of the merged graph (Kahn, smallest id first);
+  // a domain removed at head is a source (its result is fixed, see above).
+  const indegree = new Map(reportedIds.map((id) => [id, 0]));
+  const dependents = new Map(reportedIds.map((id) => [id, []]));
+  for (const [id, domain] of byId) {
+    for (const edge of domain.dependsOn) {
+      if (!indegree.has(edge.domain)) return { ok: false, reason: `the merged dependency of ${id} names ${edge.domain}, which is not an enabled domain` };
+      indegree.set(id, indegree.get(id) + 1);
+      dependents.get(edge.domain).push(id);
+    }
+  }
+  const ready = reportedIds.filter((id) => indegree.get(id) === 0);
+  const order = [];
+  while (ready.length > 0) {
+    ready.sort();
+    const id = ready.shift();
+    order.push(id);
+    for (const next of dependents.get(id)) {
+      indegree.set(next, indegree.get(next) - 1);
+      if (indegree.get(next) === 0) ready.push(next);
+    }
+  }
+  if (order.length !== reportedIds.length) return { ok: false, reason: "the merged base/head dependency graph contains a cycle" };
+  return { ok: true, byId, proposals, order };
+}
+
 /** Fingerprint one domain's ordered protectedInputs (or derivedFrom-SOURCE) selectors against one reader. */
 async function fingerprintSelectors(selectors, reader) {
   const framed = [];
@@ -345,6 +444,8 @@ async function computeDeltaReview(input) {
   const baseEnabledIds = new Set([...baseById.values()].filter((d) => d.enabled).map((d) => d.domainId));
   const reportedIds = [...new Set([...headEnabledIds, ...baseEnabledIds])].sort();
   if (reportedIds.length > MAX_DOMAINS) return invalidInput("too many domains to report on");
+  const composition = composeDomains(headGraph, baseGraph, reportedIds, headEnabledIds);
+  if (!composition.ok) return deepFreeze({ subject, records: [graphInconsistentRecord(subject, composition.reason)], outcome: null });
 
   const effective = new Map(); // domainId -> level
   const reasonsOf = new Map(); // domainId -> reason strings
@@ -362,8 +463,12 @@ async function computeDeltaReview(input) {
     fingerprintOf.set(id, null);
   }
 
-  for (const id of headGraph.topologicalOrder) {
-    const domain = headById.get(id);
+  for (const id of composition.order) {
+    if (!headEnabledIds.has(id)) continue; // removed at head: resolved above
+    // The effective (base + head tightening) declaration drives every check below;
+    // the raw head declaration is used only to detect that the head changed it.
+    const domain = composition.byId.get(id);
+    const notApplied = composition.proposals.get(id);
     const reasons = [];
     const evidenceRefs = [];
     let ownLevel = "PRESERVATION_CHECK_ONLY";
@@ -378,9 +483,14 @@ async function computeDeltaReview(input) {
     } else if (!baseDomain.enabled) {
       ownLevel = "DEEP_REVIEW_REQUIRED";
       reasons.push("DOMAIN_ADDED");
-    } else if (canonicalDeclaration(domain) !== canonicalDeclaration(baseDomain)) {
-      // Condition 4: own manifest declaration differs from base.
+    } else if (canonicalDeclaration(headById.get(id)) !== canonicalDeclaration(baseDomain)) {
+      // Condition 4: own manifest declaration differs from base. A loosening part
+      // of that change is not applied (see composeDomains()) and needs a human.
       ownLevel = "DEEP_REVIEW_REQUIRED";
+      if (notApplied.length > 0) {
+        ownLevel = "HUMAN_REVIEW_REQUIRED";
+        reasons.push("GOVERNANCE_CONFIG");
+      }
       reasons.push("MANIFEST_DECLARATION_CHANGED");
     }
 
@@ -564,12 +674,16 @@ async function computeDeltaReview(input) {
     const evidenceRefs = evidenceOf.get(id) || [];
     const fingerprint = fingerprintOf.get(id) ?? null;
     const dependencyState = reasons.length > 0 ? reasons.join(",").slice(0, 64) : "NO_DEPENDENCY_ESCALATION";
+    // A head loosening proposal that was not applied is recorded with the result
+    // (design section 14: "the proposal is recorded"); absent when there is none.
+    const notApplied = composition.proposals.get(id) || [];
+    const observed = notApplied.length > 0 ? { domainId: id, notAppliedProposals: sample(notApplied, MAX_PROPOSALS_REPORTED) } : { domainId: id };
     const record = {
       checkId: `1E.DOMAIN.${id}`,
       ownerStage: "1E",
       status: statusForEffectiveLevel(level),
       subject,
-      observed: { domainId: id },
+      observed,
       expected: null,
       reasonCode: reasons[0] ? REASON[reasons[0]] || REASON.OK : REASON.OK,
       detail: sample([`${id}: ${level}`], 1)[0] || "",
@@ -587,6 +701,25 @@ async function computeDeltaReview(input) {
     if (!checked.ok) throw new Error(`internal error: invalid 1E.DOMAIN.${id} record: ${checked.problems.join("; ")}`);
     records.push(checked.record);
   }
+
+  // Corrective C1 (1G M1): 1E is the canonical owner of "which domains this run
+  // reports on", so it states that set once, as its own record. A report consumer
+  // derives the required domain results from this record instead of trusting a
+  // caller-supplied list, so omitting a domain result can never shrink the set.
+  const domainSet = {
+    checkId: "1E.DELTA.DOMAIN_SET",
+    ownerStage: "1E",
+    status: STATUS.PASS,
+    subject,
+    observed: { domainIds: reportedIds },
+    expected: null,
+    reasonCode: REASON.OK,
+    detail: `${reportedIds.length} domain result(s) reported`,
+    evidenceRefs: [],
+  };
+  const checkedSet = validateResultRecord(domainSet);
+  if (!checkedSet.ok) throw new Error(`internal error: invalid 1E.DELTA.DOMAIN_SET record: ${checkedSet.problems.join("; ")}`);
+  records.push(checkedSet.record);
 
   return done();
 }

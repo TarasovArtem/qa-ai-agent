@@ -10,6 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const nodePath = require("node:path");
 const g = require("./index");
+const { stagePlan } = require("./test-support");
 const { basePolicy, changedResult, fakeReader, makeSubject } = require("./test-support-git");
 
 const subject = makeSubject();
@@ -39,7 +40,7 @@ test("W2 interaction Case A: 1C PASS + 1D PASS -> combined READY", () => {
   const evidence = g.checkEvidenceModel({ subject, documents, config: evidenceConfig });
   const consistency = g.checkConsistency({ subject, documents, config: consistencyConfig, evidenceResult: evidence });
   for (const r of [...evidence.records, ...consistency.records]) assert.equal(r.status === "PASS" || r.status === "NOT_APPLICABLE", true, r.checkId);
-  assert.equal(g.aggregate([...evidence.records, ...consistency.records]).readiness.state, "READY");
+  assert.equal(g.aggregate([...evidence.records, ...consistency.records], stagePlan([...evidence.records, ...consistency.records])).readiness.state, "READY");
 });
 
 test("W2 interaction Case B: 1C HUMAN_REVIEW_REQUIRED (promotion wording) -> a dependent 1D count check also becomes HUMAN_REVIEW_REQUIRED, never a fabricated PASS", () => {
@@ -49,7 +50,7 @@ test("W2 interaction Case B: 1C HUMAN_REVIEW_REQUIRED (promotion wording) -> a d
   assert.ok(evidence.records.some((r) => r.status === "HUMAN_REVIEW_REQUIRED"));
   const consistency = g.checkConsistency({ subject, documents, config: consistencyConfig, evidenceResult: evidence });
   assert.equal(consistency.records.find((r) => r.checkId === "1D.CONSISTENCY.COUNTS").status, "HUMAN_REVIEW_REQUIRED");
-  assert.equal(g.aggregate([...evidence.records, ...consistency.records]).readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(g.aggregate([...evidence.records, ...consistency.records], stagePlan([...evidence.records, ...consistency.records])).readiness.state, "HUMAN_REVIEW_REQUIRED");
 });
 
 test("W2 interaction Case C: 1C FAIL (class missing) + 1D independent FAIL (unrelated taxonomy) -> both preserved, aggregate FAIL/NOT_READY", () => {

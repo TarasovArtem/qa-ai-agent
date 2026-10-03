@@ -3,7 +3,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../index");
-const { record, domainRecord, SUBJECT } = require("../test-support");
+const { record, domainRecord, SUBJECT, stagePlan } = require("../test-support");
+
+// Corrective C2 (1G R1): READY / HUMAN_REVIEW_REQUIRED require an explicit completeness
+// plan; `planned(records)` states "exactly these records are required, no domain".
+const planned = (records, options = {}) => g.aggregate(records, { ...stagePlan(records), ...options });
 
 test("every valid status is an accepted record status and the enum is authoritative", () => {
   for (const status of Object.values(g.STATUS)) {
@@ -45,14 +49,14 @@ test("invalid status, owner stage, subject and reason code are rejected without 
 });
 
 test("all PASS -> READY", () => {
-  const out = g.aggregate([record(), record({ checkId: "1A.TREE_MATCH" })]);
+  const out = planned([record(), record({ checkId: "1A.TREE_MATCH" })]);
   assert.equal(out.overallStatus, "PASS");
   assert.equal(out.readiness.state, "READY");
   assert.equal(out.notAuthorization, true);
 });
 
 test("HUMAN_REVIEW_REQUIRED -> HUMAN_REVIEW_REQUIRED, never READY", () => {
-  const out = g.aggregate([record(), record({ checkId: "1C.X", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "NEEDS_JUDGMENT" })]);
+  const out = planned([record(), record({ checkId: "1C.X", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "NEEDS_JUDGMENT" })]);
   assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
   assert.deepEqual(out.humanReviewRequired, ["1C.X"]);
 });
@@ -85,7 +89,7 @@ test("precedence is CONFIGURATION_ERROR > FAIL > INCOMPLETE > HUMAN_REVIEW_REQUI
 
 test("NOT_APPLICABLE is neutral, requires a proof, and never equals PASS", () => {
   const na = record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: { applicabilityProof: "no markdown changed" }, reasonCode: "NOT_APPLICABLE" });
-  const ready = g.aggregate([record(), na]);
+  const ready = planned([record(), na]);
   assert.equal(ready.readiness.state, "READY");
   const noProof = g.aggregate([record(), record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: null, reasonCode: "NOT_APPLICABLE" })]);
   assert.equal(noProof.readiness.state, "NOT_READY");
@@ -130,7 +134,7 @@ test("caller input is not mutated and the output is frozen", () => {
 });
 
 test("domain result completeness: exact set passes; missing, duplicate and unknown are reported", () => {
-  const ok = g.aggregate([record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
+  const ok = planned([record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
   assert.equal(ok.readiness.state, "READY");
   const missing = g.aggregate([record(), domainRecord("A_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
   assert.ok(missing.kernelRecords.some((r) => r.reasonCode === "DOMAIN_RESULT_MISSING" && r.status === "INCOMPLETE"));
@@ -143,7 +147,7 @@ test("domain result completeness: exact set passes; missing, duplicate and unkno
 });
 
 test("a domain-level HUMAN_REVIEW_REQUIRED reaches readiness through records[]", () => {
-  const out = g.aggregate([record(), domainRecord("A_DOMAIN", "HUMAN_REVIEW_REQUIRED")], { expectedDomainIds: ["A_DOMAIN"] });
+  const out = planned([record(), domainRecord("A_DOMAIN", "HUMAN_REVIEW_REQUIRED")], { expectedDomainIds: ["A_DOMAIN"] });
   assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
   assert.deepEqual(out.humanReviewRequired, ["1E.DOMAIN.A_DOMAIN"]);
 });
@@ -151,7 +155,7 @@ test("a domain-level HUMAN_REVIEW_REQUIRED reaches readiness through records[]",
 test("a domains[] projection that differs from the records is reported; a matching one is accepted", () => {
   const records = [record(), domainRecord("A_DOMAIN", "DEEP_REVIEW_REQUIRED")];
   const good = [{ domainId: "A_DOMAIN", effectiveLevel: "DEEP_REVIEW_REQUIRED", reasons: [], fingerprint: null }];
-  assert.equal(g.aggregate(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: good }).readiness.state, "READY");
+  assert.equal(planned(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: good }).readiness.state, "READY");
   const bad = [{ domainId: "A_DOMAIN", effectiveLevel: "PRESERVATION_CHECK_ONLY", reasons: [], fingerprint: null }];
   const out = g.aggregate(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: bad });
   assert.ok(out.kernelRecords.some((r) => r.reasonCode === "DOMAIN_PROJECTION_MISMATCH"));
@@ -177,21 +181,21 @@ const na = (checkId, proof = "predicate evaluated true") =>
   record({ checkId, status: "NOT_APPLICABLE", observed: proof === null ? null : { applicabilityProof: proof }, reasonCode: "NOT_APPLICABLE" });
 
 test("C1 DEV-L1: one proven NOT_APPLICABLE record is READY (no extra evidence rule)", () => {
-  const out = g.aggregate([na("1B.NA")]);
+  const out = planned([na("1B.NA")]);
   assert.equal(out.overallStatus, "PASS");
   assert.equal(out.readiness.state, "READY");
   assert.deepEqual(out.kernelRecords, []);
 });
 
 test("C1 DEV-L1: several proven NOT_APPLICABLE records are READY", () => {
-  const out = g.aggregate([na("1B.NA1"), na("1B.NA2"), na("1C.NA3")]);
+  const out = planned([na("1B.NA1"), na("1B.NA2"), na("1C.NA3")]);
   assert.equal(out.readiness.state, "READY");
   assert.equal(out.counts.PASS, 0);
   assert.equal(out.counts.NOT_APPLICABLE, 3);
 });
 
 test("C1 DEV-L1: PASS mixed with NOT_APPLICABLE is READY", () => {
-  const out = g.aggregate([record(), na("1B.NA")]);
+  const out = planned([record(), na("1B.NA")]);
   assert.equal(out.overallStatus, "PASS");
   assert.equal(out.readiness.state, "READY");
 });
@@ -206,7 +210,7 @@ test("C1 DEV-L1: NOT_APPLICABLE without proof is INCOMPLETE / NOT_READY, alone o
 });
 
 test("C1 DEV-L1: HUMAN_REVIEW_REQUIRED and FAIL still dominate NOT_APPLICABLE", () => {
-  const human = g.aggregate([na("1B.NA"), record({ checkId: "1E.H", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "MEANING_DEPENDENCY_CHANGED" })]);
+  const human = planned([na("1B.NA"), record({ checkId: "1E.H", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "MEANING_DEPENDENCY_CHANGED" })]);
   assert.equal(human.readiness.state, "HUMAN_REVIEW_REQUIRED");
   const fail = g.aggregate([na("1B.NA"), record({ checkId: "1A.F", status: "FAIL", reasonCode: "SOME_REASON" })]);
   assert.equal(fail.overallStatus, "FAIL");

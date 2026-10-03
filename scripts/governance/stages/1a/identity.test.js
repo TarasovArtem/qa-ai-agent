@@ -3,9 +3,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../../index");
+const { stagePlan } = require("../../test-support");
 const { createGitAdapter } = require("./git-adapter");
 const { GIT, createTempRepo, basePolicy, prContext, postMergeContext, gitOptions } = require("../../test-support-git");
 const { validateResultRecord } = require("../../kernel/results");
+const { FRAMEWORK_METADATA } = require("../../framework-metadata");
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const rec = (result, id) => result.records.find((r) => r.checkId === id);
@@ -71,7 +73,7 @@ test("W1 1A identity: identity records aggregate through the Wave 0 kernel witho
   const s = prScenario();
   try {
     const r = await s.run();
-    const agg = g.aggregate(r.records);
+    const agg = g.aggregate(r.records, stagePlan(r.records));
     assert.equal(agg.kernelRecords.some((k) => k.reasonCode === "RESULT_RECORD_INVALID"), false);
     assert.equal(agg.overallStatus, "PASS");
     assert.equal(agg.readiness.state, "READY");
@@ -657,19 +659,30 @@ test("W1 1A identity: capability support comes from the TARGET-TIP metadata; the
     assert.equal(executing.identity.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
     assert.match(rec(executing, "1A.POLICY.CAPABILITIES").detail, /executing framework/);
     assert.notEqual(g.aggregate(executing.records).readiness.state, "READY");
-    // The target tip (the protected branch) does not list the capability yet: CAPABILITY_LAG, even
-    // though the code executing this check (the head) claims to support it.
-    const lag = await s.run({ targetFrameworkMetadata: TARGET_OLD });
-    assert.equal(state(lag, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
-    assert.equal(rec(lag, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
-    assert.deepEqual([...rec(lag, "1A.POLICY.CAPABILITIES").observed.unsupported], ["repository-preflight@1"]);
-    assert.notEqual(g.aggregate(lag.records).readiness.state, "READY");
-    const supported = await s.run({ targetFrameworkMetadata: TARGET_NEW });
+    // Corrective C2 (1G R3): a caller cannot hand in "target" metadata -- a supplied list that
+    // differs from the executing framework's is unproven and fails closed, never TARGET_TIP.
+    const claimed = await s.run({ targetFrameworkMetadata: TARGET_NEW });
+    assert.equal(claimed.established, false);
+    assert.deepEqual({ status: claimed.outcome.status, reason: claimed.outcome.reasonCode }, { status: "INCOMPLETE", reason: "TARGET_METADATA_UNPROVEN" });
+    // Only a run the platform reports as executed from the tip 1A resolved reads target-tip metadata.
+    const supported = await s.run({}, { workflow: { path: WORKFLOW, sha: s.tip } });
     assert.equal(state(supported, "1A.POLICY.CAPABILITIES"), "PASS/OK");
     assert.equal(rec(supported, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
+    assert.equal(rec(supported, "1A.POLICY.CAPABILITIES").observed.targetTip, s.tip);
     assert.match(rec(supported, "1A.POLICY.CAPABILITIES").detail, /target-tip framework/);
   } finally {
     s.repo.cleanup();
+  }
+  // The target tip does not list a required capability: CAPABILITY_LAG, even from the target tip.
+  const lagScenario = prScenario({ policy: policyJson({ requiredCapabilities: ["future-capability@1"] }) });
+  try {
+    const lag = await lagScenario.run({}, { workflow: { path: WORKFLOW, sha: lagScenario.tip } });
+    assert.equal(state(lag, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    assert.equal(rec(lag, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
+    assert.deepEqual([...rec(lag, "1A.POLICY.CAPABILITIES").observed.unsupported], ["future-capability@1"]);
+    assert.notEqual(g.aggregate(lag.records).readiness.state, "READY");
+  } finally {
+    lagScenario.repo.cleanup();
   }
 });
 
@@ -678,11 +691,14 @@ test("W1 1A identity: the policy schemaVersion is judged against the TARGET rang
   try {
     const executing = await s.run();
     assert.equal(state(executing, "1A.POLICY.ROOT"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET", "the executing framework supports only schema 1");
-    const target = await s.run({ targetFrameworkMetadata: TARGET_NEW });
-    assert.equal(state(target, "1A.POLICY.ROOT"), "PASS/OK", "the target range [1,2] accepts schema 2");
-    const old = await s.run({ targetFrameworkMetadata: TARGET_OLD });
-    assert.equal(state(old, "1A.POLICY.ROOT"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
-    assert.equal(old.policy.policy, null, "no usable policy: nothing is guessed or upgraded");
+    // The target-tip framework's range [1,1] decides: schema 2 is capability lag there too.
+    const target = await s.run({}, { workflow: { path: WORKFLOW, sha: s.tip } });
+    assert.equal(state(target, "1A.POLICY.ROOT"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    assert.equal(target.policy.policy, null, "no usable policy: nothing is guessed or upgraded");
+    // Corrective C2 (1G R3): a caller-supplied wider range ([1,2]) can never be adopted as the target's.
+    const widened = await s.run({ targetFrameworkMetadata: TARGET_NEW });
+    assert.equal(widened.established, false);
+    assert.equal(widened.outcome.reasonCode, "TARGET_METADATA_UNPROVEN");
   } finally {
     s.repo.cleanup();
   }
@@ -716,14 +732,19 @@ test("W1-SEC-M3 regression: only TARGET_TIP metadata can satisfy a required capa
     // Absent target metadata (the executing head supports the capability): must not PASS.
     const absent = await s.run();
     assert.notEqual(rec(absent, "1A.POLICY.CAPABILITIES").status, "PASS");
-    // A "head" claiming extra capability cannot become target support: the target list decides.
-    const headClaim = await s.run({ targetFrameworkMetadata: TARGET_OLD });
-    assert.equal(state(headClaim, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    // A caller-supplied claim (structurally valid or not) never becomes target support (Corrective C2, 1G R3).
+    for (const claim of [TARGET_OLD, TARGET_NEW]) {
+      const headClaim = await s.run({ targetFrameworkMetadata: claim });
+      assert.equal(headClaim.established, false);
+      assert.equal(headClaim.outcome.reasonCode, "TARGET_METADATA_UNPROVEN");
+    }
     // Malformed target metadata fails closed with no subject (the existing schema contract).
     const malformed = await s.run({ targetFrameworkMetadata: { frameworkVersion: "1", supportedCapabilities: "repository-preflight@1" } });
     assert.equal(malformed.established, false);
     assert.equal(malformed.outcome.status, "INCOMPLETE", "unusable target metadata fails closed with no subject");
-    assert.equal((await s.run({ targetFrameworkMetadata: TARGET_NEW })).records.find((r) => r.checkId === "1A.POLICY.CAPABILITIES").status, "PASS");
+    // Only target-tip execution satisfies it; restating the executing metadata changes nothing.
+    assert.equal(rec(await s.run({ targetFrameworkMetadata: FRAMEWORK_METADATA }), "1A.POLICY.CAPABILITIES").status, "INCOMPLETE");
+    assert.equal(rec(await s.run({}, { workflow: { path: WORKFLOW, sha: s.tip } }), "1A.POLICY.CAPABILITIES").status, "PASS");
   } finally {
     s.repo.cleanup();
   }

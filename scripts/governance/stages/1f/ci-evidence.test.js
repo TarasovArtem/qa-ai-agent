@@ -6,7 +6,7 @@ const { collectCiEvidence } = require("./ci-evidence");
 const { computeDeterminationDigest } = require("./determination");
 const governance = require("../../index");
 const { validateResultRecord } = require("../../kernel/results");
-const { makeSubject } = require("../../test-support-git");
+const { makeSubject, reportContext, requiredRecords } = require("../../test-support-git");
 
 const subject = makeSubject();
 const REPO = "TarasovArtem/qa-ai-agent";
@@ -174,19 +174,14 @@ test("C8-DEV-L1: a requiredJobs array whose Symbol.iterator hides a real, indexe
   assert.deepEqual(r.records[0].observed.missing, ["Missing Job Hidden By Iterator"]);
   assert.deepEqual(r.records[0].observed.requiredJobs, [...indexedPolicy].sort(), "the PUBLISHED policy must be the real indexed one, not the iterator's substitute");
 
-  const trustedContext = {
-    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
-    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
-    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
-    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
-    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
-    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
-  };
+  // Corrective C1 (1G M2/L3): an authoritative target-tip Phase 2 context.
+  const trustedContext = reportContext(subject, { repositoryId: REPO });
   const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
-  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  // Corrective C1 (1G M1): every result a report requires, so CI alone decides readiness.
+  const identity = requiredRecords(subject);
   const report = buildReport({
     subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: r.externalEvidence,
-    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...r.records],
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [...identity, ...r.records],
   });
   assert.equal(report.ok, true, JSON.stringify(report));
   assert.notEqual(report.report.readiness.state, "READY", "a hidden missing job must never reach READY");
@@ -203,19 +198,14 @@ test("C8-DEV-L1: a requiredJobs array whose Symbol.iterator differs from its ind
   assert.equal(r.records[0].observed.classification, "CLEAN_FIRST_PASS");
   assert.deepEqual(r.records[0].observed.requiredJobs, [...REQUIRED].sort());
 
-  const trustedContext = {
-    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
-    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
-    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
-    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
-    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
-    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
-  };
+  // Corrective C1 (1G M2/L3): an authoritative target-tip Phase 2 context.
+  const trustedContext = reportContext(subject, { repositoryId: REPO });
   const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
-  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  // Corrective C1 (1G M1): every result a report requires, so CI alone decides readiness.
+  const identity = requiredRecords(subject);
   const report = buildReport({
     subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: r.externalEvidence,
-    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...r.records],
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [...identity, ...r.records],
   });
   assert.equal(report.ok, true, JSON.stringify(report));
   assert.equal(report.report.readiness.state, "READY");
@@ -692,16 +682,11 @@ test("C6-INFO2-14: a valid completed rerun without accepted determination remain
 // path never reaches the second module.
 test("C6-INFO2-15: no malformed requiredJobs input can produce a completed-run record plus externalEvidence that report.js would reject as a schema mismatch (cross-module integration)", async () => {
   const { buildReport } = require("./report");
-  const trustedContext = {
-    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
-    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
-    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
-    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
-    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
-    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
-  };
+  // Corrective C1 (1G M2/L3): an authoritative target-tip Phase 2 context.
+  const trustedContext = reportContext(subject, { repositoryId: REPO });
   const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
-  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  // Corrective C1 (1G M1): every result a report requires, so CI alone decides readiness.
+  const identity = requiredRecords(subject);
 
   // Negative cases: the collector's own boundary rejects the malformed
   // policy before any record or externalEvidence exists -- buildReport()
@@ -721,7 +706,7 @@ test("C6-INFO2-15: no malformed requiredJobs input can produce a completed-run r
   assert.equal(ci.records[0].observed.classification, "CLEAN_FIRST_PASS");
   const report = buildReport({
     subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: ci.externalEvidence,
-    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...ci.records],
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [...identity, ...ci.records],
   });
   assert.equal(report.ok, true, JSON.stringify(report));
   assert.equal(report.report.readiness.state, "READY");
@@ -768,19 +753,14 @@ function c9LengthProxy(target, later) {
 
 function c9Report(collected) {
   const { buildReport } = require("./report");
-  const trustedContext = {
-    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
-    eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
-    headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
-    baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
-    executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
-    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
-  };
+  // Corrective C1 (1G M2/L3): an authoritative target-tip Phase 2 context.
+  const trustedContext = reportContext(subject, { repositoryId: REPO });
   const manifest = { gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] };
-  const identity = { checkId: "1A.IDENTITY", ownerStage: "1A", status: "PASS", subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] };
+  // Corrective C1 (1G M1): every result a report requires, so CI alone decides readiness.
+  const identity = requiredRecords(subject);
   return buildReport({
     subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext, externalEvidence: collected.externalEvidence,
-    manifest, reviewClass: "HEAVY", changedFiles: [], records: [identity, ...collected.records],
+    manifest, reviewClass: "HEAVY", changedFiles: [], records: [...identity, ...collected.records],
   });
 }
 

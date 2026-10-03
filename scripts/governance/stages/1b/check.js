@@ -14,6 +14,7 @@
  *   1B.MARKDOWN.HEADINGS   headings extracted (anchors generated)
  *   1B.MARKDOWN.ANCHORS    local and cross-file heading anchors exist
  *   1B.MARKDOWN.LINKS      repository-local link targets exist and stay in the root
+ *   1B.MARKDOWN.POLICY     the fingerprint and reference families of the policy used
  *   1B.REFERENCES.<FAMILY> per configured ID family: dangling, duplicate, malformed
  *
  * 1B judges STRUCTURE only. It never decides whether a statement is true, whether
@@ -32,9 +33,9 @@ const { validateRepoRelativePath, compareBytewise } = require("../../safety/repo
 const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
 const { resolveGitAdapter } = require("../1a/git-adapter");
 const { resolveReader } = require("../head-reader");
-const { validateBasePolicy, resolveFrameworkMetadata } = require("../1a/policy");
+const { validateBasePolicy, resolveFrameworkMetadata, policyDigest } = require("../1a/policy");
 
-/** Metadata deciding schema/capability support: the caller-supplied target-tip metadata when valid. */
+/** Metadata deciding schema/capability support: the executing framework's own; a supplied value is only an assertion that must equal it (Corrective C2, 1G R3), else nothing is supported. */
 const metadataOf = (input) => {
   const r = resolveFrameworkMetadata(input.targetFrameworkMetadata);
   return r.ok ? r.metadata : { supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 0 } };
@@ -132,6 +133,21 @@ async function checkReferences(input) {
     add("1B.MARKDOWN.FILES", STATUS.INCOMPLETE, REASON.POLICY_INVALID, "no effective policy was supplied", {});
     return done();
   }
+  // Corrective C2 (1G R2): state which policy this run actually checked against and
+  // which reference families it therefore emits, using 1A's own policy fingerprint
+  // (1A stays the only policy owner; 1B never re-derives the effective policy). The
+  // report binds this statement to 1A.POLICY.EFFECTIVE, so a narrowed or substituted
+  // policy, or a dropped family result, can never pass as complete.
+  let policyFingerprint;
+  try {
+    policyFingerprint = policyDigest(supplied);
+  } catch {
+    add("1B.MARKDOWN.FILES", STATUS.CONFIGURATION_ERROR, REASON.POLICY_INVALID, "the supplied policy is not plain JSON data", {});
+    return done();
+  }
+  add("1B.MARKDOWN.POLICY", STATUS.PASS, REASON.OK, "the policy this Markdown / reference check ran with", {
+    policyFingerprint, referenceFamilies: markdown.idFamilies.map((f) => f.family),
+  });
   const families = markdown.idFamilies.map(compileFamily);
   const patterns = markdown.filePatterns.map((p) => parsePathPattern(p).pattern);
 

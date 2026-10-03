@@ -2,7 +2,9 @@
  * GOV-AUTO-1 Wave 0 -- pure aggregation and readiness derivation (design
  * sections 7, 22).
  *
- * `aggregate()` depends only on the records it is given: it never inspects Git,
+ * `aggregate()` depends only on the records it is given and the completeness plan
+ * the caller states (Corrective C2, 1G R1: the enabled-domain set and the
+ * mandatory-result IDs, both required for READY): it never inspects Git,
  * the network, the filesystem or the clock, and it never interprets meaning.
  * readiness.state is reproducible solely from the records. Readiness is framework
  * attestation only: it never authorizes a merge, approves a PR, accepts risk,
@@ -14,7 +16,7 @@
 
 const { REASON, STATUS, STATUS_PRECEDENCE, READINESS, deepFreeze } = require("./contracts");
 const { isPlainObject } = require("./validation");
-const { validateResultRecord, canonicalJson } = require("./results");
+const { validateResultRecord, canonicalJson, CHECK_ID } = require("./results");
 const { DOMAIN_ID } = require("./graph");
 
 function kernelRecord(checkId, status, reasonCode, detail, subject) {
@@ -66,11 +68,36 @@ function hasApplicabilityProof(record) {
   return isPlainObject(record.observed) && typeof record.observed.applicabilityProof === "string" && record.observed.applicabilityProof.length > 0;
 }
 
+const MAX_REQUIRED_CHECK_IDS = 1024;
+// A missing required ID is reported as `KERNEL.REQUIRED_RESULT.<id>`, which must itself
+// stay a valid check ID (at most 128 characters), so a planned ID is at most 105.
+const MAX_REQUIRED_CHECK_ID_LENGTH = 128 - "KERNEL.REQUIRED_RESULT.".length;
+
+/**
+ * Required-result completeness (Corrective C2, 1G R1): every ID in the caller's
+ * completeness plan must be present as an actual valid record. A missing one is an
+ * INCOMPLETE kernel record; presence is decided only from the records, never from
+ * a summary. Returns kernel-generated records (empty when complete).
+ */
+function checkRequiredResults(validRecords, requiredCheckIds, subject) {
+  const present = new Set(validRecords.map((r) => r.checkId));
+  return [...requiredCheckIds].sort()
+    .filter((id) => !present.has(id))
+    .map((id) => kernelRecord(`KERNEL.REQUIRED_RESULT.${id}`, STATUS.INCOMPLETE, REASON.REQUIRED_RESULT_MISSING, "a result the completeness plan requires is missing", subject));
+}
+
 /**
  * Aggregate records into the derived overall status and readiness. Options:
- *   expectedDomainIds  enabled domain IDs from a validated graph (enables the
- *                      domain-result completeness invariant);
+ *   expectedDomainIds  enabled domain IDs from a validated graph (the
+ *                      domain-result completeness invariant, GT-16);
+ *   requiredCheckIds   the check IDs the run must contain (the mandatory-result
+ *                      plan; Corrective C2, 1G R1);
  *   domainsProjection  a `domains[]` projection to check against the records.
+ * Both completeness options are required for READY (Corrective C2, 1G R1): READY
+ * attests that every MANDATORY result is present and passed, not merely that the
+ * records a caller happened to supply passed. An absent option is never assumed
+ * to be an empty set; it adds an INCOMPLETE kernel record (COMPLETENESS_CONTEXT_MISSING).
+ * An explicitly empty set is a statement the caller makes, and is honoured.
  * Never throws for bad records: they become CONFIGURATION_ERROR kernel records.
  */
 function aggregate(records, options = {}) {
@@ -104,12 +131,25 @@ function aggregate(records, options = {}) {
     }
   }
 
-  if (options.expectedDomainIds !== undefined) {
-    const ids = options.expectedDomainIds;
+  const opts = isPlainObject(options) ? options : {};
+  if (opts.expectedDomainIds === undefined) {
+    kernel.push(kernelRecord("KERNEL.EXPECTED_DOMAINS", STATUS.INCOMPLETE, REASON.COMPLETENESS_CONTEXT_MISSING, "no enabled-domain set was supplied: domain-result completeness cannot be established", runSubject));
+  } else {
+    const ids = opts.expectedDomainIds;
     if (Array.isArray(ids) && ids.every((id) => typeof id === "string" && DOMAIN_ID.test(id)) && new Set(ids).size === ids.length) {
-      kernel.push(...checkDomainResultCompleteness(valid, ids, options.domainsProjection, runSubject));
+      kernel.push(...checkDomainResultCompleteness(valid, ids, opts.domainsProjection, runSubject));
     } else {
       kernel.push(kernelRecord("KERNEL.EXPECTED_DOMAINS", STATUS.CONFIGURATION_ERROR, REASON.RESULT_RECORD_INVALID, "expectedDomainIds must be unique valid domain IDs", runSubject));
+    }
+  }
+  if (opts.requiredCheckIds === undefined) {
+    kernel.push(kernelRecord("KERNEL.REQUIRED_CHECKS", STATUS.INCOMPLETE, REASON.COMPLETENESS_CONTEXT_MISSING, "no mandatory-result plan was supplied: result completeness cannot be established", runSubject));
+  } else {
+    const ids = opts.requiredCheckIds;
+    if (Array.isArray(ids) && ids.length <= MAX_REQUIRED_CHECK_IDS && ids.every((id) => typeof id === "string" && CHECK_ID.test(id) && id.length <= MAX_REQUIRED_CHECK_ID_LENGTH) && new Set(ids).size === ids.length) {
+      kernel.push(...checkRequiredResults(valid, ids, runSubject));
+    } else {
+      kernel.push(kernelRecord("KERNEL.REQUIRED_CHECKS", STATUS.CONFIGURATION_ERROR, REASON.RESULT_RECORD_INVALID, "requiredCheckIds must be a bounded array of unique valid check IDs", runSubject));
     }
   }
 
@@ -127,9 +167,14 @@ function aggregate(records, options = {}) {
       : overallStatus === STATUS.HUMAN_REVIEW_REQUIRED ? READINESS.HUMAN_REVIEW_REQUIRED
         : READINESS.NOT_READY;
 
+  // Design section 23: readiness carries `reasons[]`, derived only from the records:
+  // the sorted, distinct reason codes of the records that decided the dominant
+  // status (empty exactly when the state is READY).
+  const reasons = state === READINESS.READY ? [] : [...new Set(all.filter((r) => r.status === overallStatus).map((r) => r.reasonCode))].sort();
+
   return deepFreeze({
     overallStatus,
-    readiness: { state, dominantStatus: overallStatus, counts },
+    readiness: { state, dominantStatus: overallStatus, reasons, counts },
     counts,
     humanReviewRequired: all.filter((r) => r.status === STATUS.HUMAN_REVIEW_REQUIRED).map((r) => r.checkId),
     records: valid,

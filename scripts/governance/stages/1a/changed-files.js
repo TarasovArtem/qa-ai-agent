@@ -25,7 +25,7 @@ const { REASON, STATUS, RANGE_MODES, deepFreeze } = require("../../kernel/contra
 const { isPlainObject } = require("../../kernel/validation");
 const { validateRepoRelativePath, compareBytewise } = require("../../safety/repo-path");
 const { resolveGitAdapter } = require("./git-adapter");
-const { createRecordFactory, isValidSubject, sample } = require("../common");
+const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
 
 const MAX_CHANGED_FILES = 100_000;
 
@@ -68,11 +68,35 @@ function evaluatePlatformList(platformFiles) {
 }
 
 /**
- * getChangedFiles({ subject, git | { repositoryRoot, gitExecutable }, platformFiles,
- *                   invocationTrust, from?, to?, mode? })
- * `subject` is the run identity established by getGitIdentity(); `from`, `to` and
- * `mode` are optional assertions that must equal subject.range (the mode is an
- * explicit input, never hard-coded to base..head).
+ * The invocation trust the changed-file comparison runs under (Corrective C1, 1G
+ * L2). 1A owns one trusted invocation context: the trust level is taken from the
+ * getGitIdentity() result established for this exact subject, never from a
+ * separate caller-supplied flag, so a platform-authenticated identity cannot be
+ * paired with an operator-trust diff that skips the platform comparison.
+ * Without an identity the strictest path (PLATFORM_AUTHENTICATED: the complete
+ * platform list is required) applies. Returns { ok, trust } or { ok:false, detail }.
+ */
+function changedFileTrust(input, subject) {
+  if (Object.hasOwn(input, "invocationTrust")) return { ok: false, detail: "invocationTrust is not an input: the trust level comes from the getGitIdentity() result for this subject" };
+  if (!Object.hasOwn(input, "identity") || input.identity === undefined) return { ok: true, trust: "PLATFORM_AUTHENTICATED" };
+  const id = input.identity;
+  const facts = isPlainObject(id) ? id.identity : undefined;
+  if (!isPlainObject(id) || id.established !== true || !sameSubject(id.subject, subject) || !isPlainObject(facts)) {
+    return { ok: false, detail: "identity must be the established getGitIdentity() result for the same subject" };
+  }
+  if (facts.mode !== subject.range.mode || (facts.invocationTrust !== "PLATFORM_AUTHENTICATED" && facts.invocationTrust !== "OPERATOR_SUPPLIED")) {
+    return { ok: false, detail: "identity mode or invocation trust is not valid for this subject" };
+  }
+  return { ok: true, trust: facts.invocationTrust };
+}
+
+/**
+ * getChangedFiles({ subject, identity?, git | { repositoryRoot, gitExecutable },
+ *                   platformFiles, from?, to?, mode? })
+ * `subject` is the run identity established by getGitIdentity(); `identity` is that
+ * getGitIdentity() result itself (the only source of the invocation trust; see
+ * changedFileTrust()); `from`, `to` and `mode` are optional assertions that must
+ * equal subject.range (the mode is an explicit input, never hard-coded to base..head).
  */
 async function getChangedFiles(input) {
   if (!isPlainObject(input) || !isValidSubject(input.subject)) {
@@ -82,6 +106,11 @@ async function getChangedFiles(input) {
   const out = createRecordFactory(subject, "1A");
   const { add, notApplicable } = out;
   const finish = (files, complete, emptyDiffConfirmed) => result(subject, files, complete, emptyDiffConfirmed, out.records);
+  const trusted = changedFileTrust(input, subject);
+  if (!trusted.ok) {
+    add("1A.DIFF.CHANGED_FILES", STATUS.CONFIGURATION_ERROR, REASON.TRUSTED_CONTEXT_INVALID, trusted.detail, {});
+    return finish([], false, false);
+  }
 
   const mode = input.mode === undefined ? subject.range.mode : input.mode;
   const from = input.from === undefined ? subject.range.from : input.from;
@@ -118,11 +147,14 @@ async function getChangedFiles(input) {
     notApplicable("1A.DIFF.PLATFORM_AGREEMENT", "post-merge identity compares no platform changed-file list");
     return finish(files, true, false);
   }
-  const trust = input.invocationTrust === "OPERATOR_SUPPLIED" ? "OPERATOR_SUPPLIED" : "PLATFORM_AUTHENTICATED";
+  const trust = trusted.trust;
   const platform = input.platformFiles === undefined ? null : input.platformFiles;
   if (platform === null) {
     if (trust === "OPERATOR_SUPPLIED" && files.length > 0) {
-      notApplicable("1A.DIFF.PLATFORM_AGREEMENT", "an operator invocation has no platform-authenticated changed-file list");
+      // The trust level is recorded with the proof so a report consumer can check it
+      // against the run's own trusted context (Corrective C1, 1G L2/L3).
+      const proof = "an operator invocation has no platform-authenticated changed-file list";
+      add("1A.DIFF.PLATFORM_AGREEMENT", STATUS.NOT_APPLICABLE, REASON.OK, proof, { applicabilityProof: proof, invocationTrust: "OPERATOR_SUPPLIED" });
       return finish(files, true, false);
     }
     add("1A.DIFF.PLATFORM_AGREEMENT", STATUS.INCOMPLETE, files.length === 0 ? REASON.DIFF_EMPTY_UNEXPECTED : REASON.PLATFORM_FILE_LIST_INCOMPLETE, files.length === 0 ? "an empty diff cannot be confirmed without the platform list" : "the platform did not supply a changed-file list", { gitCount: files.length });

@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../../index");
+const { stagePlan } = require("../../test-support");
 const { basePolicy, changedResult, makeSubject } = require("../../test-support-git");
 const { validateBasePolicy, BUILTIN_MINIMUM_POLICY } = require("./policy");
 const { validateResultRecord } = require("../../kernel/results");
@@ -25,7 +26,7 @@ test("W1 1A scope: an in-scope change passes every scope check and the records a
     assert.equal(validateResultRecord(record).ok, true, record.checkId);
     assert.equal(record.ownerStage, "1A");
   }
-  assert.equal(g.aggregate(r.records).readiness.state, "READY");
+  assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "READY");
   assert.equal(Object.isFrozen(r), true);
   assert.equal(Object.isFrozen(r.records), true);
 });
@@ -58,7 +59,7 @@ test("W1 1A scope: a protected governance/framework path is HUMAN_REVIEW_REQUIRE
     const r = g.checkScope({ subject, changedFiles: changedResult(subject, [path]), policy: permissive });
     assert.equal(state(r, "1A.SCOPE.PROTECTED"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG", path);
     assert.equal(state(r, "1A.SCOPE.ALLOWED"), "PASS/OK", path);
-    assert.equal(g.aggregate(r.records).readiness.state, "HUMAN_REVIEW_REQUIRED", path);
+    assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "HUMAN_REVIEW_REQUIRED", path);
   }
   const custom = validateBasePolicy(basePolicy({ scope: { allowedPathDomains: ["**"], forbiddenPathDomains: [], protectedPaths: ["docs/design.md"] } })).policy;
   assert.equal(state(g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/design.md"]), policy: custom }), "1A.SCOPE.PROTECTED"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG");
@@ -136,7 +137,7 @@ test("W1 1A scope: the changed-file input must be the complete 1A result for the
 
 test("W1 1A scope: an empty change set passes; findings are deterministic and bounded", () => {
   const empty = scope([]);
-  assert.equal(g.aggregate(empty.records).readiness.state, "READY");
+  assert.equal(g.aggregate(empty.records, stagePlan(empty.records)).readiness.state, "READY");
   const many = Array.from({ length: 500 }, (_, i) => `tools/f${i}.sh`);
   const r = scope(many);
   assert.equal(rec(r, "1A.SCOPE.ALLOWED").observed.count, 500);
@@ -144,13 +145,15 @@ test("W1 1A scope: an empty change set passes; findings are deterministic and bo
   assert.deepEqual(JSON.stringify(scope(many)), JSON.stringify(r), "same input, same output");
 });
 
-test("W1 1A scope: downstream re-validation honors the same target-tip metadata (a schema the target supports is not re-rejected)", () => {
+test("W1 1A scope: downstream re-validation never adopts a caller-supplied target range (Corrective C2, 1G R3)", () => {
   const v2 = { ...JSON.parse(JSON.stringify(policy)), schemaVersion: 2 };
   const withoutMetadata = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2 });
   assert.equal(state(withoutMetadata, "1A.SCOPE.ALLOWED"), "INCOMPLETE/SCOPE_POLICY_UNAVAILABLE", "the executing framework supports schema 1 only");
-  const target = { frameworkVersion: "0.2.0", supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 2 } };
-  const withMetadata = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2, targetFrameworkMetadata: target });
-  assert.equal(state(withMetadata, "1A.SCOPE.ALLOWED"), "PASS/OK");
+  const widened = { frameworkVersion: "0.2.0", supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 2 } };
+  const withMetadata = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2, targetFrameworkMetadata: widened });
+  assert.equal(state(withMetadata, "1A.SCOPE.ALLOWED"), "INCOMPLETE/SCOPE_POLICY_UNAVAILABLE", "a supplied wider range is an unproven claim, never the target's");
+  const restated = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy, targetFrameworkMetadata: JSON.parse(JSON.stringify(require("../../framework-metadata").FRAMEWORK_METADATA)) });
+  assert.equal(state(restated, "1A.SCOPE.ALLOWED"), "PASS/OK", "restating the executing metadata is consistent and changes nothing");
   const broken = g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: v2, targetFrameworkMetadata: { nonsense: true } });
   assert.equal(state(broken, "1A.SCOPE.ALLOWED"), "INCOMPLETE/SCOPE_POLICY_UNAVAILABLE", "unusable target metadata never falls back to a permissive default");
 });

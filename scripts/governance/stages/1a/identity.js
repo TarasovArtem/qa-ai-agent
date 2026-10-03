@@ -178,15 +178,42 @@ async function getGitIdentity(input) {
   else if (protectedRefs.includes(context.targetRefName)) add("1A.TARGET.PROTECTED", STATUS.PASS, REASON.OK, "the target is an authenticated, protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
   else add("1A.TARGET.PROTECTED", context.mode === "POST_MERGE" ? STATUS.FAIL : STATUS.HUMAN_REVIEW_REQUIRED, REASON.TARGET_NOT_PROTECTED, "the authenticated target is not a protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
 
+  // Target framework metadata provenance (Corrective C2, 1G R3). Design section 14: the
+  // supported capability set and schema range come only from the framework at the target
+  // tip, and only phase 2 executes framework code from the resolved target tip (rule 8;
+  // section 25a: executedCommit must equal the resolved target tip). The executing
+  // framework's metadata is therefore target-tip metadata exactly when the
+  // platform-authenticated run metadata says the run executed from the commit this
+  // function resolved as the target tip -- never because a caller supplied a value or
+  // asserted a tip. Otherwise (head-executed, operator run without run metadata, or a
+  // different commit) it is EXECUTING_FRAMEWORK and can never establish target support.
+  const executedCommit = context.workflow !== null ? context.workflow.sha : null;
+  const metadataSource = executedCommit !== null && executedCommit === targetTip ? "TARGET_TIP" : framework.source;
+  const provenance = {
+    frameworkMetadataSource: metadataSource,
+    targetTip,
+    executedCommit,
+    targetMetadata: metadataSource === "TARGET_TIP"
+      ? { frameworkVersion: framework.metadata.frameworkVersion, supportedCapabilities: [...framework.metadata.supportedCapabilities], supportedSchemaVersions: { ...framework.metadata.supportedSchemaVersions } }
+      : null,
+  };
+
   // Target capability support is decided ONLY by target-tip framework metadata. The executing
   // framework (which may be the reviewed head's own code) can never establish what the target
   // supports, so with any other source a required capability is INCOMPLETE, never PASS.
   if (policy.policy !== null) {
     const required = policy.policy.requiredCapabilities;
-    if (required.length === 0) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "the policy requires no capability", { required, frameworkMetadataSource: framework.source });
-    else if (framework.source !== "TARGET_TIP") add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "target-tip framework metadata was not supplied: capability support cannot be established from the executing framework", { required, frameworkMetadataSource: framework.source });
-    else if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the target-tip framework does not list", { unsupported: policy.unsupportedCapabilities, frameworkMetadataSource: framework.source });
-    else add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "every required capability is listed by the target-tip framework", { required, frameworkMetadataSource: framework.source });
+    if (required.length === 0) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "the policy requires no capability", { required, ...provenance });
+    else if (metadataSource !== "TARGET_TIP") add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the run did not execute from the resolved target tip: capability support cannot be established from the executing framework", { required, ...provenance });
+    else if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the target-tip framework does not list", { required, unsupported: policy.unsupportedCapabilities, ...provenance });
+    else add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "every required capability is listed by the target-tip framework", { required, ...provenance });
+
+    // The effective policy this run is governed by (Corrective C2, 1G R2), stated by its
+    // only owner: its fingerprint and the reference families it defines. Later stages
+    // that consume the policy are bound to this statement; nothing re-derives it.
+    add("1A.POLICY.EFFECTIVE", STATUS.PASS, REASON.OK, "the effective policy for this run", {
+      source: policy.source, policyFingerprint: policyDigest(policy.policy), referenceFamilies: policy.policy.markdown.idFamilies.map((f) => f.family),
+    });
   }
 
   if (context.mode === "PR_REVIEW") {
@@ -234,7 +261,7 @@ async function getGitIdentity(input) {
   return deepFreeze({
     established: true,
     mode: context.mode,
-    identity: { frameworkMetadataSource: framework.source, mode: context.mode, head: subject.head, tree: subject.tree, parents: [...parents], base, targetRefName: context.targetRefName, targetTip, rootTip, invocationTrust: context.invocationTrust },
+    identity: { frameworkMetadataSource: metadataSource, mode: context.mode, head: subject.head, tree: subject.tree, parents: [...parents], base, targetRefName: context.targetRefName, targetTip, rootTip, invocationTrust: context.invocationTrust },
     subject,
     policy: { source: policy.source, policy: policy.policy, digest: policy.digest },
     records: out.records,

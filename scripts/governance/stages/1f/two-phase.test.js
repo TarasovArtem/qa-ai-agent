@@ -11,21 +11,19 @@ const { buildReport } = require("./report");
 const { collectCiEvidence, ciRunSourceObjectId, computeCiRunDigest } = require("./ci-evidence");
 const { renderMarkdown } = require("./render-markdown");
 const { revalidateEvidence } = require("../../kernel/revalidation");
-const { makeSubject } = require("../../test-support-git");
+const { makeSubject, reportContext, requiredRecords } = require("../../test-support-git");
 
 const subject = makeSubject();
 const REPO = "TarasovArtem/qa-ai-agent";
 const WORKFLOW = ".github/workflows/cypress.yml";
 const REQUIRED = ["Unit tests"];
 
-const trustedContext = (phase) => ({
-  mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO,
-  eventType: "pull_request", targetRefName: "main", resolvedTargetTip: "b".repeat(40), suppliedTargetSha: null,
-  headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
-  baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
-  executedFrom: "HEAD", frameworkVersion: "1.0.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: [1],
-  requiredCapabilities: [], phase, collectorRunId: "collector-1", executedCommit: subject.head,
-});
+// Corrective C1 (1G M2/L3): an authoritative context -- platform authenticated,
+// executed from the resolved target tip, canonical metadata.
+const trustedContext = (phase) => reportContext(subject, { repositoryId: REPO, phase });
+// Corrective C1 (1G L1): revalidation always re-resolves the governance root and
+// compares it with the report's own values; this resolver reports them unchanged.
+const rootOf = (report) => ({ resolve: async () => ({ ok: true, rootTip: report.trustedContext.rootTip, digest: report.trustedContext.rootPolicyDigest }) });
 const manifest = () => ({ gatePath: "governance/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] });
 const NOW = "2026-09-30T00:00:00.000Z";
 
@@ -37,7 +35,8 @@ function assertOnlyCiRunEvidence(externalEvidence) {
   assert.equal(externalEvidence[0].sourceObjectId.startsWith("ci-run:"), true);
 }
 const genericRecord = (checkId, ownerStage, status) => ({ checkId, ownerStage, status, subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] });
-const phase1Records = [genericRecord("1A.IDENTITY", "1A", "PASS"), genericRecord("1B.MARKDOWN", "1B", "PASS")];
+// Corrective C1 (1G M1): every result a report requires, so only CI decides readiness here.
+const phase1Records = requiredRecords(subject);
 
 function reportInput(overrides = {}) {
   return { subject, tool: { name: "gov-auto-1", version: "0.0.0" }, trustedContext: trustedContext(1), externalEvidence: [], manifest: manifest(), reviewClass: "HEAVY", changedFiles: [], records: phase1Records, ci: { state: "NOT_COLLECTED" }, ...overrides };
@@ -154,7 +153,8 @@ test("DEV-C1-11 (corrected by C2): Phase 2 with a fabricated adapter-mediated SE
 
 test("SEC-C2-18: forged evidence plus a forged revalidation response never establishes initial authentication -- revalidation checks freshness only, and the forged justified record is refused at the report boundary", async () => {
   const forgedEntry = { sourceObjectId: "comment-1", sourceVersion: "v1", contentDigest: "d".repeat(64), collectedAt: "2026-09-30T00:00:00Z", immutability: "MUTABLE" };
-  const revalidation = await revalidateEvidence({ subject, items: [{ entry: forgedEntry, sourceType: "comment" }], adapters: { comment: { fetch: async () => ({ ok: true, version: "v1", digest: "d".repeat(64) }) } } });
+  const forgedReport = { schemaVersion: 1, requiresRevalidation: true, notAuthorization: true, generatedFor: { head: subject.head, tree: subject.tree, base: subject.base }, trustedContext: { rootTip: "c".repeat(40), rootPolicyDigest: null }, externalEvidence: [forgedEntry] };
+  const revalidation = await revalidateEvidence({ subject, report: forgedReport, rootPolicy: rootOf(forgedReport), items: [{ entry: forgedEntry, sourceType: "comment" }], adapters: { comment: { fetch: async () => ({ ok: true, version: "v1", digest: "d".repeat(64) }) } } });
   assert.equal(revalidation.records[0].status, "PASS", "the forged source is 'fresh' -- freshness is all revalidation establishes");
 
   const forgedCi = {
@@ -235,7 +235,7 @@ test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation agains
   const sameRunAdapter = { fetch: async () => ({ ok: true, version: pinnedEntry.sourceVersion, digest: pinnedEntry.contentDigest }) };
   const items1 = report1.report.externalEvidence.map((entry) => ({ entry, sourceType: sourceTypeForExternalEvidenceEntry(entry) }));
   assert.ok(items1.every((i) => i.sourceType !== null), "every pinned entry must map to a known sourceType, never silently dropped");
-  const revalidation1 = await revalidateEvidence({ subject, items: items1, adapters: { CI_RUN: sameRunAdapter } });
+  const revalidation1 = await revalidateEvidence({ subject, report: report1.report, rootPolicy: rootOf(report1.report), items: items1, adapters: { CI_RUN: sameRunAdapter } });
   assert.equal(revalidation1.records[0].status, "PASS");
 
   // Same repository, same HEAD, same run ID, a NEW attempt (2) with a failed required job.
@@ -256,7 +256,7 @@ test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation agains
   assert.equal(changedEntry.sourceObjectId, pinnedEntry.sourceObjectId, "same repository/run -- same source identity, only the version/digest changed");
   assert.notEqual(changedEntry.contentDigest, pinnedEntry.contentDigest, "the digest must actually differ once a required job's conclusion changes");
   const changedRunAdapter = { fetch: async () => ({ ok: true, version: changedEntry.sourceVersion, digest: changedEntry.contentDigest }) };
-  const revalidation2 = await revalidateEvidence({ subject, items: items1, adapters: { CI_RUN: changedRunAdapter } });
+  const revalidation2 = await revalidateEvidence({ subject, report: report1.report, rootPolicy: rootOf(report1.report), items: items1, adapters: { CI_RUN: changedRunAdapter } });
   assert.equal(revalidation2.records[0].status, "INCOMPLETE");
   assert.equal(revalidation2.records[0].reasonCode, "STALE_EVIDENCE");
 
@@ -273,13 +273,15 @@ test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation agains
   assert.equal(sameAttemptChangedEntry.sourceVersion, pinnedEntry.sourceVersion, "attempt number alone is unchanged");
   assert.notEqual(sameAttemptChangedEntry.contentDigest, pinnedEntry.contentDigest, "the digest must differ purely from the changed job conclusion");
   const sameAttemptAdapter = { fetch: async () => ({ ok: true, version: sameAttemptChangedEntry.sourceVersion, digest: sameAttemptChangedEntry.contentDigest }) };
-  const revalidation3 = await revalidateEvidence({ subject, items: items1, adapters: { CI_RUN: sameAttemptAdapter } });
+  const revalidation3 = await revalidateEvidence({ subject, report: report1.report, rootPolicy: rootOf(report1.report), items: items1, adapters: { CI_RUN: sameAttemptAdapter } });
   assert.equal(revalidation3.records[0].status, "INCOMPLETE");
   assert.equal(revalidation3.records[0].reasonCode, "STALE_EVIDENCE");
 
   // The original READY report is not reusable: folding the revalidation record into
-  // its own record pool turns readiness away from READY.
-  const foldedRecords = [...report1.report.records, ...revalidation2.records];
+  // its own record pool turns readiness away from READY. Corrective C1 (1G M1/M2):
+  // the pool is the report's stage inputs; the report's own 1F.CONTEXT.* records
+  // are buildReport()'s to add, and 1F.CONTEXT.* / 1F.COMPLETENESS.* are refused as input.
+  const foldedRecords = [...phase1Records, ...ci1.records, ...revalidation2.records];
   const notReusable = buildReport(reportInput({ trustedContext: trustedContext(2), records: foldedRecords, externalEvidence: ci1.externalEvidence, ci: undefined }));
   assert.equal(notReusable.ok, true);
   assert.notEqual(notReusable.report.readiness.state, "READY");

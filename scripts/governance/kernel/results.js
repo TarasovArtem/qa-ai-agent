@@ -121,4 +121,4 @@ function validateResultRecord(input) {
   return deepFreeze({ ok: true, problems: [], record: cloneJson(input) });
 }
 
-module.exports = { validateResultRecord, statusForEffectiveLevel, canonicalJson, cloneJson, isJsonValue };
+module.exports = { validateResultRecord, statusForEffectiveLevel, canonicalJson, cloneJson, isJsonValue, CHECK_ID };
