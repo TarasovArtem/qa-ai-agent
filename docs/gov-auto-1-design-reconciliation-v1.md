@@ -158,7 +158,7 @@ through the owner's public interface and must never recompute it.
 | Fingerprints | `1E` | `1F` (report) | One canonicalization ([§13](#13-fingerprint-model)) |
 | Secret scanning and suppression application | `1A` | `1F` (report) | Operates on the owner's changed-file set; output masked |
 | Manifest and configuration loading/validation, dependency-graph validation | Wave 0 shared contracts | all stages | Not a stage; the shared kernel ([§19](#19-implementation-dependency-order-and-waves)) |
-| Result/verdict types, error model, readiness derivation, `pre-review.json` writer, `pre-review.md` renderer | Wave 0 kernel (types, derivation); `1F` (wiring, CLI, files) | all stages | One aggregator function; renderer derives Markdown from JSON |
+| Result/verdict types, error model, readiness derivation, canonical completeness map and owner-statement cross-binding ([D16](#27-design-decisions-d1-d16)), `pre-review.json` writer, `pre-review.md` renderer | Wave 0 kernel (types, derivation, completeness map, binding); `1F` (wiring, CLI, files) | all stages | One aggregator function; one framework-constant completeness map, never copied by a consumer; renderer derives Markdown from JSON |
 | Reviewer-facing summary | `1F` | humans | Derived view only |
 
 A fact with two owners is a defect in this design. A future stage that needs a
@@ -268,7 +268,7 @@ human-authorized merge where canonical governance explicitly permits a bootstrap
 or capability transition. The enum is never a review-access control.
 
 The aggregator has no input except the records; the state is reproducible
-byte-for-byte from `records[]` alone. It is not approval, risk acceptance,
+byte-for-byte from `records[]` alone together with the framework-constant completeness map, which the kernel applies to the owner statements inside `records[]`; a caller-supplied completeness plan can only restate or tighten it ([D16](#27-design-decisions-d1-d16)). It is not approval, risk acceptance,
 security acceptance, merge authorization or lifecycle completion, and it never
 lowers a review class. A missing CI evidence record is `INCOMPLETE` and
 therefore `NOT_READY` ([§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary)).
@@ -509,7 +509,7 @@ from its source makes the run `INCOMPLETE`.
 | `targetRefName` | Platform-authenticated PR metadata (read by the tool for the PR from the provider API, or from the provider-supplied event payload) | Head manifest, workflow input, a CLI flag supplied by reviewed code, an environment variable controlled by the reviewed workflow, PR body or comment text |
 | `headSha` | Resolved from the PR head through the provider API; local `HEAD` must equal it and be a full 40-hex commit present in the object store | Manifest, event text |
 | Target tip | **Resolved by the tool itself** by fetching `targetRefName` from the derived remote (argument array, no shell) | Any supplied SHA: a supplied `targetSha` is an **assertion** only |
-| `workflowIdentity`, `workflowRef`, `workflowSha` | Platform-authenticated run metadata | Workflow content reported by the head |
+| `workflowIdentity`, `workflowRef`, `workflowSha` | Platform-authenticated run metadata | Workflow content reported by the head; operator input (under `OPERATOR_SUPPLIED` a workflow value is rejected and never establishes execution provenance, [D16](#27-design-decisions-d1-d16)) |
 
 *Governance root and protected targets (C4).* Policy is anchored to one
 trust root: the **tip of the repository's default branch**, whose name is
@@ -675,7 +675,7 @@ authenticated: the tool still resolves the target tip and validates the range
 itself, but the operator-supplied target and head carry `invocationTrust =
 OPERATOR_SUPPLIED` and a `HUMAN_REVIEW_REQUIRED` record (`OPERATOR_INVOCATION`),
 so a manual run is at best `HUMAN_REVIEW_REQUIRED` and never `READY`. Arbitrary
-command-line input never qualifies as platform metadata.
+command-line input never qualifies as platform metadata. "At best `HUMAN_REVIEW_REQUIRED`" is a **ceiling, not a guarantee** that every manual run yields an accepted canonical report: operator-supplied workflow metadata never establishes target-tip provenance, so a manual run whose target-tip execution cannot be established from a platform-authenticated source fails closed (`NOT_READY`, or no authoritative report is constructed), as fixed by [D16](#27-design-decisions-d1-d16).
 
 **Protected fields** (taken from the base anchor; the head can only tighten):
 stage identity; review-class minimum; allowed and forbidden path domains;
@@ -733,7 +733,7 @@ bootstrap transition is stated explicitly, not left to inference.
   explicit, required and validated `supportedSchemaVersions` range (see the target range contract below). The gate manifest and base policy
   declare `schemaVersion` and `requiredCapabilities[]`. A capability identity
   includes its semantic version: `capability-id@major` (for example `dependency-aware-delta@1`, the canonical `1E` identity; the canonical stage
-  capabilities and `frameworkVersion` are fixed by [D15](#27-design-decisions-d1-d15)), matching `^[a-z][a-z0-9-]{1,63}@[1-9][0-9]{0,3}$`.
+  capabilities and `frameworkVersion` are fixed by [D15](#27-design-decisions-d1-d16)), matching `^[a-z][a-z0-9-]{1,63}@[1-9][0-9]{0,3}$`.
   A requirement `X@n` is satisfied only by the exact identity `X@n` listed in
   `supportedCapabilities[]`: a name-only match never satisfies a requirement,
   `X@1` does not satisfy `X@2`, and a target that supports several majors lists
@@ -745,7 +745,7 @@ bootstrap transition is stated explicitly, not left to inference.
   metadata rather than a capability the target lacks. Detection compares these
   explicit identifiers and never relies on heuristic behavior. The supported
   capability set and schema range come only from target-tip framework metadata;
-  the reviewed head cannot claim what the target supports. A head may add required capabilities (tightening) but may not remove base-required ones.
+  the reviewed head cannot claim what the target supports, and metadata counts as target-tip metadata only under `PLATFORM_AUTHENTICATED` invocation with the authenticated execution commit equal to the `1A`-resolved target tip ([D16](#27-design-decisions-d1-d16)). A head may add required capabilities (tightening) but may not remove base-required ones.
  Semantic-version correctness is **governance-enforced, not machine-inferred**:
   no deterministic recognition of a breaking semantic change is claimed. A
   framework PR that changes capability semantics touches protected framework
@@ -915,7 +915,7 @@ explicit suppression covers it. A suppression follows the exception trust anchor
 of [§14](#14-manifest-ownership-trust-anchor-and-authority) and
 [§15](#15-governed-exception-model) (only base-anchored suppressions yield
 `PASS`; a head-added suppression is a proposal and leaves the hit
-`HUMAN_REVIEW_REQUIRED`), plus these rules:
+`HUMAN_REVIEW_REQUIRED`; base-anchored status is membership in the `1A` effective policy that the scan is bound to by policy fingerprint, never presence in a caller-provided object, [D16](#27-design-decisions-d1-d16)), plus these rules:
 
 - **Explicit and narrow:** one rule ID, one exact file path (and optionally one
   line range), one fingerprint; never a directory glob, never global, never
@@ -1097,7 +1097,7 @@ implement a second CI lookup.
 | `1B` Markdown and reference integrity | Parser-aware tables, fences, headings, anchors, links; ID-family references | Changed-file set from `1A`; file bytes at head; manifest ID families | Parsed document structure, integrity records | Wave 0, `1A` | Markdown and reference integrity | `parseMarkdown()`, `checkReferences()` | No semantic wording judgment; no auto-fix |
 | `1C` Evidence and provenance | Class vs strength separation, one class per row, promotion-wording flags, weakest-premise check | `1B` structure; manifest evidence-model config | Evidence records, `HUMAN_REVIEW_REQUIRED` flags | `1B` | Evidence/provenance validation | `checkEvidenceModel()` | Never decides whether an inference is substantively justified |
 | `1D` Risk / source / method consistency | Totals, counts, taxonomy, research-method contradiction checks | `1B` structure; `1C` records | Consistency records | `1B`, `1C` | Risk/source and method consistency | `checkConsistency()` | Never decides whether a risk is acceptable; nuanced method cases are `HUMAN_REVIEW_REQUIRED` |
-| `1E` Delta review and fingerprints | Domain change model, fingerprints, transitive invalidation, `PRESERVATION_CHECK_ONLY` eligibility | Graph (Wave 0); `1A` identity and changed files; `1B`-`1D` records; base and head Git content | One domain result record per enabled domain (effective level, reasons, evidence refs, dependency state, fingerprint) | Wave 0, `1A`-`1D` | Delta review, fingerprints | `computeDeltaReview()` | Never lowers review class; never states correctness |
+| `1E` Delta review and fingerprints | Domain change model, fingerprints, transitive invalidation, `PRESERVATION_CHECK_ONLY` eligibility | Graph (Wave 0); `1A` identity and changed files; `1B`-`1D` records; base and head Git content | One domain result record per enabled domain (effective level, reasons, evidence refs, dependency state, fingerprint); the domain-set statement naming the gate-manifest digests of the graphs consumed | Wave 0, `1A`-`1D` | Delta review, fingerprints | `computeDeltaReview()` | Never lowers review class; never states correctness; never treats an omitted base graph as "no base governance" unless `1A` proved absence ([D16](#27-design-decisions-d1-d16)) |
 | `1F` CI evidence and reporting | CI evidence collection/classification; report assembly; CLI; workflow wiring (later) | `1A` identity; GitHub run metadata; all stage records | CI evidence record; `pre-review.json`; derived `pre-review.md` | Wave 0, `1A`-`1E` | CI evidence, reviewer-facing summary | `collectCiEvidence()` (post-run; §17), `buildReport()` | Never computes readiness by any means except the kernel aggregator; never reruns CI; never observes its own run; not a required-check change |
 | `1G` Independent framework validation | Independent Senior Software Developer and Security review, adversarial validation of `1A`-`1F` | The implemented framework, tests, fixtures | Review record | `1A`-`1F` merged | Nothing executable | none | Not code; not self-certification; not the Type & Schema Boundary Audit |
 
@@ -1141,13 +1141,13 @@ Audit.
 | External command output | Exit status checked; stdout size-capped; parsed with strict formats; stderr never trusted as data |
 | Evidence files | Read as bounded UTF-8; invalid encoding fails the domain; parsed by the `1B` parser only, and never executed, imported, sourced or evaluated |
 | Exceptions and suppressions | Same as manifest; base-anchored only for `PASS`; expiry evaluated with an injected clock |
-| Trusted invocation context | Mode, repository, target ref name and head SHA from the platform-authenticated sources of [§14](#14-manifest-ownership-trust-anchor-and-authority); SHAs 40-hex, allow-listed mode; a supplied target SHA is only an assertion; operator input only in capped manual mode; never repository files |
+| Trusted invocation context | Mode, repository, target ref name and head SHA from the platform-authenticated sources of [§14](#14-manifest-ownership-trust-anchor-and-authority); SHAs 40-hex, allow-listed mode; a supplied target SHA is only an assertion; operator input only in capped manual mode, and never as workflow or execution provenance; SHA-256 digest fields lowercase 64-hex; never repository files ([D16](#27-design-decisions-d1-d16)) |
 | CI rerun determination record | Runtime schema; every binding field checked against actual run data; identity taken from the authenticated channel and checked against the base-anchored authorized set; content digest and version history checked |
 
 ## 21. Public versus internal API boundary
 
 Only the interfaces named in [§18](#18-sub-stage-ownership-map) and the kernel
-(types, `validateManifest()`, `validateGraph()`, `aggregate()`) are public.
+(types, `validateManifest()`, `validateGraph()`, `aggregate()`) are public. Public `aggregate()` is a completeness authority: it derives the canonical completeness plan itself from the framework-constant map and the owner statements in the records, so no caller-chosen plan can narrow it, and it needs no separate plan API ([D16](#27-design-decisions-d1-d16)).
 Consumers -- including `GOV-VERIFY-1` -- import only these. Stage-internal
 helpers (parsers' token handling, regexes, extractors, git command builders) are
 private; no consumer reaches into them, and no consumer recomputes an owner's
@@ -1201,7 +1201,7 @@ only from the JSON; the report schema is versioned and an unknown incompatible r
 | `schemaVersion` | integer | Required. This is the **report** format version, a consumer-side contract separate from the manifest `schemaVersion` of [§14](#14-manifest-ownership-trust-anchor-and-authority): consumers reject any value they do not list as supported (`FAIL` for a verifier, never a best-effort read) |
 | `tool` | object: `name`, `version` | Required |
 | `generatedFor` | object: `head`, `tree`, `base`, `parents[]`, `branch` | Full 40-hex identity; must equal the `1A` identity |
-| `trustedContext` | object: `mode`, `invocationTrust` (`PLATFORM_AUTHENTICATED`/`OPERATOR_SUPPLIED`), `repositoryId`, `provider`, `eventType`, `targetRefName`, `resolvedTargetTip`, `suppliedTargetSha` (or `null`), `headSha`, `base`, `baseDerivation`, `workflowIdentity`, `workflowBlobSha`, `baseWorkflowBlobSha`, `defaultBranch`, `rootTip`, `rootPolicyDigest`, `basePolicyDigest`, `executedFrom` (`TARGET_TIP`/`HEAD`), `frameworkVersion`, `targetSupportedCapabilities[]` (`id@major`), `targetSupportedSchemaVersions`, `requiredCapabilities[]` (`id@major`), `phase` (`1`/`2`), `collectorRunId`, `executedCommit` | The trusted invocation values the base was derived from and the independently resolved tip ([§14](#14-manifest-ownership-trust-anchor-and-authority)) |
+| `trustedContext` | object: `mode`, `invocationTrust` (`PLATFORM_AUTHENTICATED`/`OPERATOR_SUPPLIED`), `repositoryId`, `provider`, `eventType`, `targetRefName`, `resolvedTargetTip`, `suppliedTargetSha` (or `null`), `headSha`, `base`, `baseDerivation`, `workflowIdentity`, `workflowBlobSha`, `baseWorkflowBlobSha`, `defaultBranch`, `rootTip`, `rootPolicyDigest`, `basePolicyDigest`, `executedFrom` (`TARGET_TIP`/`HEAD`), `frameworkVersion`, `targetSupportedCapabilities[]` (`id@major`), `targetSupportedSchemaVersions`, `requiredCapabilities[]` (`id@major`), `phase` (`1`/`2`), `collectorRunId`, `executedCommit` | The trusted invocation values the base was derived from and the independently resolved tip ([§14](#14-manifest-ownership-trust-anchor-and-authority)). **Restatement only, never authority:** every field whose fact `1A` owns must equal the validated `1A` record or the report is not constructed; SHA-256 digest fields are lowercase 64-hex ([D16](#27-design-decisions-d1-d16)) |
 | `externalEvidence` | array of `{sourceObjectId, sourceVersion, contentDigest, collectedAt, immutability}` (`MUTABLE` by default; `VERIFIED_PROVIDER` or `VERIFIED_CRYPTO` only with recorded verification) | Every externally mutable source the report relied on ([§25a](#25a-decision-time-evidence-freshness)) |
 | `requiresRevalidation` | literal `true` | The report is not usable for a decision until revalidated |
 | `finalized` | boolean | Marks a phase-2 finalized report. **Non-authoritative on its own:** `finalized = true` never authenticates a report; authority requires the external run-identity verification of [§25a](#25a-decision-time-evidence-freshness) |
@@ -1294,7 +1294,12 @@ for the two verified values; an unknown or unverifiable source is `MUTABLE`.
 Only a `VERIFIED_*` item may skip re-fetch at revalidation; every `MUTABLE` item
 is always re-fetched, and the report-level `requiresRevalidation` stays `true`.
 Revalidation also re-resolves the governance root tip and compares
-`rootPolicyDigest`; a difference is `STALE_EVIDENCE`. CI run data is re-fetched
+`rootPolicyDigest`; a difference is `STALE_EVIDENCE`. The report root facts
+used for that comparison are consumed only after they are proven equal to the
+report's own `1A.POLICY.ROOT` record (with a lowercase 64-hex digest, or `null`
+only in the bootstrap case that record proves); an absent, malformed or differing
+record is `STALE_EVIDENCE`, so a `trustedContext` restatement can never make stale
+evidence appear fresh ([D16](#27-design-decisions-d1-d16)). CI run data is re-fetched
 because reruns add attempts.
 **Report finalization is externally verified (C5).** A `finalized` marker or a
 `phase` field inside a report is not authoritative by itself. Before treating a
@@ -1334,7 +1339,7 @@ certification wherever pre-merge evidence is reused.
   `STANDARD_TWO_PARENT` merge, post-merge certification and canonical closure are
   unchanged.
 
-## 27. Design decisions D1-D15
+## 27. Design decisions D1-D16
 
 | ID | Decision | Rationale | Rejected alternatives | Consequences |
 |---|---|---|---|---|
@@ -1353,6 +1358,7 @@ certification wherever pre-merge evidence is reused.
 | D13 | Evidence bound to (`head`,`tree`,`base`) from Git and to the trusted invocation and root policy digest; existing reports and cached CI never trusted; externally mutable evidence carries object ID, version, digest, `collectedAt` and `immutability` (mutable by default; only provider- or cryptographically verified immutability skips re-fetch) and is re-verified at review consumption, merge authorization and reuse in certification (`STALE_EVIDENCE` is `INCOMPLETE`) | Stale/borrowed CI is a recorded failure mode in this repository's history; comments can be edited after collection; a configured immutability flag proves nothing | Trusting a committed report; treating a report as indefinitely authoritative; assuming comments or configured flags are immutable | Reports are regenerated per head; every finalized report carries `requiresRevalidation: true` |
 | D14 | Public interface limited to ownership-matrix APIs plus kernel; waves 0-5; the framework's readiness is informational and never a merge gate; bootstrap is explicit (`FIRST_INTRODUCTION`, `CAPABILITY_LAG`), capability detection uses explicit identifiers, the head never validates itself, and the framework's effectiveness expands monotonically with certified merges; Type & Schema Audit and `AISEC-4` remain separate | Prevents a second source of truth; avoids a bootstrap deadlock | Exposing internals; folding the audit into `1G`; requiring `READY` to merge the first implementation | Interface additions need a reviewed matrix change; a required-check rollout needs a bootstrap exemption; capabilities are semantically versioned (`id@major`) and a name-only match never satisfies a requirement |
 | D15 | Canonical stage capabilities and framework version: the executable stages `1A`-`1F` each declare exactly one stage-level capability identity at major `@1` (`repository-preflight@1`, `markdown-reference-integrity@1`, `evidence-provenance-validation@1`, `risk-source-method-consistency@1`, `dependency-aware-delta@1`, `ci-evidence-reporting@1`); `1G` has none; the implemented `1A`-`1F` framework is `frameworkVersion = "0.5.0"`, a human-governed release identity that is never a compatibility mechanism; `supportedSchemaVersions` stays `1..1` (full statement in the D15 detail below) | Capability identities are externally visible governance contract identities, so they must be canonical design rather than derived from implementation code; exact `id@major` matching needs fixed identities for every executable stage | One identity per exported function; minting identities from implementation code; inferring capability support from `frameworkVersion` (for example "version >= N"); a new major for corrective hardening within the existing contracts; a capability identity for the non-executable `1G` | Truthful framework metadata declares `0.5.0` and the six identities in stage order; compatibility stays exact membership in target-tip `supportedCapabilities[]` plus the separately validated schema range; a later breaking semantic change needs a separately reviewed decision and a new major; no manifest, report schema or public interface changes |
+| D16 | Stage `1G` C3 trust/completeness corrective contract: a policy- or configuration-dependent stage result counts toward `READY` only when the policy or configuration it consumed is bound by fingerprint equality to the owner fact (`1A.POLICY.EFFECTIVE` for `checkScope()`, `scanSecrets()` and `1B`; `1A.POLICY.GATE_ANCHOR` gate-manifest digests for the `1E` graphs, and an omitted base graph only where `1A` proved no base manifest); `trustedContext` is restatement only and every field `1A` owns must equal the `1A` record; SHA-256 digests are lowercase 64-hex; `TARGET_TIP` provenance exists only under `PLATFORM_AUTHENTICATED`, and operator workflow metadata is rejected; the manual-mode "at best `HUMAN_REVIEW_REQUIRED`" is a ceiling, not a guarantee; public `aggregate()` derives the canonical completeness plan from one framework-constant map plus owner statements, and a caller plan can only restate or tighten it (full statement in the D16 detail below) | The independent Stage `1G` C2 re-reviews confirmed that valid-but-wrong inputs to real stages, contradictory restatements, operator-typed provenance and caller-chosen completeness plans could each reach a false `READY`, `TARGET_TIP` or fresh state without forging any record; one owner per fact ([§6](#6-capability-ownership-matrix)) requires consumers to prove which owner fact they consumed | A new public API for each consumer; "stricter caller policy is acceptable" (no ordering is defined); an omitted base graph meaning "no base"; binding `trustedContext` only at revalidation; accepting operator `TARGET_TIP` capped at `HUMAN_REVIEW_REQUIRED`; a new `executedFrom` value or report schema version for manual runs; a caller-chosen completeness plan; a plan-relative contract with a consumer obligation; a separate public completeness-plan API | No report schema bump, no new capability identity or major, `frameworkVersion` stays `0.5.0`; new record IDs, observed fields and reason codes are additive within report `schemaVersion` 1; an honest manual target-tip run has no accepted authoritative report; `1C`/`1D` configuration provenance is not decided; implementation is a separately authorized C3 corrective |
 
 **D15 detail: canonical stage capabilities and framework version.** This refines the capability declaration and versioning rule of
 [§14](#14-manifest-ownership-trust-anchor-and-authority) (framework
@@ -1397,6 +1403,281 @@ repository metadata. Afterwards, compatible fixes and internal hardening may
 advance the patch version and backward-compatible capability additions the
 minor version; version correctness remains governance-enforced.
 
+**D16 detail: Stage `1G` C3 trust/completeness corrective contract.** The
+independent Senior and Security re-reviews of the Stage `1G` C2 corrective (PR
+#208 at `df05203342b7e57eb40e23fd09c2fa36d182491c`) confirmed five residual
+findings, C3-M1, C3-M2, C3-M3, C3-L1 and C3-L2. This decision fixes the canonical semantics a
+later, separately authorized C3 corrective implements. It is design only: it
+implements nothing, and it changes no rule of D1-D15 except the two
+clarifications it states (the manual-mode ceiling of
+[§14](#14-manifest-ownership-trust-anchor-and-authority) and the public
+`aggregate()` completeness authority of
+[§21](#21-public-versus-internal-api-boundary)). Record IDs written here as
+introduced by the Stage `1G` corrective branch (`1A.POLICY.EFFECTIVE`,
+`1B.MARKDOWN.POLICY`, `1E.DELTA.DOMAIN_SET`) are made canonical by this decision.
+
+*Decision.*
+
+1. **Policy and configuration consumer binding (C3-M1).** A stage result that
+   depends on governance policy or configuration may contribute to `READY` only
+   when the exact policy or configuration that stage consumed is bound to the
+   canonical owner-produced fact. `1A` remains the sole owner of the effective
+   repository policy; no consumer establishes policy truth.
+   - *Owner statement.* `1A.POLICY.EFFECTIVE` (status `PASS`, emitted whenever
+     `1A` established an effective policy) states `policyFingerprint`, the
+     SHA-256 of the canonical JSON of the effective policy object computed by the
+     one canonical policy-digest function, and `referenceFamilies`. When no
+     effective policy can be established, the statement is absent, which is
+     itself a missing required result (`INCOMPLETE`).
+   - *Consumer statements.* Every stage function that consumes the effective
+     policy emits one always-present consumer statement with
+     `observed.policyFingerprint` computed by the same function over the policy
+     object it actually received, before any stage-local normalization. The
+     statement is emitted on every path that emits records, including early
+     exits. The consumer statements are `1B.MARKDOWN.POLICY` (existing),
+     `1A.SCOPE.POLICY` (from `checkScope()`) and `1A.SECRETS.POLICY` (from
+     `scanSecrets()`). All three are canonical required results in both modes.
+   - *Binding is equality.* A consumer fingerprint that differs from the owner
+     fingerprint is `CONFIGURATION_ERROR` (`POLICY_BINDING_MISMATCH`), whether
+     the supplied policy is weaker, stricter or merely different: no ordering of
+     policies is defined (the same reason [§14](#14-manifest-ownership-trust-anchor-and-authority)
+     rule 5 uses equality). A malformed fingerprint (not lowercase 64-hex) is
+     `CONFIGURATION_ERROR`. Widening allowed domains, removing forbidden or
+     protected paths, removing or relaxing secret rules, and altering the
+     suppression policy or suppression list all change the fingerprint and
+     therefore fail closed.
+   - *Suppressions.* A suppression is base-anchored only by membership in the
+     effective policy bound above ([§16](#16-secret-suppression-model)). A
+     suppression that appears only in a caller-provided object is never
+     base-anchored and can never yield `PASS`; head-proposed suppressions keep
+     the [§16](#16-secret-suppression-model) proposal rule.
+   - *Non-breaking pattern.* Owner statement, consumer fingerprint statement and
+     cross-binding: the signatures of `checkScope()` and `scanSecrets()` are
+     unchanged and no new public interface is added. If the C3 implementation
+     proves this pattern insufficient, it stops and returns the needed interface
+     as a separate design decision.
+   - *One binding step.* The cross-binding is implemented once, in the kernel's
+     canonical derivation (item 5), so a raw `aggregate()` call and
+     `buildReport()` (which derives readiness only through `aggregate()`) apply
+     the identical check; `1F` keeps no second validator.
+2. **`trustedContext` is restatement, never authority (C3-M2).**
+   `trustedContext` may restate canonical facts for transport and reporting,
+   but never establishes them. Before `buildReport()` constructs a report, every
+   `trustedContext` field whose fact `1A` owns must equal the corresponding
+   validated `1A` record; any difference rejects construction (no report is
+   produced), as already applied to `resolvedTargetTip`. The binding map is:
+
+   | `trustedContext` field | Canonical `1A` owner record | Modes |
+   |---|---|---|
+   | `mode`, `invocationTrust` | `1A.IDENTITY.INVOCATION` (`PASS` exactly for `PLATFORM_AUTHENTICATED`; `HUMAN_REVIEW_REQUIRED`/`OPERATOR_INVOCATION` exactly for `OPERATOR_SUPPLIED`) | both |
+   | `repositoryId`, `provider`, `eventType` | `1A.IDENTITY.INVOCATION` | both |
+   | `targetRefName` | `1A.IDENTITY.TARGET_TIP` and `1A.TARGET.PROTECTED` | `PR_REVIEW`; `1A.TARGET.PROTECTED` in both |
+   | `resolvedTargetTip` | `1A.IDENTITY.TARGET_TIP` and `1A.POLICY.CAPABILITIES` | both where emitted |
+   | `suppliedTargetSha` | `1A.IDENTITY.TARGET_TIP` (the supplied assertion value, or `null` when none was supplied) | `PR_REVIEW` |
+   | `defaultBranch` | `1A.POLICY.ROOT` | both |
+   | `rootTip`, `rootPolicyDigest` | `1A.POLICY.ROOT` (`rootPolicyDigest` is `null` only in the proven bootstrap case) | both |
+   | `basePolicyDigest` | `1A.POLICY.ANCHOR` (`null` only when `1A` proved no valid policy at the base anchor) | both |
+   | `workflowIdentity`, `workflowBlobSha`, `baseWorkflowBlobSha` | `1A.IDENTITY.WORKFLOW_ANCHOR` (all `null` under `OPERATOR_SUPPLIED`) | `PR_REVIEW` |
+   | `executedCommit`, `executedFrom`, `frameworkVersion`, `targetSupportedCapabilities`, `targetSupportedSchemaVersions`, `requiredCapabilities` | `1A.POLICY.CAPABILITIES` (`frameworkMetadataSource`, `executedCommit`, `targetMetadata`, `required`) | both where emitted |
+   | `headSha`, `base` | the run `subject` established by `1A` | both |
+
+   Where an owner record does not yet state the field in every outcome, C3
+   makes it do so (an observed-field addition, not a schema change). A
+   `trustedContext` field for which no canonical owner record exists (for
+   example the post-merge workflow fields, `collectorRunId`, `phase`) is not
+   duplicated into a new owner by this decision; it stays subject to runtime
+   validation and to the external verification of
+   [§25a](#25a-decision-time-evidence-freshness).
+   - *Digest representation.* Every SHA-256 digest used as a policy or content
+     digest (`policyFingerprint`, `rootPolicyDigest`, `basePolicyDigest`, the
+     gate-manifest digests of item 6 and the report `manifest` digests) is
+     lowercase 64-hex (`^[0-9a-f]{64}$`), or `null` only where the contract
+     permits absence. A malformed digest fails closed: `buildReport()` rejects
+     construction, and an owner or consumer record with a malformed digest is
+     `CONFIGURATION_ERROR`.
+   - *Revalidation.* `revalidateEvidence()` consumes root facts only after
+     proving that `trustedContext.rootTip` and `trustedContext.rootPolicyDigest`
+     equal the report's own `1A.POLICY.ROOT` record; an absent, malformed or
+     differing record is `STALE_EVIDENCE` (`INCOMPLETE`). A restatement can never
+     make stale evidence appear fresh ([§25a](#25a-decision-time-evidence-freshness)).
+3. **Operator input never establishes `TARGET_TIP` provenance (C3-M3).**
+   `TARGET_TIP` execution and framework-metadata provenance exists only under
+   `invocationTrust = PLATFORM_AUTHENTICATED`, and only when the
+   platform-authenticated execution commit equals the target tip `1A` resolved
+   independently. Under `OPERATOR_SUPPLIED`, operator-provided workflow metadata
+   is never platform metadata:
+   - trusted-context validation rejects a non-`null` `workflow` value under
+     `OPERATOR_SUPPLIED` (`TRUSTED_CONTEXT_INVALID`, so `1A` is `INCOMPLETE`);
+   - independently, as defense in depth, `1A` never derives an execution commit
+     or a `TARGET_TIP` source from an operator invocation: `executedCommit` is
+     `null`, the metadata source is the executing framework, and no target
+     metadata is recorded, so any required capability is `INCOMPLETE`
+     (`CAPABILITY_UNAVAILABLE_ON_TARGET`) and never `PASS`;
+   - `1A.IDENTITY.WORKFLOW_ANCHOR` stays `NOT_APPLICABLE` with proof, so operator
+     input never establishes workflow-anchor authority;
+   - `buildReport()` rejects an `OPERATOR_SUPPLIED` report that claims
+     `executedFrom = TARGET_TIP` or carries a non-`null` workflow field.
+
+   No operator path reaches `READY`: `1A.IDENTITY.INVOCATION` is a canonical
+   required result and is `HUMAN_REVIEW_REQUIRED` (`OPERATOR_INVOCATION`) for
+   every operator run. This decision does not authenticate the
+   `PLATFORM_AUTHENTICATED` label itself: that label, and the run metadata it
+   carries, may be set only by the platform adapter (OQ-GA-12).
+4. **Manual-mode ceiling semantics (C3-L2).** "At best `HUMAN_REVIEW_REQUIRED`"
+   ([§14](#14-manifest-ownership-trust-anchor-and-authority)) is a ceiling, not a
+   guarantee that every manual run produces an accepted canonical report. Manual
+   mode remains supported for diagnostics, evidence collection and human review.
+   If target-tip execution cannot be established from a platform-authenticated
+   source, the framework fails closed.
+
+   | Manual (`OPERATOR_SUPPLIED`) run | Canonical outcome |
+   |---|---|
+   | Stage functions and raw `aggregate()` over their records | Diagnostic records; readiness at best `HUMAN_REVIEW_REQUIRED`, and `NOT_READY` whenever a capability is required |
+   | `buildReport()` with `executedFrom = HEAD` and `executedCommit` equal to the head, for an operator who executed head code | Accepted; advisory and `NOT_READY` (head-executed output, [§14](#14-manifest-ownership-trust-anchor-and-authority) "No self-validation") |
+   | `buildReport()` with `executedFrom = TARGET_TIP` | Rejected: no authoritative report is constructed |
+   | An operator who executed target-tip code | No accepted authoritative report: the run must not claim `TARGET_TIP` (unprovable) or `HEAD` (false); its records remain diagnostic evidence, and authoritative pre-review evidence requires a platform-authenticated phase 2 run |
+
+   The operator's assertion never gains authenticated target-tip provenance.
+   No new `executedFrom` value, report-schema enum or report schema version is
+   added. If C3 cannot represent this without a report schema or public-contract
+   change, it stops and returns that as a separate Product Owner design decision.
+5. **Public `aggregate()` canonical completeness authority (C3-L1).** The
+   caller-chosen completeness plan is rejected as a basis for authoritative
+   `READY`. The GT-16 invariant holds at the public kernel interface: readiness
+   never becomes `READY` because a caller omitted mandatory facts from both the
+   records and the plan.
+   - *One canonical map.* The canonical required-result map (the fixed check
+     IDs per mode) is one framework constant owned by the kernel. `1F` imports
+     it and keeps no copy; no future consumer, including `GOV-VERIFY-1`, defines
+     another. It is framework contract state, not repository-specific
+     configuration.
+   - *Derivation.* `aggregate()` derives the effective plan itself from three
+     sources: the map entry for the run mode (taken from the run `subject`,
+     whose uniqueness the kernel already enforces); one
+     `1B.REFERENCES.<family>` per family in `1A.POLICY.EFFECTIVE`; and one
+     domain result per domain in `1E.DELTA.DOMAIN_SET`. Each owner statement is
+     itself in the constant map, so a missing one is `INCOMPLETE`
+     (`REQUIRED_RESULT_MISSING`). A malformed or non-`PASS` owner statement is
+     `CONFIGURATION_ERROR` (`COMPLETENESS_SOURCE_INVALID`), and so is a
+     reference-family result for a family the effective policy does not define.
+     An unknown mode is `CONFIGURATION_ERROR`, and a run with no valid record
+     stays `INCOMPLETE`.
+   - *Caller plan restates or tightens only.* `requiredCheckIds` and
+     `expectedDomainIds` become optional restatements. A supplied
+     `requiredCheckIds` must be a superset of the derived set (extra IDs become
+     required), and a supplied `expectedDomainIds` must equal the derived domain
+     set. Anything narrower or different is `CONFIGURATION_ERROR`
+     (`COMPLETENESS_PLAN_NARROWED`). An explicit `[]` is never proof that the
+     canonical set is empty, and a plan derived from the supplied records (for
+     example `records.map(checkId)`) carries no authority: it is narrower
+     whenever a canonical result is missing. Omitting the options is no longer a
+     missing context, because the kernel derives the context itself.
+   - *Unchanged rules.* A duplicate check ID or domain result is
+     `CONFIGURATION_ERROR`. `NOT_APPLICABLE` counts only with recorded
+     applicability proof ([§22](#22-error-model-and-exit-codes)). The policy and
+     graph cross-binding of items 1 and 6 run in the same derivation.
+   - *Auditability without a schema bump.* The kernel emits one
+     `KERNEL.COMPLETENESS` record (an ordinary result record) whose `observed`
+     states the mode, the sorted required IDs, the reference families, the domain
+     IDs and `planFingerprint`, the lowercase 64-hex SHA-256 of their canonical
+     JSON. It is non-`PASS` when derivation fails, and it reaches the report
+     through the existing `records[]`. On re-aggregation of a report's records,
+     the kernel recomputes it: an identical supplied `KERNEL.COMPLETENESS` is
+     counted once, and a differing one is `CONFIGURATION_ERROR`.
+   - *No new public API.* `aggregate()` keeps its signature and stays public. If
+     C3 finds that satisfying this item requires a new public owner-derived
+     completeness-plan API, it stops and returns the exact proposed API as a
+     separate Product Owner design decision.
+6. **`1E` base-graph absence semantics (C3-M1).** An omitted `baseGraph` never
+   means "no base governance".
+   - `1A.POLICY.GATE_ANCHOR` states, in every outcome, `baseGateSha256` and
+     `headGateSha256`: the SHA-256 of the gate-manifest bytes `1A` read at the
+     base anchor (the base, or the first parent post-merge) and at the head.
+     Each is `null` exactly when `1A` established that no gate manifest exists
+     at that side, or that no gate is declared.
+   - Every graph `computeDeltaReview()` consumes carries the SHA-256 of the
+     gate-manifest bytes it was validated from, set by the Wave 0 manifest
+     loader. `1E.DELTA.DOMAIN_SET` restates the `baseGateSha256` (`null` when no
+     base graph was supplied) and `headGateSha256` of the graphs actually
+     consumed.
+   - The kernel derivation (item 5) requires both 1E digests to equal the `1A`
+     digests. A base graph may therefore be absent only when `1A` proved that no
+     applicable base manifest exists. Otherwise the result is
+     `CONFIGURATION_ERROR` (`BASE_GRAPH_UNBOUND`), and so is a head graph not
+     validated from the head manifest `1A` read.
+   - D16 defines no semantics for `1C`/`1D` configuration provenance: no bypass
+     there was confirmed. A later confirmed bypass needs its own reviewed
+     decision.
+7. **No report schema bump.** The [§23](#23-minimum-pre-reviewjson-schema-and-versioning)
+   field set, field types and report `schemaVersion` 1 are unchanged. The
+   additions are all additive within report `schemaVersion` 1, as in earlier
+   Stage `1G` correctives:
+   - new record IDs: `1A.SCOPE.POLICY`, `1A.SECRETS.POLICY` and `KERNEL.COMPLETENESS`;
+   - new observed fields in existing records;
+   - new reason codes: `POLICY_BINDING_MISMATCH`, `BASE_GRAPH_UNBOUND`,
+     `COMPLETENESS_PLAN_NARROWED` and `COMPLETENESS_SOURCE_INVALID`.
+
+   A report schema bump needs a separate Product Owner decision; if C3 needs
+   one, it stops.
+8. **No new capability identity or major.** This is corrective hardening within
+   the existing stage contracts, so the six D15 identities stay at `@1` and no
+   identity is added.
+9. **`frameworkVersion` stays `0.5.0`** unless a separate version decision is
+   made.
+
+*Rationale.* The independent re-reviews showed that each residual reached a
+false attestation without forging any record. The paths were:
+- a valid-but-wrong argument to a real stage (a substituted scope or secret
+  policy, or an omitted base graph);
+- a restatement that contradicts its owner (a forged root identity that fooled
+  decision-time revalidation);
+- operator input labeled as platform provenance;
+- a caller-chosen completeness plan.
+
+One owner per fact ([§6](#6-capability-ownership-matrix)) is enforceable only
+if every consumer states which owner fact it consumed and that statement is
+checked against the owner. Equality is the only binding with defined meaning
+across all policy fields. Deriving completeness inside the kernel keeps one
+completeness owner and removes a shrinkable input from a public interface.
+
+*Rejected alternatives.*
+- A new public signature for `checkScope()`/`scanSecrets()` taking the
+  `getGitIdentity()` result: breaking, and unnecessary unless the fingerprint
+  pattern proves insufficient.
+- Accepting a stricter caller policy: no policy ordering is defined.
+- Treating an omitted base graph as "no base": the confirmed C3-M1 vector.
+- Binding `trustedContext` only at revalidation: the false `READY` already
+  exists by then.
+- Silently ignoring operator workflow metadata as the only control: it hides a
+  misconfiguration. Rejection is the contract, and ignoring for provenance is
+  the `1A` defense in depth.
+- Accepting operator `TARGET_TIP` capped at `HUMAN_REVIEW_REQUIRED`: violates
+  "arbitrary command-line input never qualifies as platform metadata".
+- A new `executedFrom` value (for example `OPERATOR_ASSERTED`) or report schema
+  version for manual runs: a schema change this decision avoids.
+- A caller-chosen plan honored verbatim (the C2 contract): shrinkable.
+- Recording a plan-relative contract and obligating every consumer to supply
+  the canonical plan: makes each consumer a second completeness owner.
+- A separate public completeness-plan accessor: not needed, and it would export
+  a map that consumers could copy.
+
+*Consequences.*
+- `checkScope()`, `scanSecrets()` and `computeDeltaReview()` keep their
+  signatures but emit binding statements. `aggregate()` keeps its signature but
+  no longer honors a narrowing plan.
+- `buildReport()` rejects contradictory restatements and operator `TARGET_TIP`
+  claims.
+- An honest manual target-tip run has no accepted authoritative report.
+- Readiness of raw `aggregate()` and of `buildReport()` derive from the same
+  canonical plan and binding.
+- Scope boundary: D16 binds valid-but-wrong inputs and restatements. It does not
+  authenticate records themselves. Wholesale forgery of owner statements stays
+  outside the claimed control, and authenticity of a finalized report remains
+  the external run-identity verification of [§25a](#25a-decision-time-evidence-freshness).
+- `1C`/`1D` configuration provenance is not decided.
+- The findings are `ADDRESSED` by design only. Closure needs the separately
+  authorized C3 implementation and fresh independent exact-head re-reviews.
+
 ## 28. Non-goals and status boundaries
 
 This design does not: implement any script, module, manifest, schema file,
@@ -1431,21 +1712,23 @@ independent Security review, correctives, exact-head merge authorization,
 | GT-11 | The framework passes a change to itself (self-certification) | Framework/config changes always human-reviewed; `1G` independent; report says `notAuthorization` | Review requirement, not a code test |
 | GT-12 | Resource exhaustion (huge files, output, deep manifests) | Size, depth and time caps on every input and command | Fixtures: oversized manifest/file/command output fail closed |
 | GT-13 | Self-justification: the author supplies the human determination for their own CI rerun, by push, by posting in a channel under their own account, by a self-declared reviewer field, by editing the accepted record, or by adding themselves to the authorized set | Authority derives only from the channel's authenticated `{provider, accountId, accountType}`; the base-anchored `authorizedDeterminers` set (head edits are ignored proposals); explicit `determinationMode` (`SEPARATE_PERSON`, or capped `OWNER_ATTESTED` that never reaches `READY`); bots and service accounts excluded; content digest, channel object ID and version bound at acceptance so a later edit invalidates it | Fixtures: record in the head, author's own unlisted-account comment, self-declared reviewer field, record edited after acceptance, author-added determiner, bot record, single-owner repository under each mode |
-| GT-14 | Forged or head-influenced base/invocation: the head manifest, a modified workflow, an environment variable or a supplied SHA selects the target, base or policy; a forged `base == head` or older base yields an empty diff or a weaker policy; workflow-change detection is defeated by the forged diff | Target ref name only from platform-authenticated metadata; target tip resolved by the tool from a remote derived from the authenticated repository (a supplied `targetSha` is an assertion, mismatch is `INCOMPLETE`); unique merge base; `DEGENERATE_RANGE` guard; empty diff accepted only if the platform reports zero changed files, and a computed-versus-platform count mismatch is `INCOMPLETE`; workflow blob compared with the base blob using platform run metadata, independent of the diff; only a phase-2 run from the target tip can be `READY`; `expectedBase` mismatch is `FAIL`; `POST_MERGE` requires reachability from the protected tip, exactly two parents, first parent on the target first-parent history; manual runs capped at `HUMAN_REVIEW_REQUIRED`; head can only tighten and loosening is not applied | Fixtures: head-supplied target ref, supplied SHA differing from the remote tip, `base == head`, older weaker target, forged empty diff against a platform count, modified workflow with unchanged diff, `expectedBase` mismatch, merge commit not on the target, squash, fast-forward and octopus topologies, manual argument |
+| GT-14 | Forged or head-influenced base/invocation: the head manifest, a modified workflow, an environment variable or a supplied SHA selects the target, base or policy; a forged `base == head` or older base yields an empty diff or a weaker policy; workflow-change detection is defeated by the forged diff | Target ref name only from platform-authenticated metadata; target tip resolved by the tool from a remote derived from the authenticated repository (a supplied `targetSha` is an assertion, mismatch is `INCOMPLETE`); unique merge base; `DEGENERATE_RANGE` guard; empty diff accepted only if the platform reports zero changed files, and a computed-versus-platform count mismatch is `INCOMPLETE`; workflow blob compared with the base blob using platform run metadata, independent of the diff; only a phase-2 run from the target tip can be `READY`; `expectedBase` mismatch is `FAIL`; `POST_MERGE` requires reachability from the protected tip, exactly two parents, first parent on the target first-parent history; manual runs capped at `HUMAN_REVIEW_REQUIRED` (a ceiling: operator workflow metadata is rejected and never establishes target-tip or workflow-anchor provenance, [D16](#27-design-decisions-d1-d16)); head can only tighten and loosening is not applied | Fixtures: head-supplied target ref, supplied SHA differing from the remote tip, `base == head`, older weaker target, forged empty diff against a platform count, modified workflow with unchanged diff, `expectedBase` mismatch, merge commit not on the target, squash, fast-forward and octopus topologies, manual argument, operator-typed workflow SHA equal to the target tip |
 | GT-15 | CI timing circularity or a silently missing CI record | External post-run collector; `ci` is never `null`; `NOT_COLLECTED`, in-progress or partial evidence is `INCOMPLETE` and `NOT_READY` | Fixtures: phase-1-only report, in-progress run, missing required job, `ci: null` schema violation |
-| GT-16 | Readiness green-signal ambiguity: a consumer reads only readiness and misses required human judgment, or a domain-level judgment lives outside the aggregation input | Three-value `readiness.state`; one aggregation input `records[]` that includes one domain result record per enabled domain; kernel validates domain-result completeness (missing is `INCOMPLETE`, duplicate is `CONFIGURATION_ERROR`); `domains[]` is a derived projection checked against the records; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE` | Fixtures: a domain at `HUMAN_REVIEW_REQUIRED` with every other record `PASS` yields `HUMAN_REVIEW_REQUIRED`; a dependency-level `HUMAN_REVIEW_REQUIRED`; a missing or duplicate domain result; a differing `domains[]` projection |
-| GT-17 | Stale determination or CI evidence: a determination is edited or deleted after collection, or an old report is reused for a decision | `externalEvidence[]` (object ID, version, digest, `collectedAt`) in every report; `revalidateEvidence()` at review consumption, merge authorization and reuse in certification; a difference or unavailable source is `STALE_EVIDENCE` (`INCOMPLETE`, `NOT_READY`) and a changed determination is not accepted; `requiresRevalidation: true`; comments never assumed immutable | Fixtures: determination edited after report creation, stale version reused for authorization, unavailable source, report reused without revalidation |
+| GT-16 | Readiness green-signal ambiguity: a consumer reads only readiness and misses required human judgment, or a domain-level judgment lives outside the aggregation input | Three-value `readiness.state`; one aggregation input `records[]` that includes one domain result record per enabled domain; kernel validates domain-result completeness (missing is `INCOMPLETE`, duplicate is `CONFIGURATION_ERROR`); `domains[]` is a derived projection checked against the records; `READY` only when every record is `PASS` or a proven `NOT_APPLICABLE`; public `aggregate()` derives the canonical completeness plan from the framework-constant map and owner statements, and a caller plan can only restate or tighten it ([D16](#27-design-decisions-d1-d16)) | Fixtures: a domain at `HUMAN_REVIEW_REQUIRED` with every other record `PASS` yields `HUMAN_REVIEW_REQUIRED`; a dependency-level `HUMAN_REVIEW_REQUIRED`; a missing or duplicate domain result; a differing `domains[]` projection; `aggregate()` with an explicit empty, narrowed, records-derived or altered-domain plan is `CONFIGURATION_ERROR`, and with no plan still enforces the canonical plan |
+| GT-17 | Stale determination or CI evidence: a determination is edited or deleted after collection, or an old report is reused for a decision | `externalEvidence[]` (object ID, version, digest, `collectedAt`) in every report; `revalidateEvidence()` at review consumption, merge authorization and reuse in certification; a difference or unavailable source is `STALE_EVIDENCE` (`INCOMPLETE`, `NOT_READY`) and a changed determination is not accepted; report root facts are consumed only once proven equal to the report's `1A.POLICY.ROOT` record ([D16](#27-design-decisions-d1-d16)); `requiresRevalidation: true`; comments never assumed immutable | Fixtures: determination edited after report creation, stale version reused for authorization, unavailable source, report reused without revalidation |
 | GT-18 | `OWNER_ATTESTED` overclassification: an owner-attested rerun reported as an independently justified pass | Provenance invariant: only `SEPARATE_PERSON` can emit `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN`; under `OWNER_ATTESTED` the final classification is `HUMAN_REVIEW_REQUIRED` with `candidateClassification` recorded as evidence and readiness capped at `HUMAN_REVIEW_REQUIRED` | Fixtures: `OWNER_ATTESTED` never emits the justified classification or `READY`; unresolved contributor makes `SEPARATE_PERSON` unavailable |
 | GT-19 | Unprotected or attacker-chosen target: a PR or post-merge run against a branch the attacker controls | `protectedTargetRefs` from the root policy (default branch tip), never from the head; unprotected PR target is `HUMAN_REVIEW_REQUIRED` (never `READY`); unprotected `POST_MERGE` target is `FAIL`; under the built-in minimum the only protected target is the platform-authenticated default branch; live branch protection status stays `GOV-VERIFY-1`'s | Fixtures: authenticated but unprotected PR target, head adds its branch to the list, post-merge on an unprotected branch with a fabricated two-parent commit |
-| GT-20 | Bootstrap deadlock or capability-lag self-validation: the first implementation cannot merge, or the head's own code validates the head | `FIRST_INTRODUCTION` is `NO_TARGET_FRAMEWORK` (`INCOMPLETE`); `CAPABILITY_LAG` is `CAPABILITY_UNAVAILABLE_ON_TARGET` (`INCOMPLETE`) by explicit version and capability identifiers; head-executed output is advisory, labeled `executedFrom = HEAD` and capped at `NOT_READY`; readiness is never a merge prerequisite; required-check rollout needs a bootstrap exemption; effectiveness expands only through certified merges | Fixtures: target without a framework, target lacking a required capability or manifest schema version, head-executed phase 1 never `READY`, a required check on a target without the framework |
-| GT-21 | Old-branch weak-policy selection: branching from an old commit to be reviewed under weaker policy | Base policy protected fields must equal the root-tip policy or the run is `INCOMPLETE` (`POLICY_OUTDATED`, rebase required); `rootPolicyDigest` bound to the report and rechecked at revalidation, so a policy advance makes earlier evidence `STALE_EVIDENCE` | Fixtures: branch point with an older policy, root policy advancing after evidence collection |
+| GT-20 | Bootstrap deadlock or capability-lag self-validation: the first implementation cannot merge, or the head's own code validates the head | `FIRST_INTRODUCTION` is `NO_TARGET_FRAMEWORK` (`INCOMPLETE`); `CAPABILITY_LAG` is `CAPABILITY_UNAVAILABLE_ON_TARGET` (`INCOMPLETE`) by explicit version and capability identifiers; head-executed output is advisory, labeled `executedFrom = HEAD` and capped at `NOT_READY`; operator-supplied workflow metadata can never establish target-tip execution or target capability support ([D16](#27-design-decisions-d1-d16)); readiness is never a merge prerequisite; required-check rollout needs a bootstrap exemption; effectiveness expands only through certified merges | Fixtures: target without a framework, target lacking a required capability or manifest schema version, head-executed phase 1 never `READY`, a required check on a target without the framework |
+| GT-21 | Old-branch weak-policy selection: branching from an old commit to be reviewed under weaker policy | Base policy protected fields must equal the root-tip policy or the run is `INCOMPLETE` (`POLICY_OUTDATED`, rebase required); `rootPolicyDigest` bound to the report, required to equal the `1A.POLICY.ROOT` record (lowercase 64-hex) and rechecked at revalidation, so a policy advance makes earlier evidence `STALE_EVIDENCE` and a forged root restatement is rejected ([D16](#27-design-decisions-d1-d16)) | Fixtures: branch point with an older policy, root policy advancing after evidence collection, report whose `trustedContext` root identity differs from its `1A.POLICY.ROOT` record, malformed digest |
 | GT-22 | Partial platform diff metadata used to confirm a forged base | Complete-list proof (pagination exhausted, received count equals platform count, limit not reached) before comparison, else `INCOMPLETE`; comparison is of normalized path sets with no aliasing (byte-exact, no case folding, renames contribute both paths); equal counts with different paths are never agreement | Fixtures: truncated list, unresolved pagination, equal counts with different paths, case-differing paths |
 | GT-23 | Fake immutable evidence: a config flag or author assertion claims a source is immutable so revalidation is skipped | Mutable by default; only provider-verified or cryptographically verified immutability, recorded with its verification evidence, may skip re-fetch; manifest booleans, configuration flags, author assertions and comment text never qualify | Fixtures: configured immutability flag, unverifiable source, verified source, comment claiming immutability |
 | GT-24 | Readiness misread as an authority: `NOT_READY` treated as "human review forbidden" (recreating a bootstrap deadlock) or `READY` treated as merge authorization | `readiness.state` is defined as framework attestation only; `NOT_READY` never bars human review or a human-authorized merge; `READY` never authorizes a merge; bootstrap states are `NOT_READY` yet proceed through `HEAVY` review; the ROADMAP sync must align the pre-review-pass wording | Fixtures and review checks: a first-introduction PR at `NOT_READY` still enters review and merge; `READY` never appears as an authorization field |
-| GT-25 | Capability semantic drift or schema-version ambiguity: a target claims a capability name with older semantics, or a newer schema is treated as corruption | Capability identity is `id@major` with exact matching and a new major for breaking changes; malformed identity is `CONFIGURATION_ERROR`; one `schemaVersion` rule (malformed or too-old `CONFIGURATION_ERROR`, valid-newer `CAPABILITY_UNAVAILABLE_ON_TARGET`); supported sets come only from target-tip metadata | Fixtures: `X@1` against a `X@2` requirement, `X@unknown`, malformed and newer and older schema versions, head-claimed target support; the manifest `schemaVersion` syntax is defined and parsed before any comparison, so a malformed value can never become capability lag; capability major correctness is governance-enforced (a framework PR changing capability semantics is `HUMAN_REVIEW_REQUIRED`) |
+| GT-25 | Capability semantic drift or schema-version ambiguity: a target claims a capability name with older semantics, or a newer schema is treated as corruption | Capability identity is `id@major` with exact matching and a new major for breaking changes; malformed identity is `CONFIGURATION_ERROR`; one `schemaVersion` rule (malformed or too-old `CONFIGURATION_ERROR`, valid-newer `CAPABILITY_UNAVAILABLE_ON_TARGET`); supported sets come only from target-tip metadata established under `PLATFORM_AUTHENTICATED` invocation ([D16](#27-design-decisions-d1-d16)) | Fixtures: `X@1` against a `X@2` requirement, `X@unknown`, malformed and newer and older schema versions, head-claimed target support; the manifest `schemaVersion` syntax is defined and parsed before any comparison, so a malformed value can never become capability lag; capability major correctness is governance-enforced (a framework PR changing capability semantics is `HUMAN_REVIEW_REQUIRED`) |
 | GT-26 | Forged finalized report or anomalous provider file metadata | A `finalized` marker is never authoritative: the consumer verifies `phase = 2`, collector run ID, workflow identity and blob, and executed commit against provider-authenticated run metadata; a duplicate path in the platform file list is an anomaly (`INCOMPLETE`), never silently deduplicated | Fixtures: report claiming phase 2 without matching run evidence, report from a head-executed run, duplicate platform path entries |
 | GT-27 | Root-policy field omission weakening governance: a root policy without a valid `protectedTargetRefs` falls back to the default branch | `protectedTargetRefs` is required in an existing root policy; absent, empty, malformed or unparseable is `CONFIGURATION_ERROR`; the bootstrap fallback is used only when no root policy exists and is disabled once one does; an unobtainable default branch is `INCOMPLETE` with no guessing | Fixtures: root policy without the field, empty list, duplicate entries, unparseable policy, default branch unavailable |
 | GT-28 | Malformed or absent target capability metadata causing permissive compatibility handling (for example a missing range treated as unlimited support, or `min > max` swapped) | `supportedSchemaVersions` is required and validated (raw-token positive integers, `min <= max`); absent is `TARGET_SCHEMA_RANGE_UNAVAILABLE`, invalid is `TARGET_SCHEMA_RANGE_INVALID`, both `INCOMPLETE`; the manifest is never compared against an unvalidated range; the head cannot supply the range | Fixtures: missing, null, wrong-container, malformed, zero, decimal and reversed ranges; `min = 5`, `max = 2`, manifest `3`; a head-supplied range |
+| GT-29 | Consumer policy or configuration substitution: a valid-but-different policy is passed to a real stage (wider scope, omitted forbidden or protected paths, removed secret rule, caller-created suppression) or the `1E` base graph is omitted, so a real violation reaches `READY` without forging a record | `1A.POLICY.EFFECTIVE` owner fingerprint; always-present consumer statements (`1B.MARKDOWN.POLICY`, `1A.SCOPE.POLICY`, `1A.SECRETS.POLICY`) bound by fingerprint equality (`POLICY_BINDING_MISMATCH`); base-anchored suppression only by membership in the bound effective policy; `1E` graph digests bound to `1A.POLICY.GATE_ANCHOR`, base graph absent only on `1A` proof (`BASE_GRAPH_UNBOUND`) ([D16](#27-design-decisions-d1-d16)) | Fixtures: each substitution against the real pipeline is never `READY`; a stricter but different policy also fails; omitted base graph with an existing base manifest; positive controls with the effective policy and real graphs |
+| GT-30 | Restatement forgery or operator provenance: `trustedContext` restates root, base, target, workflow or capability facts that differ from the `1A` records, or an operator-typed workflow SHA is presented as platform execution provenance | `trustedContext` is restatement only; every `1A`-owned field must equal its `1A` record or no report is constructed; digests lowercase 64-hex; `TARGET_TIP` only under `PLATFORM_AUTHENTICATED`; operator `workflow` rejected; revalidation consumes root facts only after proving them equal to `1A.POLICY.ROOT` ([D16](#27-design-decisions-d1-d16)) | Fixtures: each mapped field altered alone; malformed digests; forged root identity at revalidation; operator workflow SHA equal to the target tip; operator report claiming `executedFrom = TARGET_TIP`; legitimate platform target-tip control |
 
 Injection through Markdown content (prompt-style text in evidence files) is not
 executed or interpreted: the framework only parses structure and never follows
@@ -1488,6 +1771,12 @@ Each case must be answered by this design without ambiguity.
 | GD-RV-29 | Tool cannot reach the CI API | `INCOMPLETE`, readiness `NOT_READY` |
 | GD-RV-30 | Framework asked to lower review class from `HEAVY` | Not possible; class copied, never derived |
 | GD-RV-31 | Design claims Type & Schema Audit or `AISEC-4` progress | Prohibited ([§28](#28-non-goals-and-status-boundaries)); both remain separate/`NOT_STARTED` |
+| GD-RV-32 | `checkScope()` or `scanSecrets()` receives a valid policy that differs from the `1A` effective policy | `CONFIGURATION_ERROR` (`POLICY_BINDING_MISMATCH`); never `READY` ([D16](#27-design-decisions-d1-d16)) |
+| GD-RV-33 | `computeDeltaReview()` without a base graph while `1A` read a base gate manifest | `CONFIGURATION_ERROR` (`BASE_GRAPH_UNBOUND`); absence is legal only on `1A` proof |
+| GD-RV-34 | `trustedContext.rootTip`/`rootPolicyDigest` differ from `1A.POLICY.ROOT`, or a digest is not lowercase 64-hex | No report is constructed; at revalidation `STALE_EVIDENCE` |
+| GD-RV-35 | `OPERATOR_SUPPLIED` with a typed workflow SHA equal to the target tip | Trusted context rejected; never `TARGET_TIP`, never capability `PASS` |
+| GD-RV-36 | Honest manual run that executed target-tip code | No accepted authoritative report; diagnostic records only, at best `HUMAN_REVIEW_REQUIRED` |
+| GD-RV-37 | `aggregate(records, {requiredCheckIds: []})` or a plan derived from `records.map(checkId)` | `CONFIGURATION_ERROR` (`COMPLETENESS_PLAN_NARROWED`) when narrower than the canonical plan; never `READY` |
 
 ## 31. Open questions
 
@@ -1504,6 +1793,7 @@ implementation; there are none.
 | OQ-GA-9 | Trust contract for the CI rerun determination record | `RESOLVED` as a design trust contract in C2 | Authenticated identity, authorized set, separation modes, tamper evidence and bindings fixed in [§17](#17-ci-evidence-ownership-and-the-machinehuman-boundary) independent of storage |
 | OQ-GA-10 | Provider-specific channel and storage choice for the determination record | `NON_BLOCKING_IMPLEMENTATION` | All trust properties are fixed by section 17 rules 1-7; a provider that cannot satisfy them is not qualifying, so the choice cannot weaken them |
 | OQ-GA-11 | Distinct protected policy per target ref (for example release branches) instead of the single root policy | `FUTURE_ENHANCEMENT` | The design applies the root-tip policy to every protected target; per-target policy would need a reviewed design change |
+| OQ-GA-12 | Phase-2 platform adapter: which provider-authenticated run metadata populates a `PLATFORM_AUTHENTICATED` context, in particular the execution commit (`workflowSha`/`executedCommit`) that must equal the resolved target tip | `NON_BLOCKING_IMPLEMENTATION` | Must be fixed before any operational rollout that relies on `READY`; [D16](#27-design-decisions-d1-d16) binds provenance to the label but does not authenticate the label, and genuine `pull_request` run metadata does not by itself identify an execution from the target tip |
 | OQ-GA-6 | Extractor strategy for Markdown domain regions (heading-based versus marker-based) | `NON_BLOCKING_IMPLEMENTATION` | Must yield the region selectors of [§13](#13-fingerprint-model) |
 | OQ-GA-7 | Reuse of the framework for the Type & Schema Boundary Audit | `FUTURE_ENHANCEMENT` | Tooling may help; certification stays separate |
 | OQ-GA-8 | Non-Markdown artifact domains (JSON, code) | `FUTURE_ENHANCEMENT` | Design is region-selector based and format-agnostic |
@@ -1544,3 +1834,8 @@ not self-declare closure.
 | L-11 (LOW) target schema range validity undefined | ADDRESSED by C7 -- closure pending independent review | Required, validated `supportedSchemaVersions`; absent is `TARGET_SCHEMA_RANGE_UNAVAILABLE`, invalid or `min > max` is `TARGET_SCHEMA_RANGE_INVALID`, both `INCOMPLETE`; never compared before validation | [§14](#14-manifest-ownership-trust-anchor-and-authority), [§22](#22-error-model-and-exit-codes), [§20](#20-runtime-validation-at-every-input) |
 | INFO-1..4 (C6 re-review) | ADDRESSED by C7 | Raw-token validation before numeric normalization; wrong-container `protectedTargetRefs` is `CONFIGURATION_ERROR`; `DEFAULT_BRANCH_UNAVAILABLE` reason code; manifest-schema precedence over `POLICY_OUTDATED` clarified | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
 | INFO items from earlier re-reviews | ADDRESSED or RESOLVED | See earlier rows | [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| Stage `1G` C2 re-review C3-M1 (MEDIUM) policy/config provenance | ADDRESSED by D16 (design) -- implementation pending a separately authorized C3; closure pending independent review | Consumer fingerprint statements bound to `1A.POLICY.EFFECTIVE`; `1E` graph digests bound to `1A.POLICY.GATE_ANCHOR` | [D16](#27-design-decisions-d1-d16), [§16](#16-secret-suppression-model), [§18](#18-sub-stage-ownership-map) |
+| Stage `1G` C2 re-review C3-M2 (MEDIUM) `trustedContext` cross-binding | ADDRESSED by D16 (design) -- implementation and closure pending | Restatement-only map; lowercase 64-hex digests; revalidation root binding | [D16](#27-design-decisions-d1-d16), [§23](#23-minimum-pre-reviewjson-schema-and-versioning), [§25a](#25a-decision-time-evidence-freshness) |
+| Stage `1G` C2 re-review C3-M3 (release-blocking; Senior MEDIUM, Security LOW) operator provenance | ADDRESSED by D16 (design) -- implementation and closure pending | `TARGET_TIP` only under `PLATFORM_AUTHENTICATED`; operator `workflow` rejected | [D16](#27-design-decisions-d1-d16), [§14](#14-manifest-ownership-trust-anchor-and-authority) |
+| Stage `1G` C2 re-review C3-L1 (LOW) public `aggregate()` completeness | ADDRESSED by D16 (design) -- implementation and closure pending | Kernel-derived canonical plan; caller plan restates or tightens only; `KERNEL.COMPLETENESS` record | [D16](#27-design-decisions-d1-d16), [§21](#21-public-versus-internal-api-boundary) |
+| Stage `1G` C2 re-review C3-L2 (LOW) manual-mode semantics | ADDRESSED by D16 (design) -- implementation and closure pending | Ceiling, not guarantee; manual outcome table | [D16](#27-design-decisions-d1-d16), [§14](#14-manifest-ownership-trust-anchor-and-authority) |
