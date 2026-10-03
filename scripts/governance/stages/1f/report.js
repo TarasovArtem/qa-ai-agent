@@ -107,17 +107,19 @@ const MAX_PARENTS = 8;
 // early already emits a non-PASS record, so a missing ID here only adds an
 // INCOMPLETE). Per-domain 1E results are required through 1E.DELTA.DOMAIN_SET,
 // the 1E-owned statement of which domains the run reports on. Records whose IDs
-// depend on the effective policy (1B.REFERENCES.<family>) are not enumerable
-// here and are covered by aggregation of whatever 1B emitted.
+// depend on the effective policy (1B.REFERENCES.<family>) are required through
+// 1A.POLICY.EFFECTIVE, the 1A-owned statement of the effective policy and its
+// reference families, bound to 1B.MARKDOWN.POLICY (Corrective C2, 1G R2; see
+// referenceFamilyPlan()).
 const REQUIRED_CHECK_IDS = deepFreeze({
   COMMON: [
     "1A.IDENTITY.INVOCATION", "1A.IDENTITY.HEAD", "1A.IDENTITY.BASE",
-    "1A.POLICY.ROOT", "1A.POLICY.ANCHOR", "1A.POLICY.CURRENT", "1A.POLICY.CAPABILITIES", "1A.POLICY.GATE_ANCHOR",
+    "1A.POLICY.ROOT", "1A.POLICY.ANCHOR", "1A.POLICY.CURRENT", "1A.POLICY.CAPABILITIES", "1A.POLICY.GATE_ANCHOR", "1A.POLICY.EFFECTIVE",
     "1A.TARGET.PROTECTED",
     "1A.DIFF.CHANGED_FILES", "1A.DIFF.PLATFORM_AGREEMENT",
     "1A.SCOPE.PROPOSAL", "1A.SCOPE.FORBIDDEN", "1A.SCOPE.ALLOWED", "1A.SCOPE.PROTECTED",
     "1A.SECRETS.SCAN", "1A.SECRETS.SUPPRESSIONS",
-    "1B.MARKDOWN.FILES", "1B.MARKDOWN.FENCES", "1B.MARKDOWN.TABLES", "1B.MARKDOWN.HEADINGS", "1B.MARKDOWN.ANCHORS", "1B.MARKDOWN.LINKS",
+    "1B.MARKDOWN.FILES", "1B.MARKDOWN.FENCES", "1B.MARKDOWN.TABLES", "1B.MARKDOWN.HEADINGS", "1B.MARKDOWN.ANCHORS", "1B.MARKDOWN.LINKS", "1B.MARKDOWN.POLICY",
     "1C.EVIDENCE.CONFIG", "1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING", "1C.EVIDENCE.ROW_INDEX",
     "1D.CONSISTENCY.CONFIG", "1D.CONSISTENCY.COUNTS", "1D.CONSISTENCY.TAXONOMY", "1D.CONSISTENCY.METHOD",
     "1E.DELTA.DOMAIN_SET",
@@ -126,7 +128,9 @@ const REQUIRED_CHECK_IDS = deepFreeze({
   PR_REVIEW: ["1A.IDENTITY.TARGET_TIP", "1A.IDENTITY.RANGE", "1A.IDENTITY.EXPECTED_BASE", "1A.IDENTITY.WORKFLOW_ANCHOR"],
   POST_MERGE: ["1A.IDENTITY.MERGE_ON_TARGET", "1A.IDENTITY.TOPOLOGY", "1A.IDENTITY.MERGED_HEAD"],
 });
-// Check IDs buildReport() itself contributes; a caller-supplied record may not claim them.
+// Check IDs buildReport() contributes (1F.CONTEXT.*) or contributed before the kernel
+// became the completeness authority (1F.COMPLETENESS.*, Corrective C2); a caller-supplied
+// record may not claim them.
 const RESERVED_CHECK_ID = /^1F\.(CONTEXT\.|COMPLETENESS\.)/;
 
 function requiredCheckIds(mode) {
@@ -199,6 +203,99 @@ function requiredDomainIds(records, subject, callerIds) {
     if (ids === null) ids = callerIds;
   }
   return { ok: true, ids };
+}
+
+const FINGERPRINT = /^[0-9a-f]{64}$/;
+const FAMILY_NAME = /^[A-Z][A-Z0-9]{0,15}$/;
+const MAX_FAMILIES = 32;
+const sortedJson = (list) => JSON.stringify([...list].sort());
+
+/** The single record with this checkId, or null when there is none or several (a duplicate is the kernel's DUPLICATE_CHECK_ID). */
+function onlyRecord(records, checkId) {
+  const found = records.filter((r) => isPlainObject(r) && r.checkId === checkId);
+  return found.length === 1 ? found[0] : null;
+}
+
+function isPolicyStatement(r, ownerStage, subject) {
+  const o = r.observed;
+  return r.ownerStage === ownerStage && r.status === STATUS.PASS && sameSubject(r.subject, subject) && isPlainObject(o) &&
+    typeof o.policyFingerprint === "string" && FINGERPRINT.test(o.policyFingerprint) &&
+    Array.isArray(o.referenceFamilies) && o.referenceFamilies.length <= MAX_FAMILIES &&
+    o.referenceFamilies.every((f) => typeof f === "string" && FAMILY_NAME.test(f)) && new Set(o.referenceFamilies).size === o.referenceFamilies.length;
+}
+
+/**
+ * The reference families the report must contain results for (Corrective C2, 1G
+ * R2). They come only from 1A's 1A.POLICY.EFFECTIVE statement (1A is the only
+ * policy owner), never from what 1B happened to emit. 1B's 1B.MARKDOWN.POLICY must
+ * name the same policy fingerprint and family set, so a 1B run against a narrowed
+ * or substituted policy is rejected, and a result for a family the effective policy
+ * does not define is rejected rather than counted. When a statement is absent, its
+ * own required ID is missing, which already makes the report INCOMPLETE.
+ * Returns { ok:true, families } or { ok:false, reason }.
+ */
+function referenceFamilyPlan(records, subject) {
+  const effective = onlyRecord(records, "1A.POLICY.EFFECTIVE");
+  const used = onlyRecord(records, "1B.MARKDOWN.POLICY");
+  if (effective !== null && !isPolicyStatement(effective, "1A", subject)) return { ok: false, reason: "the 1A.POLICY.EFFECTIVE record is malformed" };
+  if (used !== null && !isPolicyStatement(used, "1B", subject)) return { ok: false, reason: "the 1B.MARKDOWN.POLICY record is malformed" };
+  if (effective === null) return { ok: true, families: [] };
+  const families = [...effective.observed.referenceFamilies].sort();
+  if (used !== null) {
+    if (used.observed.policyFingerprint !== effective.observed.policyFingerprint) return { ok: false, reason: "1B checked references against a different policy than 1A's effective policy" };
+    if (sortedJson(used.observed.referenceFamilies) !== JSON.stringify(families)) return { ok: false, reason: "1B's reference families differ from those 1A's effective policy defines" };
+  }
+  const defined = new Set(families);
+  const foreign = records.find((r) => isPlainObject(r) && typeof r.checkId === "string" && r.checkId.startsWith("1B.REFERENCES.") && !defined.has(r.checkId.slice("1B.REFERENCES.".length)));
+  if (foreign !== undefined) return { ok: false, reason: "records[] contains a reference-family result for a family the effective policy does not define" };
+  return { ok: true, families };
+}
+
+function isCapabilityProvenance(r, subject) {
+  const o = r.observed;
+  if (r.ownerStage !== "1A" || !sameSubject(r.subject, subject) || !isPlainObject(o)) return false;
+  if (o.frameworkMetadataSource !== "TARGET_TIP" && o.frameworkMetadataSource !== "EXECUTING_FRAMEWORK") return false;
+  if (typeof o.targetTip !== "string" || !SHA40.test(o.targetTip)) return false;
+  if (o.executedCommit !== null && (typeof o.executedCommit !== "string" || !SHA40.test(o.executedCommit))) return false;
+  if (!Array.isArray(o.required) || !o.required.every((c) => validateCapabilityId(c).ok)) return false;
+  if (o.frameworkMetadataSource !== "TARGET_TIP") return o.targetMetadata === null;
+  return o.executedCommit === o.targetTip && validateFrameworkMetadata(o.targetMetadata).ok;
+}
+
+/**
+ * Cross-binding of trustedContext to the target provenance 1A established
+ * (Corrective C2, 1G R3). 1A.POLICY.CAPABILITIES carries the target tip 1A resolved
+ * itself, the platform-authenticated execution commit, and -- only when the run
+ * executed from that tip -- the target framework metadata. trustedContext may
+ * restate these facts but never establish them: a resolvedTargetTip/executedCommit
+ * pair that merely agree with each other, a TARGET_TIP execution claim 1A did not
+ * establish, or target capabilities / schema range / required capabilities that
+ * differ from 1A's are rejected. Returns null when consistent, else the reason.
+ * (An absent record is a missing required result and already INCOMPLETE.)
+ */
+function targetProvenanceContradiction(records, subject, tc) {
+  const tipRecord = onlyRecord(records, "1A.IDENTITY.TARGET_TIP");
+  if (tipRecord !== null && isPlainObject(tipRecord.observed) && Object.hasOwn(tipRecord.observed, "resolvedTargetTip") && tipRecord.observed.resolvedTargetTip !== tc.resolvedTargetTip) {
+    return "trustedContext.resolvedTargetTip differs from the target tip 1A resolved";
+  }
+  const caps = onlyRecord(records, "1A.POLICY.CAPABILITIES");
+  if (caps === null) return null;
+  if (!isCapabilityProvenance(caps, subject)) return "the 1A.POLICY.CAPABILITIES record does not carry valid target provenance";
+  const o = caps.observed;
+  if (tc.resolvedTargetTip !== o.targetTip) return "trustedContext.resolvedTargetTip differs from the target tip 1A resolved";
+  if (o.executedCommit !== null && tc.executedCommit !== o.executedCommit) return "trustedContext.executedCommit differs from the execution commit 1A established";
+  if (sortedJson(tc.requiredCapabilities) !== sortedJson(o.required)) return "trustedContext.requiredCapabilities differs from the effective policy's required capabilities";
+  if (tc.executedFrom === "TARGET_TIP") {
+    if (o.frameworkMetadataSource !== "TARGET_TIP") return "executedFrom is TARGET_TIP but 1A did not establish that the run executed from the resolved target tip";
+    const m = o.targetMetadata;
+    if (tc.frameworkVersion !== m.frameworkVersion || sortedJson(tc.targetSupportedCapabilities) !== sortedJson(m.supportedCapabilities) ||
+        tc.targetSupportedSchemaVersions.minSupported !== m.supportedSchemaVersions.minSupported || tc.targetSupportedSchemaVersions.maxSupported !== m.supportedSchemaVersions.maxSupported) {
+      return "trustedContext target framework metadata differs from the target-tip metadata 1A established";
+    }
+  } else if (o.frameworkMetadataSource === "TARGET_TIP") {
+    return "executedFrom is HEAD but 1A established that the run executed from the resolved target tip";
+  }
+  return null;
 }
 
 function invalidInput(detail) {
@@ -699,6 +796,14 @@ function buildReport(rawInput) {
   }
   const domainSet = requiredDomainIds(input.records, subject, input.expectedDomainIds);
   if (!domainSet.ok) return invalidInput(domainSet.reason);
+  // Corrective C2 (1G R2): the reference families the report must contain come from
+  // 1A's effective policy, and 1B must have checked against that same policy.
+  const policyBinding = referenceFamilyPlan(input.records, subject);
+  if (!policyBinding.ok) return invalidInput(policyBinding.reason);
+  // Corrective C2 (1G R3): the target tip, execution commit and target framework
+  // metadata in trustedContext must be the ones 1A established.
+  const provenanceProblem = targetProvenanceContradiction(input.records, subject, input.trustedContext);
+  if (provenanceProblem !== null) return invalidInput(provenanceProblem);
 
   const ci = input.ci === undefined ? null : input.ci;
   if (ci !== null && (!isPlainObject(ci) || ci.state !== "NOT_COLLECTED")) return invalidInput("ci must be omitted or exactly { state: \"NOT_COLLECTED\" } for a Phase 1 report");
@@ -743,18 +848,20 @@ function buildReport(rawInput) {
   // exact failure this record exists to prevent.
   const suppliedRecords = ci !== null ? [...input.records, ciNotCollectedRecord(subject)] : input.records;
 
-  // Corrective C1 (1G M1): every required result must be present as an actual
-  // record; a missing one is an INCOMPLETE record in the same aggregation, so a
-  // report with, e.g., only an identity record and a CI record can never be READY.
+  // Corrective C1 (1G M1) / C2 (1G R1, R2): every required result must be present
+  // as an actual record. The mandatory-result plan -- the fixed IDs for the mode plus
+  // one 1B.REFERENCES.<family> per family 1A's effective policy defines -- is handed
+  // to the kernel, the one completeness authority: a missing result becomes the
+  // kernel's INCOMPLETE KERNEL.REQUIRED_RESULT.<id> record in the same aggregation, so
+  // a report with, e.g., only an identity record and a CI record can never be READY.
   // A required result that is NOT_APPLICABLE counts only through the kernel's own
   // applicability-proof rule; a duplicate is the kernel's DUPLICATE_CHECK_ID error.
-  const present = new Set(suppliedRecords.filter((r) => isPlainObject(r) && typeof r.checkId === "string").map((r) => r.checkId));
-  const missing = requiredCheckIds(subject.range.mode).filter((id) => !present.has(id));
-  const completenessRecords = missing.map((id) => reportRecord(subject, `1F.COMPLETENESS.${id}`, STATUS.INCOMPLETE, REASON.REQUIRED_RESULT_MISSING, "a result this report requires is missing", { missingCheckId: id }));
-  const aggregateInput = [...suppliedRecords, executionContextRecord(subject, input.trustedContext), ...completenessRecords];
+  const plan = [...requiredCheckIds(subject.range.mode), ...policyBinding.families.map((f) => `1B.REFERENCES.${f}`)];
+  const aggregateInput = [...suppliedRecords, executionContextRecord(subject, input.trustedContext)];
 
   const agg = aggregate(aggregateInput, {
     expectedDomainIds: domainSet.ids === null ? undefined : domainSet.ids,
+    requiredCheckIds: plan,
     domainsProjection: input.domainsProjection,
   });
 

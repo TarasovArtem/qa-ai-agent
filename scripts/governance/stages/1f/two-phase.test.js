@@ -279,8 +279,8 @@ test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation agains
 
   // The original READY report is not reusable: folding the revalidation record into
   // its own record pool turns readiness away from READY. Corrective C1 (1G M1/M2):
-  // the pool is the report's stage inputs; the report's own 1F.CONTEXT.* /
-  // 1F.COMPLETENESS.* records are buildReport()'s to add and are refused as input.
+  // the pool is the report's stage inputs; the report's own 1F.CONTEXT.* records
+  // are buildReport()'s to add, and 1F.CONTEXT.* / 1F.COMPLETENESS.* are refused as input.
   const foldedRecords = [...phase1Records, ...ci1.records, ...revalidation2.records];
   const notReusable = buildReport(reportInput({ trustedContext: trustedContext(2), records: foldedRecords, externalEvidence: ci1.externalEvidence, ci: undefined }));
   assert.equal(notReusable.ok, true);

@@ -211,9 +211,28 @@ function reportContext(subject, overrides = {}) {
 function requiredRecords(subject, { domainIds = [] } = {}) {
   const { REQUIRED_CHECK_IDS } = require("./stages/1f/report");
   const ids = [...REQUIRED_CHECK_IDS.COMMON, ...REQUIRED_CHECK_IDS[subject.range.mode]].filter((id) => id !== "1F.CI");
+  // Corrective C2: the provenance / policy statements carry exactly what
+  // reportContext(subject) restates (target tip, execution commit, target metadata),
+  // and one policy fingerprint with no reference family, so buildReport()'s
+  // cross-bindings hold by default and tests can break one fact at a time.
+  const ctx = reportContext(subject);
+  const policyStatement = { policyFingerprint: "e".repeat(64), referenceFamilies: [] };
+  const observedFor = (checkId) => {
+    if (checkId === "1E.DELTA.DOMAIN_SET") return { domainIds: [...domainIds].sort() };
+    if (checkId === "1A.POLICY.EFFECTIVE") return { source: "ROOT_POLICY", ...policyStatement };
+    if (checkId === "1B.MARKDOWN.POLICY") return { ...policyStatement };
+    if (checkId === "1A.IDENTITY.TARGET_TIP") return { targetRefName: ctx.targetRefName, resolvedTargetTip: ctx.resolvedTargetTip, suppliedAssertion: false };
+    if (checkId === "1A.POLICY.CAPABILITIES") {
+      return {
+        required: [...ctx.requiredCapabilities], frameworkMetadataSource: "TARGET_TIP", targetTip: ctx.resolvedTargetTip, executedCommit: ctx.executedCommit,
+        targetMetadata: { frameworkVersion: ctx.frameworkVersion, supportedCapabilities: [...ctx.targetSupportedCapabilities], supportedSchemaVersions: { ...ctx.targetSupportedSchemaVersions } },
+      };
+    }
+    return {};
+  };
   return ids.map((checkId) => ({
     checkId, ownerStage: checkId.slice(0, 2), status: "PASS", subject,
-    observed: checkId === "1E.DELTA.DOMAIN_SET" ? { domainIds: [...domainIds].sort() } : {},
+    observed: observedFor(checkId),
     expected: null, reasonCode: "OK", detail: "", evidenceRefs: [],
   }));
 }

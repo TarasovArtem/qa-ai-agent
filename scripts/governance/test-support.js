@@ -46,4 +46,16 @@ function domainDecl(domainId, overrides = {}) {
   };
 }
 
-module.exports = { H, T, B, SUBJECT, record, domainRecord, domainDecl };
+/**
+ * Corrective C2 (1G R1): kernel aggregate() is READY only with an explicit
+ * completeness plan. Stage-level tests judge one stage's OWN records, so this
+ * states exactly that scope: the plan is the check IDs the stage emitted plus
+ * an explicit enabled-domain set (none by default). It never widens what can be
+ * READY -- report-level completeness is covered by buildReport() and the kernel
+ * tests, which supply the real plan.
+ */
+function stagePlan(records, expectedDomainIds = []) {
+  return { expectedDomainIds, requiredCheckIds: [...new Set(records.map((r) => r.checkId))] };
+}
+
+module.exports = { H, T, B, SUBJECT, record, domainRecord, domainDecl, stagePlan };

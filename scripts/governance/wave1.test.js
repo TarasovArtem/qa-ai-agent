@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const nodePath = require("node:path");
 const g = require("./index");
+const { stagePlan } = require("./test-support");
 const { createTempRepo, basePolicy, prContext, postMergeContext, platformList, gitOptions } = require("./test-support-git");
 
 const WORKFLOW = ".github/workflows/ci.yml";
@@ -35,7 +36,7 @@ async function pipeline(repo, head, { ctx = {}, extra = {}, scopeProposal, headS
   const secrets = await g.scanSecrets({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, headSuppressions, now: NOW, ...common });
   const markdown = await g.checkReferences({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, ...common });
   const records = files([...identity.records, ...changed.records, ...scope.records, ...secrets.records, ...markdown.records]);
-  return { identity, changed, scope, secrets, markdown, records, aggregate: g.aggregate(records) };
+  return { identity, changed, scope, secrets, markdown, records, aggregate: g.aggregate(records, stagePlan(records)) };
 }
 
 function scenario(headFiles, { baseFiles = {}, platform = true } = {}) {
@@ -59,7 +60,7 @@ test("W1 integration: a clean, in-scope PR passes every 1A and 1B check and is R
     assert.deepEqual([...p.changed.files], ["docs/a.md"]);
     for (const r of p.records) assert.deepEqual(r.subject, p.identity.subject, r.checkId);
     assert.equal(new Set(p.records.map((r) => r.checkId)).size, p.records.length);
-    assert.equal(p.markdown.records.length, 7);
+    assert.equal(p.markdown.records.length, 8, "1B.MARKDOWN.POLICY plus the six structural checks plus 1B.REFERENCES.TB");
   } finally {
     s.repo.cleanup();
   }

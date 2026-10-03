@@ -255,16 +255,26 @@ function invalid(problems, reasonCode = REASON.POLICY_INVALID, status = STATUS.C
 /**
  * Which framework metadata decides schema and capability support. Design section 14:
  * the supported capability set and schema range come ONLY from the framework at the
- * TARGET tip; a reviewed head can never claim what the target supports. A caller that
- * read the target-tip metadata passes it in (validated here, never trusted as shaped);
- * otherwise the EXECUTING framework's own metadata is used and the source is reported
- * as EXECUTING_FRAMEWORK, so head-executed (phase-1, advisory) output is labelled.
+ * TARGET tip; a reviewed head can never claim what the target supports. The metadata
+ * used is always the EXECUTING framework's own, reported as EXECUTING_FRAMEWORK, so
+ * head-executed (phase-1, advisory) output is labelled.
  */
+//
+// Corrective C2 (1G R3): a caller-supplied value is an ASSERTION, never a source of
+// target-tip provenance. Structural validity proves nothing about where a value came
+// from, so this function never labels anything TARGET_TIP: the only metadata it ever
+// returns is the executing framework's own, labelled EXECUTING_FRAMEWORK. A supplied
+// value must be structurally valid AND equal to that metadata; anything else (a
+// forged capability list, another schema range, another frameworkVersion) is
+// TARGET_METADATA_UNPROVEN and fails closed. Whether the executing framework IS the
+// target-tip framework is established only by getGitIdentity() (stages/1a/identity.js),
+// from the platform-authenticated execution commit and the target tip it resolves itself.
 function resolveFrameworkMetadata(raw) {
   if (raw === undefined || raw === null) return { ok: true, metadata: FRAMEWORK_METADATA, source: "EXECUTING_FRAMEWORK" };
   const checked = validateFrameworkMetadata(raw);
   if (!checked.ok) return { ok: false, reasonCode: checked.findings[0].reasonCode };
-  return { ok: true, metadata: checked.metadata, source: "TARGET_TIP" };
+  if (canonicalJson(checked.metadata) !== canonicalJson(FRAMEWORK_METADATA)) return { ok: false, reasonCode: REASON.TARGET_METADATA_UNPROVEN };
+  return { ok: true, metadata: FRAMEWORK_METADATA, source: "EXECUTING_FRAMEWORK" };
 }
 
 function validateBasePolicy(tree, metadata = FRAMEWORK_METADATA) {

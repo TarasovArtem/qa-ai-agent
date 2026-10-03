@@ -1,4 +1,5 @@
 "use strict";
+const { stagePlan } = require("../../test-support");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -1127,7 +1128,7 @@ test("C3-M1.19. a domain result escalated by the covering-check limit still vali
 test("C3-M1.20. the covering-limit-exceeded domain result aggregates HUMAN_REVIEW_REQUIRED via the real kernel aggregator, never READY", async () => {
   const cov = buildCovering(65, { prefix: "1C.A" });
   const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: cov.ids }, records: cov.records });
-  const agg = aggregate(r.records, { expectedDomainIds: ["DOMAIN_A"] });
+  const agg = aggregate(r.records, { ...stagePlan(r.records), expectedDomainIds: ["DOMAIN_A"] });
   assert.notEqual(agg.readiness.state, "READY");
   assert.equal(agg.readiness.state, "HUMAN_REVIEW_REQUIRED");
 });
@@ -1257,7 +1258,7 @@ async function runRaw(extra, { headDecls = singleDomain, baseDecls, records = fa
   return computeDeltaReview({ subject, headGraph, baseGraph, records, reader: { atBase: reader(files), atHead: reader(filesHead || files) }, ...extra });
 }
 const domF = (id, deps = []) => dom(id, deps, [`file:${id}.md`]);
-const readinessOf = (r, ids) => aggregate(r.records, { expectedDomainIds: ids }).readiness.state;
+const readinessOf = (r, ids) => aggregate(r.records, { ...stagePlan(r.records), expectedDomainIds: ids }).readiness.state;
 
 test("C4-L1.1. { DOMAIN_A: \"1B.C0\" } with a genuine 1B.C0 FAIL present -- rejected for the domain, never PRESERVATION / READY (the original reproduction)", async () => {
   const r = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } });

@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../../index");
+const { stagePlan } = require("../../test-support");
 const { basePolicy, changedResult, fakeReader, fakeAdapter, makeSubject } = require("../../test-support-git");
 const { validateBasePolicy, BUILTIN_MINIMUM_POLICY } = require("../1a/policy");
 const { validateResultRecord } = require("../../kernel/results");
@@ -23,14 +24,15 @@ const CHECKS = ["1B.MARKDOWN.FILES", "1B.MARKDOWN.FENCES", "1B.MARKDOWN.TABLES",
 
 test("W1 1B check: a clean document passes every structural check; every fact is its own stable record", async () => {
   const r = await check({ "docs/a.md": "# Title\n\nSee [b](b.md#other) and [self](#title) and [ext](https://example.test/x).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```\n", "docs/b.md": "# Other\n" });
-  assert.deepEqual(r.records.map((x) => x.checkId), CHECKS);
-  for (const id of CHECKS) assert.equal(state(r, id), "PASS/OK", id);
+  // Corrective C2 (1G R2): the policy statement comes first, then every structural fact.
+  assert.deepEqual(r.records.map((x) => x.checkId), ["1B.MARKDOWN.POLICY", ...CHECKS]);
+  for (const id of ["1B.MARKDOWN.POLICY", ...CHECKS]) assert.equal(state(r, id), "PASS/OK", id);
   for (const record of r.records) {
     assert.equal(validateResultRecord(record).ok, true, record.checkId);
     assert.equal(record.ownerStage, "1B");
     assert.deepEqual(record.subject, subject);
   }
-  assert.equal(g.aggregate(r.records).readiness.state, "READY");
+  assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "READY");
   assert.equal(Object.isFrozen(r), true);
   assert.equal(Object.isFrozen(r.records), true);
   assert.equal(rec(r, "1B.MARKDOWN.LINKS").observed.linksChecked, 2, "only repository-local links are verified");
@@ -134,13 +136,20 @@ test("W1 1B check: only changed Markdown files matching the configured patterns 
 
 test("W1 1B check: with nothing to inspect every record is NOT_APPLICABLE with a proof (not a hidden aggregate PASS)", async () => {
   const none = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["src/x.js"]), policy: policyOf([family()]), reader: fakeReader({ "src/x.js": "x" }) });
-  assert.deepEqual(none.records.map((x) => x.status), Array(7).fill("NOT_APPLICABLE"));
-  assert.deepEqual(none.records.map((x) => x.checkId), [...CHECKS, "1B.REFERENCES.TB"]);
-  for (const record of none.records) assert.match(record.observed.applicabilityProof, /no changed file matches/);
-  assert.equal(g.aggregate([...none.records]).kernelRecords.length, 0);
+  // Corrective C2 (1G R2): the policy statement is the one PASS record (a statement of the policy used,
+  // not a check result); every check -- including each configured family -- is NOT_APPLICABLE with a proof.
+  assert.equal(state(none, "1B.MARKDOWN.POLICY"), "PASS/OK");
+  assert.deepEqual([...rec(none, "1B.MARKDOWN.POLICY").observed.referenceFamilies], ["TB"]);
+  const noneChecks = none.records.filter((x) => x.checkId !== "1B.MARKDOWN.POLICY");
+  assert.deepEqual(noneChecks.map((x) => x.status), Array(7).fill("NOT_APPLICABLE"));
+  assert.deepEqual(noneChecks.map((x) => x.checkId), [...CHECKS, "1B.REFERENCES.TB"]);
+  for (const record of noneChecks) assert.match(record.observed.applicabilityProof, /no changed file matches/);
+  assert.equal(g.aggregate([...none.records], stagePlan(none.records)).kernelRecords.length, 0);
   const builtin = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: { ...BUILTIN_MINIMUM_POLICY, protectedTargetRefs: ["main"] }, reader: fakeReader({ "docs/a.md": "# A\n" }) });
-  assert.equal(builtin.records.every((x) => x.status === "NOT_APPLICABLE"), true);
-  assert.match(builtin.records[0].observed.applicabilityProof, /selects no Markdown files/);
+  const builtinChecks = builtin.records.filter((x) => x.checkId !== "1B.MARKDOWN.POLICY");
+  assert.equal(builtinChecks.every((x) => x.status === "NOT_APPLICABLE"), true);
+  assert.match(builtinChecks[0].observed.applicabilityProof, /selects no Markdown files/);
+  assert.deepEqual([...rec(builtin, "1B.MARKDOWN.POLICY").observed.referenceFamilies], []);
 });
 
 test("W1 1B check: invalid UTF-8 is a distinct FAIL and downgrades unrelated checks to INCOMPLETE (they ran on a partial set)", async () => {
@@ -184,7 +193,7 @@ test("W1 1B check: the changed-file input must be the complete 1A result for the
   assert.deepEqual(reader.calls.read, [], "nothing is read for an untrusted changed-file input");
   for (const bad of [null, {}, { ...subject, head: "x" }]) assert.equal((await g.checkReferences({ subject: bad, changedFiles: changedResult(subject, []), policy: policyOf(), reader })).subject, null);
   assert.equal((await g.checkReferences(null)).subject, null);
-  assert.equal((await g.checkReferences({ subject, changedFiles: changedResult(subject, ["a.md"]), policy: policyOf() })).records[0].status, "CONFIGURATION_ERROR", "no reader and no Git adapter");
+  assert.equal(rec(await g.checkReferences({ subject, changedFiles: changedResult(subject, ["a.md"]), policy: policyOf() }), "1B.MARKDOWN.FILES").status, "CONFIGURATION_ERROR", "no reader and no Git adapter");
   for (const bad of [null, undefined, "policy", { scope: {} }]) {
     const r = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: bad, reader });
     assert.notEqual(rec(r, "1B.MARKDOWN.FILES").status, "PASS", JSON.stringify(bad));
@@ -337,7 +346,7 @@ test("W1 1B composition: the subject is identical across stages and the combined
   const secrets = await g.scanSecrets({ subject, changedFiles: changed, policy: policyOf(), reader: fakeReader({ "docs/a.md": "# A\n" }), now: "2026-06-01" });
   const all = [...changed.records, ...s.records, ...secrets.records, ...b.records];
   for (const record of all) assert.deepEqual(record.subject, subject, record.checkId);
-  const agg = g.aggregate(all);
+  const agg = g.aggregate(all, stagePlan(all));
   assert.equal(agg.kernelRecords.some((k) => k.reasonCode === "RESULT_RECORD_INVALID" || k.reasonCode === "DUPLICATE_CHECK_ID" || k.reasonCode === "SUBJECT_MISMATCH"), false);
   assert.equal(agg.overallStatus, "PASS");
   assert.equal(agg.readiness.state, "READY");

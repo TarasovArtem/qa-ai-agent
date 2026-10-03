@@ -42,7 +42,7 @@ const { resolveGitAdapter } = require("./git-adapter");
 const { resolveReader } = require("../head-reader");
 const { BUILTIN_SECRET_RULE_IDS, parseSuppression, validateBasePolicy, resolveFrameworkMetadata } = require("./policy");
 
-/** Metadata deciding schema/capability support: the caller-supplied target-tip metadata when valid. */
+/** Metadata deciding schema/capability support: the executing framework's own; a supplied value is only an assertion that must equal it (Corrective C2, 1G R3), else nothing is supported. */
 const metadataOf = (input) => {
   const r = resolveFrameworkMetadata(input.targetFrameworkMetadata);
   return r.ok ? r.metadata : { supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 0 } };

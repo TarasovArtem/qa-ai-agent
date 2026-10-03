@@ -53,14 +53,20 @@ const GRAPH = [dom("DOMAIN_A", [], ["file:docs/a.md"]), dom("DOMAIN_B", [{ domai
 
 // ------------------------------------------------------------------ real-Git end-to-end pipeline
 
-/** Every executable stage, in order, on a real repository; returns the inputs buildReport() needs. */
-async function endToEnd() {
+/**
+ * Every executable stage, in order, on a real repository; returns the inputs buildReport() needs.
+ * `executedFrom` is where the platform-authenticated run metadata says the run executed
+ * (Corrective C2, 1G R3): a phase-2 run executes from the resolved target tip ("TARGET_TIP",
+ * the default); "HEAD" is a head-executed (advisory) run.
+ */
+async function endToEnd({ executedFrom = "TARGET_TIP" } = {}) {
   const repo = createTempRepo();
-  repo.commit("base", { "README.md": "# Readme\n", [WORKFLOW]: "name: ci\n", "governance/base.json": JSON.stringify(basePolicy()), "docs/a.md": DOC_BASE });
+  const tip = repo.commit("base", { "README.md": "# Readme\n", [WORKFLOW]: "name: ci\n", "governance/base.json": JSON.stringify(basePolicy()), "docs/a.md": DOC_BASE });
   repo.checkout("feature", true);
   const head = repo.commit("head", { "docs/a.md": DOC_HEAD });
   const common = gitOptions(repo);
-  const trustedContext = prContext(head, { workflow: { path: WORKFLOW, sha: head }, platformFiles: platformList(["docs/a.md"]) });
+  const executed = executedFrom === "TARGET_TIP" ? tip : head;
+  const trustedContext = prContext(head, { workflow: { path: WORKFLOW, sha: executed }, platformFiles: platformList(["docs/a.md"]) });
   const identity = await g.getGitIdentity({ trustedContext, ...common, targetFrameworkMetadata: FRAMEWORK_METADATA });
   assert.equal(identity.established, true);
   const subject = identity.subject;
@@ -82,10 +88,11 @@ async function endToEnd() {
     targetRefName: "main", resolvedTargetTip: identity.identity.targetTip, suppliedTargetSha: null, headSha: subject.head, base: subject.base,
     baseDerivation: "merge-base", workflowIdentity: WORKFLOW, workflowBlobSha: null, baseWorkflowBlobSha: null, defaultBranch: "main",
     rootTip: identity.identity.rootTip, rootPolicyDigest: identity.policy.digest, basePolicyDigest: identity.policy.digest,
-    executedFrom: "TARGET_TIP", frameworkVersion: FRAMEWORK_METADATA.frameworkVersion, targetSupportedCapabilities: [...FRAMEWORK_METADATA.supportedCapabilities],
+    executedFrom, frameworkVersion: FRAMEWORK_METADATA.frameworkVersion, targetSupportedCapabilities: [...FRAMEWORK_METADATA.supportedCapabilities],
     targetSupportedSchemaVersions: { ...FRAMEWORK_METADATA.supportedSchemaVersions }, requiredCapabilities: [], phase: 2, collectorRunId: "collector-77",
-    executedCommit: identity.identity.targetTip,
+    executedCommit: executed,
   };
+  assert.equal(executedFrom !== "TARGET_TIP" || executed === identity.identity.targetTip, true, "the fixture's target-tip run executes from the tip 1A resolved");
   const input = {
     subject, tool: { name: "gov-auto-1", version: FRAMEWORK_METADATA.frameworkVersion }, trustedContext: reportContext, externalEvidence: [...ci.externalEvidence],
     manifest: { gatePath: "governance/manifests/gate.json", schemaVersions: [1], headSha256: null, baseGateSha256: null, basePolicySha256: null, baseAnchor: "ABSENT", protectedProposals: [] },
@@ -104,8 +111,14 @@ async function pipeline() {
   if (shared === null) shared = await endToEnd();
   return shared;
 }
+let sharedHead = null;
+async function headPipeline() {
+  if (sharedHead === null) sharedHead = await endToEnd({ executedFrom: "HEAD" });
+  return sharedHead;
+}
 test.after(() => {
   if (shared !== null) shared.repo.cleanup();
+  if (sharedHead !== null) sharedHead.repo.cleanup();
 });
 
 test("C1 positive control: a complete, platform-authenticated, target-tip Phase 2 run of every real stage is READY", async () => {
@@ -118,7 +131,7 @@ test("C1 positive control: a complete, platform-authenticated, target-tip Phase 
   assert.equal(r.report.finalized, true);
   assert.equal(r.report.notAuthorization, true);
   assert.ok(r.report.records.some((x) => x.checkId === "1F.CONTEXT.EXECUTION" && x.status === "PASS"));
-  assert.ok(!r.report.records.some((x) => x.checkId.startsWith("1F.COMPLETENESS.")), "the real stages emit every required result");
+  assert.ok(!r.report.records.some((x) => x.checkId.startsWith("KERNEL.REQUIRED_RESULT.")), "the real stages emit every required result");
   assert.deepEqual(r.report.domains.map((d) => d.domainId), ["DOMAIN_A", "DOMAIN_B"]);
 });
 
@@ -130,7 +143,7 @@ test("C1 M1: identity + CI only (no stage or domain results) is never READY; eac
   const r = g.buildReport(withRecords(p.input, minimal));
   assert.equal(r.ok, true, r.reason);
   assert.equal(r.report.readiness.state, "NOT_READY");
-  const missing = r.report.records.filter((x) => x.reasonCode === "REQUIRED_RESULT_MISSING").map((x) => x.observed.missingCheckId);
+  const missing = r.report.records.filter((x) => x.reasonCode === "REQUIRED_RESULT_MISSING").map((x) => x.checkId.slice("KERNEL.REQUIRED_RESULT.".length));
   for (const id of ["1A.SECRETS.SCAN", "1B.MARKDOWN.FILES", "1C.EVIDENCE.CONFIG", "1D.CONSISTENCY.CONFIG", "1E.DELTA.DOMAIN_SET", "1A.IDENTITY.WORKFLOW_ANCHOR"]) assert.ok(missing.includes(id), id);
   assert.ok(r.report.readiness.reasons.includes("REQUIRED_RESULT_MISSING"));
 });
@@ -157,7 +170,7 @@ test("C1 M1: omitting the 1E domain-set record itself is a missing required resu
   const p = await pipeline();
   const r = g.buildReport(withRecords(p.input, without(p.records, "1E.DELTA.DOMAIN_SET")));
   assert.equal(r.report.readiness.state, "NOT_READY");
-  assert.ok(reasonsOf(r.report).includes("1F.COMPLETENESS.1E.DELTA.DOMAIN_SET:REQUIRED_RESULT_MISSING"));
+  assert.ok(reasonsOf(r.report).includes("KERNEL.REQUIRED_RESULT.1E.DELTA.DOMAIN_SET:REQUIRED_RESULT_MISSING"));
 });
 
 test("C1 M1: a missing mandatory stage result fails closed (one per stage)", async () => {
@@ -166,7 +179,7 @@ test("C1 M1: a missing mandatory stage result fails closed (one per stage)", asy
     const r = g.buildReport(withRecords(p.input, without(p.records, id)));
     assert.equal(r.ok, true, `${id}: ${r.reason}`);
     assert.equal(r.report.readiness.state, "NOT_READY", id);
-    assert.ok(reasonsOf(r.report).includes(`1F.COMPLETENESS.${id}:REQUIRED_RESULT_MISSING`), id);
+    assert.ok(reasonsOf(r.report).includes(`KERNEL.REQUIRED_RESULT.${id}:REQUIRED_RESULT_MISSING`), id);
   }
 });
 
@@ -199,8 +212,8 @@ test("C1 M1: a caller cannot pre-empt the completeness or execution-context reco
 // ------------------------------------------------------------------ M2: execution-context authority
 
 test("C1 M2: HEAD-executed output is advisory and never READY", async () => {
-  const p = await pipeline();
-  const r = g.buildReport(withContext(p.input, { executedFrom: "HEAD", executedCommit: p.subject.head }));
+  const p = await headPipeline();
+  const r = g.buildReport(p.input);
   assert.equal(r.ok, true, r.reason);
   assert.equal(r.report.readiness.state, "NOT_READY");
   assert.ok(reasonsOf(r.report).includes("1F.CONTEXT.EXECUTION:EXECUTION_NOT_FROM_TARGET_TIP"));
@@ -509,9 +522,9 @@ test("C1 L3: readiness carries the canonical reasons[] (empty only when READY)",
   const ready = g.buildReport(p.input).report.readiness;
   assert.deepEqual(Object.keys(ready).sort(), ["counts", "dominantStatus", "reasons", "state"]);
   assert.deepEqual([...ready.reasons], []);
-  const notReady = g.buildReport(withContext(p.input, { executedFrom: "HEAD", executedCommit: p.subject.head })).report.readiness;
+  const notReady = g.buildReport((await headPipeline()).input).report.readiness;
   assert.deepEqual([...notReady.reasons], ["EXECUTION_NOT_FROM_TARGET_TIP"]);
-  const hrr = g.aggregate([{ checkId: "X", ownerStage: "1A", status: "HUMAN_REVIEW_REQUIRED", subject: makeSubject(), observed: {}, expected: null, reasonCode: "GOVERNANCE_CONFIG", detail: "", evidenceRefs: [] }]).readiness;
+  const hrr = g.aggregate([{ checkId: "X", ownerStage: "1A", status: "HUMAN_REVIEW_REQUIRED", subject: makeSubject(), observed: {}, expected: null, reasonCode: "GOVERNANCE_CONFIG", detail: "", evidenceRefs: [] }], { expectedDomainIds: [], requiredCheckIds: ["X"] }).readiness;
   assert.deepEqual([...hrr.reasons], ["GOVERNANCE_CONFIG"]);
 });
 
@@ -552,8 +565,7 @@ function hostileReport(base) {
 }
 
 test("C1 S1: author- or caller-controlled strings cannot forge Markdown governance statements", async () => {
-  const p = await pipeline();
-  const notReady = g.buildReport(withContext(p.input, { executedFrom: "HEAD", executedCommit: p.subject.head })).report;
+  const notReady = g.buildReport((await headPipeline()).input).report;
   const md = renderMarkdown(hostileReport(notReady));
   const lines = md.split("\n");
   // No forged line: CR/LF inside a value never starts a new Markdown line.
