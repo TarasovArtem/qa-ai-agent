@@ -36,6 +36,8 @@
 const crypto = require("node:crypto");
 const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
+const { policyDigest } = require("./policy");
+const { cloneJson } = require("../../kernel/results");
 const { redactString, TOKEN_RULES } = require("../../safety/redaction");
 const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
 const { resolveGitAdapter } = require("./git-adapter");
@@ -203,6 +205,10 @@ async function scanSecrets(input) {
   if (!isPlainObject(changed) || !Array.isArray(changed.files) || !sameSubject(changed.subject, subject)) return bad("changedFiles must be the getChangedFiles() result for the same subject");
   const out = createRecordFactory(subject, "1A");
   const { add, notApplicable } = out;
+  let consumedFingerprint = null;
+  let consumedPolicy = null;
+  try { consumedPolicy = cloneJson(input.policy); consumedFingerprint = policyDigest(consumedPolicy); } catch {}
+  add("1A.SECRETS.POLICY", consumedFingerprint === null ? STATUS.CONFIGURATION_ERROR : STATUS.PASS, consumedFingerprint === null ? REASON.POLICY_BINDING_MISMATCH : REASON.OK, "identity of the exact consumed policy before normalization", { policyFingerprint: consumedFingerprint });
   const done = () => deepFreeze({ subject, records: out.records, outcome: null });
 
   if (changed.complete !== true) {
@@ -213,7 +219,7 @@ async function scanSecrets(input) {
   let customRules = [];
   let baseSuppressions = [];
   let maxExpiryDays = 1;
-  const policy = input.policy;
+  const policy = consumedPolicy;
   if (isPlainObject(policy) && !(policy.scope && Array.isArray(policy.scope.allowedPathDomains) && policy.scope.allowedPathDomains.length === 0)) {
     const validated = validateBasePolicy(policy, metadataOf(input));
     if (!validated.ok) {

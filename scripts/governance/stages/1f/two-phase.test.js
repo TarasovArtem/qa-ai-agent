@@ -18,8 +18,8 @@ const REPO = "TarasovArtem/qa-ai-agent";
 const WORKFLOW = ".github/workflows/cypress.yml";
 const REQUIRED = ["Unit tests"];
 
-// Corrective C1 (1G M2/L3): an authoritative context -- platform authenticated,
-// executed from the resolved target tip, canonical metadata.
+// D16: reportContext deliberately models an operator invocation. It can carry
+// valid evidence and classifications, but it cannot authenticate READY.
 const trustedContext = (phase) => reportContext(subject, { repositoryId: REPO, phase });
 // Corrective C1 (1G L1): revalidation always re-resolves the governance root and
 // compares it with the report's own values; this resolver reports them unchanged.
@@ -33,6 +33,13 @@ const NOW = "2026-09-30T00:00:00.000Z";
 function assertOnlyCiRunEvidence(externalEvidence) {
   assert.equal(externalEvidence.length, 1);
   assert.equal(externalEvidence[0].sourceObjectId.startsWith("ci-run:"), true);
+}
+function assertOperatorBoundary(report, additionalReason) {
+  assert.equal(report.readiness.state, "NOT_READY");
+  for (const reason of ["EXECUTION_NOT_FROM_TARGET_TIP", "OPERATOR_INVOCATION", "PLATFORM_PROVENANCE_UNAVAILABLE"]) {
+    assert.ok(report.readiness.reasons.includes(reason), `${reason}: ${JSON.stringify(report.readiness)}`);
+  }
+  if (additionalReason) assert.ok(report.readiness.reasons.includes(additionalReason), `${additionalReason}: ${JSON.stringify(report.readiness)}`);
 }
 const genericRecord = (checkId, ownerStage, status) => ({ checkId, ownerStage, status, subject, observed: {}, expected: null, reasonCode: "OK", detail: "", evidenceRefs: [] });
 // Corrective C1 (1G M1): every result a report requires, so only CI decides readiness here.
@@ -68,7 +75,7 @@ test("Phase 1: a report built with ci=NOT_COLLECTED is never READY, even when ev
   assert.equal(r.report.readiness.state, "NOT_READY");
 });
 
-test("Phase 2: collectCiEvidence() output, folded into a second buildReport() call, finalizes the report and (with a clean run) reaches READY", async () => {
+test("Phase 2: collectCiEvidence() output, folded into a second buildReport() call, finalizes the clean report while the operator boundary prevents READY", async () => {
   const ci = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: cleanRunAdapter(), requiredJobs: REQUIRED, now: NOW });
   assert.equal(ci.records[0].status, "PASS");
   assertOnlyCiRunEvidence(ci.externalEvidence);
@@ -76,8 +83,9 @@ test("Phase 2: collectCiEvidence() output, folded into a second buildReport() ca
   const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
   assert.equal(finalReport.ok, true);
   assert.equal(finalReport.report.finalized, true);
-  assert.equal(finalReport.report.overallStatus, "PASS");
-  assert.equal(finalReport.report.readiness.state, "READY");
+  assert.equal(finalReport.report.overallStatus, "INCOMPLETE");
+  assertOperatorBoundary(finalReport.report);
+  assert.equal(finalReport.report.ci.classification, "CLEAN_FIRST_PASS");
 });
 
 test("Phase 2 with a failing required CI job: the 1F.CI record alone prevents READY even though every 1A-1E record is PASS -- the CI record genuinely participates in aggregation, not decoration", async () => {
@@ -143,7 +151,7 @@ test("DEV-C1-11 (corrected by C2): Phase 2 with a fabricated adapter-mediated SE
   const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
   assert.equal(finalReport.ok, true);
   assert.equal(finalReport.report.finalized, true);
-  assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assertOperatorBoundary(finalReport.report, "CI_UNEXPLAINED_RERUN");
   assert.deepEqual(finalReport.report.ci, { classification: "HUMAN_REVIEW_REQUIRED" });
 
   const md = renderMarkdown(finalReport.report);
@@ -153,7 +161,17 @@ test("DEV-C1-11 (corrected by C2): Phase 2 with a fabricated adapter-mediated SE
 
 test("SEC-C2-18: forged evidence plus a forged revalidation response never establishes initial authentication -- revalidation checks freshness only, and the forged justified record is refused at the report boundary", async () => {
   const forgedEntry = { sourceObjectId: "comment-1", sourceVersion: "v1", contentDigest: "d".repeat(64), collectedAt: "2026-09-30T00:00:00Z", immutability: "MUTABLE" };
-  const forgedReport = { schemaVersion: 1, requiresRevalidation: true, notAuthorization: true, generatedFor: { head: subject.head, tree: subject.tree, base: subject.base }, trustedContext: { rootTip: "c".repeat(40), rootPolicyDigest: null }, externalEvidence: [forgedEntry] };
+  const forgedReport = {
+    schemaVersion: 1, requiresRevalidation: true, notAuthorization: true,
+    generatedFor: { head: subject.head, tree: subject.tree, base: subject.base },
+    trustedContext: { rootTip: "c".repeat(40), rootPolicyDigest: null },
+    records: [{
+      checkId: "1A.POLICY.ROOT", ownerStage: "1A", status: "NOT_APPLICABLE", subject,
+      observed: { rootTip: "c".repeat(40), rootPolicyDigest: null, applicabilityProof: "no root policy applies to this fixture" },
+      expected: null, reasonCode: "NOT_APPLICABLE", detail: "", evidenceRefs: [],
+    }],
+    externalEvidence: [forgedEntry],
+  };
   const revalidation = await revalidateEvidence({ subject, report: forgedReport, rootPolicy: rootOf(forgedReport), items: [{ entry: forgedEntry, sourceType: "comment" }], adapters: { comment: { fetch: async () => ({ ok: true, version: "v1", digest: "d".repeat(64) }) } } });
   assert.equal(revalidation.records[0].status, "PASS", "the forged source is 'fresh' -- freshness is all revalidation establishes");
 
@@ -193,7 +211,7 @@ test("SEC-C2-22: an OWNER_ATTESTED CI record never lets a Phase 2 report reach R
   };
   const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, owner], externalEvidence: [ownerEvidence], ci: undefined }));
   assert.equal(finalReport.ok, true);
-  assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assertOperatorBoundary(finalReport.report, "OWNER_SELF_DETERMINATION");
   assertNeverPromoted(finalReport.report);
   assert.equal(buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, { ...owner, status: "PASS" }], ci: undefined })).ok, false);
 });
@@ -210,7 +228,7 @@ test("a rerun with NO determinationAdapter injected reaches Phase 2 HUMAN_REVIEW
   const finalReport = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci.records], externalEvidence: ci.externalEvidence, ci: undefined }));
   assert.equal(finalReport.ok, true);
   assert.notEqual(finalReport.report.readiness.state, "READY");
-  assert.equal(finalReport.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assertOperatorBoundary(finalReport.report, "CI_UNEXPLAINED_RERUN");
 });
 
 // ======================================================================
@@ -222,13 +240,13 @@ test("a rerun with NO determinationAdapter injected reaches Phase 2 HUMAN_REVIEW
 
 const { sourceTypeForExternalEvidenceEntry } = require("./ci-evidence");
 
-test("a CLEAN_FIRST_PASS report reaches READY, decision-time revalidation against the SAME run PASSes (freshness only, never authentication), then a later attempt with a failed job makes the ORIGINAL report's evidence STALE -- the original READY report is not reusable, and this is never treated as an authorized human rerun (no PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN)", async () => {
+test("a CLEAN_FIRST_PASS operator report stays NOT_READY, decision-time revalidation against the SAME run PASSes (freshness only, never authentication), then a later attempt with a failed job makes the ORIGINAL report's evidence STALE -- the original report is not reusable, and this is never treated as an authorized human rerun (no PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN)", async () => {
   // Initial state: repository R, HEAD H, run RUN-1, attempt 1, required job succeeds.
   const ci1 = await collectCiEvidence({ subject, repository: REPO, workflowPath: WORKFLOW, event: "pull_request", adapter: cleanRunAdapter(), requiredJobs: REQUIRED, now: NOW });
   assert.equal(ci1.records[0].status, "PASS");
   const report1 = buildReport(reportInput({ trustedContext: trustedContext(2), records: [...phase1Records, ...ci1.records], externalEvidence: ci1.externalEvidence, ci: undefined }));
   assert.equal(report1.ok, true);
-  assert.equal(report1.report.readiness.state, "READY");
+  assertOperatorBoundary(report1.report);
   const pinnedEntry = report1.report.externalEvidence[0];
 
   // First decision-time revalidation: the adapter returns the SAME run evidence -> PASS.

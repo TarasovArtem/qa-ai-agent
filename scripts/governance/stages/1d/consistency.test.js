@@ -53,7 +53,7 @@ test("W2 1D: correct totals and correct grouped totals all PASS", () => {
   // so a config that also declares those rules correctly reports them INCOMPLETE, not PASS --
   // corrective C1, W2-SEC-H1; see the dedicated tests for that).
   const countOnly = runRisk([{ id: "R1", sev: "HIGH" }], [{ level: "HIGH", count: 1 }], { taxonomyRules: [], methodRules: [] });
-  assert.equal(g.aggregate(countOnly.records, stagePlan(countOnly.records)).readiness.state, "READY");
+  assert.equal(countOnly.records.every((record) => ["PASS", "NOT_APPLICABLE"].includes(record.status)), true);
 });
 
 test("W2 1D: a declared total that differs from the actual counted rows is a deterministic mismatch", () => {

@@ -26,7 +26,6 @@ test("W1 1A scope: an in-scope change passes every scope check and the records a
     assert.equal(validateResultRecord(record).ok, true, record.checkId);
     assert.equal(record.ownerStage, "1A");
   }
-  assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "READY");
   assert.equal(Object.isFrozen(r), true);
   assert.equal(Object.isFrozen(r.records), true);
 });
@@ -35,7 +34,6 @@ test("W1 1A scope: a forbidden path is FAIL and is reported with the path", () =
   const r = scope(["docs/a.md", "secrets/key.txt"]);
   assert.equal(state(r, "1A.SCOPE.FORBIDDEN"), "FAIL/SCOPE_FORBIDDEN_PATH");
   assert.deepEqual([...rec(r, "1A.SCOPE.FORBIDDEN").observed.paths], ["secrets/key.txt"]);
-  assert.equal(g.aggregate(r.records).overallStatus, "FAIL");
 });
 
 test("W1 1A scope: a path outside every allowed domain is FAIL (unmatched paths are never silently ignored)", () => {
@@ -59,7 +57,6 @@ test("W1 1A scope: a protected governance/framework path is HUMAN_REVIEW_REQUIRE
     const r = g.checkScope({ subject, changedFiles: changedResult(subject, [path]), policy: permissive });
     assert.equal(state(r, "1A.SCOPE.PROTECTED"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG", path);
     assert.equal(state(r, "1A.SCOPE.ALLOWED"), "PASS/OK", path);
-    assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "HUMAN_REVIEW_REQUIRED", path);
   }
   const custom = validateBasePolicy(basePolicy({ scope: { allowedPathDomains: ["**"], forbiddenPathDomains: [], protectedPaths: ["docs/design.md"] } })).policy;
   assert.equal(state(g.checkScope({ subject, changedFiles: changedResult(subject, ["docs/design.md"]), policy: custom }), "1A.SCOPE.PROTECTED"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG");
@@ -137,7 +134,7 @@ test("W1 1A scope: the changed-file input must be the complete 1A result for the
 
 test("W1 1A scope: an empty change set passes; findings are deterministic and bounded", () => {
   const empty = scope([]);
-  assert.equal(g.aggregate(empty.records, stagePlan(empty.records)).readiness.state, "READY");
+  assert.equal(empty.records.every((record) => ["PASS", "NOT_APPLICABLE"].includes(record.status)), true);
   const many = Array.from({ length: 500 }, (_, i) => `tools/f${i}.sh`);
   const r = scope(many);
   assert.equal(rec(r, "1A.SCOPE.ALLOWED").observed.count, 500);

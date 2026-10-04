@@ -59,7 +59,14 @@ test("W1 1A identity: a valid PR_REVIEW identity is established from Git and eve
       assert.deepEqual(record.subject, r.subject);
     }
     const notPass = r.records.filter((x) => !["PASS", "NOT_APPLICABLE"].includes(x.status));
-    assert.deepEqual(notPass.map((x) => x.checkId), [], "a fully anchored, current, protected PR has no non-passing identity record");
+    assert.deepEqual(notPass.map((x) => x.checkId), [
+      "1A.IDENTITY.INVOCATION",
+      "1A.POLICY.CAPABILITIES",
+      "1A.IDENTITY.WORKFLOW_ANCHOR",
+    ], "raw Git facts do not manufacture platform provenance");
+    assert.equal(state(r, "1A.IDENTITY.INVOCATION"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
+    assert.equal(state(r, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
+    assert.equal(state(r, "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.equal(r.policy.source, "ROOT_POLICY");
     assert.match(r.policy.digest, /^[0-9a-f]{64}$/);
     assert.equal(Object.isFrozen(r), true);
@@ -69,14 +76,11 @@ test("W1 1A identity: a valid PR_REVIEW identity is established from Git and eve
   }
 });
 
-test("W1 1A identity: identity records aggregate through the Wave 0 kernel without RESULT_RECORD_INVALID", async () => {
+test("W1 1A identity: every identity record remains kernel-valid under the D16 provenance boundary", async () => {
   const s = prScenario();
   try {
     const r = await s.run();
-    const agg = g.aggregate(r.records, stagePlan(r.records));
-    assert.equal(agg.kernelRecords.some((k) => k.reasonCode === "RESULT_RECORD_INVALID"), false);
-    assert.equal(agg.overallStatus, "PASS");
-    assert.equal(agg.readiness.state, "READY");
+    for (const record of r.records) assert.equal(validateResultRecord(record).ok, true, record.checkId);
   } finally {
     s.repo.cleanup();
   }
@@ -367,20 +371,19 @@ test("W1 1A identity: a head-edited base policy can never change the effective p
   }
 });
 
-test("W1 1A identity: workflow anchoring compares the invoking workflow blob with the base, independent of the diff", async () => {
+test("W1 1A identity: raw platform-shaped workflow claims never establish workflow provenance", async () => {
   const s = prScenario();
   try {
-    assert.equal(state(await s.run(), "1A.IDENTITY.WORKFLOW_ANCHOR"), "PASS/OK");
-    assert.equal(state(await s.run({}, { workflow: null }), "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/WORKFLOW_IDENTITY_UNAVAILABLE");
-    assert.equal(state(await s.run({}, { workflow: { path: WORKFLOW, sha: "9".repeat(40) } }), "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/WORKFLOW_IDENTITY_UNAVAILABLE", "a run commit that is not available cannot be anchored");
-    assert.equal(state(await s.run({}, { workflow: { path: ".github/workflows/none.yml", sha: s.head } }), "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/WORKFLOW_IDENTITY_UNAVAILABLE");
+    for (const overrides of [{}, { workflow: null }, { workflow: { path: WORKFLOW, sha: "9".repeat(40) } }, { workflow: { path: ".github/workflows/none.yml", sha: s.head } }]) {
+      assert.equal(state(await s.run({}, overrides), "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
+    }
   } finally {
     s.repo.cleanup();
   }
   const changed = prScenario({ headFiles: { [WORKFLOW]: "name: tampered\non: pull_request\n" } });
   try {
     const r = await changed.run();
-    assert.equal(state(r, "1A.IDENTITY.WORKFLOW_ANCHOR"), "HUMAN_REVIEW_REQUIRED/INVOCATION_NOT_ANCHORED");
+    assert.equal(state(r, "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.notEqual(g.aggregate(r.records).readiness.state, "READY");
   } finally {
     changed.repo.cleanup();
@@ -388,7 +391,7 @@ test("W1 1A identity: workflow anchoring compares the invoking workflow blob wit
   const added = prScenario({ headFiles: { ".github/workflows/new.yml": "name: new\n" } });
   try {
     const r = await added.run({}, { workflow: { path: ".github/workflows/new.yml", sha: added.head } });
-    assert.equal(state(r, "1A.IDENTITY.WORKFLOW_ANCHOR"), "HUMAN_REVIEW_REQUIRED/INVOCATION_NOT_ANCHORED", "a head-selected new workflow is never anchored");
+    assert.equal(state(r, "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE", "a head-selected workflow claim has no platform authority");
   } finally {
     added.repo.cleanup();
   }
@@ -397,10 +400,16 @@ test("W1 1A identity: workflow anchoring compares the invoking workflow blob wit
 test("W1 1A identity: gate manifest anchoring (no base anchor / missing / removed / present / invalid gate)", async () => {
   const gate = (o = {}) => ({ gateId: "wave-gate", ...o });
   const path = "governance/manifests/wave-gate.json";
-  const fresh = prScenario({ headFiles: { [path]: "{}\n" } });
+  const manifest = JSON.stringify({
+    schemaVersion: 1,
+    gateId: "wave-gate",
+    requiredCapabilities: [],
+    domains: [{ domainId: "DOMAIN_A", enabled: true, ownerStage: "1E", dependsOn: [], derivedFrom: [], protectedInputs: ["file:docs/a.md"], reviewModes: ["DEEP_REVIEW_REQUIRED", "PRESERVATION_CHECK_ONLY"] }],
+  }) + "\n";
+  const fresh = prScenario({ headFiles: { [path]: manifest } });
   try {
     assert.equal(state(await fresh.run({ gate: gate() }), "1A.POLICY.GATE_ANCHOR"), "HUMAN_REVIEW_REQUIRED/NO_BASE_GATE_ANCHOR");
-    assert.equal(state(await fresh.run(), "1A.POLICY.GATE_ANCHOR"), "NOT_APPLICABLE/OK");
+    assert.equal(state(await fresh.run(), "1A.POLICY.GATE_ANCHOR"), "PASS/OK");
     assert.equal(state(await fresh.run({ gate: { gateId: "Bad Gate" } }), "1A.POLICY.GATE_ANCHOR"), "CONFIGURATION_ERROR/MANIFEST_TYPE_INVALID");
     assert.equal(state(await fresh.run({ gate: "wave-gate" }), "1A.POLICY.GATE_ANCHOR"), "CONFIGURATION_ERROR/MANIFEST_TYPE_INVALID");
   } finally {
@@ -409,17 +418,17 @@ test("W1 1A identity: gate manifest anchoring (no base anchor / missing / remove
   const missing = prScenario();
   try {
     assert.equal(state(await missing.run({ gate: gate({ requiresManifest: true }) }), "1A.POLICY.GATE_ANCHOR"), "CONFIGURATION_ERROR/GATE_MANIFEST_MISSING");
-    assert.equal(state(await missing.run({ gate: gate() }), "1A.POLICY.GATE_ANCHOR"), "NOT_APPLICABLE/OK");
+    assert.equal(state(await missing.run({ gate: gate() }), "1A.POLICY.GATE_ANCHOR"), "PASS/OK");
   } finally {
     missing.repo.cleanup();
   }
-  const anchored = prScenario({ baseFiles: { [path]: "{}\n" }, headFiles: { [path]: '{"a":1}\n' } });
+  const anchored = prScenario({ baseFiles: { [path]: manifest }, headFiles: { [path]: manifest } });
   try {
     assert.equal(state(await anchored.run({ gate: gate() }), "1A.POLICY.GATE_ANCHOR"), "PASS/OK");
   } finally {
     anchored.repo.cleanup();
   }
-  const removed = prScenario({ baseFiles: { [path]: "{}\n" }, headFiles: { [path]: null } });
+  const removed = prScenario({ baseFiles: { [path]: manifest }, headFiles: { [path]: null } });
   try {
     assert.equal(state(await removed.run({ gate: gate() }), "1A.POLICY.GATE_ANCHOR"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG");
   } finally {
@@ -427,11 +436,11 @@ test("W1 1A identity: gate manifest anchoring (no base anchor / missing / remove
   }
 });
 
-test("W1 1A identity: a policy requiring an unlisted capability is CAPABILITY_UNAVAILABLE_ON_TARGET (lag, not a pass)", async () => {
+test("W1 1A identity: an untrusted platform-shaped invocation cannot establish target capability support", async () => {
   const s = prScenario({ policy: policyJson({ requiredCapabilities: ["repository-preflight@1", "future-capability@1"] }) });
   try {
     const r = await s.run();
-    assert.equal(state(r, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    assert.equal(state(r, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.notEqual(g.aggregate(r.records).readiness.state, "READY");
   } finally {
     s.repo.cleanup();
@@ -563,7 +572,7 @@ test("W1 1A identity: POST_MERGE fast-forward, squash and octopus topologies are
       const r = await s.run();
       assert.equal(r.established, true, kind);
       assert.equal(state(r, "1A.IDENTITY.TOPOLOGY"), "FAIL/TOPOLOGY_UNEXPECTED", kind);
-      assert.equal(g.aggregate(r.records).overallStatus, "FAIL", kind);
+      assert.equal(rec(r, "1A.IDENTITY.TOPOLOGY").status, "FAIL", kind);
     } finally {
       s.repo.cleanup();
     }
@@ -649,37 +658,32 @@ test("W1 1A identity: POST_MERGE identity is shared facts only (no merge-gate re
 const TARGET_OLD = { frameworkVersion: "0.1.0", supportedCapabilities: ["kernel-wave0@1"], supportedSchemaVersions: { minSupported: 1, maxSupported: 1 } };
 const TARGET_NEW = { frameworkVersion: "0.2.0", supportedCapabilities: ["repository-preflight@1", "markdown-reference-integrity@1", "future-capability@1"], supportedSchemaVersions: { minSupported: 1, maxSupported: 2 } };
 
-test("W1 1A identity: capability support comes from the TARGET-TIP metadata; the executing (head) framework cannot vouch for itself", async () => {
+test("W1 1A identity: capability support cannot be established from raw target-tip claims or executing-head metadata", async () => {
   const s = prScenario({ policy: policyJson({ requiredCapabilities: ["repository-preflight@1"] }) });
   try {
     const executing = await s.run();
     // W1-SEC-M3: the executing framework supports the capability, but that is NOT target support.
-    assert.equal(state(executing, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
+    assert.equal(state(executing, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.equal(rec(executing, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
     assert.equal(executing.identity.frameworkMetadataSource, "EXECUTING_FRAMEWORK");
-    assert.match(rec(executing, "1A.POLICY.CAPABILITIES").detail, /executing framework/);
+    assert.match(rec(executing, "1A.POLICY.CAPABILITIES").detail, /cannot authenticate target capability support/);
     assert.notEqual(g.aggregate(executing.records).readiness.state, "READY");
     // Corrective C2 (1G R3): a caller cannot hand in "target" metadata -- a supplied list that
     // differs from the executing framework's is unproven and fails closed, never TARGET_TIP.
     const claimed = await s.run({ targetFrameworkMetadata: TARGET_NEW });
     assert.equal(claimed.established, false);
     assert.deepEqual({ status: claimed.outcome.status, reason: claimed.outcome.reasonCode }, { status: "INCOMPLETE", reason: "TARGET_METADATA_UNPROVEN" });
-    // Only a run the platform reports as executed from the tip 1A resolved reads target-tip metadata.
+    // A raw field claiming target-tip execution still has no reviewed platform authority.
     const supported = await s.run({}, { workflow: { path: WORKFLOW, sha: s.tip } });
-    assert.equal(state(supported, "1A.POLICY.CAPABILITIES"), "PASS/OK");
-    assert.equal(rec(supported, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
-    assert.equal(rec(supported, "1A.POLICY.CAPABILITIES").observed.targetTip, s.tip);
-    assert.match(rec(supported, "1A.POLICY.CAPABILITIES").detail, /target-tip framework/);
+    assert.equal(state(supported, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
   } finally {
     s.repo.cleanup();
   }
-  // The target tip does not list a required capability: CAPABILITY_LAG, even from the target tip.
+  // The same boundary applies when the claimed target would lack a capability.
   const lagScenario = prScenario({ policy: policyJson({ requiredCapabilities: ["future-capability@1"] }) });
   try {
     const lag = await lagScenario.run({}, { workflow: { path: WORKFLOW, sha: lagScenario.tip } });
-    assert.equal(state(lag, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/CAPABILITY_UNAVAILABLE_ON_TARGET");
-    assert.equal(rec(lag, "1A.POLICY.CAPABILITIES").observed.frameworkMetadataSource, "TARGET_TIP");
-    assert.deepEqual([...rec(lag, "1A.POLICY.CAPABILITIES").observed.unsupported], ["future-capability@1"]);
+    assert.equal(state(lag, "1A.POLICY.CAPABILITIES"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.notEqual(g.aggregate(lag.records).readiness.state, "READY");
   } finally {
     lagScenario.repo.cleanup();
@@ -742,9 +746,9 @@ test("W1-SEC-M3 regression: only TARGET_TIP metadata can satisfy a required capa
     const malformed = await s.run({ targetFrameworkMetadata: { frameworkVersion: "1", supportedCapabilities: "repository-preflight@1" } });
     assert.equal(malformed.established, false);
     assert.equal(malformed.outcome.status, "INCOMPLETE", "unusable target metadata fails closed with no subject");
-    // Only target-tip execution satisfies it; restating the executing metadata changes nothing.
+    // Neither restatement nor a raw workflow SHA can establish target authority.
     assert.equal(rec(await s.run({ targetFrameworkMetadata: FRAMEWORK_METADATA }), "1A.POLICY.CAPABILITIES").status, "INCOMPLETE");
-    assert.equal(rec(await s.run({}, { workflow: { path: WORKFLOW, sha: s.tip } }), "1A.POLICY.CAPABILITIES").status, "PASS");
+    assert.equal(state(await s.run({}, { workflow: { path: WORKFLOW, sha: s.tip } }), "1A.POLICY.CAPABILITIES"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
   } finally {
     s.repo.cleanup();
   }

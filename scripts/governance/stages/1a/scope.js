@@ -19,6 +19,8 @@
 
 const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
+const { policyDigest } = require("./policy");
+const { cloneJson } = require("../../kernel/results");
 const { parsePathPattern, matchPathPattern, patternCovers } = require("../../safety/path-patterns");
 const { validateRepoRelativePath } = require("../../safety/repo-path");
 const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
@@ -54,6 +56,10 @@ function checkScope(input) {
   if (!isPlainObject(changed) || !Array.isArray(changed.files) || !sameSubject(changed.subject, subject)) return invalidInput("changedFiles must be the getChangedFiles() result for the same subject");
   const out = createRecordFactory(subject, "1A");
   const { add, notApplicable } = out;
+  let consumedFingerprint = null;
+  let consumedPolicy = null;
+  try { consumedPolicy = cloneJson(input.policy); consumedFingerprint = policyDigest(consumedPolicy); } catch {}
+  add("1A.SCOPE.POLICY", consumedFingerprint === null ? STATUS.CONFIGURATION_ERROR : STATUS.PASS, consumedFingerprint === null ? REASON.POLICY_BINDING_MISMATCH : REASON.OK, "identity of the exact consumed policy before normalization", { policyFingerprint: consumedFingerprint });
 
   if (changed.complete !== true) {
     add("1A.SCOPE.ALLOWED", STATUS.INCOMPLETE, REASON.DIFF_COMPUTATION_FAILED, "scope cannot be evaluated: the changed-file set is not complete", {});
@@ -63,7 +69,7 @@ function checkScope(input) {
   if (!files.every((p) => validateRepoRelativePath(p).ok)) return invalidInput("changedFiles contains a non-canonical path");
 
   // Effective policy: a usable validated policy, or the built-in minimum (no allowed domain).
-  const supplied = input.policy;
+  const supplied = consumedPolicy;
   let policy = null;
   if (isPlainObject(supplied)) {
     const isBuiltin = supplied.scope && Array.isArray(supplied.scope.allowedPathDomains) && supplied.scope.allowedPathDomains.length === 0;

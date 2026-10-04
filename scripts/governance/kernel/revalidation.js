@@ -137,11 +137,18 @@ function reportBinding(report, subject) {
   const gf = report.generatedFor;
   if (!isPlainObject(gf) || gf.head !== subject.head || gf.tree !== subject.tree || gf.base !== subject.base) return null;
   const tc = report.trustedContext;
-  if (!isPlainObject(tc) || typeof tc.rootTip !== "string" || !SHA40.test(tc.rootTip)) return null;
-  if (tc.rootPolicyDigest !== null && (typeof tc.rootPolicyDigest !== "string" || tc.rootPolicyDigest.length === 0 || tc.rootPolicyDigest.length > 128)) return null;
+  if (!isPlainObject(tc)) return null;
+
   const evidence = report.externalEvidence;
   if (!Array.isArray(evidence) || evidence.length > MAX_EXTERNAL_EVIDENCE_ITEMS || !evidence.every(isValidEvidenceEntry)) return null;
-  return { evidence, rootTip: tc.rootTip, rootPolicyDigest: tc.rootPolicyDigest };
+  const roots = Array.isArray(report.records) ? report.records.filter((r) => r && r.checkId === "1A.POLICY.ROOT") : [];
+  const root = roots.length === 1 ? roots[0] : null;
+  const o = root && root.observed;
+  const ownerBound = Boolean(root && validateResultRecord(root).ok && root.ownerStage === "1A" && canonicalJson(root.subject) === canonicalJson(subject) && isPlainObject(o) &&
+    o.rootTip === tc.rootTip && o.rootPolicyDigest === tc.rootPolicyDigest &&
+    ((root.status === STATUS.PASS && typeof o.rootPolicyDigest === "string" && /^[0-9a-f]{64}$/.test(o.rootPolicyDigest)) ||
+     (root.status === STATUS.NOT_APPLICABLE && o.rootPolicyDigest === null && typeof o.applicabilityProof === "string" && o.applicabilityProof.length > 0)));
+  return { evidence, rootTip: tc.rootTip, rootPolicyDigest: tc.rootPolicyDigest, ownerBound };
 }
 
 /** True when `items` carry every report evidence entry exactly once and nothing else (multiset equality). */
@@ -212,7 +219,7 @@ async function revalidateEvidence(input) {
     return invalidInput("rootPolicy must be exactly { resolve() }: the governance root is always re-resolved");
   }
 
-  const staleItems = [];
+  const staleItems = binding.ownerBound ? [] : [{ sourceObjectId: "ROOT_POLICY", reason: "ROOT_OWNER_BINDING_INVALID" }];
   for (const item of items) {
     const result = await revalidateOne(item, input.adapters);
     if (result.stale) staleItems.push({ sourceObjectId: item.entry.sourceObjectId, reason: result.reason });

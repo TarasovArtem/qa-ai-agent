@@ -101,13 +101,20 @@ test("fixture 14: an unknown status injected at runtime never becomes PASS or RE
   }
 });
 
-test("end to end: manifest -> graph -> domain results -> aggregation stays fail-closed", () => {
+test("end to end: caller-derived completeness plan cannot mint READY without canonical owner statements", () => {
   const manifest = load("valid-minimal.json");
   assert.equal(manifest.valid, true);
   const expected = manifest.manifest.domains.filter((d) => d.enabled).map((d) => d.domainId);
   const all = [record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")];
   const complete = g.aggregate(all, { ...stagePlan(all), expectedDomainIds: expected });
-  assert.equal(complete.readiness.state, "READY");
+  assert.equal(complete.readiness.state, "NOT_READY");
+  assert.equal(complete.overallStatus, "CONFIGURATION_ERROR");
+  assert.ok(complete.kernelRecords.some((r) => r.checkId === "KERNEL.REQUIRED_CHECKS" && r.reasonCode === "COMPLETENESS_PLAN_NARROWED"));
+  const completeness = complete.kernelRecords.find((r) => r.checkId === "KERNEL.COMPLETENESS");
+  assert.deepEqual({ status: completeness.status, reasonCode: completeness.reasonCode }, { status: "CONFIGURATION_ERROR", reasonCode: "COMPLETENESS_SOURCE_INVALID" });
+  for (const id of ["1A.POLICY.EFFECTIVE", "1A.POLICY.GATE_ANCHOR", "1E.DELTA.DOMAIN_SET"]) {
+    assert.ok(complete.kernelRecords.some((r) => r.checkId === `KERNEL.REQUIRED_RESULT.${id}` && r.status === "INCOMPLETE" && r.reasonCode === "REQUIRED_RESULT_MISSING"), id);
+  }
   const partial = g.aggregate([record(), domainRecord("A_DOMAIN")], { expectedDomainIds: expected });
   assert.equal(partial.readiness.state, "NOT_READY");
 });

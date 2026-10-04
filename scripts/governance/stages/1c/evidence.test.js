@@ -66,7 +66,6 @@ test("W2 1C: one valid row, multiple valid rows, all PASS with the exact six rec
   ]);
   assert.deepEqual(r.records.map((x) => x.checkId), ["1C.EVIDENCE.CONFIG", "1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING", "1C.EVIDENCE.ROW_INDEX"]);
   for (const rr of r.records) assert.equal(rr.status, "PASS", rr.checkId);
-  assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "READY");
 });
 
 test("W2 1C: a derived conclusion with a compatible weakest premise is not an overclaim", () => {
@@ -152,7 +151,6 @@ test("W2 1C: derived inference or unknown evidence using promotion wording is HU
   assert.equal(state(derived, "1C.EVIDENCE.PROMOTION_WORDING"), "HUMAN_REVIEW_REQUIRED/EVIDENCE_PROMOTION_WORDING");
   const unknown = run([{ id: "A1", cls: "UNKNOWN", conclusion: "this has been established beyond doubt" }]);
   assert.equal(state(unknown, "1C.EVIDENCE.PROMOTION_WORDING"), "HUMAN_REVIEW_REQUIRED/EVIDENCE_PROMOTION_WORDING");
-  assert.equal(g.aggregate(derived.records, stagePlan(derived.records)).readiness.state, "HUMAN_REVIEW_REQUIRED");
 });
 
 test("W2 1C: no substantive truth judgment -- 1C never emits FAIL for promotion wording and never asserts a claim is false", () => {

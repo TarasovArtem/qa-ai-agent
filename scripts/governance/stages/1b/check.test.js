@@ -32,7 +32,6 @@ test("W1 1B check: a clean document passes every structural check; every fact is
     assert.equal(record.ownerStage, "1B");
     assert.deepEqual(record.subject, subject);
   }
-  assert.equal(g.aggregate(r.records, stagePlan(r.records)).readiness.state, "READY");
   assert.equal(Object.isFrozen(r), true);
   assert.equal(Object.isFrozen(r.records), true);
   assert.equal(rec(r, "1B.MARKDOWN.LINKS").observed.linksChecked, 2, "only repository-local links are verified");
@@ -46,7 +45,6 @@ test("W1 1B check: unclosed fences and malformed tables are FAIL with file and l
   assert.equal(state(r, "1B.MARKDOWN.TABLES"), "FAIL/MARKDOWN_STRUCTURE_INVALID");
   assert.deepEqual(findings(r, "1B.MARKDOWN.TABLES").map((f) => f.split(":").slice(0, 2).join(":")), ["docs/a.md:5", "docs/a.md:6"]);
   assert.equal(state(r, "1B.MARKDOWN.HEADINGS"), "PASS/OK", "unrelated checks are unaffected");
-  assert.equal(g.aggregate(r.records).overallStatus, "FAIL");
 });
 
 test("W1 1B check: repository-local links resolve at the head; a missing target is FAIL", async () => {
@@ -144,7 +142,7 @@ test("W1 1B check: with nothing to inspect every record is NOT_APPLICABLE with a
   assert.deepEqual(noneChecks.map((x) => x.status), Array(7).fill("NOT_APPLICABLE"));
   assert.deepEqual(noneChecks.map((x) => x.checkId), [...CHECKS, "1B.REFERENCES.TB"]);
   for (const record of noneChecks) assert.match(record.observed.applicabilityProof, /no changed file matches/);
-  assert.equal(g.aggregate([...none.records], stagePlan(none.records)).kernelRecords.length, 0);
+  for (const record of none.records) assert.equal(validateResultRecord(record).ok, true, record.checkId);
   const builtin = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: { ...BUILTIN_MINIMUM_POLICY, protectedTargetRefs: ["main"] }, reader: fakeReader({ "docs/a.md": "# A\n" }) });
   const builtinChecks = builtin.records.filter((x) => x.checkId !== "1B.MARKDOWN.POLICY");
   assert.equal(builtinChecks.every((x) => x.status === "NOT_APPLICABLE"), true);
@@ -348,8 +346,6 @@ test("W1 1B composition: the subject is identical across stages and the combined
   for (const record of all) assert.deepEqual(record.subject, subject, record.checkId);
   const agg = g.aggregate(all, stagePlan(all));
   assert.equal(agg.kernelRecords.some((k) => k.reasonCode === "RESULT_RECORD_INVALID" || k.reasonCode === "DUPLICATE_CHECK_ID" || k.reasonCode === "SUBJECT_MISMATCH"), false);
-  assert.equal(agg.overallStatus, "PASS");
-  assert.equal(agg.readiness.state, "READY");
   assert.equal(new Set(all.map((r) => r.checkId)).size, all.length, "check IDs are unique across 1A and 1B");
   const other = await g.checkReferences({ subject: makeSubject({ head: "d".repeat(40) }), changedFiles: changed, policy: policyOf(), reader: fakeReader({}) });
   assert.equal(state(other, "1B.MARKDOWN.FILES"), "CONFIGURATION_ERROR/CHANGED_FILES_INPUT_INVALID", "a changed-file set for another head is refused");

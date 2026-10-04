@@ -80,8 +80,9 @@
 
 const { REASON, STATUS, RANGE_MODES, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject, validateCapabilityId, validateFrameworkMetadata } = require("../../kernel/validation");
+const { FRAMEWORK_METADATA } = require("../../framework-metadata");
 const { aggregate } = require("../../kernel/readiness");
-const { validateResultRecord, cloneJson } = require("../../kernel/results");
+const { validateResultRecord, cloneJson, canonicalJson } = require("../../kernel/results");
 const { DOMAIN_ID } = require("../../kernel/graph");
 const { isValidSubject, sameSubject } = require("../common");
 const { isValidBranchName } = require("../1a/trusted-context");
@@ -111,31 +112,11 @@ const MAX_PARENTS = 8;
 // 1A.POLICY.EFFECTIVE, the 1A-owned statement of the effective policy and its
 // reference families, bound to 1B.MARKDOWN.POLICY (Corrective C2, 1G R2; see
 // referenceFamilyPlan()).
-const REQUIRED_CHECK_IDS = deepFreeze({
-  COMMON: [
-    "1A.IDENTITY.INVOCATION", "1A.IDENTITY.HEAD", "1A.IDENTITY.BASE",
-    "1A.POLICY.ROOT", "1A.POLICY.ANCHOR", "1A.POLICY.CURRENT", "1A.POLICY.CAPABILITIES", "1A.POLICY.GATE_ANCHOR", "1A.POLICY.EFFECTIVE",
-    "1A.TARGET.PROTECTED",
-    "1A.DIFF.CHANGED_FILES", "1A.DIFF.PLATFORM_AGREEMENT",
-    "1A.SCOPE.PROPOSAL", "1A.SCOPE.FORBIDDEN", "1A.SCOPE.ALLOWED", "1A.SCOPE.PROTECTED",
-    "1A.SECRETS.SCAN", "1A.SECRETS.SUPPRESSIONS",
-    "1B.MARKDOWN.FILES", "1B.MARKDOWN.FENCES", "1B.MARKDOWN.TABLES", "1B.MARKDOWN.HEADINGS", "1B.MARKDOWN.ANCHORS", "1B.MARKDOWN.LINKS", "1B.MARKDOWN.POLICY",
-    "1C.EVIDENCE.CONFIG", "1C.EVIDENCE.STRUCTURE", "1C.EVIDENCE.PREMISES", "1C.EVIDENCE.PROPAGATION", "1C.EVIDENCE.PROMOTION_WORDING", "1C.EVIDENCE.ROW_INDEX",
-    "1D.CONSISTENCY.CONFIG", "1D.CONSISTENCY.COUNTS", "1D.CONSISTENCY.TAXONOMY", "1D.CONSISTENCY.METHOD",
-    "1E.DELTA.DOMAIN_SET",
-    "1F.CI",
-  ],
-  PR_REVIEW: ["1A.IDENTITY.TARGET_TIP", "1A.IDENTITY.RANGE", "1A.IDENTITY.EXPECTED_BASE", "1A.IDENTITY.WORKFLOW_ANCHOR"],
-  POST_MERGE: ["1A.IDENTITY.MERGE_ON_TARGET", "1A.IDENTITY.TOPOLOGY", "1A.IDENTITY.MERGED_HEAD"],
-});
+const { REQUIRED_CHECK_IDS } = require("../../kernel/completeness");
 // Check IDs buildReport() contributes (1F.CONTEXT.*) or contributed before the kernel
 // became the completeness authority (1F.COMPLETENESS.*, Corrective C2); a caller-supplied
 // record may not claim them.
 const RESERVED_CHECK_ID = /^1F\.(CONTEXT\.|COMPLETENESS\.)/;
-
-function requiredCheckIds(mode) {
-  return [...REQUIRED_CHECK_IDS.COMMON, ...REQUIRED_CHECK_IDS[mode]];
-}
 
 function reportRecord(subject, checkId, status, reasonCode, detail, observed) {
   const record = { checkId, ownerStage: "1F", status, subject, observed, expected: null, reasonCode, detail, evidenceRefs: [] };
@@ -216,47 +197,13 @@ function onlyRecord(records, checkId) {
   return found.length === 1 ? found[0] : null;
 }
 
-function isPolicyStatement(r, ownerStage, subject) {
-  const o = r.observed;
-  return r.ownerStage === ownerStage && r.status === STATUS.PASS && sameSubject(r.subject, subject) && isPlainObject(o) &&
-    typeof o.policyFingerprint === "string" && FINGERPRINT.test(o.policyFingerprint) &&
-    Array.isArray(o.referenceFamilies) && o.referenceFamilies.length <= MAX_FAMILIES &&
-    o.referenceFamilies.every((f) => typeof f === "string" && FAMILY_NAME.test(f)) && new Set(o.referenceFamilies).size === o.referenceFamilies.length;
-}
-
-/**
- * The reference families the report must contain results for (Corrective C2, 1G
- * R2). They come only from 1A's 1A.POLICY.EFFECTIVE statement (1A is the only
- * policy owner), never from what 1B happened to emit. 1B's 1B.MARKDOWN.POLICY must
- * name the same policy fingerprint and family set, so a 1B run against a narrowed
- * or substituted policy is rejected, and a result for a family the effective policy
- * does not define is rejected rather than counted. When a statement is absent, its
- * own required ID is missing, which already makes the report INCOMPLETE.
- * Returns { ok:true, families } or { ok:false, reason }.
- */
-function referenceFamilyPlan(records, subject) {
-  const effective = onlyRecord(records, "1A.POLICY.EFFECTIVE");
-  const used = onlyRecord(records, "1B.MARKDOWN.POLICY");
-  if (effective !== null && !isPolicyStatement(effective, "1A", subject)) return { ok: false, reason: "the 1A.POLICY.EFFECTIVE record is malformed" };
-  if (used !== null && !isPolicyStatement(used, "1B", subject)) return { ok: false, reason: "the 1B.MARKDOWN.POLICY record is malformed" };
-  if (effective === null) return { ok: true, families: [] };
-  const families = [...effective.observed.referenceFamilies].sort();
-  if (used !== null) {
-    if (used.observed.policyFingerprint !== effective.observed.policyFingerprint) return { ok: false, reason: "1B checked references against a different policy than 1A's effective policy" };
-    if (sortedJson(used.observed.referenceFamilies) !== JSON.stringify(families)) return { ok: false, reason: "1B's reference families differ from those 1A's effective policy defines" };
-  }
-  const defined = new Set(families);
-  const foreign = records.find((r) => isPlainObject(r) && typeof r.checkId === "string" && r.checkId.startsWith("1B.REFERENCES.") && !defined.has(r.checkId.slice("1B.REFERENCES.".length)));
-  if (foreign !== undefined) return { ok: false, reason: "records[] contains a reference-family result for a family the effective policy does not define" };
-  return { ok: true, families };
-}
-
 function isCapabilityProvenance(r, subject) {
   const o = r.observed;
   if (r.ownerStage !== "1A" || !sameSubject(r.subject, subject) || !isPlainObject(o)) return false;
   if (o.frameworkMetadataSource !== "TARGET_TIP" && o.frameworkMetadataSource !== "EXECUTING_FRAMEWORK") return false;
   if (typeof o.targetTip !== "string" || !SHA40.test(o.targetTip)) return false;
   if (o.executedCommit !== null && (typeof o.executedCommit !== "string" || !SHA40.test(o.executedCommit))) return false;
+  if (o.executedCommit !== null || o.frameworkMetadataSource !== "EXECUTING_FRAMEWORK" || o.targetMetadata !== null) return false;
   if (!Array.isArray(o.required) || !o.required.every((c) => validateCapabilityId(c).ok)) return false;
   if (o.frameworkMetadataSource !== "TARGET_TIP") return o.targetMetadata === null;
   return o.executedCommit === o.targetTip && validateFrameworkMetadata(o.targetMetadata).ok;
@@ -292,6 +239,8 @@ function targetProvenanceContradiction(records, subject, tc) {
         tc.targetSupportedSchemaVersions.minSupported !== m.supportedSchemaVersions.minSupported || tc.targetSupportedSchemaVersions.maxSupported !== m.supportedSchemaVersions.maxSupported) {
       return "trustedContext target framework metadata differs from the target-tip metadata 1A established";
     }
+  } else if (tc.frameworkVersion !== FRAMEWORK_METADATA.frameworkVersion || tc.targetSupportedCapabilities.length !== 0 || canonicalJson(tc.targetSupportedSchemaVersions) !== canonicalJson(FRAMEWORK_METADATA.supportedSchemaVersions)) {
+    return "trustedContext target framework metadata differs from the unavailable target support";
   } else if (o.frameworkMetadataSource === "TARGET_TIP") {
     return "executedFrom is HEAD but 1A established that the run executed from the resolved target tip";
   }
@@ -677,8 +626,8 @@ function isValidTrustedContext(tc) {
   if (tc.baseWorkflowBlobSha !== null && (typeof tc.baseWorkflowBlobSha !== "string" || !SHA40.test(tc.baseWorkflowBlobSha))) return false;
   if (typeof tc.defaultBranch !== "string" || tc.defaultBranch.length === 0) return false;
   if (typeof tc.rootTip !== "string" || !SHA40.test(tc.rootTip)) return false;
-  if (tc.rootPolicyDigest !== null && !isBoundedString(tc.rootPolicyDigest, 128)) return false;
-  if (tc.basePolicyDigest !== null && !isBoundedString(tc.basePolicyDigest, 128)) return false;
+  if (tc.rootPolicyDigest !== null && (typeof tc.rootPolicyDigest !== "string" || !FINGERPRINT.test(tc.rootPolicyDigest))) return false;
+  if (tc.basePolicyDigest !== null && (typeof tc.basePolicyDigest !== "string" || !FINGERPRINT.test(tc.basePolicyDigest))) return false;
   if (!EXECUTED_FROM.includes(tc.executedFrom)) return false;
   // frameworkVersion, targetSupportedCapabilities (capability-id@major, no duplicate)
   // and targetSupportedSchemaVersions ({minSupported, maxSupported}, min <= max) are
@@ -709,9 +658,9 @@ function isValidManifestProvenance(m) {
   if (keys !== "baseAnchor,baseGateSha256,basePolicySha256,gatePath,headSha256,protectedProposals,schemaVersions") return false;
   if (typeof m.gatePath !== "string" || m.gatePath.length === 0) return false;
   if (!Array.isArray(m.schemaVersions)) return false;
-  if (typeof m.headSha256 !== "string" && m.headSha256 !== null) return false;
-  if (typeof m.baseGateSha256 !== "string" && m.baseGateSha256 !== null) return false;
-  if (typeof m.basePolicySha256 !== "string" && m.basePolicySha256 !== null) return false;
+  if (m.headSha256 !== null && (typeof m.headSha256 !== "string" || !FINGERPRINT.test(m.headSha256))) return false;
+  if (m.baseGateSha256 !== null && (typeof m.baseGateSha256 !== "string" || !FINGERPRINT.test(m.baseGateSha256))) return false;
+  if (m.basePolicySha256 !== null && (typeof m.basePolicySha256 !== "string" || !FINGERPRINT.test(m.basePolicySha256))) return false;
   if (m.baseAnchor !== "PRESENT" && m.baseAnchor !== "ABSENT") return false;
   return Array.isArray(m.protectedProposals);
 }
@@ -747,6 +696,25 @@ function isValidManifestProvenance(m) {
  * `domains[]` is always DERIVED from `records[]` here, never trusted from a
  * caller-supplied value beyond the optional consistency check above.
  */
+function ownerContextContradiction(records, subject, tc) {
+  const bindings = [
+    ["1A.IDENTITY.INVOCATION", ["mode", "invocationTrust", "repositoryId", "provider", "eventType"]],
+    ["1A.IDENTITY.TARGET_TIP", ["targetRefName", "resolvedTargetTip", "suppliedTargetSha"]],
+    ["1A.TARGET.PROTECTED", ["targetRefName"]],
+    ["1A.POLICY.ROOT", ["defaultBranch", "rootTip", "rootPolicyDigest"]],
+    ["1A.POLICY.ANCHOR", ["basePolicyDigest"]],
+    ["1A.IDENTITY.WORKFLOW_ANCHOR", ["workflowIdentity", "workflowBlobSha", "baseWorkflowBlobSha"]],
+  ];
+  for (const [id, keys] of bindings) {
+    const owner = onlyRecord(records, id);
+    if (owner === null) continue; // missing canonical records remain required by the kernel
+    const checked = validateResultRecord(owner);
+    if (!checked.ok || owner.ownerStage !== "1A" || !sameSubject(owner.subject, subject) || !isPlainObject(owner.observed)) return "invalid canonical owner record " + id;
+    for (const key of keys) if (!Object.hasOwn(owner.observed, key) || canonicalJson(tc[key]) !== canonicalJson(owner.observed[key])) return "trustedContext." + key + " differs from canonical " + id;
+  }
+  return null;
+}
+
 function buildReport(rawInput) {
   if (!isPlainObject(rawInput)) return invalidInput("input must be an object");
   // Corrective C3 (W4-C2R-SEC-L1): one bounded JSON snapshot, taken before any
@@ -770,6 +738,8 @@ function buildReport(rawInput) {
   const subject = input.subject;
   if (!isPlainObject(input.tool) || typeof input.tool.name !== "string" || typeof input.tool.version !== "string") return invalidInput("tool must be { name, version }");
   if (!isValidTrustedContext(input.trustedContext)) return invalidInput("trustedContext is malformed or incomplete");
+  if (input.trustedContext.invocationTrust === "PLATFORM_AUTHENTICATED") return invalidInput("PLATFORM_PROVENANCE_UNAVAILABLE: no reviewed platform adapter exists");
+  if (input.trustedContext.executedFrom === "TARGET_TIP" || ["workflowIdentity", "workflowBlobSha", "baseWorkflowBlobSha"].some((k) => input.trustedContext[k] !== null)) return invalidInput("operator input cannot establish TARGET_TIP or workflow provenance");
   const contradiction = trustedContextContradiction(input.trustedContext, subject);
   if (contradiction !== null) return invalidInput(contradiction);
   // Corrective C1 (1G L3): generatedFor's caller-supplied identity fields are
@@ -796,12 +766,10 @@ function buildReport(rawInput) {
   }
   const domainSet = requiredDomainIds(input.records, subject, input.expectedDomainIds);
   if (!domainSet.ok) return invalidInput(domainSet.reason);
-  // Corrective C2 (1G R2): the reference families the report must contain come from
-  // 1A's effective policy, and 1B must have checked against that same policy.
-  const policyBinding = referenceFamilyPlan(input.records, subject);
-  if (!policyBinding.ok) return invalidInput(policyBinding.reason);
   // Corrective C2 (1G R3): the target tip, execution commit and target framework
   // metadata in trustedContext must be the ones 1A established.
+  const ownerProblem = ownerContextContradiction(input.records, subject, input.trustedContext);
+  if (ownerProblem !== null) return invalidInput(ownerProblem);
   const provenanceProblem = targetProvenanceContradiction(input.records, subject, input.trustedContext);
   if (provenanceProblem !== null) return invalidInput(provenanceProblem);
 
@@ -848,20 +816,11 @@ function buildReport(rawInput) {
   // exact failure this record exists to prevent.
   const suppliedRecords = ci !== null ? [...input.records, ciNotCollectedRecord(subject)] : input.records;
 
-  // Corrective C1 (1G M1) / C2 (1G R1, R2): every required result must be present
-  // as an actual record. The mandatory-result plan -- the fixed IDs for the mode plus
-  // one 1B.REFERENCES.<family> per family 1A's effective policy defines -- is handed
-  // to the kernel, the one completeness authority: a missing result becomes the
-  // kernel's INCOMPLETE KERNEL.REQUIRED_RESULT.<id> record in the same aggregation, so
-  // a report with, e.g., only an identity record and a CI record can never be READY.
-  // A required result that is NOT_APPLICABLE counts only through the kernel's own
-  // applicability-proof rule; a duplicate is the kernel's DUPLICATE_CHECK_ID error.
-  const plan = [...requiredCheckIds(subject.range.mode), ...policyBinding.families.map((f) => `1B.REFERENCES.${f}`)];
+  // D16: the kernel derives and binds its plan from records; 1F has no second plan.
   const aggregateInput = [...suppliedRecords, executionContextRecord(subject, input.trustedContext)];
 
   const agg = aggregate(aggregateInput, {
     expectedDomainIds: domainSet.ids === null ? undefined : domainSet.ids,
-    requiredCheckIds: plan,
     domainsProjection: input.domainsProjection,
   });
 

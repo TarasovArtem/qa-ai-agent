@@ -33,7 +33,11 @@
 
 const { REASON, STATUS, EFFECTIVE_LEVELS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
-const { validateResultRecord, statusForEffectiveLevel } = require("../../kernel/results");
+const { validateResultRecord, statusForEffectiveLevel, cloneJson } = require("../../kernel/results");
+const { graphFingerprint } = require("../../kernel/graph-fingerprint");
+const crypto = require("node:crypto");
+const { parseManifestBytes } = require("../../kernel/manifest");
+const { gateManifestPath } = require("../1a/policy");
 const { isValidSubject, sameSubject, sample, safe } = require("../common");
 const { isHeadReader, createHeadReader } = require("../head-reader");
 const { resolveGitAdapter } = require("../1a/git-adapter");
@@ -400,7 +404,14 @@ async function computeDeltaReview(input) {
   const done = () => deepFreeze({ subject, records, outcome: null });
 
   if (!isValidatedGraph(input.headGraph)) return invalidInput("headGraph must be a valid validateGraph() result");
-  const headGraph = input.headGraph;
+  let headGraph;
+  let baseSnapshot;
+  try {
+    // One graph snapshot before validation or awaits; the same values drive both
+    // semantic identity and the entire computation, including composition.
+    headGraph = cloneJson(input.headGraph);
+    baseSnapshot = input.baseGraph == null ? null : cloneJson(input.baseGraph);
+  } catch { return invalidInput("graph cannot be safely snapshotted"); }
   const topoCheck = validateTopologicalOrder(headGraph);
   if (!topoCheck.ok) return deepFreeze({ subject, records: [graphInconsistentRecord(subject, topoCheck.reason)], outcome: null });
   // W3-SEC-H2 residual fix: an O(1) length check on the raw pool, before any
@@ -410,7 +421,7 @@ async function computeDeltaReview(input) {
   if (Array.isArray(input.records) && input.records.length > MAX_POOLED_RECORDS) {
     return deepFreeze({ subject, records: [recordPoolExceededRecord(subject, input.records.length)], outcome: null });
   }
-  const baseGraph = isValidatedGraph(input.baseGraph) ? input.baseGraph : null;
+  const baseGraph = isValidatedGraph(baseSnapshot) ? baseSnapshot : null;
   if (input.baseGraph !== undefined && input.baseGraph !== null && baseGraph === null) return invalidInput("baseGraph, if supplied, must be a valid validateGraph() result");
   // W3-C3-DEV-L1 fix (design section 20): an omitted container is the only
   // supported absence; a present container that is not a plain object (null,
@@ -431,6 +442,28 @@ async function computeDeltaReview(input) {
   const coveringChecks = input.coveringChecks === undefined ? {} : input.coveringChecks;
   const recordedExtractorVersions = input.recordedExtractorVersions === undefined ? {} : input.recordedExtractorVersions;
   const validRecords = validRecordsFor(input.records, subject);
+
+  const graphIdentity = {
+    baseGraphFingerprint: baseGraph === null ? null : graphFingerprint(baseGraph),
+    headGraphFingerprint: graphFingerprint(headGraph),
+    baseGateSha256: null, headGateSha256: null,
+  };
+  if (graphIdentity.headGraphFingerprint === null || (baseGraph !== null && graphIdentity.baseGraphFingerprint === null)) return invalidInput("graph semantics failed canonical validation");
+  // Existing records[] carries the canonical owner statement, never a new
+  // caller-selected expected fingerprint argument. Only Git/reader bytes can
+  // establish the consumer's source identity; graph-carried labels are ignored.
+  const anchors = Array.isArray(input.records) ? input.records.filter((r) => r && r.checkId === "1A.POLICY.GATE_ANCHOR") : [];
+  const anchor = anchors.length === 1 ? validateResultRecord(anchors[0]) : null;
+  if (anchor && anchor.ok && anchor.record.ownerStage === "1A" && sameSubject(anchor.record.subject, subject)) {
+    const path = anchor.record.observed && anchor.record.observed.path;
+    const match = typeof path === "string" ? /^governance\/manifests\/([a-z][a-z0-9-]{1,63})\.json$/.exec(path) : null;
+    if (match && gateManifestPath(match[1]) === path) {
+      for (const [side, source] of [["base", reader.atBase], ["head", reader.atHead]]) {
+        const entry = await source.read(path, 1024 * 1024);
+        if (entry.kind === "blob" && parseManifestBytes(entry.bytes).valid) graphIdentity[`${side}GateSha256`] = crypto.createHash("sha256").update(entry.bytes).digest("hex");
+      }
+    }
+  }
 
   const headById = new Map(headGraph.domains.map((d) => [d.domainId, d]));
   const baseById = new Map(baseGraph ? baseGraph.domains.map((d) => [d.domainId, d]) : []);
@@ -711,7 +744,7 @@ async function computeDeltaReview(input) {
     ownerStage: "1E",
     status: STATUS.PASS,
     subject,
-    observed: { domainIds: reportedIds },
+    observed: { domainIds: reportedIds, ...graphIdentity },
     expected: null,
     reasonCode: REASON.OK,
     detail: `${reportedIds.length} domain result(s) reported`,

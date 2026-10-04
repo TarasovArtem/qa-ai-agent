@@ -185,20 +185,20 @@ module.exports.fakeAdapter = fakeAdapter;
 // Wave 5 / Stage 1G Corrective C1 builders (still test-only).
 
 /**
- * A report trustedContext that is valid and authoritative for `subject`: a
- * platform-authenticated Phase 2 run executed from the resolved target tip
- * (design section 14 rule 8), with canonical D15 target metadata. Tests override
- * single fields to probe one property at a time.
+ * A schema-valid raw report context for `subject`. D16 permits a caller to
+ * describe only an operator-supplied, head-executed invocation; it carries no
+ * platform authority and can never make a report READY. Tests override single
+ * fields to probe one property at a time.
  */
 function reportContext(subject, overrides = {}) {
   const tip = "b".repeat(40);
   return {
-    mode: subject.range.mode, invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: "TarasovArtem/qa-ai-agent",
-    eventType: subject.range.mode === "PR_REVIEW" ? "pull_request" : "push", targetRefName: "main", resolvedTargetTip: tip, suppliedTargetSha: null,
+    mode: subject.range.mode, invocationTrust: "OPERATOR_SUPPLIED", provider: "github", repositoryId: "TarasovArtem/qa-ai-agent",
+    eventType: "manual", targetRefName: "main", resolvedTargetTip: tip, suppliedTargetSha: null,
     headSha: subject.head, base: subject.base, baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null,
     baseWorkflowBlobSha: null, defaultBranch: "main", rootTip: "c".repeat(40), rootPolicyDigest: null, basePolicyDigest: null,
-    executedFrom: "TARGET_TIP", frameworkVersion: "0.5.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: { minSupported: 1, maxSupported: 1 },
-    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: tip,
+    executedFrom: "HEAD", frameworkVersion: "0.5.0", targetSupportedCapabilities: [], targetSupportedSchemaVersions: { minSupported: 1, maxSupported: 1 },
+    requiredCapabilities: [], phase: 2, collectorRunId: "collector-1", executedCommit: subject.head,
     ...overrides,
   };
 }
@@ -218,23 +218,33 @@ function requiredRecords(subject, { domainIds = [] } = {}) {
   const ctx = reportContext(subject);
   const policyStatement = { policyFingerprint: "e".repeat(64), referenceFamilies: [] };
   const observedFor = (checkId) => {
-    if (checkId === "1E.DELTA.DOMAIN_SET") return { domainIds: [...domainIds].sort() };
+    if (checkId === "1A.IDENTITY.INVOCATION") return { mode: ctx.mode, invocationTrust: ctx.invocationTrust, repositoryId: ctx.repositoryId, provider: ctx.provider, eventType: ctx.eventType };
+    if (checkId === "1A.IDENTITY.TARGET_TIP") return { targetRefName: ctx.targetRefName, resolvedTargetTip: ctx.resolvedTargetTip, suppliedTargetSha: ctx.suppliedTargetSha };
+    if (checkId === "1A.TARGET.PROTECTED") return { targetRefName: ctx.targetRefName };
+    if (checkId === "1A.POLICY.ROOT") return { defaultBranch: ctx.defaultBranch, rootTip: ctx.rootTip, rootPolicyDigest: ctx.rootPolicyDigest, applicabilityProof: "no governance-root policy exists in this fixture" };
+    if (checkId === "1A.POLICY.ANCHOR") return { basePolicyDigest: ctx.basePolicyDigest };
+    if (checkId === "1A.IDENTITY.WORKFLOW_ANCHOR") return { workflowIdentity: null, workflowBlobSha: null, baseWorkflowBlobSha: null };
+    if (checkId === "1A.POLICY.GATE_ANCHOR") return { baseGateSha256: null, headGateSha256: null, baseGraphFingerprint: null, headGraphFingerprint: null };
+    if (checkId === "1E.DELTA.DOMAIN_SET") return { domainIds: [...domainIds].sort(), baseGateSha256: null, headGateSha256: null, baseGraphFingerprint: null, headGraphFingerprint: null };
     if (checkId === "1A.POLICY.EFFECTIVE") return { source: "ROOT_POLICY", ...policyStatement };
+    if (checkId === "1A.SCOPE.POLICY" || checkId === "1A.SECRETS.POLICY") return { policyFingerprint: policyStatement.policyFingerprint };
     if (checkId === "1B.MARKDOWN.POLICY") return { ...policyStatement };
-    if (checkId === "1A.IDENTITY.TARGET_TIP") return { targetRefName: ctx.targetRefName, resolvedTargetTip: ctx.resolvedTargetTip, suppliedAssertion: false };
+    if (checkId === "1A.DIFF.PLATFORM_AGREEMENT") return { invocationTrust: ctx.invocationTrust };
     if (checkId === "1A.POLICY.CAPABILITIES") {
       return {
-        required: [...ctx.requiredCapabilities], frameworkMetadataSource: "TARGET_TIP", targetTip: ctx.resolvedTargetTip, executedCommit: ctx.executedCommit,
-        targetMetadata: { frameworkVersion: ctx.frameworkVersion, supportedCapabilities: [...ctx.targetSupportedCapabilities], supportedSchemaVersions: { ...ctx.targetSupportedSchemaVersions } },
+        required: [...ctx.requiredCapabilities], frameworkMetadataSource: "EXECUTING_FRAMEWORK", targetTip: ctx.resolvedTargetTip, executedCommit: null, targetMetadata: null,
       };
     }
     return {};
   };
-  return ids.map((checkId) => ({
-    checkId, ownerStage: checkId.slice(0, 2), status: "PASS", subject,
-    observed: observedFor(checkId),
-    expected: null, reasonCode: "OK", detail: "", evidenceRefs: [],
-  }));
+  return ids.map((checkId) => {
+    let status = "PASS";
+    let reasonCode = "OK";
+    if (checkId === "1A.IDENTITY.INVOCATION") { status = "HUMAN_REVIEW_REQUIRED"; reasonCode = "OPERATOR_INVOCATION"; }
+    if (checkId === "1A.POLICY.CAPABILITIES" || checkId === "1A.IDENTITY.WORKFLOW_ANCHOR") { status = "INCOMPLETE"; reasonCode = "PLATFORM_PROVENANCE_UNAVAILABLE"; }
+    if (checkId === "1A.POLICY.ROOT") { status = "NOT_APPLICABLE"; reasonCode = "NOT_APPLICABLE"; }
+    return { checkId, ownerStage: checkId.slice(0, 2), status, subject, observed: observedFor(checkId), expected: null, reasonCode, detail: "", evidenceRefs: [] };
+  });
 }
 
 module.exports.reportContext = reportContext;

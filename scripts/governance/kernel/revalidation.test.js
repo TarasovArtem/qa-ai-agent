@@ -43,6 +43,11 @@ const reportFor = (items, overrides = {}) => ({
   schemaVersion: 1, requiresRevalidation: true, notAuthorization: true,
   generatedFor: { head: subject.head, tree: subject.tree, base: subject.base, parents: [], branch: "" },
   trustedContext: { rootTip: ROOT_TIP, rootPolicyDigest: ROOT_DIGEST },
+  records: [{
+    checkId: "1A.POLICY.ROOT", ownerStage: "1A", status: "PASS", subject,
+    observed: { rootTip: ROOT_TIP, rootPolicyDigest: ROOT_DIGEST }, expected: null,
+    reasonCode: "OK", detail: "", evidenceRefs: [],
+  }],
   externalEvidence: Array.isArray(items) ? items.map((i) => (i && i.entry) || i) : [],
   ...overrides,
 });

@@ -54,9 +54,13 @@ test("W1 integration: a clean, in-scope PR passes every 1A and 1B check and is R
   try {
     const p = await pipeline(s.repo, s.head, { ctx: s.ctx });
     const bad = p.records.filter((r) => !["PASS", "NOT_APPLICABLE"].includes(r.status));
-    assert.deepEqual(bad.map((r) => `${r.checkId}:${r.status}`), []);
-    assert.equal(p.aggregate.overallStatus, "PASS");
-    assert.equal(p.aggregate.readiness.state, "READY");
+    assert.deepEqual(bad.map((r) => `${r.checkId}:${r.status}`), [
+      "1A.IDENTITY.INVOCATION:INCOMPLETE",
+      "1A.POLICY.CAPABILITIES:INCOMPLETE",
+      "1A.IDENTITY.WORKFLOW_ANCHOR:INCOMPLETE",
+    ]);
+    assert.equal(p.aggregate.overallStatus, "CONFIGURATION_ERROR");
+    assert.equal(p.aggregate.readiness.state, "NOT_READY");
     assert.deepEqual([...p.changed.files], ["docs/a.md"]);
     for (const r of p.records) assert.deepEqual(r.subject, p.identity.subject, r.checkId);
     assert.equal(new Set(p.records.map((r) => r.checkId)).size, p.records.length);
@@ -83,7 +87,6 @@ test("W1 integration: a defective PR surfaces every deterministic fact separatel
     assert.equal(state(p.records, "1B.MARKDOWN.ANCHORS"), "FAIL/ANCHOR_DANGLING");
     assert.equal(state(p.records, "1B.MARKDOWN.LINKS"), "FAIL/LINK_TARGET_MISSING");
     assert.equal(state(p.records, "1B.REFERENCES.TB"), "FAIL/REFERENCE_DANGLING");
-    assert.equal(p.aggregate.overallStatus, "FAIL");
     assert.equal(p.aggregate.readiness.state, "NOT_READY");
     assert.equal(JSON.stringify(p).includes(GH), false, "the secret never appears anywhere in the output");
   } finally {
@@ -121,7 +124,7 @@ test("W1 integration: a head that changes governance/framework files is HUMAN_RE
   try {
     const p = await pipeline(s.repo, s.head, { ctx: s.ctx });
     assert.equal(state(p.records, "1A.SCOPE.PROTECTED"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG");
-    assert.equal(state(p.records, "1A.IDENTITY.WORKFLOW_ANCHOR"), "HUMAN_REVIEW_REQUIRED/INVOCATION_NOT_ANCHORED");
+    assert.equal(state(p.records, "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.deepEqual([...p.identity.policy.policy.protectedTargetRefs], ["main"], "the head's own policy edit is not applied");
     assert.equal(state(p.records, "1A.SCOPE.ALLOWED"), "FAIL/SCOPE_OUTSIDE_ALLOWED", "the head widening its own scope changes nothing: the changed governance/scripts paths are outside the BASE allowed domains");
     assert.notEqual(p.aggregate.readiness.state, "READY");

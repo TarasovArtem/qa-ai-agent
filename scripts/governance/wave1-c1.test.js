@@ -164,7 +164,7 @@ test("W1-SEC-L1: link, ID and path text is sanitized on every record path", asyn
   assertInert(scope, "scope");
   const scan = await g.scanSecrets({ subject, changedFiles: changedResult(subject, [evilPath]), policy: basePolicy(), reader: fakeReader({ [evilPath]: `x gh${"p_"}${"Q".repeat(36)}\n` }), now: "2026-09-25" });
   assertInert(scan, "secrets");
-  assert.equal(scan.records[0].status, "FAIL");
+  assert.equal(scan.records.find((x) => x.checkId === "1A.SECRETS.SCAN").status, "FAIL");
 });
 
 // ------------------------------------------------------------- W1-DEV-L1

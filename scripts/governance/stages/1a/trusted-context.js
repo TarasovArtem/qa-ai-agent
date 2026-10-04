@@ -121,6 +121,7 @@ function validateTrustedContext(raw) {
     if (typeof mergedHead !== "string" || !SHA40.test(mergedHead)) problems.push("POST_MERGE requires mergedPrHeadSha (full lowercase 40-hex SHA)");
   } else if (mergedHead !== null) problems.push("mergedPrHeadSha is only valid for POST_MERGE");
   const workflow = validateWorkflow(Object.hasOwn(raw, "workflow") ? raw.workflow : null, problems);
+  if (trust === "OPERATOR_SUPPLIED" && workflow !== null) problems.push("operator workflow metadata cannot authenticate execution provenance");
   const platformFiles = validatePlatformFiles(Object.hasOwn(raw, "platformFiles") ? raw.platformFiles : null, problems);
   if (mode === "POST_MERGE" && raw.platformFiles) problems.push("platformFiles is only valid for PR_REVIEW");
 

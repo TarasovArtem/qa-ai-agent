@@ -6,8 +6,8 @@
 // L4, S1), plus one real-Git end-to-end run of every executable stage
 // (1A -> 1B -> 1C -> 1D -> 1E -> 1F) into buildReport() and revalidateEvidence().
 // The end-to-end run is the positive control: it proves the mandatory result set
-// buildReport() now requires is exactly what the real stages emit, so READY stays
-// reachable for a genuinely complete, target-tip, platform-authenticated run.
+// the kernel requires is exactly what the real stages emit. With no reviewed
+// adapter, the public path remains diagnostic and never READY.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -61,13 +61,13 @@ const GRAPH = [dom("DOMAIN_A", [], ["file:docs/a.md"]), dom("DOMAIN_B", [{ domai
  */
 async function endToEnd({ executedFrom = "TARGET_TIP" } = {}) {
   const repo = createTempRepo();
-  const tip = repo.commit("base", { "README.md": "# Readme\n", [WORKFLOW]: "name: ci\n", "governance/base.json": JSON.stringify(basePolicy()), "docs/a.md": DOC_BASE });
+  const tip = repo.commit("base", { "README.md": "# Readme\n", [WORKFLOW]: "name: ci\n", "governance/base.json": JSON.stringify(basePolicy()), "governance/manifests/gate.json": JSON.stringify({schemaVersion:1, gateId:"gate", requiredCapabilities:[], domains:GRAPH}), "docs/a.md": DOC_BASE });
   repo.checkout("feature", true);
   const head = repo.commit("head", { "docs/a.md": DOC_HEAD });
   const common = gitOptions(repo);
   const executed = executedFrom === "TARGET_TIP" ? tip : head;
-  const trustedContext = prContext(head, { workflow: { path: WORKFLOW, sha: executed }, platformFiles: platformList(["docs/a.md"]) });
-  const identity = await g.getGitIdentity({ trustedContext, ...common, targetFrameworkMetadata: FRAMEWORK_METADATA });
+  const trustedContext = prContext(head, { invocationTrust: "OPERATOR_SUPPLIED", eventType: "manual", workflow: null, platformFiles: platformList(["docs/a.md"]) });
+  const identity = await g.getGitIdentity({ trustedContext, gate: { gateId: "gate", requiresManifest: true }, ...common, targetFrameworkMetadata: FRAMEWORK_METADATA });
   assert.equal(identity.established, true);
   const subject = identity.subject;
   const policy = identity.policy.policy;
@@ -79,18 +79,18 @@ async function endToEnd({ executedFrom = "TARGET_TIP" } = {}) {
   const evidence = g.checkEvidenceModel({ subject, documents, config: evidenceConfig });
   const consistency = g.checkConsistency({ subject, documents, config: consistencyConfig, evidenceResult: evidence });
   const stageRecords = [...markdown.records, ...evidence.records, ...consistency.records];
-  const delta = await g.computeDeltaReview({ subject, headGraph: g.validateGraph(GRAPH), baseGraph: g.validateGraph(GRAPH), records: stageRecords, ...common });
+  const delta = await g.computeDeltaReview({ subject, headGraph: g.validateGraph(GRAPH), baseGraph: g.validateGraph(GRAPH), records: [...identity.records, ...stageRecords], ...common });
   const run = { repository: REPO_ID, workflowPath: WORKFLOW, runId: "77", event: "pull_request", headSha: head, attempt: 1, status: "completed", jobs: [{ name: "Unit tests", status: "completed", conclusion: "success" }], attemptHistory: [] };
   const ci = await g.collectCiEvidence({ subject, repository: REPO_ID, workflowPath: WORKFLOW, event: "pull_request", requiredJobs: ["Unit tests"], now: NOW, adapter: { fetchRun: async () => ({ ok: true, run }) } });
   const records = [...identity.records, ...changed.records, ...scope.records, ...secrets.records, ...stageRecords, ...delta.records, ...ci.records];
   const reportContext = {
-    mode: "PR_REVIEW", invocationTrust: "PLATFORM_AUTHENTICATED", provider: "github", repositoryId: REPO_ID, eventType: "pull_request",
+    mode: "PR_REVIEW", invocationTrust: "OPERATOR_SUPPLIED", provider: "github", repositoryId: REPO_ID, eventType: "manual",
     targetRefName: "main", resolvedTargetTip: identity.identity.targetTip, suppliedTargetSha: null, headSha: subject.head, base: subject.base,
-    baseDerivation: "merge-base", workflowIdentity: WORKFLOW, workflowBlobSha: null, baseWorkflowBlobSha: null, defaultBranch: "main",
+    baseDerivation: "merge-base", workflowIdentity: null, workflowBlobSha: null, baseWorkflowBlobSha: null, defaultBranch: "main",
     rootTip: identity.identity.rootTip, rootPolicyDigest: identity.policy.digest, basePolicyDigest: identity.policy.digest,
-    executedFrom, frameworkVersion: FRAMEWORK_METADATA.frameworkVersion, targetSupportedCapabilities: [...FRAMEWORK_METADATA.supportedCapabilities],
+    executedFrom: "HEAD", frameworkVersion: FRAMEWORK_METADATA.frameworkVersion, targetSupportedCapabilities: [],
     targetSupportedSchemaVersions: { ...FRAMEWORK_METADATA.supportedSchemaVersions }, requiredCapabilities: [], phase: 2, collectorRunId: "collector-77",
-    executedCommit: executed,
+    executedCommit: head,
   };
   assert.equal(executedFrom !== "TARGET_TIP" || executed === identity.identity.targetTip, true, "the fixture's target-tip run executes from the tip 1A resolved");
   const input = {
@@ -104,7 +104,7 @@ async function endToEnd({ executedFrom = "TARGET_TIP" } = {}) {
 const withRecords = (input, records) => ({ ...input, records });
 const withContext = (input, overrides) => ({ ...input, trustedContext: { ...input.trustedContext, ...overrides } });
 const without = (records, checkId) => records.filter((r) => r.checkId !== checkId);
-const reasonsOf = (report) => report.records.filter((r) => r.status !== "PASS" && r.status !== "NOT_APPLICABLE").map((r) => `${r.checkId}:${r.reasonCode}`);
+const reasonsOf = (report) => report.records.filter((r) => r.status !== "PASS" && r.status !== "NOT_APPLICABLE" && !["OPERATOR_INVOCATION", "EXECUTION_NOT_FROM_TARGET_TIP"].includes(r.reasonCode)).map((r) => `${r.checkId}:${r.reasonCode}`);
 
 let shared = null;
 async function pipeline() {
@@ -121,16 +121,16 @@ test.after(() => {
   if (sharedHead !== null) sharedHead.repo.cleanup();
 });
 
-test("C1 positive control: a complete, platform-authenticated, target-tip Phase 2 run of every real stage is READY", async () => {
+test("C1/C3 diagnostic control: every real stage completes without claiming authenticated readiness", async () => {
   const p = await pipeline();
   const r = g.buildReport(p.input);
   assert.equal(r.ok, true, r.reason);
   assert.deepEqual(reasonsOf(r.report), []);
-  assert.equal(r.report.readiness.state, "READY");
-  assert.deepEqual([...r.report.readiness.reasons], []);
+  assert.equal(r.report.readiness.state, "NOT_READY");
+  assert.deepEqual(new Set(r.report.readiness.reasons), new Set(["EXECUTION_NOT_FROM_TARGET_TIP", "OPERATOR_INVOCATION"]));
   assert.equal(r.report.finalized, true);
   assert.equal(r.report.notAuthorization, true);
-  assert.ok(r.report.records.some((x) => x.checkId === "1F.CONTEXT.EXECUTION" && x.status === "PASS"));
+  assert.ok(r.report.records.some((x) => x.checkId === "1F.CONTEXT.EXECUTION" && x.status === "INCOMPLETE"));
   assert.ok(!r.report.records.some((x) => x.checkId.startsWith("KERNEL.REQUIRED_RESULT.")), "the real stages emit every required result");
   assert.deepEqual(r.report.domains.map((d) => d.domainId), ["DOMAIN_A", "DOMAIN_B"]);
 });
@@ -163,7 +163,7 @@ test("C1 M1: a caller cannot narrow the required domain set with expectedDomainI
   assert.match(r.reason, /expectedDomainIds differs from the 1E-reported domain set/);
   const same = g.buildReport({ ...p.input, expectedDomainIds: ["DOMAIN_B", "DOMAIN_A"] });
   assert.equal(same.ok, true, same.reason);
-  assert.equal(same.report.readiness.state, "READY");
+  assert.equal(same.report.readiness.state, "NOT_READY");
 });
 
 test("C1 M1: omitting the 1E domain-set record itself is a missing required result", async () => {
@@ -195,7 +195,7 @@ test("C1 M1: NOT_APPLICABLE satisfies completeness only as a real record with an
   const p = await pipeline();
   const swap = (proof) => p.records.map((r) => (r.checkId === "1C.EVIDENCE.PROMOTION_WORDING" ? { ...r, status: "NOT_APPLICABLE", observed: proof === null ? {} : { applicabilityProof: proof } } : r));
   const proven = g.buildReport(withRecords(p.input, swap("no promotion wording applies")));
-  assert.equal(proven.report.readiness.state, "READY");
+  assert.equal(proven.report.readiness.state, "NOT_READY");
   const unproven = g.buildReport(withRecords(p.input, swap(null)));
   assert.equal(unproven.report.readiness.state, "NOT_READY");
   assert.ok(reasonsOf(unproven.report).includes("KERNEL.APPLICABILITY.1C.EVIDENCE.PROMOTION_WORDING:APPLICABILITY_NOT_PROVEN"));
@@ -216,15 +216,15 @@ test("C1 M2: HEAD-executed output is advisory and never READY", async () => {
   const r = g.buildReport(p.input);
   assert.equal(r.ok, true, r.reason);
   assert.equal(r.report.readiness.state, "NOT_READY");
-  assert.ok(reasonsOf(r.report).includes("1F.CONTEXT.EXECUTION:EXECUTION_NOT_FROM_TARGET_TIP"));
+  assert.ok(r.report.records.some((x) => x.checkId === "1F.CONTEXT.EXECUTION" && x.reasonCode === "EXECUTION_NOT_FROM_TARGET_TIP"));
 });
 
 test("C1 M2: an OPERATOR_SUPPLIED invocation is at best HUMAN_REVIEW_REQUIRED, never READY", async () => {
   const p = await pipeline();
   const r = g.buildReport(withContext(p.input, { invocationTrust: "OPERATOR_SUPPLIED", eventType: "manual" }));
   assert.equal(r.ok, true, r.reason);
-  assert.equal(r.report.readiness.state, "HUMAN_REVIEW_REQUIRED");
-  assert.ok(r.report.humanReviewRequired.includes("1F.CONTEXT.EXECUTION"));
+  assert.equal(r.report.readiness.state, "NOT_READY");
+  assert.ok(r.report.humanReviewRequired.includes("1A.IDENTITY.INVOCATION"));
 });
 
 test("C1 M2: Phase 1 is never READY, even from the target tip", async () => {
@@ -327,7 +327,8 @@ test("C1 L1: the root policy is always re-resolved and compared with the report'
   const appeared = await call({ resolve: async () => ({ ok: true, rootTip: report.trustedContext.rootTip, digest: "1".repeat(64) }) }, bootstrap);
   assert.equal(appeared.records[0].status, "INCOMPLETE");
   const stillAbsent = await call({ resolve: async () => ({ ok: true, rootTip: report.trustedContext.rootTip, digest: null }) }, bootstrap);
-  assert.equal(stillAbsent.records[0].status, "PASS");
+  assert.equal(stillAbsent.records[0].status, "INCOMPLETE", "a forged bootstrap restatement is not owner-proven absence");
+  assert.equal(stillAbsent.records[0].observed.staleItems[0].reason, "ROOT_OWNER_BINDING_INVALID");
 });
 
 // ------------------------------------------------------------------ M4: base/head tighten-only composition
@@ -435,7 +436,7 @@ test("C1 M4: a head cannot remove a base-required capability -- required capabil
     repo.commit("base", { "README.md": "# R\n", "governance/base.json": JSON.stringify(policy), "docs/a.md": "# A\n" });
     repo.checkout("feature", true);
     const head = repo.commit("head drops the requirement", { "governance/base.json": JSON.stringify(basePolicy()), "docs/a.md": "# A2\n" });
-    const identity = await g.getGitIdentity({ trustedContext: prContext(head), ...gitOptions(repo), targetFrameworkMetadata: FRAMEWORK_METADATA });
+    const identity = await g.getGitIdentity({ trustedContext: prContext(head, { invocationTrust: "OPERATOR_SUPPLIED", eventType: "manual", workflow: null }), ...gitOptions(repo), targetFrameworkMetadata: FRAMEWORK_METADATA });
     const capabilities = identity.records.find((x) => x.checkId === "1A.POLICY.CAPABILITIES");
     assert.equal(capabilities.status, "INCOMPLETE");
     assert.equal(capabilities.reasonCode, "CAPABILITY_UNAVAILABLE_ON_TARGET");
@@ -456,7 +457,9 @@ test("C1 L2: changed-file trust is bound to the 1A identity, never a separate ca
   const bothFlagAndIdentity = await g.getChangedFiles({ subject: p.subject, identity: p.identity, invocationTrust: "PLATFORM_AUTHENTICATED", ...common });
   assert.equal(bothFlagAndIdentity.records[0].status, "CONFIGURATION_ERROR");
   // A platform-authenticated identity without the platform list can never skip the comparison.
-  const noList = await g.getChangedFiles({ subject: p.subject, identity: p.identity, ...common });
+  const rawClaim = await g.getGitIdentity({ trustedContext: prContext(p.subject.head), gate: { gateId: "gate", requiresManifest: true }, ...common });
+  assert.equal(rawClaim.records.find((r) => r.checkId === "1A.IDENTITY.INVOCATION").reasonCode, "PLATFORM_PROVENANCE_UNAVAILABLE");
+  const noList = await g.getChangedFiles({ subject: p.subject, identity: rawClaim, ...common });
   assert.equal(noList.records.find((r) => r.checkId === "1A.DIFF.PLATFORM_AGREEMENT").status, "INCOMPLETE");
   const noIdentity = await g.getChangedFiles({ subject: p.subject, ...common });
   assert.equal(noIdentity.records.find((r) => r.checkId === "1A.DIFF.PLATFORM_AGREEMENT").status, "INCOMPLETE");
@@ -475,9 +478,9 @@ test("C1 L2: an operator-trust changed-file comparison cannot be reported under 
   assert.equal(agreement.status, "NOT_APPLICABLE");
   assert.equal(agreement.observed.invocationTrust, "OPERATOR_SUPPLIED");
   const records = p.records.map((r) => (r.checkId === "1A.DIFF.PLATFORM_AGREEMENT" ? agreement : r));
-  const r = g.buildReport(withRecords(p.input, records));
+  const r = g.buildReport(withRecords(withContext(p.input, { invocationTrust: "PLATFORM_AUTHENTICATED", eventType: "pull_request" }), records));
   assert.equal(r.ok, false);
-  assert.match(r.reason, /different invocation trust/);
+  assert.match(r.reason, /PLATFORM_PROVENANCE_UNAVAILABLE/);
 });
 
 // ------------------------------------------------------------------ L3: report / trustedContext validation
@@ -487,7 +490,7 @@ test("C1 L3: contradictory or malformed trusted-context and report fields are re
   const contexts = {
     "unknown mode": { mode: "TOTALLY_MADE_UP" },
     "event does not match mode": { eventType: "push" },
-    "event does not match operator trust": { invocationTrust: "OPERATOR_SUPPLIED" },
+    "event does not match operator trust": { invocationTrust: "OPERATOR_SUPPLIED", eventType: "pull_request" },
     "malformed capability": { targetSupportedCapabilities: ["not a capability"] },
     "unknown capability major": { targetSupportedCapabilities: ["x@unknown"] },
     "duplicate capability": { targetSupportedCapabilities: ["repository-preflight@1", "repository-preflight@1"] },
@@ -521,11 +524,12 @@ test("C1 L3: readiness carries the canonical reasons[] (empty only when READY)",
   const p = await pipeline();
   const ready = g.buildReport(p.input).report.readiness;
   assert.deepEqual(Object.keys(ready).sort(), ["counts", "dominantStatus", "reasons", "state"]);
-  assert.deepEqual([...ready.reasons], []);
+  assert.deepEqual(new Set(ready.reasons), new Set(["EXECUTION_NOT_FROM_TARGET_TIP", "OPERATOR_INVOCATION"]));
   const notReady = g.buildReport((await headPipeline()).input).report.readiness;
-  assert.deepEqual([...notReady.reasons], ["EXECUTION_NOT_FROM_TARGET_TIP"]);
+  assert.deepEqual(new Set(notReady.reasons), new Set(["EXECUTION_NOT_FROM_TARGET_TIP", "OPERATOR_INVOCATION"]));
   const hrr = g.aggregate([{ checkId: "X", ownerStage: "1A", status: "HUMAN_REVIEW_REQUIRED", subject: makeSubject(), observed: {}, expected: null, reasonCode: "GOVERNANCE_CONFIG", detail: "", evidenceRefs: [] }], { expectedDomainIds: [], requiredCheckIds: ["X"] }).readiness;
-  assert.deepEqual([...hrr.reasons], ["GOVERNANCE_CONFIG"]);
+  assert.equal(hrr.state, "NOT_READY");
+  assert.ok(hrr.reasons.includes("COMPLETENESS_SOURCE_INVALID"));
 });
 
 // ------------------------------------------------------------------ L4: truthful framework metadata (D15)
