@@ -58,17 +58,20 @@ test("invalid status, owner stage, subject and reason code are rejected without 
   assert.equal(g.validateResultRecord(missing).ok, false);
 });
 
-test("all PASS -> READY", () => {
+test("all deterministic checks PASS retains the current operator invocation ceiling", () => {
   const out = complete([record(), record({ checkId: "1A.TREE_MATCH" })]);
-  assert.equal(out.overallStatus, "PASS");
-  assert.equal(out.readiness.state, "READY");
+  assert.ok(out.records.filter((r) => r.checkId !== "1A.IDENTITY.INVOCATION").every((r) => r.status === "PASS"));
+  assert.equal(out.overallStatus, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => `${r.checkId}:${r.status}/${r.reasonCode}`), ["KERNEL.COMPLETENESS:PASS/OK"]);
   assert.equal(out.notAuthorization, true);
 });
 
 test("HUMAN_REVIEW_REQUIRED -> HUMAN_REVIEW_REQUIRED, never READY", () => {
   const out = complete([record(), record({ checkId: "1C.X", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "NEEDS_JUDGMENT" })]);
   assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(out.humanReviewRequired, ["1C.X"]);
+  assert.deepEqual(out.humanReviewRequired, ["1A.IDENTITY.INVOCATION", "1C.X"]);
 });
 
 test("INCOMPLETE, FAIL and CONFIGURATION_ERROR -> NOT_READY", () => {
@@ -91,7 +94,7 @@ test("precedence is CONFIGURATION_ERROR > FAIL > INCOMPLETE > HUMAN_REVIEW_REQUI
   const out = complete(withConfig);
   assert.equal(out.overallStatus, "CONFIGURATION_ERROR");
   assert.deepEqual(out.records.filter((r) => r.checkId.startsWith("c.")).map((r) => r.checkId), ["c.1", "c.2", "c.3", "c.4", "c.5"]);
-  assert.deepEqual(out.humanReviewRequired, ["c.2"]);
+  assert.deepEqual(out.humanReviewRequired, ["1A.IDENTITY.INVOCATION", "c.2"]);
   assert.equal(out.records.filter((r) => r.checkId.startsWith("c.") && r.status === "PASS").length, 1);
   assert.equal(out.records.filter((r) => r.checkId.startsWith("c.") && r.status === "FAIL").length, 1);
   assert.equal(complete(records.slice(0, 3)).overallStatus, "INCOMPLETE");
@@ -99,8 +102,11 @@ test("precedence is CONFIGURATION_ERROR > FAIL > INCOMPLETE > HUMAN_REVIEW_REQUI
 
 test("NOT_APPLICABLE is neutral, requires a proof, and never equals PASS", () => {
   const na = record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: { applicabilityProof: "no markdown changed" }, reasonCode: "NOT_APPLICABLE" });
-  const ready = complete([record(), na]);
-  assert.equal(ready.readiness.state, "READY");
+  const proven = complete([record(), na]);
+  assert.equal(proven.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(proven.records.find((r) => r.checkId === "1B.NA").status, "NOT_APPLICABLE");
+  assert.deepEqual(proven.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.ok(!proven.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
   const noProof = complete([record(), record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: null, reasonCode: "NOT_APPLICABLE" })]);
   assert.equal(noProof.readiness.state, "NOT_READY");
   assert.ok(noProof.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
@@ -146,7 +152,9 @@ test("caller input is not mutated and the output is frozen", () => {
 
 test("domain result completeness: exact set passes; missing, duplicate and unknown are reported", () => {
   const ok = complete([record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
-  assert.equal(ok.readiness.state, "READY");
+  assert.equal(ok.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(!ok.kernelRecords.some((r) => r.checkId.startsWith("KERNEL.DOMAIN_RESULT.")));
+  assert.deepEqual(ok.kernelRecords.find((r) => r.checkId === "KERNEL.COMPLETENESS").observed.domainIds, ["A_DOMAIN", "B_DOMAIN"]);
   const missingRecords = canonicalRecords({ domainIds: ["A_DOMAIN", "B_DOMAIN"] }).filter((r) => r.checkId !== "1E.DOMAIN.B_DOMAIN");
   const missing = g.aggregate(missingRecords, { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
   assert.ok(missing.kernelRecords.some((r) => r.reasonCode === "DOMAIN_RESULT_MISSING" && r.status === "INCOMPLETE"));
@@ -161,13 +169,16 @@ test("domain result completeness: exact set passes; missing, duplicate and unkno
 test("a domain-level HUMAN_REVIEW_REQUIRED reaches readiness through records[]", () => {
   const out = complete([record(), domainRecord("A_DOMAIN", "HUMAN_REVIEW_REQUIRED")], { expectedDomainIds: ["A_DOMAIN"] });
   assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(out.humanReviewRequired, ["1E.DOMAIN.A_DOMAIN"]);
+  assert.deepEqual(out.humanReviewRequired, ["1A.IDENTITY.INVOCATION", "1E.DOMAIN.A_DOMAIN"]);
 });
 
 test("a domains[] projection that differs from the records is reported; a matching one is accepted", () => {
   const records = [record(), domainRecord("A_DOMAIN", "DEEP_REVIEW_REQUIRED")];
   const good = [{ domainId: "A_DOMAIN", effectiveLevel: "DEEP_REVIEW_REQUIRED", reasons: [], fingerprint: null }];
-  assert.equal(complete(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: good }).readiness.state, "READY");
+  const matching = complete(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: good });
+  assert.equal(matching.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(!matching.kernelRecords.some((r) => r.reasonCode === "DOMAIN_PROJECTION_MISMATCH"));
+  assert.deepEqual(matching.readiness.reasons, ["OPERATOR_INVOCATION"]);
   const bad = [{ domainId: "A_DOMAIN", effectiveLevel: "PRESERVATION_CHECK_ONLY", reasons: [], fingerprint: null }];
   const out = complete(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: bad });
   assert.ok(out.kernelRecords.some((r) => r.reasonCode === "DOMAIN_PROJECTION_MISMATCH"));
@@ -192,23 +203,31 @@ test("unknown status injected at runtime becomes a CONFIGURATION_ERROR kernel re
 const na = (checkId, proof = "predicate evaluated true") =>
   record({ checkId, status: "NOT_APPLICABLE", observed: proof === null ? null : { applicabilityProof: proof }, reasonCode: "NOT_APPLICABLE" });
 
-test("C1 DEV-L1: one proven NOT_APPLICABLE record is READY (no extra evidence rule)", () => {
+test("C1 DEV-L1: one proven non-invocation NOT_APPLICABLE record adds no diagnostic", () => {
   const out = complete([na("1B.NA")]);
-  assert.equal(out.overallStatus, "PASS");
-  assert.equal(out.readiness.state, "READY");
+  assert.equal(out.overallStatus, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.counts.NOT_APPLICABLE, 1);
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
   assert.deepEqual(out.kernelRecords.map((r) => `${r.checkId}:${r.status}/${r.reasonCode}`), ["KERNEL.COMPLETENESS:PASS/OK"]);
 });
 
-test("C1 DEV-L1: several proven NOT_APPLICABLE records are READY", () => {
+test("C1 DEV-L1: several proven non-invocation NOT_APPLICABLE records remain neutral", () => {
   const out = complete([na("1B.NA1"), na("1B.NA2"), na("1C.NA3")]);
-  assert.equal(out.readiness.state, "READY");
-  assert.equal(out.counts.NOT_APPLICABLE, 4, "three exercised records plus the canonical no-invocation proof");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.counts.NOT_APPLICABLE, 3, "only the three legitimate non-invocation checks are neutral");
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => r.checkId), ["KERNEL.COMPLETENESS"]);
 });
 
-test("C1 DEV-L1: PASS mixed with NOT_APPLICABLE is READY", () => {
+test("C1 DEV-L1: PASS mixed with legitimate NOT_APPLICABLE adds no diagnostic", () => {
   const out = complete([record(), na("1B.NA")]);
-  assert.equal(out.overallStatus, "PASS");
-  assert.equal(out.readiness.state, "READY");
+  assert.equal(out.overallStatus, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.records.find((r) => r.checkId === "1A.HEAD_MATCH").status, "PASS");
+  assert.equal(out.records.find((r) => r.checkId === "1B.NA").status, "NOT_APPLICABLE");
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => r.checkId), ["KERNEL.COMPLETENESS"]);
 });
 
 test("C1 DEV-L1: NOT_APPLICABLE without proof is INCOMPLETE / NOT_READY, alone or mixed", () => {

@@ -59,15 +59,15 @@ function stagePlan(records, expectedDomainIds = []) {
 /**
  * Canonical test data for kernel aggregation tests. This is deliberately built
  * from the kernel-owned map, not from the records a test happens to supply.
- * The invocation is proven NOT_APPLICABLE because these unit fixtures exercise
- * the pure status reducer without claiming any platform-authenticated origin.
+ * The invocation models the current operator producer state. A complete public
+ * aggregate therefore retains HUMAN_REVIEW_REQUIRED without platform authority.
  */
 function canonicalRecords({ subject = SUBJECT, domainIds = [], overrides = {}, extras = [] } = {}) {
   const { REQUIRED_CHECK_IDS } = require("./kernel/completeness");
   const policyFingerprint = "d".repeat(64);
   const ids = [...REQUIRED_CHECK_IDS.COMMON, ...REQUIRED_CHECK_IDS[subject.range.mode]];
   const observedFor = (checkId) => {
-    if (checkId === "1A.IDENTITY.INVOCATION") return { applicabilityProof: "pure kernel aggregation fixture has no invocation boundary" };
+    if (checkId === "1A.IDENTITY.INVOCATION") return { mode: subject.range.mode, invocationTrust: "OPERATOR_SUPPLIED", provider: "github", repositoryId: "owner/repo", eventType: "manual" };
     if (checkId === "1A.POLICY.EFFECTIVE") return { source: "ROOT_POLICY", policyFingerprint, referenceFamilies: [] };
     if (checkId === "1A.SCOPE.POLICY" || checkId === "1A.SECRETS.POLICY") return { policyFingerprint };
     if (checkId === "1B.MARKDOWN.POLICY") return { policyFingerprint, referenceFamilies: [] };
@@ -78,8 +78,8 @@ function canonicalRecords({ subject = SUBJECT, domainIds = [], overrides = {}, e
   const required = ids.map((checkId) => {
     const base = record({ checkId, ownerStage: checkId.slice(0, 2), subject: JSON.parse(JSON.stringify(subject)), observed: observedFor(checkId) });
     if (checkId === "1A.IDENTITY.INVOCATION") {
-      base.status = "NOT_APPLICABLE";
-      base.reasonCode = "NOT_APPLICABLE";
+      base.status = "HUMAN_REVIEW_REQUIRED";
+      base.reasonCode = "OPERATOR_INVOCATION";
     }
     return Object.hasOwn(overrides, checkId) ? { ...base, ...overrides[checkId] } : base;
   });

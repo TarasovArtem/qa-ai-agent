@@ -255,10 +255,11 @@ function deriveCompleteness(records, subject, failures) {
       else if (result.bound) result.domainIds = [...b.domainIds].sort();
     }
   }
-  // There is no reviewed adapter. A supplied PASS invocation record cannot
-  // make a raw aggregation authoritative, even when its copied values are true.
+  // There is no reviewed adapter. Neither a caller-written PASS nor an
+  // unsupported NOT_APPLICABLE invocation can exempt this mandatory boundary.
+  // Other checks retain their contract-specific applicability proofs.
   const invocation = one("1A.IDENTITY.INVOCATION");
-  if (invocation && invocation.status === STATUS.PASS) failures.push(kernelRecord("KERNEL.INVOCATION_PROVENANCE", STATUS.INCOMPLETE, REASON.PLATFORM_PROVENANCE_UNAVAILABLE, "no reviewed non-caller-mintable platform adapter exists", subject));
+  if (invocation && (invocation.status === STATUS.PASS || invocation.status === STATUS.NOT_APPLICABLE)) failures.push(kernelRecord("KERNEL.INVOCATION_PROVENANCE", STATUS.INCOMPLETE, REASON.PLATFORM_PROVENANCE_UNAVAILABLE, "no reviewed non-caller-mintable platform adapter exists", subject));
   result.requiredIds.sort();
   return result;
 }
