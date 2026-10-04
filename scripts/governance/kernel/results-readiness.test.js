@@ -228,9 +228,9 @@ test("C1 DEV-L1: HUMAN_REVIEW_REQUIRED and FAIL still dominate NOT_APPLICABLE", 
   assert.equal(fail.readiness.state, "NOT_READY");
 });
 
-test("C1 DEV-L1: an empty record set is a completeness configuration error (nothing established)", () => {
+test("C4: an empty valid record set remains INCOMPLETE (nothing established)", () => {
   const out = g.aggregate([]);
-  assert.equal(out.overallStatus, "CONFIGURATION_ERROR");
+  assert.equal(out.overallStatus, "INCOMPLETE");
   assert.equal(out.readiness.state, "NOT_READY");
   assert.ok(out.readiness.reasons.includes("COMPLETENESS_SOURCE_INVALID"));
 });

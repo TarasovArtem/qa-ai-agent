@@ -73,12 +73,17 @@ function evaluatePlatformList(platformFiles) {
  * getGitIdentity() result established for this exact subject, never from a
  * separate caller-supplied flag, so a platform-authenticated identity cannot be
  * paired with an operator-trust diff that skips the platform comparison.
- * Without an identity the strictest path (PLATFORM_AUTHENTICATED: the complete
- * platform list is required) applies. Returns { ok, trust } or { ok:false, detail }.
+ * Without an identity the legacy label selects diagnostic behavior only. With
+ * neither input the strict platform-list comparison applies. No label here
+ * authenticates provenance. Returns { ok, trust } or { ok:false, detail }.
  */
 function changedFileTrust(input, subject) {
-  if (Object.hasOwn(input, "invocationTrust")) return { ok: false, detail: "invocationTrust is not an input: the trust level comes from the getGitIdentity() result for this subject" };
-  if (!Object.hasOwn(input, "identity") || input.identity === undefined) return { ok: true, trust: "PLATFORM_AUTHENTICATED" };
+  const hasLegacy = Object.hasOwn(input, "invocationTrust");
+  const legacy = hasLegacy ? input.invocationTrust : undefined;
+  if (hasLegacy && legacy !== "OPERATOR_SUPPLIED" && legacy !== "PLATFORM_AUTHENTICATED") return { ok: false, detail: "invocationTrust must be a valid compatibility assertion" };
+  // A legacy label selects diagnostic behavior only; it emits no invocation
+  // owner fact and cannot authenticate platform provenance.
+  if (!Object.hasOwn(input, "identity") || input.identity === undefined) return { ok: true, trust: hasLegacy ? legacy : "PLATFORM_AUTHENTICATED" };
   const id = input.identity;
   const facts = isPlainObject(id) ? id.identity : undefined;
   if (!isPlainObject(id) || id.established !== true || !sameSubject(id.subject, subject) || !isPlainObject(facts)) {
@@ -87,12 +92,13 @@ function changedFileTrust(input, subject) {
   if (facts.mode !== subject.range.mode || (facts.invocationTrust !== "PLATFORM_AUTHENTICATED" && facts.invocationTrust !== "OPERATOR_SUPPLIED")) {
     return { ok: false, detail: "identity mode or invocation trust is not valid for this subject" };
   }
+  if (hasLegacy && legacy !== facts.invocationTrust) return { ok: false, detail: "invocationTrust differs from the canonical identity" };
   return { ok: true, trust: facts.invocationTrust };
 }
 
 /**
  * getChangedFiles({ subject, identity?, git | { repositoryRoot, gitExecutable },
- *                   platformFiles, from?, to?, mode? })
+ *                   invocationTrust?, platformFiles, from?, to?, mode? })
  * `subject` is the run identity established by getGitIdentity(); `identity` is that
  * getGitIdentity() result itself (the only source of the invocation trust; see
  * changedFileTrust()); `from`, `to` and `mode` are optional assertions that must

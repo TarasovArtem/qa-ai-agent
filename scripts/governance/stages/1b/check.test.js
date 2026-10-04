@@ -182,7 +182,8 @@ test("W1 1B check: the changed-file input must be the complete 1A result for the
   for (const bad of [null, undefined, ["docs/a.md"], { files: ["docs/a.md"] }, changedResult(otherSubject, ["docs/a.md"]), { ...changedResult(subject, ["docs/a.md"]), files: "docs/a.md" }]) {
     const r = await g.checkReferences({ subject, changedFiles: bad, policy: policyOf(), reader });
     assert.equal(state(r, "1B.MARKDOWN.FILES"), "CONFIGURATION_ERROR/CHANGED_FILES_INPUT_INVALID", JSON.stringify(bad));
-    assert.equal(r.records.length, 1);
+    assert.equal(r.records.length, 2);
+    assert.equal(state(r, "1B.MARKDOWN.POLICY"), "PASS/OK");
   }
   const incomplete = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"], false), policy: policyOf(), reader });
   assert.equal(state(incomplete, "1B.MARKDOWN.FILES"), "INCOMPLETE/CHANGED_FILES_INPUT_INVALID");

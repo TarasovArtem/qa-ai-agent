@@ -147,7 +147,8 @@ function aggregate(records, options = {}) {
   if (plan.bound) kernel.push(...checkDomainResultCompleteness(valid, plan.domainIds, opts.domainsProjection, runSubject));
   const observed = { mode: runSubject ? runSubject.range.mode : null, requiredCheckIds: required, referenceFamilies: plan.families, domainIds: plan.domainIds };
   observed.planFingerprint = crypto.createHash("sha256").update(canonicalJson(observed)).digest("hex");
-  const completeness = { ...kernelRecord("KERNEL.COMPLETENESS", plan.bound ? STATUS.PASS : STATUS.CONFIGURATION_ERROR, plan.bound ? REASON.OK : REASON.COMPLETENESS_SOURCE_INVALID, "canonical completeness derived by the kernel", runSubject), observed };
+  const completenessStatus = plan.bound ? STATUS.PASS : valid.length === 0 ? STATUS.INCOMPLETE : STATUS.CONFIGURATION_ERROR;
+  const completeness = { ...kernelRecord("KERNEL.COMPLETENESS", completenessStatus, plan.bound ? REASON.OK : REASON.COMPLETENESS_SOURCE_INVALID, "canonical completeness derived by the kernel", runSubject), observed };
   const suppliedCompleteness = valid.filter((r) => r.checkId === "KERNEL.COMPLETENESS");
   if (suppliedCompleteness.length === 1 && canonicalJson(suppliedCompleteness[0]) !== canonicalJson(completeness)) {
     kernel.push(kernelRecord("KERNEL.COMPLETENESS_BINDING", STATUS.CONFIGURATION_ERROR, REASON.COMPLETENESS_SOURCE_INVALID, "persisted completeness differs from recomputation", runSubject));

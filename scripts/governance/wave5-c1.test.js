@@ -448,12 +448,14 @@ test("C1 M4: a head cannot remove a base-required capability -- required capabil
 
 // ------------------------------------------------------------------ L2: changed-file trust binding
 
-test("C1 L2: changed-file trust is bound to the 1A identity, never a separate caller flag", async () => {
+test("C4 M2: canonical changed-file trust wins over a legacy compatibility assertion", async () => {
   const p = await pipeline();
   const common = gitOptions(p.repo);
   const flag = await g.getChangedFiles({ subject: p.subject, invocationTrust: "OPERATOR_SUPPLIED", ...common });
-  assert.deepEqual(flag.records.map((r) => `${r.checkId}:${r.status}:${r.reasonCode}`), ["1A.DIFF.CHANGED_FILES:CONFIGURATION_ERROR:TRUSTED_CONTEXT_INVALID"]);
-  assert.equal(flag.complete, false);
+  assert.deepEqual([...flag.files], ["docs/a.md"]);
+  assert.equal(flag.complete, true);
+  assert.equal(flag.records.find((r) => r.checkId === "1A.DIFF.PLATFORM_AGREEMENT").status, "NOT_APPLICABLE");
+  assert.notEqual(g.aggregate(flag.records).readiness.state, "READY");
   const bothFlagAndIdentity = await g.getChangedFiles({ subject: p.subject, identity: p.identity, invocationTrust: "PLATFORM_AUTHENTICATED", ...common });
   assert.equal(bothFlagAndIdentity.records[0].status, "CONFIGURATION_ERROR");
   // A platform-authenticated identity without the platform list can never skip the comparison.
