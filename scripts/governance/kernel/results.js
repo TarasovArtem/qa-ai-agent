@@ -97,28 +97,36 @@ function validateDomainObject(domain, record, problems) {
  * a frozen deep copy (the caller's object is never mutated).
  */
 function validateResultRecord(input) {
+  // One trust-boundary observation: validation and consumers use the same
+  // detached, immutable JSON state, never a later read of caller accessors.
+  let snapshot;
+  try {
+    snapshot = deepFreeze(cloneJson(input));
+  } catch {
+    return deepFreeze({ ok: false, problems: ["record could not be safely snapshotted"], reasonCode: REASON.RESULT_RECORD_INVALID });
+  }
   const problems = [];
-  if (!isPlainObject(input)) {
+  if (!isPlainObject(snapshot)) {
     return deepFreeze({ ok: false, problems: ["record must be an object"], reasonCode: REASON.RESULT_RECORD_INVALID });
   }
-  for (const key of Object.keys(input)) if (!RECORD_KEYS.includes(key)) problems.push(`unknown field ${key}`);
-  for (const key of REQUIRED_KEYS) if (!Object.hasOwn(input, key)) problems.push(`missing field ${key}`);
+  for (const key of Object.keys(snapshot)) if (!RECORD_KEYS.includes(key)) problems.push(`unknown field ${key}`);
+  for (const key of REQUIRED_KEYS) if (!Object.hasOwn(snapshot, key)) problems.push(`missing field ${key}`);
   if (problems.length > 0) return deepFreeze({ ok: false, problems, reasonCode: REASON.RESULT_RECORD_INVALID });
 
-  if (typeof input.checkId !== "string" || !CHECK_ID.test(input.checkId)) problems.push("invalid checkId");
-  if (typeof input.ownerStage !== "string" || !OWNER_STAGES.includes(input.ownerStage)) problems.push("invalid ownerStage");
-  if (typeof input.status !== "string" || !STATUS_VALUES.includes(input.status)) problems.push("invalid status");
-  if (!validateSubject(input.subject)) problems.push("invalid subject");
-  if (!isJsonValue(input.observed)) problems.push("observed is not a bounded JSON value");
-  if (!isJsonValue(input.expected)) problems.push("expected is not a bounded JSON value");
-  if (typeof input.reasonCode !== "string" || !REASON_CODE.test(input.reasonCode)) problems.push("invalid reasonCode");
-  if (typeof input.detail !== "string" || input.detail.length > LIMITS.maxDetailLength) problems.push("invalid detail");
-  if (!validateStringList(input.evidenceRefs, LIMITS.maxEvidenceRefs, 256)) problems.push("invalid evidenceRefs");
-  if (Object.hasOwn(input, "domain")) validateDomainObject(input.domain, input, problems);
-  else if (typeof input.checkId === "string" && input.checkId.startsWith("1E.DOMAIN.")) problems.push("domain result requires a domain object");
+  if (typeof snapshot.checkId !== "string" || !CHECK_ID.test(snapshot.checkId)) problems.push("invalid checkId");
+  if (typeof snapshot.ownerStage !== "string" || !OWNER_STAGES.includes(snapshot.ownerStage)) problems.push("invalid ownerStage");
+  if (typeof snapshot.status !== "string" || !STATUS_VALUES.includes(snapshot.status)) problems.push("invalid status");
+  if (!validateSubject(snapshot.subject)) problems.push("invalid subject");
+  if (!isJsonValue(snapshot.observed)) problems.push("observed is not a bounded JSON value");
+  if (!isJsonValue(snapshot.expected)) problems.push("expected is not a bounded JSON value");
+  if (typeof snapshot.reasonCode !== "string" || !REASON_CODE.test(snapshot.reasonCode)) problems.push("invalid reasonCode");
+  if (typeof snapshot.detail !== "string" || snapshot.detail.length > LIMITS.maxDetailLength) problems.push("invalid detail");
+  if (!validateStringList(snapshot.evidenceRefs, LIMITS.maxEvidenceRefs, 256)) problems.push("invalid evidenceRefs");
+  if (Object.hasOwn(snapshot, "domain")) validateDomainObject(snapshot.domain, snapshot, problems);
+  else if (typeof snapshot.checkId === "string" && snapshot.checkId.startsWith("1E.DOMAIN.")) problems.push("domain result requires a domain object");
 
   if (problems.length > 0) return deepFreeze({ ok: false, problems, reasonCode: REASON.RESULT_RECORD_INVALID });
-  return deepFreeze({ ok: true, problems: [], record: cloneJson(input) });
+  return deepFreeze({ ok: true, problems: [], record: snapshot });
 }
 
 module.exports = { validateResultRecord, statusForEffectiveLevel, canonicalJson, cloneJson, isJsonValue, CHECK_ID };
