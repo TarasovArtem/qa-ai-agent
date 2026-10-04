@@ -14,6 +14,7 @@
  *   1B.MARKDOWN.HEADINGS   headings extracted (anchors generated)
  *   1B.MARKDOWN.ANCHORS    local and cross-file heading anchors exist
  *   1B.MARKDOWN.LINKS      repository-local link targets exist and stay in the root
+ *   1B.MARKDOWN.POLICY     the fingerprint and reference families of the policy used
  *   1B.REFERENCES.<FAMILY> per configured ID family: dangling, duplicate, malformed
  *
  * 1B judges STRUCTURE only. It never decides whether a statement is true, whether
@@ -27,14 +28,15 @@
 const nodePath = require("node:path");
 const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
+const { cloneJson, isJsonValue } = require("../../kernel/results");
 const { parsePathPattern, matchPathPattern } = require("../../safety/path-patterns");
 const { validateRepoRelativePath, compareBytewise } = require("../../safety/repo-path");
 const { createRecordFactory, isValidSubject, sameSubject, sample } = require("../common");
 const { resolveGitAdapter } = require("../1a/git-adapter");
 const { resolveReader } = require("../head-reader");
-const { validateBasePolicy, resolveFrameworkMetadata } = require("../1a/policy");
+const { validateBasePolicy, resolveFrameworkMetadata, policyDigest } = require("../1a/policy");
 
-/** Metadata deciding schema/capability support: the caller-supplied target-tip metadata when valid. */
+/** Metadata deciding schema/capability support: the executing framework's own; a supplied value is only an assertion that must equal it (Corrective C2, 1G R3), else nothing is supported. */
 const metadataOf = (input) => {
   const r = resolveFrameworkMetadata(input.targetFrameworkMetadata);
   return r.ok ? r.metadata : { supportedCapabilities: [], supportedSchemaVersions: { minSupported: 1, maxSupported: 0 } };
@@ -104,6 +106,33 @@ async function checkReferences(input) {
   const { add, notApplicable } = out;
   const done = () => deepFreeze({ subject, records: out.records, outcome: null });
 
+  // C4: read caller policy once. Validation, consumption and fingerprinting all
+  // use this detached snapshot, including on record-producing early exits.
+  let supplied;
+  let policyFingerprint = null;
+  let markdown = { filePatterns: [], idFamilies: [] };
+  let policyProblem = null;
+  try {
+    const rawPolicy = input.policy;
+    if (!isPlainObject(rawPolicy)) policyProblem = { status: STATUS.INCOMPLETE, reason: REASON.POLICY_INVALID };
+    else {
+      supplied = cloneJson(rawPolicy);
+      if (!isPlainObject(supplied) || !isJsonValue(supplied)) throw new Error("invalid policy snapshot");
+      policyFingerprint = policyDigest(supplied);
+      if (!(supplied.scope && Array.isArray(supplied.scope.allowedPathDomains) && supplied.scope.allowedPathDomains.length === 0)) {
+        const validated = validateBasePolicy(supplied, metadataOf(input));
+        if (!validated.ok) policyProblem = { status: validated.status, reason: REASON.ID_FAMILY_CONFIG_INVALID };
+        else markdown = validated.policy.markdown;
+      }
+    }
+  } catch {
+    policyProblem = { status: STATUS.CONFIGURATION_ERROR, reason: REASON.POLICY_INVALID };
+  }
+  add("1B.MARKDOWN.POLICY", policyProblem ? policyProblem.status : STATUS.PASS,
+    policyProblem ? policyProblem.reason : REASON.OK, "identity of the detached policy snapshot before normalization", {
+      policyFingerprint, referenceFamilies: markdown.idFamilies.map((f) => f.family),
+    });
+
   const changed = input.changedFiles;
   if (!isPlainObject(changed) || !Array.isArray(changed.files) || !sameSubject(changed.subject, subject)) {
     add("1B.MARKDOWN.FILES", STATUS.CONFIGURATION_ERROR, REASON.CHANGED_FILES_INPUT_INVALID, "changedFiles must be the 1A getChangedFiles() result for the same subject", {});
@@ -118,18 +147,8 @@ async function checkReferences(input) {
     return done();
   }
 
-  // Effective Markdown configuration: validated policy, or the built-in minimum (nothing selected).
-  const supplied = input.policy;
-  let markdown = { filePatterns: [], idFamilies: [] };
-  if (isPlainObject(supplied) && !(supplied.scope && Array.isArray(supplied.scope.allowedPathDomains) && supplied.scope.allowedPathDomains.length === 0)) {
-    const validated = validateBasePolicy(supplied, metadataOf(input));
-    if (!validated.ok) {
-      add("1B.MARKDOWN.FILES", validated.status, REASON.ID_FAMILY_CONFIG_INVALID, "the effective policy (Markdown / ID-family configuration) is not valid", {});
-      return done();
-    }
-    markdown = validated.policy.markdown;
-  } else if (!isPlainObject(supplied)) {
-    add("1B.MARKDOWN.FILES", STATUS.INCOMPLETE, REASON.POLICY_INVALID, "no effective policy was supplied", {});
+  if (policyProblem) {
+    add("1B.MARKDOWN.FILES", policyProblem.status, policyProblem.reason, "the supplied policy could not be established as valid detached data", {});
     return done();
   }
   const families = markdown.idFamilies.map(compileFamily);

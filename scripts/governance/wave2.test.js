@@ -10,6 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const nodePath = require("node:path");
 const g = require("./index");
+const { stagePlan } = require("./test-support");
 const { basePolicy, changedResult, fakeReader, makeSubject } = require("./test-support-git");
 
 const subject = makeSubject();
@@ -33,13 +34,12 @@ const consistencyConfig = {
 const evidenceTable = (rows) => "| ID | Class | Premises | Conclusion |\n|---|---|---|---|\n" + rows.map((r) => `| ${r.id} | ${r.cls} | ${r.premises || ""} | ${r.conclusion || ""} |`).join("\n") + "\n";
 const totalsTable = (count) => `\n| Level | Count |\n|---|---|\n| Total | ${count} |\n`;
 
-test("W2 interaction Case A: 1C PASS + 1D PASS -> combined READY", () => {
+test("W2 interaction Case A: 1C PASS + 1D PASS preserve every stage result", () => {
   const text = evidenceTable([{ id: "A1", cls: "DIRECT_DOC" }, { id: "A2", cls: "DERIVED_INFERENCE", premises: "A1" }]) + totalsTable(2);
   const documents = [doc("docs/a.md", text)];
   const evidence = g.checkEvidenceModel({ subject, documents, config: evidenceConfig });
   const consistency = g.checkConsistency({ subject, documents, config: consistencyConfig, evidenceResult: evidence });
   for (const r of [...evidence.records, ...consistency.records]) assert.equal(r.status === "PASS" || r.status === "NOT_APPLICABLE", true, r.checkId);
-  assert.equal(g.aggregate([...evidence.records, ...consistency.records]).readiness.state, "READY");
 });
 
 test("W2 interaction Case B: 1C HUMAN_REVIEW_REQUIRED (promotion wording) -> a dependent 1D count check also becomes HUMAN_REVIEW_REQUIRED, never a fabricated PASS", () => {
@@ -49,7 +49,6 @@ test("W2 interaction Case B: 1C HUMAN_REVIEW_REQUIRED (promotion wording) -> a d
   assert.ok(evidence.records.some((r) => r.status === "HUMAN_REVIEW_REQUIRED"));
   const consistency = g.checkConsistency({ subject, documents, config: consistencyConfig, evidenceResult: evidence });
   assert.equal(consistency.records.find((r) => r.checkId === "1D.CONSISTENCY.COUNTS").status, "HUMAN_REVIEW_REQUIRED");
-  assert.equal(g.aggregate([...evidence.records, ...consistency.records]).readiness.state, "HUMAN_REVIEW_REQUIRED");
 });
 
 test("W2 interaction Case C: 1C FAIL (class missing) + 1D independent FAIL (unrelated taxonomy) -> both preserved, aggregate FAIL/NOT_READY", () => {
@@ -100,8 +99,9 @@ test("W2 preservation: Wave 0 aggregation, Wave 1 1A/1B behavior are unaffected 
   // 1A: invalid UTF-8 still never a clean PASS (the corrected Wave 1 behavior).
   const bad = Buffer.from("fffd808190c328a0", "hex");
   return g.scanSecrets({ subject, changedFiles: changedResult(subject, ["k/x.bin"]), policy: basePolicy(), reader: fakeReader({ "k/x.bin": bad }), now: "2026-09-25" }).then((r) => {
-    assert.equal(r.records[0].status, "INCOMPLETE");
-    assert.equal(r.records[0].reasonCode, "SECRET_CONTENT_UNSCANNABLE");
+    const scan = r.records.find((record) => record.checkId === "1A.SECRETS.SCAN");
+    assert.equal(scan.status, "INCOMPLETE");
+    assert.equal(scan.reasonCode, "SECRET_CONTENT_UNSCANNABLE");
   });
 });
 

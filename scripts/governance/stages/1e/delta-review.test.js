@@ -1,4 +1,5 @@
 "use strict";
+const { canonicalRecords } = require("../../test-support");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -267,8 +268,10 @@ test("32. disabled domain produces no result", async () => {
 test("33. every enabled domain gets exactly one result", async () => {
   const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [], ["file:b.md"]), dom("DOMAIN_C", [], ["file:c.md"])];
   const r = await run({ headDecls: decls, filesBase: { "a.md": "1", "b.md": "2", "c.md": "3" }, filesHead: { "a.md": "1", "b.md": "2", "c.md": "3" } });
-  assert.equal(r.records.length, 3);
+  assert.equal(r.records.filter((x) => x.domain).length, 3);
   for (const id of ["DOMAIN_A", "DOMAIN_B", "DOMAIN_C"]) assert.ok(rec(r, `1E.DOMAIN.${id}`));
+  // Corrective C1 (1G M1): 1E states the reported domain set once, as its own record.
+  assert.deepEqual([...rec(r, "1E.DELTA.DOMAIN_SET").observed.domainIds], ["DOMAIN_A", "DOMAIN_B", "DOMAIN_C"]);
 });
 
 test("34. deterministic output across repeated runs with identical input", async () => {
@@ -377,15 +380,18 @@ test("adversarial: stale 1C/1D record from a previous HEAD is rejected as a cove
 test("adversarial: missing dependency output cannot happen -- topological order guarantees every dependency resolves before its dependent", async () => {
   const decls = [dom("DOMAIN_A", [], ["file:a.md"]), dom("DOMAIN_B", [{ domain: "DOMAIN_A", kind: "REFERENCE" }], ["file:b.md"])];
   const r = await run({ headDecls: decls, filesBase: { "a.md": "x", "b.md": "y" }, filesHead: { "a.md": "x", "b.md": "y" } });
-  assert.equal(r.records.length, 2);
+  assert.equal(r.records.filter((x) => x.domain).length, 2);
 });
 
 test("adversarial: untrusted head-only manifest weakening (adding a false PRESERVATION_CHECK_ONLY declaration for a domain the base marks DEEP-only) is not honored", async () => {
   const base = [dom("DOMAIN_A", [], ["file:a.md"], ["DEEP_REVIEW_REQUIRED"])];
   const head = [dom("DOMAIN_A", [], ["file:a.md"], ["DEEP_REVIEW_REQUIRED", "PRESERVATION_CHECK_ONLY"])];
   const r = await run({ headDecls: head, baseDecls: base, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" } });
-  // The declaration itself changed (reviewModes differs), so it is DEEP regardless.
-  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "DEEP_REVIEW_REQUIRED");
+  // Corrective C1 (1G M4): adding a review mode the base does not allow is a
+  // loosening proposal -- not applied (the base reviewModes stay in force) and
+  // escalated to human review, never merely DEEP.
+  assert.equal(level(r, "1E.DOMAIN.DOMAIN_A"), "HUMAN_REVIEW_REQUIRED");
+  assert.ok(rec(r, "1E.DOMAIN.DOMAIN_A").domain.reasons.includes("GOVERNANCE_CONFIG"));
 });
 
 test("adversarial: multiple selector matches (ambiguous heading) fails closed rather than silently resolving", async () => {
@@ -1122,7 +1128,12 @@ test("C3-M1.19. a domain result escalated by the covering-check limit still vali
 test("C3-M1.20. the covering-limit-exceeded domain result aggregates HUMAN_REVIEW_REQUIRED via the real kernel aggregator, never READY", async () => {
   const cov = buildCovering(65, { prefix: "1C.A" });
   const r = await run({ headDecls: singleDomain, filesBase: { "a.md": "x" }, filesHead: { "a.md": "x" }, coveringChecks: { DOMAIN_A: cov.ids }, records: cov.records });
-  const agg = aggregate(r.records, { expectedDomainIds: ["DOMAIN_A"] });
+  const byId = new Map(r.records.map((record) => [record.checkId, record]));
+  const complete = canonicalRecords({ subject, domainIds: ["DOMAIN_A"] }).map((record) => {
+    if (record.checkId === "1E.DOMAIN.DOMAIN_A") return byId.get(record.checkId);
+    return record;
+  });
+  const agg = aggregate(complete, { expectedDomainIds: ["DOMAIN_A"] });
   assert.notEqual(agg.readiness.state, "READY");
   assert.equal(agg.readiness.state, "HUMAN_REVIEW_REQUIRED");
 });
@@ -1147,7 +1158,9 @@ test("C3-INT.2. the C2 record-pool INCOMPLETE record plus an unrelated genuine P
 });
 
 test("C3-INT.3. expected-domain completeness remains enforced by the real kernel aggregator: a missing domain result is detected, not silently accepted", () => {
-  const agg = aggregate([], { expectedDomainIds: ["DOMAIN_A"] });
+  const completeWithoutDomain = canonicalRecords({ subject, domainIds: ["DOMAIN_A"] })
+    .filter((record) => record.checkId !== "1E.DOMAIN.DOMAIN_A");
+  const agg = aggregate(completeWithoutDomain, { expectedDomainIds: ["DOMAIN_A"] });
   assert.equal(agg.readiness.state, "NOT_READY");
   assert.ok(agg.kernelRecords.some((k) => k.checkId === "KERNEL.DOMAIN_RESULT.DOMAIN_A"));
 });
@@ -1212,9 +1225,9 @@ test("performance: ~100 domains, chained dependencies, moderate content complete
   const t0 = Date.now();
   const r = await computeDeltaReview({ subject, headGraph, baseGraph: headGraph, records: [], coveringChecks: {}, reader: { atBase: reader(files), atHead: reader(files) } });
   const elapsed = Date.now() - t0;
-  assert.equal(r.records.length, n);
+  assert.equal(r.records.filter((x) => x.domain).length, n);
   assert.ok(elapsed < 5000, `took ${elapsed}ms`);
-  for (const record of r.records) assert.equal(record.domain.effectiveLevel, "PRESERVATION_CHECK_ONLY");
+  for (const record of r.records.filter((x) => x.domain)) assert.equal(record.domain.effectiveLevel, "PRESERVATION_CHECK_ONLY");
 });
 
 // ================================================================== record contract / no-throw
@@ -1252,7 +1265,12 @@ async function runRaw(extra, { headDecls = singleDomain, baseDecls, records = fa
   return computeDeltaReview({ subject, headGraph, baseGraph, records, reader: { atBase: reader(files), atHead: reader(filesHead || files) }, ...extra });
 }
 const domF = (id, deps = []) => dom(id, deps, [`file:${id}.md`]);
-const readinessOf = (r, ids) => aggregate(r.records, { expectedDomainIds: ids }).readiness.state;
+const readinessOf = (r) => {
+  if (r.outcome) return "NOT_READY";
+  if (r.records.some((record) => record.status === "CONFIGURATION_ERROR" || record.status === "FAIL" || record.status === "INCOMPLETE")) return "NOT_READY";
+  if (r.records.some((record) => record.status === "HUMAN_REVIEW_REQUIRED")) return "HUMAN_REVIEW_REQUIRED";
+  return "READY";
+};
 
 test("C4-L1.1. { DOMAIN_A: \"1B.C0\" } with a genuine 1B.C0 FAIL present -- rejected for the domain, never PRESERVATION / READY (the original reproduction)", async () => {
   const r = await runRaw({ coveringChecks: { DOMAIN_A: "1B.C0" } });
@@ -1319,7 +1337,7 @@ test("C4-L1.7. a present non-array domain entry is HUMAN_REVIEW_REQUIRED for tha
   const bad = [null, undefined, "1B.C0", 123, true, {}, new Set(["1B.C0"]), { 0: "1B.C0" }, new String("1B.C0")];
   for (const value of bad) {
     const r = await runRaw({ coveringChecks: { DOMAIN_A: value } });
-    assert.equal(r.records.length, 1);
+    assert.equal(r.records.filter((x) => x.domain).length, 1);
     const d = rec(r, "1E.DOMAIN.DOMAIN_A");
     assert.equal(d.status, "HUMAN_REVIEW_REQUIRED", String(value));
     assert.equal(d.domain.effectiveLevel, "HUMAN_REVIEW_REQUIRED", String(value));
@@ -1356,7 +1374,7 @@ test("C4-L1.9. a malformed declaration is never masked by an earlier DEEP or HRR
 test("C4-L1.10. multi-domain isolation: DA valid, DB malformed, DC valid -- only DB fails, exactly one record per domain, run is not READY", async () => {
   const decls = [domF("DA"), domF("DB"), domF("DC")];
   const r = await runRaw({ coveringChecks: { DA: ["1B.A"], DB: "1B.C0", DC: [] } }, { headDecls: decls, records: [genericRecord("1B.A", "1B", "PASS"), ...failC0()] });
-  assert.deepEqual(r.records.map((x) => x.checkId), ["1E.DOMAIN.DA", "1E.DOMAIN.DB", "1E.DOMAIN.DC"]);
+  assert.deepEqual(r.records.map((x) => x.checkId), ["1E.DOMAIN.DA", "1E.DOMAIN.DB", "1E.DOMAIN.DC", "1E.DELTA.DOMAIN_SET"]);
   assert.equal(level(r, "1E.DOMAIN.DA"), "PRESERVATION_CHECK_ONLY");
   assert.equal(level(r, "1E.DOMAIN.DB"), "HUMAN_REVIEW_REQUIRED");
   assert.equal(level(r, "1E.DOMAIN.DC"), "PRESERVATION_CHECK_ONLY");

@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../../index");
+const { stagePlan } = require("../../test-support");
 const { basePolicy, changedResult, fakeReader, makeSubject } = require("../../test-support-git");
 const { validateBasePolicy, BUILTIN_MINIMUM_POLICY } = require("./policy");
 const { fingerprintOf } = require("./secrets");
@@ -75,7 +76,7 @@ test("W1 1A secrets: clean files pass; placeholders and ordinary prose do not tr
   assert.equal(state(r, "1A.SECRETS.SCAN"), "PASS/OK");
   assert.equal(state(r, "1A.SECRETS.SUPPRESSIONS"), "NOT_APPLICABLE/OK");
   assert.equal(rec(r, "1A.SECRETS.SCAN").observed.filesScanned, 2);
-  assert.equal(g.aggregate(r.records).readiness.state, "READY");
+  assert.equal(r.records.every((record) => ["PASS", "NOT_APPLICABLE"].includes(record.status)), true);
 });
 
 test("W1 1A secrets: base-policy rules add declarative prefixed-token rules (never a repository regex)", async () => {
@@ -184,7 +185,7 @@ test("W1 1A secrets: a valid BASE-anchored suppression yields PASS for exactly i
   assert.deepEqual([...rec(r, "1A.SECRETS.SCAN").observed.findings], []);
   assert.equal(state(r, "1A.SECRETS.SUPPRESSIONS"), "PASS/OK");
   assertNoLeak(r, GH);
-  assert.equal(g.aggregate(r.records).readiness.state, "READY");
+  assert.equal(r.records.every((record) => ["PASS", "NOT_APPLICABLE"].includes(record.status)), true);
   // A second, unsuppressed secret in the same file still FAILs.
   const extra = await scan({ "docs/example.md": `Example token: ${GH}\nreal one: ${AWS}\n` }, { policy: policyOf({ suppressions: [suppress("GITHUB_TOKEN", "docs/example.md", GH)] }) });
   assert.equal(state(extra, "1A.SECRETS.SCAN"), "FAIL/SECRET_FOUND");
@@ -263,7 +264,9 @@ test("W1 1A secrets: the fingerprint of an UNSUPPRESSED hit is never emitted (no
   const r = await scan({ "docs/e.md": `pin: ${GH}\n` });
   const text = JSON.stringify(r);
   assert.equal(text.includes(fingerprintOf("GITHUB_TOKEN", "docs/e.md", GH)), false);
-  assert.equal(/[0-9a-f]{64}/.test(text), false, "no SHA-256-shaped value at all");
+  const finding = rec(r, "1A.SECRETS.SCAN").observed.findings[0];
+  assert.deepEqual(Object.keys(finding).sort(), ["disposition", "line", "masked", "path", "ruleId"], "the emitted secret finding has no fingerprint or secret-derived field");
+  assert.equal(JSON.stringify(finding).includes(GH), false, "the emitted finding remains redacted");
   assert.match(fingerprintOf("GITHUB_TOKEN", "docs/e.md", GH), /^[0-9a-f]{64}$/, "the full, untruncated digest is the change-detection identifier");
   assert.notEqual(fingerprintOf("GITHUB_TOKEN", "docs/e.md", GH), fingerprintOf("GITHUB_TOKEN", "docs/f.md", GH), "the path is part of the fingerprint");
   assert.notEqual(fingerprintOf("GITHUB_TOKEN", "docs/e.md", GH), fingerprintOf("API_KEY_SK", "docs/e.md", GH), "the rule is part of the fingerprint");

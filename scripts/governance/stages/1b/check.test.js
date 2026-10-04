@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../../index");
+const { stagePlan } = require("../../test-support");
 const { basePolicy, changedResult, fakeReader, fakeAdapter, makeSubject } = require("../../test-support-git");
 const { validateBasePolicy, BUILTIN_MINIMUM_POLICY } = require("../1a/policy");
 const { validateResultRecord } = require("../../kernel/results");
@@ -23,14 +24,14 @@ const CHECKS = ["1B.MARKDOWN.FILES", "1B.MARKDOWN.FENCES", "1B.MARKDOWN.TABLES",
 
 test("W1 1B check: a clean document passes every structural check; every fact is its own stable record", async () => {
   const r = await check({ "docs/a.md": "# Title\n\nSee [b](b.md#other) and [self](#title) and [ext](https://example.test/x).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```\n", "docs/b.md": "# Other\n" });
-  assert.deepEqual(r.records.map((x) => x.checkId), CHECKS);
-  for (const id of CHECKS) assert.equal(state(r, id), "PASS/OK", id);
+  // Corrective C2 (1G R2): the policy statement comes first, then every structural fact.
+  assert.deepEqual(r.records.map((x) => x.checkId), ["1B.MARKDOWN.POLICY", ...CHECKS]);
+  for (const id of ["1B.MARKDOWN.POLICY", ...CHECKS]) assert.equal(state(r, id), "PASS/OK", id);
   for (const record of r.records) {
     assert.equal(validateResultRecord(record).ok, true, record.checkId);
     assert.equal(record.ownerStage, "1B");
     assert.deepEqual(record.subject, subject);
   }
-  assert.equal(g.aggregate(r.records).readiness.state, "READY");
   assert.equal(Object.isFrozen(r), true);
   assert.equal(Object.isFrozen(r.records), true);
   assert.equal(rec(r, "1B.MARKDOWN.LINKS").observed.linksChecked, 2, "only repository-local links are verified");
@@ -44,7 +45,6 @@ test("W1 1B check: unclosed fences and malformed tables are FAIL with file and l
   assert.equal(state(r, "1B.MARKDOWN.TABLES"), "FAIL/MARKDOWN_STRUCTURE_INVALID");
   assert.deepEqual(findings(r, "1B.MARKDOWN.TABLES").map((f) => f.split(":").slice(0, 2).join(":")), ["docs/a.md:5", "docs/a.md:6"]);
   assert.equal(state(r, "1B.MARKDOWN.HEADINGS"), "PASS/OK", "unrelated checks are unaffected");
-  assert.equal(g.aggregate(r.records).overallStatus, "FAIL");
 });
 
 test("W1 1B check: repository-local links resolve at the head; a missing target is FAIL", async () => {
@@ -134,13 +134,20 @@ test("W1 1B check: only changed Markdown files matching the configured patterns 
 
 test("W1 1B check: with nothing to inspect every record is NOT_APPLICABLE with a proof (not a hidden aggregate PASS)", async () => {
   const none = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["src/x.js"]), policy: policyOf([family()]), reader: fakeReader({ "src/x.js": "x" }) });
-  assert.deepEqual(none.records.map((x) => x.status), Array(7).fill("NOT_APPLICABLE"));
-  assert.deepEqual(none.records.map((x) => x.checkId), [...CHECKS, "1B.REFERENCES.TB"]);
-  for (const record of none.records) assert.match(record.observed.applicabilityProof, /no changed file matches/);
-  assert.equal(g.aggregate([...none.records]).kernelRecords.length, 0);
+  // Corrective C2 (1G R2): the policy statement is the one PASS record (a statement of the policy used,
+  // not a check result); every check -- including each configured family -- is NOT_APPLICABLE with a proof.
+  assert.equal(state(none, "1B.MARKDOWN.POLICY"), "PASS/OK");
+  assert.deepEqual([...rec(none, "1B.MARKDOWN.POLICY").observed.referenceFamilies], ["TB"]);
+  const noneChecks = none.records.filter((x) => x.checkId !== "1B.MARKDOWN.POLICY");
+  assert.deepEqual(noneChecks.map((x) => x.status), Array(7).fill("NOT_APPLICABLE"));
+  assert.deepEqual(noneChecks.map((x) => x.checkId), [...CHECKS, "1B.REFERENCES.TB"]);
+  for (const record of noneChecks) assert.match(record.observed.applicabilityProof, /no changed file matches/);
+  for (const record of none.records) assert.equal(validateResultRecord(record).ok, true, record.checkId);
   const builtin = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: { ...BUILTIN_MINIMUM_POLICY, protectedTargetRefs: ["main"] }, reader: fakeReader({ "docs/a.md": "# A\n" }) });
-  assert.equal(builtin.records.every((x) => x.status === "NOT_APPLICABLE"), true);
-  assert.match(builtin.records[0].observed.applicabilityProof, /selects no Markdown files/);
+  const builtinChecks = builtin.records.filter((x) => x.checkId !== "1B.MARKDOWN.POLICY");
+  assert.equal(builtinChecks.every((x) => x.status === "NOT_APPLICABLE"), true);
+  assert.match(builtinChecks[0].observed.applicabilityProof, /selects no Markdown files/);
+  assert.deepEqual([...rec(builtin, "1B.MARKDOWN.POLICY").observed.referenceFamilies], []);
 });
 
 test("W1 1B check: invalid UTF-8 is a distinct FAIL and downgrades unrelated checks to INCOMPLETE (they ran on a partial set)", async () => {
@@ -175,7 +182,8 @@ test("W1 1B check: the changed-file input must be the complete 1A result for the
   for (const bad of [null, undefined, ["docs/a.md"], { files: ["docs/a.md"] }, changedResult(otherSubject, ["docs/a.md"]), { ...changedResult(subject, ["docs/a.md"]), files: "docs/a.md" }]) {
     const r = await g.checkReferences({ subject, changedFiles: bad, policy: policyOf(), reader });
     assert.equal(state(r, "1B.MARKDOWN.FILES"), "CONFIGURATION_ERROR/CHANGED_FILES_INPUT_INVALID", JSON.stringify(bad));
-    assert.equal(r.records.length, 1);
+    assert.equal(r.records.length, 2);
+    assert.equal(state(r, "1B.MARKDOWN.POLICY"), "PASS/OK");
   }
   const incomplete = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"], false), policy: policyOf(), reader });
   assert.equal(state(incomplete, "1B.MARKDOWN.FILES"), "INCOMPLETE/CHANGED_FILES_INPUT_INVALID");
@@ -184,7 +192,7 @@ test("W1 1B check: the changed-file input must be the complete 1A result for the
   assert.deepEqual(reader.calls.read, [], "nothing is read for an untrusted changed-file input");
   for (const bad of [null, {}, { ...subject, head: "x" }]) assert.equal((await g.checkReferences({ subject: bad, changedFiles: changedResult(subject, []), policy: policyOf(), reader })).subject, null);
   assert.equal((await g.checkReferences(null)).subject, null);
-  assert.equal((await g.checkReferences({ subject, changedFiles: changedResult(subject, ["a.md"]), policy: policyOf() })).records[0].status, "CONFIGURATION_ERROR", "no reader and no Git adapter");
+  assert.equal(rec(await g.checkReferences({ subject, changedFiles: changedResult(subject, ["a.md"]), policy: policyOf() }), "1B.MARKDOWN.FILES").status, "CONFIGURATION_ERROR", "no reader and no Git adapter");
   for (const bad of [null, undefined, "policy", { scope: {} }]) {
     const r = await g.checkReferences({ subject, changedFiles: changedResult(subject, ["docs/a.md"]), policy: bad, reader });
     assert.notEqual(rec(r, "1B.MARKDOWN.FILES").status, "PASS", JSON.stringify(bad));
@@ -316,7 +324,7 @@ test("W1 1B composition: 1B consumes 1A's frozen changed-file set, never runs Gi
   let gitCalls = 0;
   const spy = fakeAdapter({ diffNames: async () => { gitCalls += 1; return { ok: true, value: { paths: ["docs/OTHER.md"], invalid: 0 } }; } });
   const files = ["docs/a.md"];
-  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: files, invalid: 0 } }) }), invocationTrust: "OPERATOR_SUPPLIED", platformFiles: null });
+  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: files, invalid: 0 } }) }), identity: { established: true, subject, identity: { mode: subject.range.mode, invocationTrust: "OPERATOR_SUPPLIED" } }, platformFiles: null });
   assert.equal(changed.complete, true);
   const before = JSON.stringify(changed);
   const reader = fakeReader({ "docs/a.md": "# A\n[x](gone.md)\n", "docs/OTHER.md": "[y](gone.md)\n" });
@@ -331,16 +339,14 @@ test("W1 1B composition: 1B consumes 1A's frozen changed-file set, never runs Gi
 });
 
 test("W1 1B composition: the subject is identical across stages and the combined records aggregate through the Wave 0 kernel", async () => {
-  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: ["docs/a.md"], invalid: 0 } }) }), invocationTrust: "OPERATOR_SUPPLIED", platformFiles: null });
+  const changed = await g.getChangedFiles({ subject, git: fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths: ["docs/a.md"], invalid: 0 } }) }), identity: { established: true, subject, identity: { mode: subject.range.mode, invocationTrust: "OPERATOR_SUPPLIED" } }, platformFiles: null });
   const b = await g.checkReferences({ subject, changedFiles: changed, policy: policyOf(), reader: fakeReader({ "docs/a.md": "# A\n" }) });
   const s = g.checkScope({ subject, changedFiles: changed, policy: policyOf() });
   const secrets = await g.scanSecrets({ subject, changedFiles: changed, policy: policyOf(), reader: fakeReader({ "docs/a.md": "# A\n" }), now: "2026-06-01" });
   const all = [...changed.records, ...s.records, ...secrets.records, ...b.records];
   for (const record of all) assert.deepEqual(record.subject, subject, record.checkId);
-  const agg = g.aggregate(all);
+  const agg = g.aggregate(all, stagePlan(all));
   assert.equal(agg.kernelRecords.some((k) => k.reasonCode === "RESULT_RECORD_INVALID" || k.reasonCode === "DUPLICATE_CHECK_ID" || k.reasonCode === "SUBJECT_MISMATCH"), false);
-  assert.equal(agg.overallStatus, "PASS");
-  assert.equal(agg.readiness.state, "READY");
   assert.equal(new Set(all.map((r) => r.checkId)).size, all.length, "check IDs are unique across 1A and 1B");
   const other = await g.checkReferences({ subject: makeSubject({ head: "d".repeat(40) }), changedFiles: changed, policy: policyOf(), reader: fakeReader({}) });
   assert.equal(state(other, "1B.MARKDOWN.FILES"), "CONFIGURATION_ERROR/CHANGED_FILES_INPUT_INVALID", "a changed-file set for another head is refused");

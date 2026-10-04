@@ -12,8 +12,10 @@ const state = (result, id) => {
   const r = rec(result, id);
   return r ? `${r.status}/${r.reasonCode}` : "MISSING";
 };
+// Corrective C1 (1G L2): the invocation trust comes only from the 1A identity result.
+const identityFor = (subj, invocationTrust) => ({ established: true, subject: subj, identity: { mode: subj.range.mode, invocationTrust } });
 const listing = (paths, invalid = 0) => fakeAdapter({ diffNames: async () => ({ ok: true, value: { paths, invalid } }) });
-const changed = (paths, extra = {}, adapter = listing(paths)) => g.getChangedFiles({ subject, git: adapter, invocationTrust: "PLATFORM_AUTHENTICATED", platformFiles: platformList(paths), ...extra });
+const changed = (paths, extra = {}, adapter = listing(paths)) => g.getChangedFiles({ subject, git: adapter, identity: identityFor(subject, "PLATFORM_AUTHENTICATED"), platformFiles: platformList(paths), ...extra });
 
 test("W1 1A diff: equal Git and platform SETS agree and the result is frozen, sorted and Wave 0 valid", async () => {
   const r = await changed(["b.md", "a.md", "docs/c.md"]);
@@ -118,7 +120,7 @@ test("W1 1A diff: a missing platform list is INCOMPLETE for a platform run and n
   const platformRun = await changed(["a.md"], { platformFiles: null });
   assert.equal(state(platformRun, "1A.DIFF.PLATFORM_AGREEMENT"), "INCOMPLETE/PLATFORM_FILE_LIST_INCOMPLETE");
   assert.equal(platformRun.complete, false);
-  const operator = await changed(["a.md"], { platformFiles: null, invocationTrust: "OPERATOR_SUPPLIED" });
+  const operator = await changed(["a.md"], { platformFiles: null, identity: identityFor(subject, "OPERATOR_SUPPLIED") });
   assert.equal(state(operator, "1A.DIFF.PLATFORM_AGREEMENT"), "NOT_APPLICABLE/OK");
   assert.equal(operator.complete, true);
   const malformed = await changed(["a.md"], { platformFiles: { entries: "nope" } });
@@ -127,12 +129,12 @@ test("W1 1A diff: a missing platform list is INCOMPLETE for a platform run and n
 
 test("W1 1A diff: non-canonical paths are CONFIGURATION_ERROR and are rejected, never repaired", async () => {
   for (const bad of ["../escape.md", "a/../../x", "/etc/passwd", "./leading.md", "a//b", "dir/", "a\\b.md", "a\u0000b", "a\nb", "C:/x", "c:\\x", "\u007f"]) {
-    const r = await changed(["ok.md", bad], { platformFiles: null, invocationTrust: "OPERATOR_SUPPLIED" });
+    const r = await changed(["ok.md", bad], { platformFiles: null, identity: identityFor(subject, "OPERATOR_SUPPLIED") });
     assert.equal(state(r, "1A.DIFF.CHANGED_FILES"), "CONFIGURATION_ERROR/CHANGED_PATH_INVALID", JSON.stringify(bad));
     assert.deepEqual([...r.files], [], "no partially-trusted file list is returned");
     assert.equal(r.complete, false);
   }
-  const nonUtf8 = await changed([], { platformFiles: null, invocationTrust: "OPERATOR_SUPPLIED" }, listing(["a.md"], 1));
+  const nonUtf8 = await changed([], { platformFiles: null, identity: identityFor(subject, "OPERATOR_SUPPLIED") }, listing(["a.md"], 1));
   assert.equal(state(nonUtf8, "1A.DIFF.CHANGED_FILES"), "CONFIGURATION_ERROR/CHANGED_PATH_INVALID", "an invalid UTF-8 path is rejected");
   const platformBad = await changed(["a.md"], { platformFiles: platformList(["a.md", "../x"]) });
   assert.equal(state(platformBad, "1A.DIFF.PLATFORM_AGREEMENT"), "CONFIGURATION_ERROR/CHANGED_PATH_INVALID");
@@ -164,7 +166,7 @@ test("W1 1A diff: an invalid subject, a Git failure or an unusable adapter fail 
   assert.equal(state(failing, "1A.DIFF.CHANGED_FILES"), "INCOMPLETE/DIFF_COMPUTATION_FAILED");
   const noAdapter = await g.getChangedFiles({ subject });
   assert.equal(state(noAdapter, "1A.DIFF.CHANGED_FILES"), "INCOMPLETE/DIFF_COMPUTATION_FAILED");
-  const tooMany = await g.getChangedFiles({ subject, git: listing(Array.from({ length: 100_001 }, (_, i) => `f/${i}.md`)), platformFiles: null, invocationTrust: "OPERATOR_SUPPLIED" });
+  const tooMany = await g.getChangedFiles({ subject, git: listing(Array.from({ length: 100_001 }, (_, i) => `f/${i}.md`)), platformFiles: null, identity: identityFor(subject, "OPERATOR_SUPPLIED") });
   assert.equal(state(tooMany, "1A.DIFF.CHANGED_FILES"), "INCOMPLETE/DIFF_COMPUTATION_FAILED");
 });
 
@@ -190,7 +192,7 @@ test("W1 1A diff: against a real repository the set is computed once from Git fo
     const head = repo.sha("HEAD");
     const identity = await g.getGitIdentity({ trustedContext: prContext(head), ...gitOptions(repo) });
     assert.equal(identity.established, true);
-    const files = await g.getChangedFiles({ subject: identity.subject, invocationTrust: "PLATFORM_AUTHENTICATED", platformFiles: platformList(["docs/keep.md", { path: "docs/new name.md", previousPath: "docs/old name.md" }, "é/ü.md"]), ...gitOptions(repo) });
+    const files = await g.getChangedFiles({ subject: identity.subject, identity, platformFiles: platformList(["docs/keep.md", { path: "docs/new name.md", previousPath: "docs/old name.md" }, "é/ü.md"]), ...gitOptions(repo) });
     assert.deepEqual([...files.files], ["docs/keep.md", "docs/new name.md", "docs/old name.md", "é/ü.md"]);
     assert.equal(files.complete, true);
     assert.equal(state(files, "1A.DIFF.PLATFORM_AGREEMENT"), "PASS/OK");

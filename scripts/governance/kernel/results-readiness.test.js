@@ -3,7 +3,21 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../index");
-const { record, domainRecord, SUBJECT } = require("../test-support");
+const { record, domainRecord, SUBJECT, canonicalRecords } = require("../test-support");
+
+// D16 kernel tests start from one complete canonical record set. Supplied records
+// replace records with the same checkId or are appended as deliberate extras.
+const complete = (records = [], options = {}) => {
+  const domainIds = options.expectedDomainIds || records.filter((r) => r && r.domain).map((r) => r.domain.domainId);
+  const supplied = new Map(records.filter((r) => r && typeof r.checkId === "string").map((r) => [r.checkId, r]));
+  const base = canonicalRecords({ domainIds }).map((r) => supplied.get(r.checkId) || r);
+  const existing = new Set(base.map((r) => r.checkId));
+  const extras = records.filter((r) => !r || typeof r.checkId !== "string" || !existing.has(r.checkId));
+  const aggregateOptions = {};
+  if (options.expectedDomainIds !== undefined) aggregateOptions.expectedDomainIds = options.expectedDomainIds;
+  if (options.domainsProjection !== undefined) aggregateOptions.domainsProjection = options.domainsProjection;
+  return g.aggregate([...base, ...extras], aggregateOptions);
+};
 
 test("every valid status is an accepted record status and the enum is authoritative", () => {
   for (const status of Object.values(g.STATUS)) {
@@ -44,22 +58,25 @@ test("invalid status, owner stage, subject and reason code are rejected without 
   assert.equal(g.validateResultRecord(missing).ok, false);
 });
 
-test("all PASS -> READY", () => {
-  const out = g.aggregate([record(), record({ checkId: "1A.TREE_MATCH" })]);
-  assert.equal(out.overallStatus, "PASS");
-  assert.equal(out.readiness.state, "READY");
+test("all deterministic checks PASS retains the current operator invocation ceiling", () => {
+  const out = complete([record(), record({ checkId: "1A.TREE_MATCH" })]);
+  assert.ok(out.records.filter((r) => r.checkId !== "1A.IDENTITY.INVOCATION").every((r) => r.status === "PASS"));
+  assert.equal(out.overallStatus, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => `${r.checkId}:${r.status}/${r.reasonCode}`), ["KERNEL.COMPLETENESS:PASS/OK"]);
   assert.equal(out.notAuthorization, true);
 });
 
 test("HUMAN_REVIEW_REQUIRED -> HUMAN_REVIEW_REQUIRED, never READY", () => {
-  const out = g.aggregate([record(), record({ checkId: "1C.X", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "NEEDS_JUDGMENT" })]);
+  const out = complete([record(), record({ checkId: "1C.X", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "NEEDS_JUDGMENT" })]);
   assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(out.humanReviewRequired, ["1C.X"]);
+  assert.deepEqual(out.humanReviewRequired, ["1A.IDENTITY.INVOCATION", "1C.X"]);
 });
 
 test("INCOMPLETE, FAIL and CONFIGURATION_ERROR -> NOT_READY", () => {
   for (const status of ["INCOMPLETE", "FAIL", "CONFIGURATION_ERROR"]) {
-    const out = g.aggregate([record(), record({ checkId: "1A.Z", status, reasonCode: "SOME_REASON" })]);
+    const out = complete([record(), record({ checkId: "1A.Z", status, reasonCode: "SOME_REASON" })]);
     assert.equal(out.readiness.state, "NOT_READY", status);
     assert.equal(out.overallStatus, status);
   }
@@ -72,35 +89,39 @@ test("precedence is CONFIGURATION_ERROR > FAIL > INCOMPLETE > HUMAN_REVIEW_REQUI
     record({ checkId: "c.3", status: "INCOMPLETE", reasonCode: "R_TWO" }),
     record({ checkId: "c.4", status: "FAIL", reasonCode: "R_THREE" }),
   ];
-  assert.equal(g.aggregate(records).overallStatus, "FAIL");
+  assert.equal(complete(records).overallStatus, "FAIL");
   const withConfig = [...records, record({ checkId: "c.5", status: "CONFIGURATION_ERROR", reasonCode: "R_FOUR" })];
-  const out = g.aggregate(withConfig);
+  const out = complete(withConfig);
   assert.equal(out.overallStatus, "CONFIGURATION_ERROR");
-  assert.equal(out.records.length, 5);
-  assert.deepEqual(out.humanReviewRequired, ["c.2"]);
-  assert.equal(out.counts.PASS, 1);
-  assert.equal(out.counts.FAIL, 1);
-  assert.equal(g.aggregate(records.slice(0, 3)).overallStatus, "INCOMPLETE");
+  assert.deepEqual(out.records.filter((r) => r.checkId.startsWith("c.")).map((r) => r.checkId), ["c.1", "c.2", "c.3", "c.4", "c.5"]);
+  assert.deepEqual(out.humanReviewRequired, ["1A.IDENTITY.INVOCATION", "c.2"]);
+  assert.equal(out.records.filter((r) => r.checkId.startsWith("c.") && r.status === "PASS").length, 1);
+  assert.equal(out.records.filter((r) => r.checkId.startsWith("c.") && r.status === "FAIL").length, 1);
+  assert.equal(complete(records.slice(0, 3)).overallStatus, "INCOMPLETE");
 });
 
 test("NOT_APPLICABLE is neutral, requires a proof, and never equals PASS", () => {
   const na = record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: { applicabilityProof: "no markdown changed" }, reasonCode: "NOT_APPLICABLE" });
-  const ready = g.aggregate([record(), na]);
-  assert.equal(ready.readiness.state, "READY");
-  const noProof = g.aggregate([record(), record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: null, reasonCode: "NOT_APPLICABLE" })]);
+  const proven = complete([record(), na]);
+  assert.equal(proven.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(proven.records.find((r) => r.checkId === "1B.NA").status, "NOT_APPLICABLE");
+  assert.deepEqual(proven.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.ok(!proven.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
+  const noProof = complete([record(), record({ checkId: "1B.NA", status: "NOT_APPLICABLE", observed: null, reasonCode: "NOT_APPLICABLE" })]);
   assert.equal(noProof.readiness.state, "NOT_READY");
   assert.ok(noProof.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
 });
 
 test("invalid, duplicate-id and mixed-subject records are surfaced, never dropped or repaired", () => {
-  const bad = g.aggregate([record(), { nonsense: true }]);
+  const bad = complete([record(), { nonsense: true }]);
   assert.equal(bad.readiness.state, "NOT_READY");
   assert.ok(bad.kernelRecords.some((r) => r.reasonCode === "RESULT_RECORD_INVALID"));
-  const dup = g.aggregate([record(), record()]);
+  const duplicate = record({ checkId: "1A.HEAD_MATCH" });
+  const dup = g.aggregate([...canonicalRecords(), duplicate, { ...duplicate }]);
   assert.ok(dup.kernelRecords.some((r) => r.reasonCode === "DUPLICATE_CHECK_ID"));
   assert.equal(dup.readiness.state, "NOT_READY");
   const other = record({ checkId: "1A.OTHER", subject: { ...SUBJECT, head: "d".repeat(40) } });
-  const mixed = g.aggregate([record(), other]);
+  const mixed = complete([record(), other]);
   assert.ok(mixed.kernelRecords.some((r) => r.reasonCode === "SUBJECT_MISMATCH"));
   assert.equal(mixed.overallStatus, "FAIL");
   assert.equal(g.aggregate("nope").readiness.state, "NOT_READY");
@@ -109,8 +130,8 @@ test("invalid, duplicate-id and mixed-subject records are surfaced, never droppe
 
 test("readiness is pure, deterministic and reproducible from records alone", () => {
   const records = [record(), record({ checkId: "1A.B", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "R_ONE" })];
-  const a = JSON.stringify(g.aggregate(records));
-  const b = JSON.stringify(g.aggregate(JSON.parse(JSON.stringify(records))));
+  const a = JSON.stringify(complete(records));
+  const b = JSON.stringify(complete(JSON.parse(JSON.stringify(records))));
   assert.equal(a, b);
   assert.equal(g.exitCodeFor("PASS"), 0);
   assert.equal(g.exitCodeFor("FAIL"), 1);
@@ -122,7 +143,7 @@ test("readiness is pure, deterministic and reproducible from records alone", () 
 test("caller input is not mutated and the output is frozen", () => {
   const records = [record(), record({ checkId: "1A.B" })];
   const before = JSON.stringify(records);
-  const out = g.aggregate(records);
+  const out = complete(records);
   assert.equal(JSON.stringify(records), before);
   assert.equal(Object.isFrozen(out), true);
   assert.equal(Object.isFrozen(out.records[0]), true);
@@ -130,30 +151,36 @@ test("caller input is not mutated and the output is frozen", () => {
 });
 
 test("domain result completeness: exact set passes; missing, duplicate and unknown are reported", () => {
-  const ok = g.aggregate([record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
-  assert.equal(ok.readiness.state, "READY");
-  const missing = g.aggregate([record(), domainRecord("A_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
+  const ok = complete([record(), domainRecord("A_DOMAIN"), domainRecord("B_DOMAIN")], { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
+  assert.equal(ok.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(!ok.kernelRecords.some((r) => r.checkId.startsWith("KERNEL.DOMAIN_RESULT.")));
+  assert.deepEqual(ok.kernelRecords.find((r) => r.checkId === "KERNEL.COMPLETENESS").observed.domainIds, ["A_DOMAIN", "B_DOMAIN"]);
+  const missingRecords = canonicalRecords({ domainIds: ["A_DOMAIN", "B_DOMAIN"] }).filter((r) => r.checkId !== "1E.DOMAIN.B_DOMAIN");
+  const missing = g.aggregate(missingRecords, { expectedDomainIds: ["A_DOMAIN", "B_DOMAIN"] });
   assert.ok(missing.kernelRecords.some((r) => r.reasonCode === "DOMAIN_RESULT_MISSING" && r.status === "INCOMPLETE"));
   assert.equal(missing.readiness.state, "NOT_READY");
   const dupRecords = [record(), domainRecord("A_DOMAIN"), domainRecord("A_DOMAIN", "DEEP_REVIEW_REQUIRED")];
   const dup = g.checkDomainResultCompleteness(dupRecords.slice(1), ["A_DOMAIN"], undefined, null);
   assert.ok(dup.some((r) => r.reasonCode === "DOMAIN_RESULT_DUPLICATE" && r.status === "CONFIGURATION_ERROR"));
-  const unknown = g.aggregate([record(), domainRecord("A_DOMAIN"), domainRecord("Z_DOMAIN")], { expectedDomainIds: ["A_DOMAIN"] });
+  const unknown = g.aggregate([...canonicalRecords({ domainIds: ["A_DOMAIN"] }), domainRecord("Z_DOMAIN")], { expectedDomainIds: ["A_DOMAIN"] });
   assert.ok(unknown.kernelRecords.some((r) => r.reasonCode === "DOMAIN_RESULT_UNKNOWN"));
 });
 
 test("a domain-level HUMAN_REVIEW_REQUIRED reaches readiness through records[]", () => {
-  const out = g.aggregate([record(), domainRecord("A_DOMAIN", "HUMAN_REVIEW_REQUIRED")], { expectedDomainIds: ["A_DOMAIN"] });
+  const out = complete([record(), domainRecord("A_DOMAIN", "HUMAN_REVIEW_REQUIRED")], { expectedDomainIds: ["A_DOMAIN"] });
   assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
-  assert.deepEqual(out.humanReviewRequired, ["1E.DOMAIN.A_DOMAIN"]);
+  assert.deepEqual(out.humanReviewRequired, ["1A.IDENTITY.INVOCATION", "1E.DOMAIN.A_DOMAIN"]);
 });
 
 test("a domains[] projection that differs from the records is reported; a matching one is accepted", () => {
   const records = [record(), domainRecord("A_DOMAIN", "DEEP_REVIEW_REQUIRED")];
   const good = [{ domainId: "A_DOMAIN", effectiveLevel: "DEEP_REVIEW_REQUIRED", reasons: [], fingerprint: null }];
-  assert.equal(g.aggregate(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: good }).readiness.state, "READY");
+  const matching = complete(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: good });
+  assert.equal(matching.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.ok(!matching.kernelRecords.some((r) => r.reasonCode === "DOMAIN_PROJECTION_MISMATCH"));
+  assert.deepEqual(matching.readiness.reasons, ["OPERATOR_INVOCATION"]);
   const bad = [{ domainId: "A_DOMAIN", effectiveLevel: "PRESERVATION_CHECK_ONLY", reasons: [], fingerprint: null }];
-  const out = g.aggregate(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: bad });
+  const out = complete(records, { expectedDomainIds: ["A_DOMAIN"], domainsProjection: bad });
   assert.ok(out.kernelRecords.some((r) => r.reasonCode === "DOMAIN_PROJECTION_MISMATCH"));
   assert.equal(out.readiness.state, "NOT_READY");
 });
@@ -176,29 +203,36 @@ test("unknown status injected at runtime becomes a CONFIGURATION_ERROR kernel re
 const na = (checkId, proof = "predicate evaluated true") =>
   record({ checkId, status: "NOT_APPLICABLE", observed: proof === null ? null : { applicabilityProof: proof }, reasonCode: "NOT_APPLICABLE" });
 
-test("C1 DEV-L1: one proven NOT_APPLICABLE record is READY (no extra evidence rule)", () => {
-  const out = g.aggregate([na("1B.NA")]);
-  assert.equal(out.overallStatus, "PASS");
-  assert.equal(out.readiness.state, "READY");
-  assert.deepEqual(out.kernelRecords, []);
+test("C1 DEV-L1: one proven non-invocation NOT_APPLICABLE record adds no diagnostic", () => {
+  const out = complete([na("1B.NA")]);
+  assert.equal(out.overallStatus, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.counts.NOT_APPLICABLE, 1);
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => `${r.checkId}:${r.status}/${r.reasonCode}`), ["KERNEL.COMPLETENESS:PASS/OK"]);
 });
 
-test("C1 DEV-L1: several proven NOT_APPLICABLE records are READY", () => {
-  const out = g.aggregate([na("1B.NA1"), na("1B.NA2"), na("1C.NA3")]);
-  assert.equal(out.readiness.state, "READY");
-  assert.equal(out.counts.PASS, 0);
-  assert.equal(out.counts.NOT_APPLICABLE, 3);
+test("C1 DEV-L1: several proven non-invocation NOT_APPLICABLE records remain neutral", () => {
+  const out = complete([na("1B.NA1"), na("1B.NA2"), na("1C.NA3")]);
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.counts.NOT_APPLICABLE, 3, "only the three legitimate non-invocation checks are neutral");
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => r.checkId), ["KERNEL.COMPLETENESS"]);
 });
 
-test("C1 DEV-L1: PASS mixed with NOT_APPLICABLE is READY", () => {
-  const out = g.aggregate([record(), na("1B.NA")]);
-  assert.equal(out.overallStatus, "PASS");
-  assert.equal(out.readiness.state, "READY");
+test("C1 DEV-L1: PASS mixed with legitimate NOT_APPLICABLE adds no diagnostic", () => {
+  const out = complete([record(), na("1B.NA")]);
+  assert.equal(out.overallStatus, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.readiness.state, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(out.records.find((r) => r.checkId === "1A.HEAD_MATCH").status, "PASS");
+  assert.equal(out.records.find((r) => r.checkId === "1B.NA").status, "NOT_APPLICABLE");
+  assert.deepEqual(out.readiness.reasons, ["OPERATOR_INVOCATION"]);
+  assert.deepEqual(out.kernelRecords.map((r) => r.checkId), ["KERNEL.COMPLETENESS"]);
 });
 
 test("C1 DEV-L1: NOT_APPLICABLE without proof is INCOMPLETE / NOT_READY, alone or mixed", () => {
   for (const records of [[na("1B.NA", null)], [na("1B.NA", "")], [record(), na("1B.NA", null)]]) {
-    const out = g.aggregate(records);
+    const out = complete(records);
     assert.equal(out.overallStatus, "INCOMPLETE");
     assert.equal(out.readiness.state, "NOT_READY");
     assert.ok(out.kernelRecords.some((r) => r.reasonCode === "APPLICABILITY_NOT_PROVEN"));
@@ -206,15 +240,16 @@ test("C1 DEV-L1: NOT_APPLICABLE without proof is INCOMPLETE / NOT_READY, alone o
 });
 
 test("C1 DEV-L1: HUMAN_REVIEW_REQUIRED and FAIL still dominate NOT_APPLICABLE", () => {
-  const human = g.aggregate([na("1B.NA"), record({ checkId: "1E.H", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "MEANING_DEPENDENCY_CHANGED" })]);
+  const human = complete([na("1B.NA"), record({ checkId: "1E.H", status: "HUMAN_REVIEW_REQUIRED", reasonCode: "MEANING_DEPENDENCY_CHANGED" })]);
   assert.equal(human.readiness.state, "HUMAN_REVIEW_REQUIRED");
-  const fail = g.aggregate([na("1B.NA"), record({ checkId: "1A.F", status: "FAIL", reasonCode: "SOME_REASON" })]);
+  const fail = complete([na("1B.NA"), record({ checkId: "1A.F", status: "FAIL", reasonCode: "SOME_REASON" })]);
   assert.equal(fail.overallStatus, "FAIL");
   assert.equal(fail.readiness.state, "NOT_READY");
 });
 
-test("C1 DEV-L1: an empty record set is still INCOMPLETE (nothing established)", () => {
+test("C4: an empty valid record set remains INCOMPLETE (nothing established)", () => {
   const out = g.aggregate([]);
   assert.equal(out.overallStatus, "INCOMPLETE");
   assert.equal(out.readiness.state, "NOT_READY");
+  assert.ok(out.readiness.reasons.includes("COMPLETENESS_SOURCE_INVALID"));
 });

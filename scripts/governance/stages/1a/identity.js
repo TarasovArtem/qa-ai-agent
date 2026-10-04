@@ -25,6 +25,9 @@
 const { REASON, STATUS, deepFreeze } = require("../../kernel/contracts");
 const { isPlainObject } = require("../../kernel/validation");
 const { canonicalJson } = require("../../kernel/results");
+const crypto = require("node:crypto");
+const { parseManifestBytes } = require("../../kernel/manifest");
+const { graphFingerprint } = require("../../kernel/graph-fingerprint");
 const { safe, createRecordFactory } = require("../common");
 const { validateTrustedContext } = require("./trusted-context");
 const { resolveGitAdapter } = require("./git-adapter");
@@ -50,15 +53,15 @@ async function readPolicyAt(git, commit, metadata) {
 function policyRecords(out, { rootTip, mode, basePolicyState, rootState, defaultBranchName }) {
   const { add, notApplicable } = out;
   // Governance root policy.
-  if (rootState.state === "valid") add("1A.POLICY.ROOT", STATUS.PASS, REASON.OK, "governance-root policy validated", { rootTip, rootPolicyDigest: rootState.digest });
-  else if (rootState.state === "absent") notApplicable("1A.POLICY.ROOT", "no governance-root policy exists (bootstrap): the built-in minimum policy applies");
+  if (rootState.state === "valid") add("1A.POLICY.ROOT", STATUS.PASS, REASON.OK, "governance-root policy validated", { rootTip, rootPolicyDigest: rootState.digest, defaultBranch: defaultBranchName });
+  else if (rootState.state === "absent") add("1A.POLICY.ROOT", STATUS.NOT_APPLICABLE, REASON.OK, "proven bootstrap root absence", { rootTip, rootPolicyDigest: null, defaultBranch: defaultBranchName, applicabilityProof: "no governance-root policy exists" });
   else if (rootState.state === "invalid") add("1A.POLICY.ROOT", rootState.status, rootState.reasonCode, `governance-root policy is unusable: ${rootState.detail}`, { rootTip });
   else add("1A.POLICY.ROOT", STATUS.INCOMPLETE, REASON.POLICY_INVALID, "the governance-root policy could not be read", { rootTip });
 
   // Base trust anchor.
   const bothAbsent = rootState.state === "absent" && basePolicyState.state === "absent";
-  if (bothAbsent) add("1A.POLICY.ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.NO_BASE_TRUST_ANCHOR, "no policy at the governance root or the base: the built-in minimum applies and initial trust is established by human review", { builtinMinimum: true, defaultBranchName });
-  else add("1A.POLICY.ANCHOR", STATUS.PASS, REASON.OK, "a policy anchor exists", { rootPolicy: rootState.state, basePolicy: basePolicyState.state });
+  if (bothAbsent) add("1A.POLICY.ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.NO_BASE_TRUST_ANCHOR, "no policy at the governance root or the base: the built-in minimum applies and initial trust is established by human review", { builtinMinimum: true, defaultBranchName, basePolicyDigest: null });
+  else add("1A.POLICY.ANCHOR", STATUS.PASS, REASON.OK, "a policy anchor exists", { rootPolicy: rootState.state, basePolicy: basePolicyState.state, basePolicyDigest: basePolicyState.state === "valid" ? basePolicyState.digest : null });
 
   // Policy monotonicity: rebase required (PR_REVIEW only).
   if (mode !== "PR_REVIEW") notApplicable("1A.POLICY.CURRENT", "POLICY_OUTDATED does not apply post-merge: the root policy may legitimately have advanced");
@@ -73,32 +76,33 @@ function policyRecords(out, { rootTip, mode, basePolicyState, rootState, default
 }
 
 async function readGate(git, gate, baseCommit, headCommit, out, baseLabel) {
-  const { add, notApplicable } = out;
-  if (gate === undefined || gate === null) return notApplicable("1A.POLICY.GATE_ANCHOR", "no gate was declared for this run");
+  const { add } = out;
+  const absent = { path: null, baseGateSha256: null, headGateSha256: null, baseGraphFingerprint: null, headGraphFingerprint: null };
+  if (gate === undefined || gate === null) return add("1A.POLICY.GATE_ANCHOR", STATUS.PASS, REASON.OK, "no gate was declared for this run", absent);
   const path = isPlainObject(gate) ? gateManifestPath(gate.gateId) : null;
   if (path === null) return add("1A.POLICY.GATE_ANCHOR", STATUS.CONFIGURATION_ERROR, REASON.MANIFEST_TYPE_INVALID, "invalid gateId", {});
-  const [atBase, atHead] = [await git.treeEntry(baseCommit, path), await git.treeEntry(headCommit, path)];
-  if (!atBase.ok || !atHead.ok) return add("1A.POLICY.GATE_ANCHOR", STATUS.INCOMPLETE, REASON.NO_BASE_GATE_ANCHOR, "the gate manifest could not be read", { path });
-  const inBase = !atBase.value.absent;
-  const inHead = !atHead.value.absent;
-  if (inBase && inHead) return add("1A.POLICY.GATE_ANCHOR", STATUS.PASS, REASON.OK, `the gate manifest exists at the ${baseLabel} and at the head`, { path });
-  if (!inBase && inHead) return add("1A.POLICY.GATE_ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.NO_BASE_GATE_ANCHOR, "the head gate manifest has no base anchor: it is a proposal and cannot self-certify", { path });
-  if (inBase && !inHead) return add("1A.POLICY.GATE_ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.GOVERNANCE_CONFIG, "the gate manifest exists at the base but not at the head", { path });
-  if (gate.requiresManifest === true) return add("1A.POLICY.GATE_ANCHOR", STATUS.CONFIGURATION_ERROR, REASON.GATE_MANIFEST_MISSING, "the gate requires a manifest and none exists at the head", { path });
-  return notApplicable("1A.POLICY.GATE_ANCHOR", "the gate declares no manifest and none exists");
+  const entries = [await git.readBlob(baseCommit, path, 1024 * 1024), await git.readBlob(headCommit, path, 1024 * 1024)];
+  if (entries.some((e) => !e.ok)) return add("1A.POLICY.GATE_ANCHOR", STATUS.INCOMPLETE, REASON.NO_BASE_GATE_ANCHOR, "the gate manifest could not be read", { path });
+  const identities = { ...absent, path };
+  for (const [side, entry] of [["base", entries[0].value], ["head", entries[1].value]]) {
+    if (entry.kind === "absent") continue;
+    if (entry.kind !== "blob") return add("1A.POLICY.GATE_ANCHOR", STATUS.CONFIGURATION_ERROR, REASON.GRAPH_PROVENANCE_MISMATCH, "gate manifest is not a regular bounded blob", { path });
+    const parsed = parseManifestBytes(entry.bytes);
+    if (!parsed.valid || parsed.manifest.gateId !== gate.gateId) return add("1A.POLICY.GATE_ANCHOR", STATUS.CONFIGURATION_ERROR, REASON.GRAPH_PROVENANCE_MISMATCH, "gate manifest graph semantics cannot be established", { path });
+    identities[side + "GateSha256"] = crypto.createHash("sha256").update(entry.bytes).digest("hex");
+    identities[side + "GraphFingerprint"] = graphFingerprint({ valid: true, domains: parsed.manifest.domains });
+  }
+  const inBase = identities.baseGateSha256 !== null, inHead = identities.headGateSha256 !== null;
+  if (inBase && inHead) return add("1A.POLICY.GATE_ANCHOR", STATUS.PASS, REASON.OK, "validated gate source and graph identity at the " + baseLabel + " and head", identities);
+  if (!inBase && inHead) return add("1A.POLICY.GATE_ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.NO_BASE_GATE_ANCHOR, "head gate has no base anchor: it cannot self-certify", identities);
+  if (inBase && !inHead) return add("1A.POLICY.GATE_ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.GOVERNANCE_CONFIG, "base gate is missing at head", identities);
+  if (gate.requiresManifest === true) return add("1A.POLICY.GATE_ANCHOR", STATUS.CONFIGURATION_ERROR, REASON.GATE_MANIFEST_MISSING, "required gate manifest is missing", identities);
+  return add("1A.POLICY.GATE_ANCHOR", STATUS.PASS, REASON.OK, "proven absence of gate manifests", identities);
 }
 
 async function workflowAnchor(git, context, base, out) {
-  const { add, notApplicable } = out;
-  if (context.invocationTrust === "OPERATOR_SUPPLIED") return notApplicable("1A.IDENTITY.WORKFLOW_ANCHOR", "an operator invocation has no platform-authenticated workflow");
-  if (context.workflow === null) return add("1A.IDENTITY.WORKFLOW_ANCHOR", STATUS.INCOMPLETE, REASON.WORKFLOW_IDENTITY_UNAVAILABLE, "the platform did not supply the invoking workflow identity", {});
-  const { path, sha } = context.workflow;
-  const [atRun, atBase] = [await git.treeEntry(sha, path), await git.treeEntry(base, path)];
-  if (!atRun.ok || !atBase.ok || atRun.value.absent) return add("1A.IDENTITY.WORKFLOW_ANCHOR", STATUS.INCOMPLETE, REASON.WORKFLOW_IDENTITY_UNAVAILABLE, "the invoking workflow blob could not be established", { path });
-  const runBlob = atRun.value.sha;
-  const baseBlob = atBase.value.absent ? null : atBase.value.sha;
-  if (runBlob === baseBlob) return add("1A.IDENTITY.WORKFLOW_ANCHOR", STATUS.PASS, REASON.OK, "the invoking workflow blob equals the blob at the base", { path, blob: runBlob }, { blob: baseBlob });
-  return add("1A.IDENTITY.WORKFLOW_ANCHOR", STATUS.HUMAN_REVIEW_REQUIRED, REASON.INVOCATION_NOT_ANCHORED, "the invoking workflow differs from the base version (or is new)", { path, runBlob, baseBlob });
+  if (context.invocationTrust === "OPERATOR_SUPPLIED") return out.add("1A.IDENTITY.WORKFLOW_ANCHOR", STATUS.NOT_APPLICABLE, REASON.OK, "operator workflow provenance is unavailable", { applicabilityProof: "operator invocation has no platform-authenticated workflow", workflowIdentity: null, workflowBlobSha: null, baseWorkflowBlobSha: null });
+  return out.add("1A.IDENTITY.WORKFLOW_ANCHOR", STATUS.INCOMPLETE, REASON.PLATFORM_PROVENANCE_UNAVAILABLE, "no reviewed platform adapter exists", { workflowIdentity: null, workflowBlobSha: null, baseWorkflowBlobSha: null });
 }
 
 async function getGitIdentity(input) {
@@ -147,8 +151,8 @@ async function getGitIdentity(input) {
   const { add, notApplicable } = out;
 
   // Invocation trust.
-  if (context.invocationTrust === "PLATFORM_AUTHENTICATED") add("1A.IDENTITY.INVOCATION", STATUS.PASS, REASON.OK, "the invocation is platform authenticated", { mode: context.mode, provider: context.provider });
-  else add("1A.IDENTITY.INVOCATION", STATUS.HUMAN_REVIEW_REQUIRED, REASON.OPERATOR_INVOCATION, "operator-supplied invocation: at best human review, never READY", { mode: context.mode });
+  if (context.invocationTrust === "PLATFORM_AUTHENTICATED") add("1A.IDENTITY.INVOCATION", STATUS.INCOMPLETE, REASON.PLATFORM_PROVENANCE_UNAVAILABLE, "no reviewed platform adapter exists: raw claims cannot authenticate provenance", { mode: context.mode, provider: context.provider, repositoryId: context.repositoryId, eventType: context.eventType, invocationTrust: context.invocationTrust });
+  else add("1A.IDENTITY.INVOCATION", STATUS.HUMAN_REVIEW_REQUIRED, REASON.OPERATOR_INVOCATION, "operator-supplied invocation: at best human review, never READY", { mode: context.mode, provider: context.provider, repositoryId: context.repositoryId, eventType: context.eventType, invocationTrust: context.invocationTrust });
 
   add("1A.IDENTITY.HEAD", STATUS.PASS, REASON.OK, "head and tree established from Git", { head: subject.head, tree: subject.tree, parents });
 
@@ -178,21 +182,49 @@ async function getGitIdentity(input) {
   else if (protectedRefs.includes(context.targetRefName)) add("1A.TARGET.PROTECTED", STATUS.PASS, REASON.OK, "the target is an authenticated, protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
   else add("1A.TARGET.PROTECTED", context.mode === "POST_MERGE" ? STATUS.FAIL : STATUS.HUMAN_REVIEW_REQUIRED, REASON.TARGET_NOT_PROTECTED, "the authenticated target is not a protected governance target", { targetRefName: context.targetRefName, protectedTargetRefs: protectedRefs });
 
+  // Target framework metadata provenance (Corrective C2, 1G R3). Design section 14: the
+  // supported capability set and schema range come only from the framework at the target
+  // tip, and only phase 2 executes framework code from the resolved target tip (rule 8;
+  // section 25a: executedCommit must equal the resolved target tip). The executing
+  // framework's metadata is therefore target-tip metadata exactly when the
+  // platform-authenticated run metadata says the run executed from the commit this
+  // function resolved as the target tip -- never because a caller supplied a value or
+  // asserted a tip. Otherwise (head-executed, operator run without run metadata, or a
+  // different commit) it is EXECUTING_FRAMEWORK and can never establish target support.
+  const executedCommit = null;
+  const metadataSource = framework.source;
+  const provenance = {
+    frameworkMetadataSource: metadataSource,
+    targetTip,
+    executedCommit,
+    targetMetadata: metadataSource === "TARGET_TIP"
+      ? { frameworkVersion: framework.metadata.frameworkVersion, supportedCapabilities: [...framework.metadata.supportedCapabilities], supportedSchemaVersions: { ...framework.metadata.supportedSchemaVersions } }
+      : null,
+  };
+
   // Target capability support is decided ONLY by target-tip framework metadata. The executing
   // framework (which may be the reviewed head's own code) can never establish what the target
   // supports, so with any other source a required capability is INCOMPLETE, never PASS.
   if (policy.policy !== null) {
     const required = policy.policy.requiredCapabilities;
-    if (required.length === 0) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "the policy requires no capability", { required, frameworkMetadataSource: framework.source });
-    else if (framework.source !== "TARGET_TIP") add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "target-tip framework metadata was not supplied: capability support cannot be established from the executing framework", { required, frameworkMetadataSource: framework.source });
-    else if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the target-tip framework does not list", { unsupported: policy.unsupportedCapabilities, frameworkMetadataSource: framework.source });
-    else add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "every required capability is listed by the target-tip framework", { required, frameworkMetadataSource: framework.source });
+    if (context.invocationTrust === "PLATFORM_AUTHENTICATED") add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.PLATFORM_PROVENANCE_UNAVAILABLE, "caller metadata cannot authenticate target capability support", { required, ...provenance });
+    else if (required.length === 0) add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "the policy requires no capability", { required, ...provenance });
+    else if (metadataSource !== "TARGET_TIP") add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the run did not execute from the resolved target tip: capability support cannot be established from the executing framework", { required, ...provenance });
+    else if (policy.unsupportedCapabilities.length > 0) add("1A.POLICY.CAPABILITIES", STATUS.INCOMPLETE, REASON.CAPABILITY_UNAVAILABLE_ON_TARGET, "the policy requires a capability the target-tip framework does not list", { required, unsupported: policy.unsupportedCapabilities, ...provenance });
+    else add("1A.POLICY.CAPABILITIES", STATUS.PASS, REASON.OK, "every required capability is listed by the target-tip framework", { required, ...provenance });
+
+    // The effective policy this run is governed by (Corrective C2, 1G R2), stated by its
+    // only owner: its fingerprint and the reference families it defines. Later stages
+    // that consume the policy are bound to this statement; nothing re-derives it.
+    add("1A.POLICY.EFFECTIVE", STATUS.PASS, REASON.OK, "the effective policy for this run", {
+      source: policy.source, policyFingerprint: policyDigest(policy.policy), referenceFamilies: policy.policy.markdown.idFamilies.map((f) => f.family),
+    });
   }
 
   if (context.mode === "PR_REVIEW") {
     // Target tip: a supplied SHA is an assertion only; the resolved tip is always used.
-    if (context.suppliedTargetSha !== null && context.suppliedTargetSha !== targetTip) add("1A.IDENTITY.TARGET_TIP", STATUS.INCOMPLETE, REASON.TARGET_TIP_MISMATCH, "the supplied target SHA differs from the independently resolved tip; the resolved tip is used", { resolvedTargetTip: targetTip }, { suppliedTargetSha: context.suppliedTargetSha });
-    else add("1A.IDENTITY.TARGET_TIP", STATUS.PASS, REASON.OK, "the target tip was resolved independently", { targetRefName: context.targetRefName, resolvedTargetTip: targetTip, suppliedAssertion: context.suppliedTargetSha !== null });
+    if (context.suppliedTargetSha !== null && context.suppliedTargetSha !== targetTip) add("1A.IDENTITY.TARGET_TIP", STATUS.INCOMPLETE, REASON.TARGET_TIP_MISMATCH, "the supplied target SHA differs from the independently resolved tip; the resolved tip is used", { targetRefName: context.targetRefName, resolvedTargetTip: targetTip, suppliedTargetSha: context.suppliedTargetSha }, { suppliedTargetSha: context.suppliedTargetSha });
+    else add("1A.IDENTITY.TARGET_TIP", STATUS.PASS, REASON.OK, "the target tip was resolved independently", { targetRefName: context.targetRefName, resolvedTargetTip: targetTip, suppliedAssertion: context.suppliedTargetSha !== null, suppliedTargetSha: context.suppliedTargetSha });
     add("1A.IDENTITY.BASE", STATUS.PASS, REASON.OK, "the unique merge base of the head and the resolved target tip", { base });
 
     // Degenerate-range guard: an empty diff from a wrong range must never pass.
@@ -234,7 +266,7 @@ async function getGitIdentity(input) {
   return deepFreeze({
     established: true,
     mode: context.mode,
-    identity: { frameworkMetadataSource: framework.source, mode: context.mode, head: subject.head, tree: subject.tree, parents: [...parents], base, targetRefName: context.targetRefName, targetTip, rootTip, invocationTrust: context.invocationTrust },
+    identity: { frameworkMetadataSource: metadataSource, mode: context.mode, head: subject.head, tree: subject.tree, parents: [...parents], base, targetRefName: context.targetRefName, targetTip, rootTip, invocationTrust: context.invocationTrust },
     subject,
     policy: { source: policy.source, policy: policy.policy, digest: policy.digest },
     records: out.records,

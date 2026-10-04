@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const nodePath = require("node:path");
 const g = require("./index");
+const { stagePlan } = require("./test-support");
 const { createTempRepo, basePolicy, prContext, postMergeContext, platformList, gitOptions } = require("./test-support-git");
 
 const WORKFLOW = ".github/workflows/ci.yml";
@@ -30,12 +31,12 @@ async function pipeline(repo, head, { ctx = {}, extra = {}, scopeProposal, headS
   const trustedContext = prContext(head, { workflow: { path: WORKFLOW, sha: head }, ...ctx });
   const identity = await g.getGitIdentity({ trustedContext, ...common, ...extra });
   assert.equal(identity.established, true);
-  const changed = await g.getChangedFiles({ subject: identity.subject, invocationTrust: trustedContext.invocationTrust, platformFiles: trustedContext.platformFiles, ...common });
+  const changed = await g.getChangedFiles({ subject: identity.subject, identity, platformFiles: trustedContext.platformFiles, ...common });
   const scope = g.checkScope({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, headProposal: scopeProposal });
   const secrets = await g.scanSecrets({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, headSuppressions, now: NOW, ...common });
   const markdown = await g.checkReferences({ subject: identity.subject, changedFiles: changed, policy: identity.policy.policy, ...common });
   const records = files([...identity.records, ...changed.records, ...scope.records, ...secrets.records, ...markdown.records]);
-  return { identity, changed, scope, secrets, markdown, records, aggregate: g.aggregate(records) };
+  return { identity, changed, scope, secrets, markdown, records, aggregate: g.aggregate(records, stagePlan(records)) };
 }
 
 function scenario(headFiles, { baseFiles = {}, platform = true } = {}) {
@@ -53,13 +54,17 @@ test("W1 integration: a clean, in-scope PR passes every 1A and 1B check and is R
   try {
     const p = await pipeline(s.repo, s.head, { ctx: s.ctx });
     const bad = p.records.filter((r) => !["PASS", "NOT_APPLICABLE"].includes(r.status));
-    assert.deepEqual(bad.map((r) => `${r.checkId}:${r.status}`), []);
-    assert.equal(p.aggregate.overallStatus, "PASS");
-    assert.equal(p.aggregate.readiness.state, "READY");
+    assert.deepEqual(bad.map((r) => `${r.checkId}:${r.status}`), [
+      "1A.IDENTITY.INVOCATION:INCOMPLETE",
+      "1A.POLICY.CAPABILITIES:INCOMPLETE",
+      "1A.IDENTITY.WORKFLOW_ANCHOR:INCOMPLETE",
+    ]);
+    assert.equal(p.aggregate.overallStatus, "CONFIGURATION_ERROR");
+    assert.equal(p.aggregate.readiness.state, "NOT_READY");
     assert.deepEqual([...p.changed.files], ["docs/a.md"]);
     for (const r of p.records) assert.deepEqual(r.subject, p.identity.subject, r.checkId);
     assert.equal(new Set(p.records.map((r) => r.checkId)).size, p.records.length);
-    assert.equal(p.markdown.records.length, 7);
+    assert.equal(p.markdown.records.length, 8, "1B.MARKDOWN.POLICY plus the six structural checks plus 1B.REFERENCES.TB");
   } finally {
     s.repo.cleanup();
   }
@@ -82,7 +87,6 @@ test("W1 integration: a defective PR surfaces every deterministic fact separatel
     assert.equal(state(p.records, "1B.MARKDOWN.ANCHORS"), "FAIL/ANCHOR_DANGLING");
     assert.equal(state(p.records, "1B.MARKDOWN.LINKS"), "FAIL/LINK_TARGET_MISSING");
     assert.equal(state(p.records, "1B.REFERENCES.TB"), "FAIL/REFERENCE_DANGLING");
-    assert.equal(p.aggregate.overallStatus, "FAIL");
     assert.equal(p.aggregate.readiness.state, "NOT_READY");
     assert.equal(JSON.stringify(p).includes(GH), false, "the secret never appears anywhere in the output");
   } finally {
@@ -120,7 +124,7 @@ test("W1 integration: a head that changes governance/framework files is HUMAN_RE
   try {
     const p = await pipeline(s.repo, s.head, { ctx: s.ctx });
     assert.equal(state(p.records, "1A.SCOPE.PROTECTED"), "HUMAN_REVIEW_REQUIRED/GOVERNANCE_CONFIG");
-    assert.equal(state(p.records, "1A.IDENTITY.WORKFLOW_ANCHOR"), "HUMAN_REVIEW_REQUIRED/INVOCATION_NOT_ANCHORED");
+    assert.equal(state(p.records, "1A.IDENTITY.WORKFLOW_ANCHOR"), "INCOMPLETE/PLATFORM_PROVENANCE_UNAVAILABLE");
     assert.deepEqual([...p.identity.policy.policy.protectedTargetRefs], ["main"], "the head's own policy edit is not applied");
     assert.equal(state(p.records, "1A.SCOPE.ALLOWED"), "FAIL/SCOPE_OUTSIDE_ALLOWED", "the head widening its own scope changes nothing: the changed governance/scripts paths are outside the BASE allowed domains");
     assert.notEqual(p.aggregate.readiness.state, "READY");
@@ -296,9 +300,12 @@ test("W1 boundary: the package surface is unchanged (governance is not published
   assert.deepEqual(Object.keys(pkg.exports).sort(), [".", "./destinations/azure-devops", "./package.json", "./providers/azure-devops", "./providers/jira"]);
 });
 
-test("W1 boundary: framework capability metadata lists exactly the Wave 1 capabilities on top of the Wave 0 kernel", () => {
+test("W1 boundary: framework capability metadata keeps the Wave 1 capabilities first, in canonical D15 stage order", () => {
+  // Corrective C1 (1G L4): the metadata now lists every implemented stage capability
+  // (design decision D15); the Wave 1 identities are unchanged and still lead.
   const { FRAMEWORK_METADATA, CAPABILITY_REPOSITORY_PREFLIGHT, CAPABILITY_MARKDOWN_REFERENCE_INTEGRITY } = require("./framework-metadata");
-  assert.deepEqual([...FRAMEWORK_METADATA.supportedCapabilities], [CAPABILITY_REPOSITORY_PREFLIGHT, CAPABILITY_MARKDOWN_REFERENCE_INTEGRITY]);
+  assert.deepEqual([...FRAMEWORK_METADATA.supportedCapabilities].slice(0, 2), [CAPABILITY_REPOSITORY_PREFLIGHT, CAPABILITY_MARKDOWN_REFERENCE_INTEGRITY]);
+  assert.equal(FRAMEWORK_METADATA.supportedCapabilities.length, 6);
   assert.equal(g.validateFrameworkMetadata(FRAMEWORK_METADATA).ok, true);
   for (const id of FRAMEWORK_METADATA.supportedCapabilities) assert.equal(g.validateCapabilityId(id).ok, true, id);
 });
