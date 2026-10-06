@@ -508,9 +508,10 @@ Wave 4 merged with one owner-accepted deferred finding, `W4-C2-SEC-M1`
 prerequisites are separately delivered. `GOV-AUTO-1` is `COMPLETE_ON_MAIN`,
 subject to this closure sync's own lifecycle condition in the Wave 5 evidence.
 Completion does not establish a live authenticated GitHub/provider adapter or
-production readiness. `AISEC-4` is the next roadmap-designated mainline gate and
-remains `NOT_STARTED`; this record grants no activation, start or implementation
-authorization.
+production readiness. `AISEC-4` is `COMPLETE_ON_MAIN` for its research/design
+lifecycle (see [closure evidence](#aisec-4-closure-evidence) in §8). `AISEC-5`
+is next in the mainline sequence and remains `NOT_STARTED`; this record grants
+no activation, start or implementation authorization.
 
 **Why now (facts only).** `AISEC-3` required ten correctives (C1..C10), each
 followed by an independent re-review (see [AISEC-3 closure
@@ -710,8 +711,8 @@ if needed -> exact-head merge authorization -> STANDARD_TWO_PARENT merge ->
 post-merge certification -> canonical closure. No implementation may
 self-certify.
 
-**What this entry does not do.** It implements nothing, starts no `AISEC-4`
-work, does not reopen `AISEC-3`, and changes no existing review, merge or
+**Historical scope of this entry.** It implemented nothing, started no `AISEC-4`
+work, did not reopen `AISEC-3`, and changed no existing review, merge or
 closure rule. The `MEM`, `RAG` and `LEARN` sequence is not otherwise reordered;
 because `GOV-AUTO-1` precedes `AISEC-4` in the mainline critical path, it is a
 mainline prerequisite for the later governed implementation stages (security,
@@ -982,15 +983,18 @@ Decision owner:   Project owner.
 ```
 
 This entry records ordering only. `AISEC-3` remains `COMPLETE_ON_MAIN` and is
-not reopened; `AISEC-4` remains `NOT_STARTED` with its own scope unchanged; the
+not reopened; at the time of this decision, `AISEC-4` was `NOT_STARTED` with
+its own scope unchanged; the
 `MEM`/`RAG`/`LEARN` order is unchanged. `GOV-AUTO-1` is placed before
 `AISEC-4` because a deterministic pre-review framework supports every later
 security, memory and autonomy gate. Since this decision was recorded, the
 `GOV-AUTO-1` design/reconciliation has been merged and post-merge certified (see
 [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence)), and `GOV-AUTO-1` implementation has completed with Waves 0-5, each merged and
 post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)); Wave 5 / `1G` is also certified (see [Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)), and `GOV-AUTO-1` is `COMPLETE_ON_MAIN`.
-`AISEC-4` remains `NOT_STARTED` and is next in the canonical mainline sequence;
-no activation or implementation authorization is granted. The decision itself and the `MEM`/`RAG`/`LEARN`
+`AISEC-4` has since become `COMPLETE_ON_MAIN` for research/design (see
+[closure evidence](#aisec-4-closure-evidence)); `AISEC-5` is `NOT_STARTED` and
+next in the canonical mainline sequence, with no activation or implementation
+authorization granted by this sync. The decision itself and the `MEM`/`RAG`/`LEARN`
 order are unchanged.
 
 **Provenance — what must never be claimed about this decision:**
@@ -1018,7 +1022,10 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)
   →  GOV-AUTO-1 (COMPLETE_ON_MAIN; Waves 0-5 MERGED + POST-MERGE CERTIFIED;
        this closure sync must itself complete its §8 lifecycle condition)
-  →  AISEC-4 .. AISEC-7 (NOT_STARTED; AISEC-4 is next, no activation authorized)
+  →  AISEC-4 (COMPLETE_ON_MAIN)
+  →  AISEC-5 (NOT_STARTED; NEXT, no activation authorized)
+  →  AISEC-6 (NOT_STARTED)
+  →  AISEC-7 (NOT_STARTED)
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
   →  MEM-7 .. MEM-9
@@ -1071,8 +1078,8 @@ closure, not merely its readiness or the start of its execution. See
 [§10](#10-mem--agentic-memory-foundation)
 for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
 `MEM-6` and `MEM-7`. The preceding transition rules are historical: the Gate,
-`AISEC-1`-`AISEC-3` and `GOV-AUTO-1` have since completed; `AISEC-4` remains
-`NOT_STARTED` and is next, subject to this closure sync's own lifecycle condition.
+`AISEC-1`-`AISEC-4` and `GOV-AUTO-1` have since completed; `AISEC-5` remains
+`NOT_STARTED` and is next, with no activation authorized by this sync.
 
 **Slice lifecycle status semantics.** This project's governance already
 defines a slice's lifecycle as: implementation → independent exact-head
@@ -1227,8 +1234,10 @@ design has itself been reviewed under the required review lifecycle gate (review
 and Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4 have since been merged and post-merge certified (PR #188, PR #190, PR #192, PR #194 and PR #196; see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)), so `GOV-AUTO-1`
 is `COMPLETE_ON_MAIN`: Wave 5 (`1G`) has also been merged and post-merge
 certified (PR #208; see [Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)).
-`AISEC-4` is next in the canonical mainline sequence and remains `NOT_STARTED`;
-this sync is subject to its own lifecycle condition below. `D-1` and
+`AISEC-4` is `COMPLETE_ON_MAIN` for research/design (see
+[closure evidence](#aisec-4-closure-evidence)); `AISEC-5` is next in the canonical
+mainline sequence and remains `NOT_STARTED`, with no activation authorized by
+this sync. `D-1` and
 `D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
 execution is started or activated by this state.
 
@@ -1806,6 +1815,10 @@ Nothing downstream is activated by this evidence.
 
 ### AISEC-1 closure evidence
 
+The block below records the point-in-time state at this stage's certification.
+For current AISEC-4 closure and the next stage, see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence).
+
 ```text
 AISEC-1:          COMPLETE_ON_MAIN
 Artifact:         docs/agentic-threat-model-v1.md
@@ -1862,10 +1875,15 @@ designation only; at that time neither `GOV-AUTO-1` nor `AISEC-4` execution had
 begun (the `GOV-AUTO-1` design/reconciliation has since been merged and
 post-merge certified while its implementation was then `NOT_STARTED` -- Wave 0 has
 since been merged and post-merge certified, see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence) -- and
-`AISEC-4` remains `NOT_STARTED`; see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) below). No runtime, public API, or package surface change accompanies this
+`AISEC-4` was still `NOT_STARTED` at that point; see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) below). `AISEC-4` has since completed its research/design lifecycle; see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence). No runtime, public API, or package surface change accompanies this
 evidence.
 
 ### AISEC-2 closure evidence
+
+The block below records the point-in-time state at this stage's certification.
+For current AISEC-4 closure and the next stage, see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence).
 
 ```text
 AISEC-2:          COMPLETE_ON_MAIN
@@ -1926,10 +1944,15 @@ designation only; at that time neither `GOV-AUTO-1` nor `AISEC-4` execution had
 begun (the `GOV-AUTO-1` design/reconciliation has since been merged and
 post-merge certified while its implementation was then `NOT_STARTED` -- Wave 0 has
 since been merged and post-merge certified, see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence) -- and
-`AISEC-4` remains `NOT_STARTED`; see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) below). No runtime, public API, or package surface change accompanies this
+`AISEC-4` was still `NOT_STARTED` at that point; see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) below). `AISEC-4` has since completed its research/design lifecycle; see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence). No runtime, public API, or package surface change accompanies this
 evidence.
 
 ### AISEC-3 closure evidence
+
+The block below records the point-in-time state at this stage's certification.
+For current AISEC-4 closure and the next stage, see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence).
 
 ```text
 AISEC-3:          COMPLETE_ON_MAIN
@@ -1993,8 +2016,66 @@ designation only; at that time neither `GOV-AUTO-1` nor `AISEC-4` execution had
 begun (the `GOV-AUTO-1` design/reconciliation has since been merged and
 post-merge certified while its implementation was then `NOT_STARTED` -- Wave 0 has
 since been merged and post-merge certified, see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence) -- and
-`AISEC-4` remains `NOT_STARTED`; see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) below). No runtime, public API, or package surface change accompanies this
+`AISEC-4` was still `NOT_STARTED` at that point; see [GOV-AUTO-1 design/reconciliation evidence](#gov-auto-1-designreconciliation-evidence) below). `AISEC-4` has since completed its research/design lifecycle; see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence). No runtime, public API, or package surface change accompanies this
 evidence.
+
+### AISEC-4 closure evidence
+
+```text
+Stage:                 AISEC-4 — Data Exfiltration & Cross-Project Isolation
+Status:                COMPLETE_ON_MAIN
+Artifact:              docs/data-exfiltration-cross-project-isolation-v1.md
+research/design PR:    #212
+final reviewed C2 HEAD: 4410703f4474ecc5173f9b0d27adf9f18670a896
+reviewed TREE:         219dba487e4b153ed4108144adff59decae9b239
+Senior HEAVY review:   APPROVED / FINDINGS NONE
+Security HEAVY review: APPROVED / FINDINGS NONE
+merge SHA:             591d0d825eb8040f66d4356bd205293d89d846d1
+merge method:          STANDARD_TWO_PARENT
+parent1:               35c8d72a06aa86c94bd0550e6d66715c5e27edb3
+parent2:               4410703f4474ecc5173f9b0d27adf9f18670a896
+merge TREE:            219dba487e4b153ed4108144adff59decae9b239
+post-merge CI:         run 37471091125 / SUCCESS
+                       event push / branch main / required jobs 7/7 SUCCESS
+                       exact SHA 591d0d825eb8040f66d4356bd205293d89d846d1 certified
+Management Issue #211: CLOSED / COMPLETED for research/design phase
+
+XI-01:                 OPEN / MEDIUM
+XI-02:                 OPEN / MEDIUM
+both findings:
+  confirmed reachability: YES
+  impact:                 SUPPORTED_INFERENCE
+  current remote exploit: NOT_DEMONSTRATED
+Product Owner disposition (both XI findings):
+  IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED
+AISEC-4 predecessor findings closed/re-rated: NONE (AT-* / PI-* / TB-* unchanged)
+Next mainline stage:   AISEC-5 — Agentic Security Verification Strategy
+                       NOT_STARTED / NEXT / NOT ACTIVATED
+```
+
+AISEC-4 completed its governed research/design lifecycle; neither XI finding
+is `CLOSED_ON_MAIN`. Until implementation and independent verification, the
+affected capability/path must either remain disabled or be constrained by a
+separately demonstrated trusted/provenance-bound input contract. This recorded
+owner disposition is not finding closure, remediation, waiver, risk acceptance
+or severity re-rating. No predecessor AT-*, PI-* or TB-* finding receives a
+new disposition from this sync; none is closed, reopened or re-rated.
+
+AISEC-5 is NEXT in the mainline sequence and remains `NOT_STARTED`. This
+ROADMAP sync does NOT activate AISEC-5 or grant implementation/research
+authority for it; Product Owner authorization is still required before
+starting AISEC-5. AISEC-6 follows AISEC-5, and AISEC-7 follows AISEC-6; the
+later MEM/RAG/LEARN, Full Project Strict Audit and Productization order is
+unchanged. The Type & Schema Boundary Audit remains a distinct future gate.
+
+This ROADMAP-only implementation commit does not constitute LIGHT approval,
+merge authorization, AISEC-5 authorization, XI remediation, risk acceptance or
+finding closure. Its own lifecycle remains PM verification → governed PR →
+fresh automatic exact-head CI → independent LIGHT exact-head review → Product
+Owner merge authorization → STANDARD_TWO_PARENT merge → topology verification
+→ fresh automatic push-event CI on the exact merge SHA → final canonical
+closure certification.
 
 ### GOV-AUTO-1 design/reconciliation evidence
 
@@ -2066,7 +2147,9 @@ ROADMAP synchronization that records this evidence was itself reviewed under the
 Git-identity, diff-scope and CI-evidence facts must come from the `1A`/`1F`
 interfaces. Review-chain independence was LIMITED throughout -- the `HEAVY` review chain, including the C7 approval, used same-session role separation -- and is recorded as such; the three INFO findings were non-blocking.
 The future whole-project Type & Schema Boundary Audit remains a separate gate,
-and `AISEC-4` remains `NOT_STARTED`. No runtime, public API or package surface
+and `AISEC-4` was `NOT_STARTED` at that certification. For its current
+research/design closure, see [AISEC-4 closure evidence](#aisec-4-closure-evidence).
+No runtime, public API or package surface
 change accompanies this evidence.
 
 ### GOV-AUTO-1 ROADMAP synchronization closure evidence
@@ -2631,6 +2714,11 @@ or package surface change accompanies it.
 
 ### GOV-AUTO-1 Wave 5 / Stage 1G closure evidence
 
+This section records the point-in-time state and closure-sync conditions at
+that certification. Its AISEC-4 next-stage designation is historical; for
+current AISEC-4 closure and the next stage, see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence).
+
 ```text
 GOV-AUTO-1 WAVE 5 / 1G: COMPLETE_ON_MAIN / MERGED + POST-MERGE CERTIFIED
 GOV-AUTO-1:             COMPLETE_ON_MAIN
@@ -2686,9 +2774,12 @@ unreachable while its separately governed trust prerequisites are unmet.
 The whole-project Type & Schema Boundary Audit remains a distinct future gate:
 it is not satisfied, closed, certified or absorbed into `GOV-AUTO-1`.
 
-After canonical closure, `AISEC-4` is the next roadmap-designated mainline gate
-and remains `NOT_STARTED`. This sync grants no activation, start or
-implementation authorization and starts no downstream engineering stream.
+After GOV-AUTO-1 canonical closure, `AISEC-4` was the next roadmap-designated
+mainline gate and was `NOT_STARTED`; that sync granted no activation, start or
+implementation authorization and started no downstream engineering stream.
+`AISEC-4` has since completed its research/design lifecycle; `AISEC-5` is now
+next and `NOT_STARTED` (see [AISEC-4 closure evidence](#aisec-4-closure-evidence)),
+with no activation authorized by this sync.
 
 
 ### N-15 closure evidence
@@ -2820,7 +2911,7 @@ AISEC technical entry: APPROVED
   (the RTI Integrated Audit found no BLOCKER/HIGH/unresolved-MEDIUM
   finding that would block AISEC; RTI is no longer a technical blocker)
 
-AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (research); AISEC-3 COMPLETE_ON_MAIN (research); AISEC-4..AISEC-7 NOT_STARTED
+AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (research); AISEC-3 COMPLETE_ON_MAIN (research); AISEC-4 COMPLETE_ON_MAIN (research/design); AISEC-5..AISEC-7 NOT_STARTED
   (was intentionally delayed by governance sequencing until Conformance
   Remediation and the Architecture Conformance Gate ran first, per §7's
   owner decision -- both have since completed. `AISEC-1` -- Agentic Threat
@@ -2833,8 +2924,10 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   GOV-AUTO-1 (inserted before AISEC-4 by a later owner decision, §7) is
   COMPLETE_ON_MAIN; its design/reconciliation and Waves 0-5 are merged and
   post-merge certified (see §8 Wave 5 closure evidence and this sync's own
-  lifecycle condition). AISEC-4 is NOT_STARTED and the next roadmap-designated
-  mainline gate; this sync grants no activation or implementation authorization)
+  lifecycle condition). AISEC-4 is COMPLETE_ON_MAIN for research/design; see
+  [AISEC-4 closure evidence](#aisec-4-closure-evidence). AISEC-5 is NOT_STARTED
+  and NEXT in the mainline sequence; this sync grants no activation or
+  implementation/research authority for AISEC-5)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -2846,7 +2939,7 @@ conformance remediation first.
 AISEC-1  Agentic Threat Model Research                    COMPLETE_ON_MAIN
 AISEC-2  Prompt / Indirect Injection Study                COMPLETE_ON_MAIN
 AISEC-3  Tool / Privilege / Credential Boundary Analysis   COMPLETE_ON_MAIN
-AISEC-4  Data Exfiltration & Cross-Project Isolation       NOT_STARTED
+AISEC-4  Data Exfiltration & Cross-Project Isolation       COMPLETE_ON_MAIN
 AISEC-5  Agentic Security Verification Strategy            NOT_STARTED
 AISEC-6  Security Architecture Decision Record             NOT_STARTED
 AISEC-7  Adversarial Security Test Harness                 NOT_STARTED
@@ -2857,8 +2950,14 @@ closure evidence](#aisec-1-closure-evidence) in §8. `AISEC-2` closed via
 `docs/prompt-indirect-injection-study-v1.md`; see [AISEC-2 closure
 evidence](#aisec-2-closure-evidence) in §8. `AISEC-3` closed via
 `docs/tool-privilege-credential-boundary-analysis-v1.md`; see [AISEC-3
-closure evidence](#aisec-3-closure-evidence) in §8. `AISEC-4` through
-`AISEC-7` remain `NOT_STARTED`.
+closure evidence](#aisec-3-closure-evidence) in §8. `AISEC-4` closed its
+research/design lifecycle via
+[`docs/data-exfiltration-cross-project-isolation-v1.md`](docs/data-exfiltration-cross-project-isolation-v1.md);
+see [AISEC-4 closure evidence](#aisec-4-closure-evidence) in §8. `AISEC-5` through
+`AISEC-7` remain `NOT_STARTED`. `AISEC-5` — Agentic Security Verification
+Strategy — is NEXT in the mainline sequence and is NOT activated by this
+ROADMAP sync. No implementation/research authority for AISEC-5 is granted by
+this commit; Product Owner authorization is still required before starting it.
 
 `GOV-AUTO-1` ([§6](#gov-auto-1--governance-pre-review-framework)) is not an AISEC stage: by owner decision (§7) it is
 sequenced after `AISEC-3` and before `AISEC-4`, and `AISEC-4`'s own scope is
@@ -3339,8 +3438,11 @@ Wave 5 / Stage `1G` is also merged and post-merge certified (PR #208; see
 [Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)). The proposed
 `COMPLETE_ON_MAIN` state is subject to this sync's own LIGHT review, authorized
 standard two-parent merge and fresh post-merge push certification. `AISEC-4`
-remains `NOT_STARTED` and is the next roadmap-designated mainline gate; this sync
-grants no activation, start or implementation authorization. See
+has since completed its research/design lifecycle (`COMPLETE_ON_MAIN`; see
+[AISEC-4 closure evidence](#aisec-4-closure-evidence)). `AISEC-5` remains
+`NOT_STARTED` and is NEXT in the mainline sequence; this sync grants no
+activation or implementation/research authority for it. Product Owner
+authorization is still required before starting `AISEC-5`. See
 [§6](#gov-auto-1--governance-pre-review-framework) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
 This file will be updated at each transition;
