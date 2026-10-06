@@ -211,8 +211,8 @@ audience/behavior not established. Project A/B are synthetic logical labels.
 | DE-03 | Caller logging/persistence U / returned mock analysis / caller visible | Mock no network; minimal provider interface | Injected provider is trusted executable code, not a capability sandbox | C E03, I TB-16 consequence | AT-06/16, PI-05, TB-16 | VR4-06/10 |
 | DE-04 | Fixed adapter errors; raw response not logged / returned normalized artifacts, no own durable cache / caller visible | HTTPS validated, private frozen config, manual redirect rejection, selected fields, bounded paging/retry | Caller can authorize wrong site/query; scope/actual membership U; normalized text may later egress | C E06, U platform permissions | AT-01/06/16, PI-01/05, TB-15 | VR4-06/17 |
 | DE-05 | Fixed adapter errors / normalized return, no own durable cache / caller visible | Fixed platform host, manual redirect rejection, selected fields, exact batch-ID reconciliation | Org/project label is from config; no independent TeamProject check; WIQL scope U | C E06, U platform scope | AT-05/06/16, PI-05, TB-04/15 | VR4-06/17 |
-| DE-06 | Fixed read/validation diagnostics / source file already persisted / caller visible | Explicit path containment and byte/shape bounds | Containment proves location not business project; imported text not DLP-scanned | C E08, I misuse | AT-01/05, PI-01/14, TB-04/09 | VR4-01/02/06 |
-| DE-07 | Fixed destination errors / durable remote items and returned IDs / authorized platform readers U | Host pinning, manual redirects, escaped field mapping, sequential no-write-retry, short circuit | Project A design accepted for B destination when caller selects it; no canonical project authorization | C E07, I confidentiality consequence | AT-04/08/16, PI-12, TB-05/06/19 | VR4-07/18 |
+| DE-06 | Thrown caller-visible diagnostics may include source-dependent JSON parser/validation text; downstream logging/persistence caller-controlled / source file already persisted / caller visible | Explicit path containment and byte/shape bounds | Containment proves location not business project; imported text not DLP-scanned; diagnostics not automatically logged/persisted by the loader; actual sensitive disclosure not demonstrated | C E08, I misuse | AT-01/05, PI-01/14, TB-04/09 | VR4-01/02/06 |
+| DE-07 | Fixed destination errors / durable remote items and returned IDs / authorized platform readers U | Host pinning, manual redirects, escaped field mapping, sequential no-write-retry; global-stop failures short-circuit, item-local invalid-2xx response-validation failures may continue | Project A design accepted for B destination when caller selects it; no canonical project authorization | C E07, I confidentiality consequence | AT-04/08/16, PI-12, TB-05/06/19 | VR4-07/18 |
 | DE-08 | Status/reason including errors / aggregate history file / caller/job readers | Bounded run count/retry; project/framework labels later checked | API host/env target substitution; no root/repo match; history omits originating repository | C E04, I misuse, U permissions | AT-05/13/16, PI-14, TB-15/20 | VR4-08/17 |
 | DE-09 | Y / platform logs / authorized readers U | Sanitized provider error summary; most lines counts/config/paths | Warning title and parser/API/dependency errors can expose text; log audience/retention U | C E02/E04/E14/E16, I sensitive echo | AT-12/13, PI-04/08, TB-07/17/20 | VR4-10/12 |
 | DE-10 | Status only normally / Y / local readers by OS permissions | Contained writes; separate compact prompt projection | Richer than prompts, portable stale inputs; analyzer reads fixed report paths without per-file containment helper | C E02, I replay, U actual secrets | AT-03/05/12, PI-06/14, TB-04/09 | VR4-08/11/12 |
@@ -252,8 +252,13 @@ three attempts; generator correction calls are separately bounded. Repeated
 transmission is not a different project or provider authorization.
 
 The normal collector positive-selects framework source/config/page-object
-evidence and bounds content (20 KB per file, 150 KB aggregate in the triage
-collector). Private #23 repository-context construction also checks lexical and
+evidence. It retains at most a 20 KB byte prefix per file before appending a
+truncation marker. Its nominal 150 KB aggregate admission threshold is checked
+against the existing total before adding the next accepted whole-file payload;
+accounting uses JavaScript string length rather than a strict UTF-8 byte count.
+An accepted file and its truncation marker can therefore take final content
+above the nominal threshold; this is not a strict final aggregate-byte ceiling.
+Private #23 repository-context construction also checks lexical and
 resolved framework scope, sensitive/runtime-artifact exclusions, regular files,
 physical duplicates, and per-file/aggregate bounds. These are useful selection
 controls, not semantic secret detection. An allowed test/config can contain
@@ -267,6 +272,12 @@ file, performs path containment and structural/size checks, and constructs file
 provenance. It does not discover an arbitrary requirements file from cwd or
 equate root containment with project authorization. The file artifact schema has
 no projectId; provenance location is data and never retrieval authority.
+
+File-loader exceptions are thrown caller-visible diagnostics, not uniformly
+content-independent: JSON.parse() errors can include source-text excerpts, and
+validation text may depend on input. Downstream logging/persistence is
+caller-controlled; the loader does not automatically log/persist diagnostics.
+Actual sensitive disclosure is not demonstrated.
 
 E06 Jira construction validates HTTPS base URL without embedded credentials,
 query or fragment, then privately snapshots config. The caller supplies site,
@@ -309,7 +320,12 @@ the destination is trusted executable code. The Azure destination snapshots
 org/project/auth into private config and constructs a fixed platform create
 endpoint. It maps title and escaped objective/expected-result descriptions,
 creates sequentially, does not update existing items, and never retries a write.
-Ambiguous transport/server/response outcomes stop subsequent publication.
+Transport failures, 5xx responses and other global-stop failures stop subsequent
+publication. Item-local response-validation failures, including malformed JSON
+or invalid identity in successful 200/201 responses, return
+`AZURE_TEST_CASE_RESPONSE_INVALID` with `globalStop: false`; later designs may
+still be attempted even though remote creation may have occurred. Writes are
+not retried; an ambiguous response outcome does not universally stop the batch.
 Returned remote IDs and destination ID are correlated; there is no durable
 idempotency ledger or later unknown-outcome reconciliation in v1.
 
@@ -483,7 +499,7 @@ caller misuse, copied local input, tracked workflow flow, and future service.
 | XB-12 launch → host resources | Scoped target/cwd → OS principal/files/network | Filtered env, fixed argv/time/output; no OS boundary | No post-launch filesystem/network fail-closed policy | Legitimately approved Node code under host permissions; I disclosure | C E13/SECURITY; TB-12/14; VR4-13/14 |
 | XB-13 execution → regeneration | Execution/apply/change/plan/context IDs → C7 proposal | Digests/status/attempt/current MODIFY evidence; redacted output copy | Different chain/infra/CREATE origin rejected | Matching caller labels/root provenance gap remains; no production auto loop | C E13; raw record privacy separate; VR4-05/10 |
 | XB-14 selected prompt → provider | Caller evidence project → selected provider account | C1–C7 projection + provider interface | Schema/size fails; account/project mismatch not represented | Supported triage + private calls under trusted config | C E03/E10/E11; no authenticated prompt account scope; VR4-06/09 |
-| XB-15 designs → remote publish | Requirement/design identity → configured destination org/project | Generic design/result validation; constructor target | Invalid input/redirect/ambiguous write stops; wrong valid project accepted | Supported public caller; cross-vendor transfer intentional | C E07; TB-05/19; VR4-07/18 |
+| XB-15 designs → remote publish | Requirement/design identity → configured destination org/project | Generic design/result validation; constructor target | Invalid input rejected; global-stop failures stop later items; item-local invalid-2xx response-validation failures may continue; wrong valid project accepted | Supported public caller; cross-vendor transfer intentional | C E07; TB-05/19; VR4-07/18 |
 | XB-16 report → comment/reader | Report sourceContext → workflow repo/PR audience | Formatter bounds; context.repo and event PR select target | Missing report/results/PR skips; mismatching report provenance not rejected | Workflow consumes local file; copying requires filesystem/code control | C E14; no audience/secret or origin policy; VR4-08/12/20 |
 
 ## 19. Adversarial cross-project scenarios
