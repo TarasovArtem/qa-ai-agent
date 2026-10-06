@@ -210,7 +210,7 @@ audience/behavior not established. Project A/B are synthetic logical labels.
 | DE-02 | Same distinction as DE-01 | Encoded model path, header key, timeout | Same project and free-text limits; explicit redirect policy absent | C E03, I, U | AT-12/13/16, PI-02/04/06, TB-16 | VR4-09/10/17 |
 | DE-03 | Caller logging/persistence U / returned mock analysis / caller visible | Mock no network; minimal provider interface | Injected provider is trusted executable code, not a capability sandbox | C E03, I TB-16 consequence | AT-06/16, PI-05, TB-16 | VR4-06/10 |
 | DE-04 | Fixed adapter errors; raw response not logged / returned normalized artifacts, no own durable cache / caller visible | HTTPS validated, private frozen config, manual redirect rejection, selected fields, bounded paging/retry | Caller can authorize wrong site/query; scope/actual membership U; normalized text may later egress | C E06, U platform permissions | AT-01/06/16, PI-01/05, TB-15 | VR4-06/17 |
-| DE-05 | Fixed adapter errors / normalized return, no own durable cache / caller visible | Fixed platform host, manual redirect rejection, selected fields, exact batch-ID reconciliation | Org/project label is from config; no independent TeamProject check; WIQL scope U | C E06, U platform scope | AT-05/06/16, PI-05, TB-04/15 | VR4-06/17 |
+| DE-05 | Selected response-derived diagnostics, including rejected `payload.queryType`, can reach caller-visible errors and loader `.cause`; downstream logging/persistence/rendering/publication caller-controlled / normalized return, no own durable cache / caller visible | Fixed platform host, manual redirect rejection, selected fields, exact batch-ID reconciliation; no intentional credential or full-response diagnostic dump | Diagnostic content independence is not guaranteed by credential exclusion; sensitive disclosure beyond caller not demonstrated. Org/project label is from config; no independent TeamProject check; WIQL scope U | C E06 diagnostic propagation, I downstream exposure, U platform scope | AT-05/06/16, PI-05, TB-04/15 | VR4-06/17 |
 | DE-06 | Thrown caller-visible diagnostics may include source-dependent JSON parser/validation text; downstream logging/persistence caller-controlled / source file already persisted / caller visible | Explicit path containment and byte/shape bounds | Containment proves location not business project; imported text not DLP-scanned; diagnostics not automatically logged/persisted by the loader; actual sensitive disclosure not demonstrated | C E08, I misuse | AT-01/05, PI-01/14, TB-04/09 | VR4-01/02/06 |
 | DE-07 | Fixed destination errors / durable remote items and returned IDs / authorized platform readers U | Host pinning, manual redirects, escaped field mapping, sequential no-write-retry; global-stop failures short-circuit, item-local invalid-2xx response-validation failures may continue | Project A design accepted for B destination when caller selects it; no canonical project authorization | C E07, I confidentiality consequence | AT-04/08/16, PI-12, TB-05/06/19 | VR4-07/18 |
 | DE-08 | Status/reason including errors / aggregate history file / caller/job readers | Bounded run count/retry; project/framework labels later checked | API host/env target substitution; no root/repo match; history omits originating repository | C E04, I misuse, U permissions | AT-05/13/16, PI-14, TB-15/20 | VR4-08/17 |
@@ -299,8 +299,16 @@ exploit. Caller-selected WIQL/credentials remain separate from profile identity.
 
 E09 generic `loadRequirementsFromProvider` accepts a trusted executable provider,
 validates normalized artifacts and duplicate IDs, and gives no generic guarantee
-of sanitized custom-provider error causes. Concrete adapters use fixed error
-messages rather than raw response/credential dumps. Structural normalization
+of sanitized custom-provider error causes. Concrete adapters do not intentionally
+dump credentials or full raw responses, but diagnostics are not uniformly
+content-independent. Azure response validation can serialize rejected
+`payload.queryType` into an error message; the generic loader preserves provider
+failures unsanitized in caller-visible `.cause`. Downstream logging, persistence,
+UI rendering or further publication of that cause is caller-controlled. The
+controlled synthetic Security-review probe demonstrated response canary text
+reaching `.cause.message`; actual sensitive disclosure beyond the caller was not
+demonstrated. Credential exclusion from diagnostics/prompts is a separate
+property, not proof of diagnostic content independence. Structural normalization
 preserves source descriptions/native IDs; it does not authenticate ownership.
 Provider-qualified IDs avoid a class of collisions if callers allocate distinct
 provider IDs; no global project namespace registry exists.
