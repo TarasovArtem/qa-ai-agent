@@ -514,8 +514,10 @@ is also `COMPLETE_ON_MAIN` for research/design (see
 [closure evidence](#aisec-5-closure-evidence)). `AISEC-6` is also
 `COMPLETE_ON_MAIN` for research/design (see
 [closure evidence](#aisec-6-closure-evidence)). `AISEC-7` is
-`NOT_STARTED / NEXT / NOT ACTIVATED` and requires separate future Product Owner
-authorization; this record grants no activation, start or implementation authority.
+`NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY PRE-AUTHORIZED` (Issue #222;
+not activatable while Issue #221 is the sole WIP — see
+[§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
+record grants no activation, start or implementation authority.
 
 **Why now (facts only).** `AISEC-3` required ten correctives (C1..C10), each
 followed by an independent re-review (see [AISEC-3 closure
@@ -753,6 +755,11 @@ RTI closure
   → Productization
 ```
 
+*Present-day note (Issue #221 sync):* the adopted sequence above is preserved as
+the historical decision. Its `MEM` portion was later refined (next entry), and
+the later [`OD-CONTROLLED-V1-RELEASE-MODEL`](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+inserts the first Controlled-v1 product release before `MEM`/`RAG`/`LEARN`.
+
 **Rationale** (as adopted by the owner):
 
 1. Agentic trust/security boundaries should be defined before agentic
@@ -856,6 +863,15 @@ decision:**
 This decision does **not** change the current execution gate: as of
 this update, `RAG`/`LEARN` are both `NOT_STARTED` (see
 [§10](#10-mem--agentic-memory-foundation)).
+
+*Present-day note (Issue #221 sync):* the `MEM-1..MEM-6 → RAG-1..RAG-12 →
+MEM-7..MEM-9 → LEARN-1..LEARN-9 → Full Project Strict Audit` order recorded above
+remains the unchanged internal order of the Full Autonomy Program. The later
+[`OD-CONTROLLED-V1-RELEASE-MODEL`](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+inserts the QA AI Agent v1.0 Controlled Agent Release checkpoint before
+`MEM-1`, and splits the terminal `Productization` above into Controlled-v1
+productization (before that release) and Full-Autonomy productization (after the
+Full Project Strict Audit; see [§12](#12-productization)).
 
 ### Subsequent owner decision — Parallelized Conformance Execution
 
@@ -999,9 +1015,11 @@ post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-eviden
 [closure evidence](#aisec-4-closure-evidence)); `AISEC-5` is also
 `COMPLETE_ON_MAIN` for research/design (see [closure evidence](#aisec-5-closure-evidence)),
 and so is `AISEC-6` (see [closure evidence](#aisec-6-closure-evidence)).
-`AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED`, with separate future Product
-Owner authorization required. The decision itself and the `MEM`/`RAG`/`LEARN`
-order are unchanged.
+`AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY
+PRE-AUTHORIZED` (Issue #222; not activatable while Issue #221 is the sole WIP —
+see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
+The decision itself and the internal `MEM`/`RAG`/`LEARN` order are unchanged;
+the later Controlled v1 decision places the first product release before `MEM`.
 
 **Provenance — what must never be claimed about this decision:**
 
@@ -1012,6 +1030,120 @@ order are unchanged.
   evidence (§6).
 - ✅ The owner decided a deterministic pre-review framework is sequenced before
   `AISEC-4`; this reduces deterministic review noise, not verification.
+
+### Subsequent owner decision — Controlled v1 Two-Stage Release Model
+
+```text
+Decision ID:        OD-CONTROLLED-V1-RELEASE-MODEL
+Status:             APPROVED / FINAL PRODUCT STRATEGY DECISION
+Decision date:      2026-10-07
+Decision owner:     Product Owner
+Corrective:         D-CONTROLLED-V1-PR220-C1 — APPROVED
+Decision artifact:  docs/controlled-v1-release-model-owner-decision-v1.md
+Decision PR:        #220 — MERGED / POST-MERGE CERTIFIED
+merge SHA:          ee8e090ab46e88972f2f364d561e955c4b3cfc73
+merge method:       STANDARD_TWO_PARENT
+parent1:            9148d71c1c586b61c771754ccb3986490e57e4c6
+parent2:            1c70255ec823251db965d336233adb957f7f64d1
+merge TREE:         429af1e56427e64872e8137e8fbfe1c0e6628274
+post-merge CI:      Cypress E2E Tests / run 37595791585 / run number 570
+                    event push / branch main / attempt 1 / completed / success
+                    exact merge SHA / required jobs 7/7 SUCCESS
+Sync authority:     OD-CONTROLLED-V1-ROADMAP-SYNC-START — APPROVED
+Sync issue:         #221 — ACTIVE / SOLE WIP (WIP = 1)
+
+Previous future sequence (§7 entries above; §8 before this sync):
+  AISEC-7
+    → MEM-1 .. MEM-6 → RAG-1 .. RAG-12 → MEM-7 .. MEM-9 → LEARN-1 .. LEARN-9
+    → Full Project Strict Audit
+    → Productization
+
+New sequence:
+  Stage 1 — QA AI Agent v1.0 Controlled Agent Release
+    AISEC-7
+      → Type & Schema Boundary Audit
+      → applicable Controlled-v1 release blockers / required remediations
+      → Controlled-v1 supported package/API/CLI/productization boundary
+      → qa-agent-demo external E2E validation
+      → QA AI Agent v1.0 Controlled Agent Release
+  Stage 2 — Full Autonomy Program
+    → MEM-1 .. MEM-6
+    → RAG-1 .. RAG-12
+    → MEM-7 .. MEM-9
+    → LEARN-1 .. LEARN-9
+    → Full Project Strict Audit
+    → Full-Autonomy productization / release
+```
+
+QA AI Agent is delivered in **two product stages**. The first releasable
+product is **QA AI Agent v1.0 Controlled Agent Release** — a controlled QA agent
+with explicit human authorization at authority-escalation boundaries, validated
+through the independent external consumer `qa-agent-demo` using a supported
+external product surface (private deep imports do not satisfy it). The **Full
+Autonomy Program** follows it. `MEM`, `RAG`, `LEARN` and the autonomy-wide
+`Full Project Strict Audit` are **not** Controlled-v1 prerequisites; they are
+deferred to the Full Autonomy Program, **not cancelled**, and their internal
+order `MEM-1..MEM-6 → RAG-1..RAG-12 → MEM-7..MEM-9 → LEARN-1..LEARN-9` is
+unchanged. The normative prerequisites, the capability-specific `AISEC-6` /
+`SADR-11` Controlled Release dossier, the Release Contract (`RC-01`..`RC-12`)
+boundary and its provenance are recorded in the decision artifact; this entry
+does not restate or reinterpret them.
+
+This is a sequencing/product-boundary decision, **not risk acceptance**:
+
+- The **Type & Schema Boundary Audit** remains a distinct repository-wide gate,
+  required before Controlled v1.0; it is not absorbed or satisfied by `AISEC-7`.
+- No `AT-*`, `PI-*`, `TB-*`, `XI-*`, RP, SVR or other security finding is
+  closed, re-rated, waived or remediated. Open findings applicable to
+  capabilities enabled in Controlled v1.0 remain release blockers until their
+  canonical disposition is satisfied; `XI-01`/`XI-02` remain
+  `OPEN / MEDIUM / UNCHANGED` with disposition
+  `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED`.
+- No `ODR` disposition, `FI` implementation or `FV` verification work is
+  activated.
+- **Controlled Release is NOT APPROVED.** It requires a separate Product Owner
+  release grant for the exact enabled scope. Full autonomy is NOT APPROVED.
+
+**Governance order** (`D-CONTROLLED-V1-PR220-C1 — APPROVED`), strictly serial
+under `WIP = 1`:
+
+```text
+PR #220 certified completion                     COMPLETE
+→ Issue #221 canonical ROADMAP synchronization   ACTIVE / SOLE WIP
+→ AISEC-7 activation
+→ Type & Schema Boundary Audit
+→ applicable Controlled-v1 release blockers / remediation
+→ Controlled-v1 productization
+→ qa-agent-demo external E2E validation
+→ Controlled Release (separate Product Owner release grant)
+```
+
+**`AISEC-7` start authority.** `OD-AISEC-7-START — PRE-AUTHORIZED` (Issue
+[#222](https://github.com/TarasovArtem/qa-ai-agent/issues/222)) remains valid
+and is conditional. `AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED /
+CONDITIONALLY PRE-AUTHORIZED`; it cannot be activated, and no `AISEC-7`
+repository mutation may occur, while Issue #221 is the sole WIP. The
+pre-authorization becomes effective only after Issue #221 completes fresh
+exact-head CI, independent HEAVY architecture/governance review, independent
+security/governance consistency review, Product Owner exact-head disposition,
+separate merge authorization, `STANDARD_TWO_PARENT` merge, fresh automatic
+push-event CI on the exact merge SHA and canonical lifecycle closure — and only
+if the exact current `main` HEAD/TREE is then freshly established, `WIP = 1` is
+reconfirmed and `AISEC-7` is still the canonical next security stage. No
+additional Product Owner start authorization is then required.
+
+**Provenance — what must never be claimed about this decision:**
+
+- ❌ "Controlled v1.0 no longer needs security gates." -- false; `AISEC-7`, the
+  Type & Schema Boundary Audit, applicable release-blocker dispositions and the
+  applicable `SADR-11` dossier remain mandatory.
+- ❌ "`MEM`/`RAG`/`LEARN` were cancelled or reordered internally." -- false;
+  they are deferred to the Full Autonomy Program with their order unchanged.
+- ❌ "Earlier §7 decisions or closure evidence already certified this
+  sequence." -- false; they record the sequence in force when they were made.
+- ✅ The owner decided the first product release is Controlled v1.0, placed
+  before `MEM`/`RAG`/`LEARN`; this ROADMAP sync (Issue #221) records that
+  decision and implements nothing.
 
 ## 8. Current critical path
 
@@ -1031,17 +1163,35 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  AISEC-4 (COMPLETE_ON_MAIN)
   →  AISEC-5 (COMPLETE_ON_MAIN)
   →  AISEC-6 (COMPLETE_ON_MAIN; research/design)
-  →  AISEC-7 (NOT_STARTED / NEXT / NOT ACTIVATED; separate future PO authorization required)
+  →  OD-CONTROLLED-V1-RELEASE-MODEL / PR #220 (MERGED / POST-MERGE CERTIFIED)
+  →  Issue #221 Controlled-v1 ROADMAP sync (ACTIVE / SOLE WIP)
+  →  AISEC-7 (NOT_STARTED / NEXT / NOT ACTIVATED;
+       conditionally PRE-AUTHORIZED by Issue #222)
+  →  Type & Schema Boundary Audit (NOT_STARTED; distinct gate)
+  →  applicable Controlled-v1 release blockers / required remediations
+  →  Controlled-v1 supported package/API/CLI/productization boundary
+  →  qa-agent-demo external E2E validation
+  →  QA AI Agent v1.0 Controlled Agent Release (NOT APPROVED;
+       separate PO release grant required)
   →  MEM-1 .. MEM-6
   →  RAG-1 .. RAG-12
   →  MEM-7 .. MEM-9
   →  LEARN-1 .. LEARN-9
   →  Full Project Strict Audit
-  →  Productization
+  →  Full-Autonomy productization / release
 ```
 
+**Current sequence (Issue #221 sync).** Per the [Controlled v1
+decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+recorded in §7, the QA AI Agent v1.0 Controlled Agent Release now precedes
+`MEM`/`RAG`/`LEARN`, whose internal order is unchanged. Issue #221 remains the
+sole WIP until its full certified lifecycle closes. This ROADMAP sync does not
+activate `AISEC-7`, start the Type & Schema Boundary Audit, activate any
+`MEM`/`RAG`/`LEARN` stage or approve Controlled Release. The steps after
+`AISEC-6` are strictly serial under `WIP = 1`.
+
 This is the canonical future sequence following the [subsequent owner
-decision](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
+decisions](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
 `CRW2-A2`, `CRW2-B1`, `CRW2-B4`, and `CRW2-B6` were the original five
 parallel-authorized tracks in `{ }` — none a serial predecessor to the
 other — and all
@@ -1085,8 +1235,10 @@ closure, not merely its readiness or the start of its execution. See
 for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
 `MEM-6` and `MEM-7`. The preceding transition rules are historical: the Gate,
 `AISEC-1`-`AISEC-6` and `GOV-AUTO-1` have since completed (`AISEC-4`-`AISEC-6`
-for research/design). `AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED`; separate
-future Product Owner authorization is required, and this sync grants none.
+for research/design). `AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED /
+CONDITIONALLY PRE-AUTHORIZED` (Issue #222); it becomes activatable only after
+Issue #221's certified canonical closure and fresh baseline/WIP/canonical-next
+checks, and this sync activates nothing.
 
 **Slice lifecycle status semantics.** This project's governance already
 defines a slice's lifecycle as: implementation → independent exact-head
@@ -1245,8 +1397,10 @@ certified (PR #208; see [Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-c
 [closure evidence](#aisec-4-closure-evidence)); `AISEC-5` is also
 `COMPLETE_ON_MAIN` for research/design (see [closure evidence](#aisec-5-closure-evidence)),
 and so is `AISEC-6` (see [closure evidence](#aisec-6-closure-evidence)).
-`AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED`, with separate future Product
-Owner authorization required. `D-1` and
+The Controlled v1 decision (PR #220) is merged and post-merge certified, and its
+canonical ROADMAP synchronization (Issue #221) is the sole WIP. `AISEC-7` is
+`NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY PRE-AUTHORIZED` (Issue #222;
+see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)). `D-1` and
 `D-3` remain `DEFERRED`. Nothing from `AISEC`/`MEM`/`RAG`/`LEARN`
 execution is started or activated by this state.
 
@@ -2092,6 +2246,10 @@ completed its research/design lifecycle (see
 [AISEC-6 closure evidence](#aisec-6-closure-evidence)). The
 later MEM/RAG/LEARN, Full Project Strict Audit and Productization order is
 unchanged. The Type & Schema Boundary Audit remains a distinct future gate.
+*(Historical point-in-time sequencing as of AISEC-4 closure; this closure did not
+certify the current first-release sequence, which is set by the later
+[Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+in §7/§8.)*
 
 That AISEC-4 ROADMAP-only implementation commit did not constitute LIGHT approval,
 merge authorization, AISEC-5 authorization, XI remediation, risk acceptance or
@@ -2163,7 +2321,11 @@ not satisfy, absorb, replace, close, certify or authorize it. AISEC-6 requires
 separate future Product Owner authorization; neither AISEC-6 nor AISEC-7 is
 activated or authorized by this sync. The downstream order remains AISEC-6 →
 AISEC-7 → MEM-1 .. MEM-6 → RAG-1 .. RAG-12 → MEM-7 .. MEM-9 → LEARN-1 .. LEARN-9
-→ Full Project Strict Audit → Productization.
+→ Full Project Strict Audit → Productization. *(Historical point-in-time
+sequencing and authorization state as of AISEC-5 closure; this closure did not
+certify the current first-release sequence, which is set by the later
+[Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+in §7/§8.)*
 
 Authority for this ROADMAP-only implementation is
 `OD-AISEC-5-ROADMAP-CLOSURE-SYNC — APPROVED`. The proposed canonical truth-sync
@@ -2267,7 +2429,12 @@ repository-wide future scope is unchanged. AISEC-7 requires separate future
 Product Owner authorization; it is not activated or authorized by this sync,
 and no MEM/RAG/LEARN stage is activated. The downstream order remains AISEC-7 →
 MEM-1 .. MEM-6 → RAG-1 .. RAG-12 → MEM-7 .. MEM-9 → LEARN-1 .. LEARN-9 → Full
-Project Strict Audit → Productization.
+Project Strict Audit → Productization. *(Historical point-in-time sequencing and
+authorization state as of AISEC-6 closure; this closure did not certify the
+current first-release sequence. The later
+[Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+in §7/§8 inserts the Controlled-v1 release path after `AISEC-7`, and `AISEC-7`
+is now conditionally pre-authorized by Issue #222.)*
 
 Authority for this ROADMAP-only implementation is
 `OD-AISEC-6-ROADMAP-CLOSURE-SYNC — APPROVED`. The proposed canonical truth-sync
@@ -2986,8 +3153,9 @@ implementation authorization and started no downstream engineering stream.
 lifecycles (see [AISEC-4 closure evidence](#aisec-4-closure-evidence),
 [AISEC-5 closure evidence](#aisec-5-closure-evidence) and
 [AISEC-6 closure evidence](#aisec-6-closure-evidence)). `AISEC-7` is now
-`NOT_STARTED / NEXT / NOT ACTIVATED` and requires separate future Product Owner
-authorization; this sync grants none.
+`NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY PRE-AUTHORIZED` (Issue #222;
+see [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
+sync grants no activation.
 
 
 ### N-15 closure evidence
@@ -3119,7 +3287,7 @@ AISEC technical entry: APPROVED
   (the RTI Integrated Audit found no BLOCKER/HIGH/unresolved-MEDIUM
   finding that would block AISEC; RTI is no longer a technical blocker)
 
-AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (research); AISEC-3 COMPLETE_ON_MAIN (research); AISEC-4 COMPLETE_ON_MAIN (research/design); AISEC-5 COMPLETE_ON_MAIN (research/design); AISEC-6 COMPLETE_ON_MAIN (research/design); AISEC-7 NOT_STARTED / NEXT / NOT ACTIVATED
+AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (research); AISEC-3 COMPLETE_ON_MAIN (research); AISEC-4 COMPLETE_ON_MAIN (research/design); AISEC-5 COMPLETE_ON_MAIN (research/design); AISEC-6 COMPLETE_ON_MAIN (research/design); AISEC-7 NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY PRE-AUTHORIZED
   (was intentionally delayed by governance sequencing until Conformance
   Remediation and the Architecture Conformance Gate ran first, per §7's
   owner decision -- both have since completed. `AISEC-1` -- Agentic Threat
@@ -3137,8 +3305,9 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   COMPLETE_ON_MAIN for research/design; see [AISEC-5 closure evidence](#aisec-5-closure-evidence).
   AISEC-6 is also COMPLETE_ON_MAIN for research/design; see
   [AISEC-6 closure evidence](#aisec-6-closure-evidence). AISEC-7 is
-  NOT_STARTED / NEXT / NOT ACTIVATED and requires separate future Product
-  Owner authorization; this sync grants none)
+  NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY PRE-AUTHORIZED by
+  OD-AISEC-7-START (Issue #222); it cannot start while Issue #221 is the
+  sole WIP, and this sync activates nothing)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -3153,7 +3322,8 @@ AISEC-3  Tool / Privilege / Credential Boundary Analysis   COMPLETE_ON_MAIN
 AISEC-4  Data Exfiltration & Cross-Project Isolation       COMPLETE_ON_MAIN
 AISEC-5  Agentic Security Verification Strategy            COMPLETE_ON_MAIN
 AISEC-6  Security Architecture Decision Record             COMPLETE_ON_MAIN
-AISEC-7  Adversarial Security Test Harness                 NOT_STARTED / NEXT / NOT ACTIVATED
+AISEC-7  Adversarial Security Test Harness                 NOT_STARTED / NEXT / NOT ACTIVATED /
+                                                           CONDITIONALLY PRE-AUTHORIZED
 ```
 
 `AISEC-1` closed via `docs/agentic-threat-model-v1.md`; see [AISEC-1
@@ -3173,8 +3343,22 @@ Architecture Decision Record — completed its research/design lifecycle via
 see [AISEC-6 closure evidence](#aisec-6-closure-evidence) in §8. Its approved
 `SADR`/`SAI` decisions are target architecture, not implemented or
 runtime-verified controls. `AISEC-7` — Adversarial Security Test Harness — is
-`NOT_STARTED / NEXT / NOT ACTIVATED` and requires separate future Product Owner
-authorization; it is not activated or authorized by this commit.
+`NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY PRE-AUTHORIZED`; it is not
+activated by this commit.
+
+**`AISEC-7` activation (current).** Issue #221 (the Controlled-v1 canonical
+ROADMAP sync) is the current sole WIP, and `AISEC-7` cannot start, and no
+`AISEC-7` repository mutation may occur, during it. Issue
+[#222](https://github.com/TarasovArtem/qa-ai-agent/issues/222)
+(`OD-AISEC-7-START — PRE-AUTHORIZED`) is a pre-authorization only. It becomes
+effective only after Issue #221 is merged, post-merge certified and canonically
+closed, the exact current `main` HEAD/TREE is freshly established, `WIP = 1` is
+reconfirmed and `AISEC-7` is confirmed to remain the canonical next security
+stage; no additional Product Owner start authorization is then required (full
+conditions: [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
+`AISEC-7` verification scope for Controlled v1.0 is bound by the decision
+artifact; it does not satisfy the distinct Type & Schema Boundary Audit, which
+follows it.
 
 `GOV-AUTO-1` ([§6](#gov-auto-1--governance-pre-review-framework)) is not an AISEC stage: by owner decision (§7) it is
 sequenced after `AISEC-3` and before `AISEC-4`, and `AISEC-4`'s own scope is
@@ -3182,7 +3366,8 @@ unchanged.
 
 **Research lane (early-start exception, historical pre-Gate conditions).** The
 Gate has since closed; these conditions record the earlier exception and grant
-no new start authorization for `AISEC-4`. Per the [subsequent owner
+no new start authorization for `AISEC-4` or any current `AISEC-7` early-start
+authority. Per the [subsequent owner
 decision — Early AISEC/MEM Research
 Parallelism](#7-owner-phase-order-decision) recorded in §7, `AISEC-1`,
 `AISEC-2`, and `AISEC-6` only may begin as `DRAFT`/`PROVISIONAL`/`OFF-MAIN`
@@ -3199,10 +3384,20 @@ critical path in [§8](#8-current-critical-path).
 ## 10. MEM — Agentic Memory Foundation
 
 ```text
-MEM:   NOT_STARTED
-RAG:   NOT_STARTED
-LEARN: NOT_STARTED
+MEM:   NOT_STARTED / NOT ACTIVATED
+RAG:   NOT_STARTED / NOT ACTIVATED
+LEARN: NOT_STARTED / NOT ACTIVATED
 ```
+
+**Position in the product sequence.** Per the [Controlled v1
+decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+(§7), `MEM`, `RAG` and `LEARN` belong to the **Full Autonomy Program**. None of
+them is a prerequisite for the QA AI Agent v1.0 Controlled Agent Release; all of
+them come after that release checkpoint ([§8](#8-current-critical-path)), and
+none is activated by the Issue #221 ROADMAP sync. They are deferred, not
+cancelled, and their internal order remains `MEM-1..MEM-6 → RAG-1..RAG-12 →
+MEM-7..MEM-9 → LEARN-1..LEARN-9`. The architecture and security rationale below
+is unchanged.
 
 This section covers three related, but **not synonymous**, future
 architecture layers: persistent agentic memory (`MEM`), trusted
@@ -3314,7 +3509,9 @@ Persistent autonomous agentic memory does not exist in this codebase today,
 and must not be implemented before AISEC's own security architecture exists —
 `AISEC → MEM`, never the reverse.
 
-**Research lane (early-start exception).** Per the [subsequent owner
+**Research lane (early-start exception, historical pre-Gate conditions).**
+These conditions are historical provenance only; they grant no current `MEM-1`/
+`MEM-2` start authority and no WIP. Per the [subsequent owner
 decision — Early AISEC/MEM Research
 Parallelism](#7-owner-phase-order-decision) recorded in §7, `MEM-1` and
 `MEM-2` only may begin as `DRAFT`/`PROVISIONAL`/`OFF-MAIN` research while
@@ -3527,8 +3724,18 @@ to the future `AISEC`/`MEM`/`LEARN` design stages themselves.
 ## 11. Full Project Strict Audit
 
 ```text
-NOT_STARTED
+NOT_STARTED / FULL-AUTONOMY GATE
 ```
+
+**Scope relative to Controlled v1.0.** The Full Project Strict Audit is an
+autonomy-wide audit within the Full Autonomy Program and remains after
+`MEM`/`RAG`/`LEARN`. It is **not** the release-specific prerequisite for the QA
+AI Agent v1.0 Controlled Agent Release: Controlled v1.0 has its own earlier
+release-specific path (`AISEC-7`, the distinct Type & Schema Boundary Audit,
+applicable release blockers, Controlled-v1 productization and `qa-agent-demo`
+validation — see the [Controlled v1
+decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model) and
+[§8](#8-current-critical-path)).
 
 Comes after AISEC, MEM, RAG, and LEARN foundations are all established —
 not to be confused with the RTI Integrated Audit (a narrower,
@@ -3552,8 +3759,33 @@ Recording this scope now does not start the audit; it remains
 ## 12. Productization
 
 ```text
-NOT_STARTED / DEFERRED
+Controlled-v1 productization:   NOT_STARTED / REQUIRED BEFORE CONTROLLED V1.0
+Full-Autonomy productization:   NOT_STARTED / DEFERRED UNTIL AFTER FULL PROJECT STRICT AUDIT
 ```
+
+Per the [Controlled v1
+decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+(§7), the previous single terminal `Productization` stage is split into two
+lifecycle scopes:
+
+- **Controlled-v1 productization** — required before the QA AI Agent v1.0
+  Controlled Agent Release and after the applicable Controlled-v1 release
+  blockers/remediations ([§8](#8-current-critical-path)). At minimum it
+  includes: version/install/upgrade policy; a supported high-level package/API
+  or CLI surface (separately designed, versioned, reviewed and
+  compatibility-tested); external consumer guidance; rollback/version lifecycle;
+  the minimal reusable integration required by the approved Release Contract; the
+  supported execution-environment boundary; and `qa-agent-demo` proof through
+  supported surfaces only. Private/deep-import workarounds into repository-private
+  internals (including the `PRIVATE_GENERATIVE_SURFACE` #22/#23 implementation;
+  see [§14](#14-conformance-architecture-findings)) do not satisfy it.
+- **Full-Autonomy productization / release** — deferred until after the Full
+  Project Strict Audit ([§11](#11-full-project-strict-audit)) at the end of the
+  Full Autonomy Program.
+
+This ROADMAP sync does **not** authorize implementation of any package, API,
+CLI or other product surface, and does not change `package.json`
+exports/files; each such change remains a separately authorized lifecycle.
 
 `ID-3` planning is complete; implementation (formal version policy,
 production release tags, npm-registry-publication decision, consumer install
@@ -3659,14 +3891,55 @@ has since completed its research/design lifecycle (`COMPLETE_ON_MAIN`; see
 [AISEC-4 closure evidence](#aisec-4-closure-evidence)). `AISEC-5` is also
 `COMPLETE_ON_MAIN` for research/design (see [AISEC-5 closure evidence](#aisec-5-closure-evidence)),
 and so is `AISEC-6` (see [AISEC-6 closure evidence](#aisec-6-closure-evidence)).
-`AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED` and requires separate future
-Product Owner authorization; this sync grants no activation or
-implementation/research authority for it. See
+`AISEC-7` is `NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY
+PRE-AUTHORIZED` (Issue #222); no sync grants it activation or
+implementation/research authority before its §7 conditions hold. See
 [§6](#gov-auto-1--governance-pre-review-framework) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
 This file will be updated at each transition;
 `README.md`'s own roadmap section will continue to carry the detailed
 technical evidence for whatever completes.
+
+**Controlled v1 two-stage release model (current).**
+
+```text
+OD-CONTROLLED-V1-RELEASE-MODEL:  APPROVED / FINAL PRODUCT STRATEGY DECISION
+PR #220:                         MERGED / POST-MERGE CERTIFIED
+merge SHA:                       ee8e090ab46e88972f2f364d561e955c4b3cfc73
+TREE:                            429af1e56427e64872e8137e8fbfe1c0e6628274
+current sole WIP:                Issue #221 (Controlled-v1 canonical ROADMAP sync)
+AISEC-7:                         NOT_STARTED / NEXT / NOT ACTIVATED /
+                                 CONDITIONALLY PRE-AUTHORIZED (Issue #222)
+Type & Schema Boundary Audit:    NOT_STARTED / DISTINCT GATE / NOT SATISFIED
+MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
+Controlled Release:              NOT APPROVED
+Full autonomy:                   NOT APPROVED
+
+Canonical release sequence:
+  Issue #221 Controlled-v1 ROADMAP sync (certified canonical closure)
+  → AISEC-7
+  → Type & Schema Boundary Audit
+  → applicable Controlled-v1 release blockers / required remediations
+  → Controlled-v1 supported package/API/CLI/productization boundary
+  → qa-agent-demo external E2E validation
+  → QA AI Agent v1.0 Controlled Agent Release   (Stage 1)
+  → MEM-1 .. MEM-6
+  → RAG-1 .. RAG-12
+  → MEM-7 .. MEM-9
+  → LEARN-1 .. LEARN-9
+  → Full Project Strict Audit
+  → Full-Autonomy productization / release      (Stage 2)
+```
+
+Conceptually, Controlled v1.0 is built on the current completed layers (core
+pipelines #1-#23, RTI and the proven installation boundary — see
+[§4](#4-completed-major-tracks)), guided by the completed `AISEC-1`..`AISEC-6`
+research/design (target architecture, not implemented controls), plus a future,
+not-yet-designed
+**Controlled-v1 supported product surface** between external consumers such as
+`qa-agent-demo` and the private internal implementation. The Memory, Retrieval /
+RAG and Feedback / Learning layers below are future Full-Autonomy layers; none
+exists today.
 
 **Target architecture, including the layers recorded by this update**
 (conceptual — not a claim that any of these layers are implemented;
