@@ -8,7 +8,11 @@
  *   2. False-PASS resistance of the outcome model (mission section 11).
  *   3. Binding: every current-behavior case is confirmed by an executable test
  *      in its declared file, and every case appears in the AISEC-7 document
- *      with the same declared outcome.
+ *      with the same declared outcome. This source binding is not execution
+ *      proof. Execution is enforced fail-closed (SEC-01): no harness file may
+ *      skip, todo or narrow a test, and triage-cross-project.test.js fails
+ *      rather than skips without the mock provider and keeps an execution
+ *      ledger of its mandatory cases.
  *   4. Effect safety of the harness source itself: no real endpoint, no direct
  *      network or process call, no secret consumption, temp-root writes only.
  */
@@ -67,6 +71,19 @@ test("coverage: every executable current-behavior case is confirmed by a test in
   }
 });
 
+test("evidence integrity (SEC-01): no harness file can skip, todo or narrow a test, so mandatory evidence either executes or fails the run", () => {
+  const SKIP_CONSTRUCTS = [
+    /\.(?:skip|todo|only)\s*\(/,
+    /\b(?:skip|todo|only)\s*:\s*(?:true|["'`])/,
+    /\btest\.(?:skip|todo|only)\b/,
+  ];
+  for (const file of harnessFiles()) {
+    const rel = path.relative(HARNESS_DIR, file);
+    const source = fs.readFileSync(file, "utf8");
+    for (const pattern of SKIP_CONSTRUCTS) assert.ok(!pattern.test(source), `${rel}: ${pattern} would let mandatory evidence go unexecuted`);
+  }
+});
+
 // --- 2. false-PASS resistance -----------------------------------------------------------
 
 test("false-PASS: missing or incomplete evidence never becomes PASS", () => {
@@ -122,7 +139,7 @@ test("false-PASS: a successful reproduction test keeps a FAIL security outcome, 
   assert.equal(observed(false, { ownerDispositionRequired: true }), OUTCOMES.FAIL);
   for (const id of ["H05-C1", "H05-C2", "H06-C1", "H06-C2"]) {
     assert.equal(confirmCase(id, false), OUTCOMES.FAIL);
-    assert.throws(() => confirmCase(id, true), /differs from the declared/, `${id} (XI) can never be confirmed as PASS`);
+    assert.throws(() => confirmCase(id, true), /differs from the declared/, `${id} (XI) is declared FAIL at this reviewed baseline and cannot be confirmed as PASS without an explicit, reviewed evidence-model update`);
   }
 });
 

@@ -83,7 +83,7 @@ Harness layout:
 | `source-destination.test.js` | H-04 (loader), H-10 |
 | `trust-evidence.test.js` | H-11 |
 | `enablement-surface.test.js` | H-12 |
-| `harness-invariants.test.js` | Coverage contract, false-PASS invariants, document binding, harness effect safety |
+| `harness-invariants.test.js` | Coverage contract, false-PASS invariants, document binding, evidence integrity (no skip constructs), harness effect safety |
 
 ## 4. Safety constraints
 
@@ -99,9 +99,10 @@ Only safe synthetic verification was used:
   the call and returns an inert fake child. No framework binary and no
   generated code is launched.
 - **Providers:** scripted fakes, or the repository `MockProvider` wrapped
-  in-process. The public-`main` cases run only when `config.js` resolved
-  `AI_PROVIDER` to `mock`. Otherwise they skip and that run counts as
-  INSUFFICIENT_EVIDENCE.
+  in-process. The public-`main` cases need `config.js` to have resolved
+  `AI_PROVIDER` to `mock`. Under any other value they **fail**, before any
+  provider is constructed or called, and the AISEC-7 run fails. They never
+  skip (SEC-01; section 14a).
 - **Platform:** a fake CI adapter and a fake GitHub client.
 - **Credentials:** the inert dummy `aisec7-dummy-token-not-a-secret` plus
   run-unique `AISEC7_CANARY_*` strings. Dummy values go only into environment
@@ -346,7 +347,76 @@ Enforced by `harness-invariants.test.js` and `lib/outcomes.js`:
   erase a FAIL. XI cases throw if confirmed as PASS.
 - **Binding:** every current case must be confirmed in its declared file. Every
   case must appear in this document with its declared outcome. A behavior change
-  fails the suite until the matrix is updated.
+  fails the suite until the matrix is updated. This binding is a source-text
+  check. It shows a confirmation exists, not that it ran. Execution is covered
+  by section 14a.
+
+### 14a. Evidence integrity: fail-closed execution (SEC-01)
+
+Valid AISEC-7 gate evidence on the supported Node 22 contract requires both:
+
+```text
+test failures = 0
+mandatory AISEC-7 skipped tests = 0
+```
+
+A run that reports zero failures but skips any AISEC-7 test is **invalid
+evidence**, not a partial PASS. An unexecuted mandatory case does not keep a
+trustworthy PASS (or FAIL) just because the registry declares it. The
+registry declares the expected outcome; only an executed `confirmCase()`
+evidences it.
+
+`INSUFFICIENT_EVIDENCE` is a security evidence classification for a property
+that cannot be observed (for example H11-C7). It is not permission for a
+required executable test to skip silently while CI stays green.
+
+What the harness enforces:
+
+- **No skip path for the mock-provider cases.** The harness control, H01-C1,
+  H05-C1, H05-C2, H06-C1..C4 and H07-C2 in `triage-cross-project.test.js` are
+  registered through one guarded runner. When `AI_PROVIDER` does not resolve to
+  `mock`, the runner fails with an `AISEC-7 evidence integrity (SEC-01)` error
+  before the test body starts, so no provider is constructed or called.
+  `runPublicMain()` repeats the same check.
+- **H07-C2 fails, never skips,** when every `AI_*` selector is already set. The
+  harness never overrides real configuration, so it cannot execute that case
+  there.
+- **Execution ledger (`triage-cross-project.test.js`).** That file records every
+  case only after the registry accepted its observed outcome. A `test.after`
+  hook then fails the file unless the non-vacuity control and every
+  current-behavior case declared for the file reached confirmation in that run.
+- **No skip constructs anywhere in the harness.** `harness-invariants.test.js`
+  fails if any harness file contains a `skip`, `todo` or `only` test
+  construct. This is a static check.
+- **Regression.** A `SEC-01 regression` test re-evaluates `config.js` in
+  isolation under `AI_PROVIDER=aisec7-probe-nonexistent` (only when the variable
+  is unset, then restores it). It drives every guarded body through the same
+  runner and asserts all of the following:
+  - each body fails with the evidence-integrity error;
+  - no body starts and no skip is requested;
+  - zero `MockProvider` calls, zero `fetch` calls (stubbed) and zero spawns
+    (intercepted).
+
+Limits of this mechanism:
+
+- The runtime ledger covers `triage-cross-project.test.js`, the only harness
+  file with an environment-dependent path.
+- The other evidence files have no conditional execution path. For them the
+  guarantee is the static no-skip check plus node:test's own failure reporting.
+- There is no cross-file runtime ledger, because node:test runs each file in its
+  own process.
+
+Observed on Node v22.23.3:
+
+| Run | Exit | Tests | Pass | Fail | Skipped |
+|---|---|---|---|---|---|
+| Before C1 (dc32f08), `AI_PROVIDER=aisec7-probe-nonexistent` | 0 | 76 | 68 | 0 | 8 |
+| After C1, AI_* unset (supported contract) | 0 | 78 | 78 | 0 | 0 |
+| After C1, `AI_PROVIDER=aisec7-probe-nonexistent` | 1 | 79 | 69 | 10 | 0 |
+
+The after-C1 normal count is 76 + 2 new tests: the SEC-01 regression and the
+static no-skip check. In the adversarial run, 9 guarded cases fail plus the
+file-level ledger failure, which node:test reports as one extra failing test.
 
 ## 15. Real-effects prohibition confirmation
 
@@ -371,8 +441,13 @@ non-allowlisted `process.env` names.
 existing item: XI-01, XI-02, TB-01/02/03/04/08/09/14/18/19, AT-04/07, or the
 AISEC-6 FI/ODR dependencies.
 
-**Corrective requirements for this harness: NONE.** Every case ran without any
-production change.
+**Harness corrective C1 (SEC-01, OD-AISEC-7-C1-SEC01).** The independent
+Security HEAVY review found that mandatory evidence could be skipped while
+node:test still exited 0 (SEC-01, MEDIUM, harness evidence integrity). C1 makes
+that evidence fail closed (section 14a). It changes only harness tests and this
+document. No product code is changed, and no security outcome changes. SEC-01
+stays OPEN until a fresh independent Security HEAVY re-review verifies it on the
+corrective HEAD. Every case still runs without any production change.
 
 The reproduced gaps keep their existing owners and dispositions:
 
@@ -450,3 +525,10 @@ The authorized parent is the base HEAD
 `8846aaefea57c98e4c86aa263ea6ae95b07323cd`). The implementation adds one normal
 commit on `security/aisec-7-adversarial-harness`, with tracked changes only under
 `test/security/aisec-7/**` and this document.
+
+Corrective C1 (SEC-01) adds one more normal commit on top of the implementation
+HEAD `dc32f08c7daa436788417e0c9e0256ebd1a33f13`. It touches only:
+
+- `triage-cross-project.test.js`;
+- `harness-invariants.test.js`;
+- this document.

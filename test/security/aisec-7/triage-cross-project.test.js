@@ -7,9 +7,12 @@
  * analyzeFailure.main` against synthetic temp roots. The provider it creates
  * is MockProvider (no network, ever); the harness wraps
  * MockProvider.prototype.analyze for the duration of one call to observe the
- * exact prompt at the actual consumer. These tests only run when config.js
- * resolved AI_PROVIDER to "mock" at import time, so a real provider host can
- * never be reached from here.
+ * exact prompt at the actual consumer. These cases require config.js to have
+ * resolved AI_PROVIDER to "mock" at import time. Any other value FAILS them
+ * before a provider is constructed or called (SEC-01): a real provider host can
+ * never be reached from here, and a mandatory case can never skip while the run
+ * stays green. An execution ledger then fails this file unless every mandatory
+ * case in it reached its confirmation.
  *
  * XI-01 and XI-02 remain OPEN / MEDIUM / UNCHANGED. These tests reproduce
  * the gaps; they do not remediate, close, re-rate or waive anything.
@@ -20,7 +23,8 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const fx = require("./lib/fixtures");
-const { confirmCase } = require("./lib/registry");
+const { CASES, confirmCase: registryConfirmCase } = require("./lib/registry");
+const { SCOPES } = require("./lib/outcomes");
 
 const publicApi = require(path.join(fx.AI, "index.js"));
 const config = require(path.join(fx.AI, "config.js"));
@@ -34,17 +38,53 @@ const PROJECT_B = "aisec7-project-b";
 
 test.after(() => fx.cleanupRoots());
 
-function skipUnlessMockProvider(t) {
-  if (config.PROVIDER !== "mock") {
-    t.skip(`AI_PROVIDER resolved to "${config.PROVIDER}", not "mock"; public-main XI cases would reach a real provider and are not run (INSUFFICIENT_EVIDENCE for this run)`);
-    return true;
-  }
-  return false;
+// --- SEC-01 evidence integrity --------------------------------------------------------
+
+const EVIDENCE_INTEGRITY = "AISEC-7 evidence integrity (SEC-01)";
+const HARNESS_CONTROL = "harness-control";
+const SEC01_PROBE = "aisec7-probe-nonexistent";
+
+// Every current-behavior case declared for this file, plus the non-vacuity
+// control, must reach its confirmation in every run.
+const MANDATORY = [HARNESS_CONTROL, ...CASES
+  .filter((c) => c.scope === SCOPES.CURRENT_BEHAVIOR && c.file === path.basename(__filename))
+  .map((c) => c.id)];
+const executed = new Set();
+
+// Records a case only after the registry accepted its observed outcome.
+function confirmCase(id, controlHeld) {
+  const outcome = registryConfirmCase(id, controlHeld);
+  executed.add(id);
+  return outcome;
+}
+
+test.after(() => {
+  const missing = MANDATORY.filter((id) => !executed.has(id));
+  assert.deepEqual(missing, [], `${EVIDENCE_INTEGRITY}: mandatory evidence did not execute in this run: ${missing.join(", ")}`);
+});
+
+// Fails, never skips: a skipped mandatory case is invalid evidence.
+function requireMockProvider(resolvedProvider) {
+  assert.ok(resolvedProvider === "mock", `${EVIDENCE_INTEGRITY}: AI_PROVIDER resolved to "${resolvedProvider}", not "mock". This mandatory case would reach a non-mock provider, so it is not executed and the AISEC-7 run FAILS`);
+}
+
+async function runMockEvidence(resolvedProvider, body, t) {
+  requireMockProvider(resolvedProvider);
+  return body(t);
+}
+
+// Cases that need the repository MockProvider, registered through one guarded
+// runner so the SEC-01 regression below drives the same bodies.
+const MOCK_EVIDENCE = [];
+function mockEvidenceTest(id, name, body) {
+  MOCK_EVIDENCE.push({ id, body });
+  test(name, (t) => runMockEvidence(config.PROVIDER, body, t));
 }
 
 // Runs the supported public analyzer entry with a wrapped MockProvider and
 // returns every prompt it sent plus the report it wrote under the temp root.
 async function runPublicMain({ profileId, root }) {
+  requireMockProvider(config.PROVIDER);
   const calls = [];
   const original = MockProvider.prototype.analyze;
   const savedExitCode = process.exitCode;
@@ -66,8 +106,7 @@ async function runPublicMain({ profileId, root }) {
 
 // --- harness non-vacuity control ----------------------------------------------
 
-test("harness control: the wrapped MockProvider observes a same-project analysis (interception is not vacuous)", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest(HARNESS_CONTROL, "harness control: the wrapped MockProvider observes a same-project analysis (interception is not vacuous)", async () => {
   const root = fx.makeTempRoot("same-project");
   const marker = fx.canary("SAME_PROJECT");
   fx.writeJson(root, "reports/ai/context.json", fx.triageContext({ projectId: PROJECT_B, errorMessage: marker }));
@@ -75,12 +114,12 @@ test("harness control: the wrapped MockProvider observes a same-project analysis
   assert.equal(calls.length, 1);
   assert.ok(calls[0].userPrompt.includes(marker));
   assert.equal(report.sourceContext.projectId, PROJECT_B);
+  executed.add(HARNESS_CONTROL);
 });
 
 // --- H-01 / H-05: XI-01 -----------------------------------------------------------
 
-test("H01-C1: a Project B invocation pointed at a root holding Project A context transfers A evidence to the provider (no identity join)", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H01-C1", "H01-C1: a Project B invocation pointed at a root holding Project A context transfers A evidence to the provider (no identity join)", async () => {
   const rootA = fx.makeTempRoot("project-a-root");
   const marker = fx.canary("H01_PROJECT_A_EVIDENCE");
   fx.writeJson(rootA, "reports/ai/context.json", fx.triageContext({ projectId: PROJECT_A, errorMessage: marker }));
@@ -95,8 +134,7 @@ test("H01-C1: a Project B invocation pointed at a root holding Project A context
   confirmCase("H01-C1", refused);
 });
 
-test("H05-C1 XI-01: Project A context copied into Project B's root is analyzed under B through the public main; A canary reaches the provider and A provenance lands in B's report", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H05-C1", "H05-C1 XI-01: Project A context copied into Project B's root is analyzed under B through the public main; A canary reaches the provider and A provenance lands in B's report", async () => {
   const rootB = fx.makeTempRoot("project-b-root");
   const marker = fx.canary("XI01_PROJECT_A_CONTEXT");
   fx.writeJson(rootB, "reports/ai/context.json", fx.triageContext({ projectId: PROJECT_A, errorMessage: marker, metadata: { repository: "synthetic/project-a", runId: "a-run-1" } }));
@@ -112,8 +150,7 @@ test("H05-C1 XI-01: Project A context copied into Project B's root is analyzed u
   confirmCase("H05-C1", refused);
 });
 
-test("H05-C2 XI-01: stale, foreign-run context relabelled with B's project id is accepted (no freshness or origin binding)", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H05-C2", "H05-C2 XI-01: stale, foreign-run context relabelled with B's project id is accepted (no freshness or origin binding)", async () => {
   const rootB = fx.makeTempRoot("project-b-stale");
   const marker = fx.canary("XI01_STALE_CONTEXT");
   fx.writeJson(rootB, "reports/ai/context.json", fx.triageContext({
@@ -159,8 +196,7 @@ async function runXi02Variant(variant) {
   return { ...run, marker };
 }
 
-test("H06-C1 XI-02: embedded history canary reaches the provider for every ineligible separate-history state", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H06-C1", "H06-C1 XI-02: embedded history canary reaches the provider for every ineligible separate-history state", async () => {
   const reproduced = [];
   for (const variant of SEPARATE_HISTORY_VARIANTS) {
     const { calls, marker } = await runXi02Variant(variant);
@@ -172,8 +208,7 @@ test("H06-C1 XI-02: embedded history canary reaches the provider for every ineli
   confirmCase("H06-C1", reproduced.length === 0);
 });
 
-test("H06-C2 XI-02: the report says history is null while the prompt carried embedded history (prompt/report divergence)", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H06-C2", "H06-C2 XI-02: the report says history is null while the prompt carried embedded history (prompt/report divergence)", async () => {
   const { calls, report, marker } = await runXi02Variant({ name: "absent", write: null });
   const sent = fx.promptPayload(calls[0].userPrompt).history;
   assert.equal(report.history, null, "report records no history");
@@ -182,8 +217,7 @@ test("H06-C2 XI-02: the report says history is null while the prompt carried emb
   confirmCase("H06-C2", consistent);
 });
 
-test("H06-C3: eligible separate history replaces the embedded field with exactly the four counters", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H06-C3", "H06-C3: eligible separate history replaces the embedded field with exactly the four counters", async () => {
   const { calls, report, marker } = await runXi02Variant({ name: "eligible", write: { available: true, projectId: PROJECT_B, framework: "cypress", ...ELIGIBLE_COUNTERS } });
   const sent = fx.promptPayload(calls[0].userPrompt).history;
   assert.deepEqual(sent, ELIGIBLE_COUNTERS);
@@ -191,8 +225,7 @@ test("H06-C3: eligible separate history replaces the embedded field with exactly
   confirmCase("H06-C3", !calls[0].userPrompt.includes(marker));
 });
 
-test("H06-C4: unavailable separate history is reported as null, never fabricated zero counters", async (t) => {
-  if (skipUnlessMockProvider(t)) return;
+mockEvidenceTest("H06-C4", "H06-C4: unavailable separate history is reported as null, never fabricated zero counters", async () => {
   const { report } = await runXi02Variant({ name: "unavailable", write: { available: false } });
   confirmCase("H06-C4", report.history === null);
 });
@@ -271,22 +304,73 @@ test("H07-C1: interleaved A/B analyses with separate roots and providers do not 
   confirmCase("H07-C1", isolated);
 });
 
-test("H07-C2: provider and credential selection is fixed at import time; a later per-invocation change is ignored", async (t) => {
+mockEvidenceTest("H07-C2", "H07-C2: provider and credential selection is fixed at import time; a later per-invocation change is ignored", async () => {
   // Only currently-unset names are touched, so no real credential is read or replaced.
   const fields = { AI_PROVIDER: "PROVIDER", AI_MODEL: "MODEL", AI_API_KEY: "API_KEY" };
   const injected = fx.unsetEnvNames(Object.keys(fields));
-  if (injected.length === 0) {
-    t.skip("every AI_* selector is already set in this environment; not overriding real configuration (INSUFFICIENT_EVIDENCE for this run)");
-    return;
-  }
+  assert.ok(injected.length > 0, `${EVIDENCE_INTEGRITY}: every AI_* selector is already set; real configuration is never overridden, so H07-C2 is not executed and the AISEC-7 run FAILS`);
   const before = Object.fromEntries(injected.map((n) => [n, config[fields[n]]]));
   for (const n of injected) process.env[n] = n === "AI_API_KEY" ? fx.DUMMY_TOKEN : "aisec7-invocation-b-selection";
   try {
     const reloaded = require(path.join(fx.AI, "config.js"));
     for (const n of injected) assert.equal(reloaded[fields[n]], before[n], `${n} did not follow the invocation`);
-    if (config.PROVIDER === "mock") assert.equal(createProvider().name, "mock", "default factory still returns the import-time provider");
+    assert.equal(createProvider().name, "mock", "default factory still returns the import-time provider");
   } finally {
     for (const n of injected) delete process.env[n];
   }
   confirmCase("H07-C2", null);
+});
+
+// --- SEC-01 regression ------------------------------------------------------------------
+
+// What config.js resolves AI_PROVIDER to when the variable holds `value`. The
+// module is re-evaluated in isolation and the cached copy the analyzer uses is
+// restored. A set AI_PROVIDER is never overridden; it then already resolves to
+// "mock" (any other value fails every guarded case), and the literal is used.
+function providerResolvedUnder(value) {
+  const configPath = require.resolve(path.join(fx.AI, "config.js"));
+  if (fx.unsetEnvNames(["AI_PROVIDER"]).length === 0) return value;
+  const cached = require.cache[configPath];
+  process.env.AI_PROVIDER = value;
+  delete require.cache[configPath];
+  try {
+    return require(configPath).PROVIDER;
+  } finally {
+    delete process.env.AI_PROVIDER;
+    require.cache[configPath] = cached;
+  }
+}
+
+test("SEC-01 regression: with AI_PROVIDER=aisec7-probe-nonexistent every mock-only mandatory case fails closed before any provider, network or process effect; none skips", async () => {
+  const resolved = providerResolvedUnder(SEC01_PROBE);
+  assert.equal(resolved, SEC01_PROBE, "the probe value reaches the provider selection");
+  assert.deepEqual(MOCK_EVIDENCE.map((e) => e.id), [HARNESS_CONTROL, "H01-C1", "H05-C1", "H05-C2", "H06-C1", "H06-C2", "H06-C3", "H06-C4", "H07-C2"]);
+
+  const analyze = MockProvider.prototype.analyze;
+  let providerCalls = 0;
+  MockProvider.prototype.analyze = async function counted(...args) {
+    providerCalls += 1;
+    return analyze.apply(this, args);
+  };
+  try {
+    await fx.withFetchStub(null, (fetchCalls) => fx.withSpawnInterceptor(async (spawnCalls) => {
+      for (const entry of MOCK_EVIDENCE) {
+        let entered = false;
+        const skipped = [];
+        const context = { skip: (message) => skipped.push(message) };
+        await assert.rejects(
+          runMockEvidence(resolved, async (t) => { entered = true; return entry.body(t); }, context),
+          (error) => error.message.includes(EVIDENCE_INTEGRITY) && error.message.includes(SEC01_PROBE),
+          `${entry.id} must fail with an evidence-integrity error`,
+        );
+        assert.equal(entered, false, `${entry.id}: evidence body must not start`);
+        assert.deepEqual(skipped, [], `${entry.id}: must not skip`);
+      }
+      assert.equal(fetchCalls.length, 0, "no network call");
+      assert.equal(spawnCalls.length, 0, "no process spawn");
+    }));
+  } finally {
+    MockProvider.prototype.analyze = analyze;
+  }
+  assert.equal(providerCalls, 0, "no provider call");
 });
