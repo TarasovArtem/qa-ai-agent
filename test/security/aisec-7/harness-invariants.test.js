@@ -9,15 +9,16 @@
  *   3. Binding: every current-behavior case is confirmed by an executable test
  *      in its declared file, and every case appears in the AISEC-7 document
  *      with the same declared outcome. This source binding is not execution
- *      proof. Execution is enforced fail-closed (SEC-01): no harness file may
- *      skip, todo or narrow a test, and triage-cross-project.test.js fails
- *      rather than skips without the mock provider and keeps an execution
- *      ledger of its mandatory cases.
+ *      proof. Execution is proven at runtime by the per-file execution ledgers
+ *      and the outer completeness verifier (SEC-01/SEC-02, document section
+ *      14a). The static skip/todo/only scan here is defense in depth only
+ *      (SEC-03): source scanning cannot prove that anything ran.
  *   4. Effect safety of the harness source itself: no real endpoint, no direct
- *      network or process call, no secret consumption, temp-root writes only.
+ *      network call, no process call outside the one audited outer-verifier
+ *      launch, no secret consumption, temp-root writes only.
  */
 
-const test = require("node:test");
+const nodeTest = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -25,7 +26,20 @@ const path = require("node:path");
 
 const fx = require("./lib/fixtures");
 const { OUTCOMES, SCOPES, BLOCKED_BY, deriveSecurityOutcome, observed } = require("./lib/outcomes");
+// Registry confirmCase()/targetOutcome() are called directly here on purpose:
+// these are meta checks of the outcome model, never executed case evidence.
 const { H_ROWS, CASES, confirmCase, targetOutcome } = require("./lib/registry");
+const { EVIDENCE_FILES } = require("./lib/evidence-manifest");
+const { createEvidenceLedger } = require("./lib/execution-ledger");
+
+const ledger = createEvidenceLedger(__filename);
+
+// Registered from this file so node:test attributes every result to it; the
+// ledger records completion and refuses test options (SEC-02).
+function test(name, fn) {
+  return nodeTest(name, ledger.track(name, fn));
+}
+test.after = nodeTest.after;
 
 const HARNESS_DIR = __dirname;
 const DOC = path.join(fx.REPO_ROOT, "docs", "aisec-7-adversarial-security-test-harness-v1.md");
@@ -71,17 +85,25 @@ test("coverage: every executable current-behavior case is confirmed by a test in
   }
 });
 
-test("evidence integrity (SEC-01): no harness file can skip, todo or narrow a test, so mandatory evidence either executes or fails the run", () => {
+// Static, so it only sees obvious constructs. Runtime completeness is proven by
+// the ledgers and the outer verifier, never by this scan. The outer verifier
+// and its parser/reporter libraries are not scanned: they must name the
+// runner's skip/todo fields in order to reject them.
+test("evidence integrity (SEC-03): evidence files contain no static skip, todo or only construct (defense in depth, not execution proof)", () => {
   const SKIP_CONSTRUCTS = [
-    /\.(?:skip|todo|only)\s*\(/,
-    /\b(?:skip|todo|only)\s*:\s*(?:true|["'`])/,
-    /\btest\.(?:skip|todo|only)\b/,
+    /\.(?:skip|todo|only)\s*\(/, // method call on a test or context
+    /\btest\.(?:skip|todo|only)\b/, // property reference on node:test
+    /\[\s*["'`](?:skip|todo|only)["'`]\s*\]/, // bracket access by string
+    /[{,]\s*(?:skip|todo|only)\s*[:,}]/, // options key, with any value or shorthand
   ];
-  for (const file of harnessFiles()) {
-    const rel = path.relative(HARNESS_DIR, file);
-    const source = fs.readFileSync(file, "utf8");
+  for (const rel of [...EVIDENCE_FILES, path.join("lib", "execution-ledger.js")]) {
+    const source = fs.readFileSync(path.join(HARNESS_DIR, rel), "utf8");
     for (const pattern of SKIP_CONSTRUCTS) assert.ok(!pattern.test(source), `${rel}: ${pattern} would let mandatory evidence go unexecuted`);
   }
+  // Non-vacuity: each form the scan claims to catch is caught.
+  // (Built from templates so this file's own source does not match.)
+  const forms = ["skip", "todo", "only"].flatMap((w) => [`t.${w}();`, `test.${w}("x", fn);`, `t["${w}"]("x");`, `test("x", { ${w}: cond }, fn);`, `test("x", { ${w} }, fn);`, `test("x", { timeout: 1, ${w}: true }, fn);`]);
+  for (const form of forms) assert.ok(SKIP_CONSTRUCTS.some((p) => p.test(form)), form);
 });
 
 // --- 2. false-PASS resistance -----------------------------------------------------------
@@ -182,13 +204,24 @@ test("safety: harness temp roots live under the OS temp directory", () => {
 
 test("safety: the harness makes no direct network or process call and names no real endpoint", () => {
   const ALLOWED_URL = /^https:\/\/dev\.azure\.com\/\$\{ORG\}\//;
+  const PROCESS_CALL = /(?:child_process|childProcess)\.(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/g;
+  // The one audited launch: the outer completeness verifier starts Node itself
+  // (process.execPath), never a shell, against AISEC-7 evidence files only.
+  const OUTER_VERIFIER = path.join("lib", "evidence-run.js");
   for (const file of harnessFiles()) {
     const rel = path.relative(HARNESS_DIR, file);
     const source = fs.readFileSync(file, "utf8");
-    assert.ok(!/(?:child_process|childProcess)\.(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/.test(source), `${rel}: direct child process call`);
+    const processCalls = source.match(PROCESS_CALL) || [];
+    if (rel === OUTER_VERIFIER) {
+      assert.equal(processCalls.length, 1, `${rel}: exactly one process call`);
+      assert.match(source, /childProcess\.spawnSync\(process\.execPath, args, \{/, `${rel}: the launch is Node itself`);
+      assert.match(source, /^\s*shell: false,\s*$/m, `${rel}: the launch uses no shell`);
+    } else {
+      assert.deepEqual(processCalls, [], `${rel}: direct child process call`);
+    }
     assert.ok(!/(?:^|[^.\w])fetch\s*\(/m.test(source), `${rel}: direct fetch call`);
     assert.ok(!/require\(["'](?:node:)?(?:http|https|http2|net|tls|dgram|dns|undici)["']\)/.test(source), `${rel}: network module`);
-    if (rel !== path.join("lib", "fixtures.js")) assert.ok(!/require\("node:child_process"\)/.test(source), `${rel}: only fixtures may intercept child_process`);
+    if (rel !== path.join("lib", "fixtures.js") && rel !== OUTER_VERIFIER) assert.ok(!/require\("node:child_process"\)/.test(source), `${rel}: only fixtures and the outer verifier may use child_process`);
     for (const url of source.match(/https?:\/\/[^\s'"`)]+/g) || []) {
       assert.ok(ALLOWED_URL.test(url), `${rel}: unexpected URL ${url}`);
     }
@@ -196,7 +229,7 @@ test("safety: the harness makes no direct network or process call and names no r
 });
 
 test("safety: the harness reads no real secret value from the environment", () => {
-  const ALLOWED_ENV = new Set(["AI_PROVIDER", "AI_MODEL", "AI_API_KEY", "GITHUB_TOKEN", "AISEC7_DUMMY_SECRET"]);
+  const ALLOWED_ENV = new Set(["AI_PROVIDER", "AI_MODEL", "AI_API_KEY", "GITHUB_TOKEN", "AISEC7_DUMMY_SECRET", "NODE_OPTIONS"]);
   for (const file of harnessFiles()) {
     const rel = path.relative(HARNESS_DIR, file);
     const source = fs.readFileSync(file, "utf8");

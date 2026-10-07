@@ -77,13 +77,18 @@ Harness layout:
 | `lib/outcomes.js` | Outcome vocabulary and `deriveSecurityOutcome()` (harness-internal, not a public API) |
 | `lib/registry.js` | H-01..H-12 rows and all 70 case declarations; `confirmCase()` / `targetOutcome()` |
 | `lib/fixtures.js` | Temp roots, scripted `fetch` stub, spawn interceptor, scripted providers, real-builder chain fixtures |
+| `lib/evidence-manifest.js` | Complete-execution manifest: evidence files, expected tests per file, required confirmations, reviewed counts (SEC-02) |
+| `lib/execution-ledger.js` | Per-file execution ledger: tracks test completion, case confirmation and target evaluation; fails the file when anything is missing (SEC-02) |
+| `lib/evidence-run.js` | Outer completeness verifier: one supervised Node child over the evidence files, parsed and bound to the manifest (SEC-02) |
+| `lib/evidence-reporter.js` | JSON-lines node:test reporter used only by the outer verifier's child run |
 | `triage-cross-project.test.js` | H-01 (triage), H-04 (triage), H-05, H-06, H-07 |
 | `review-apply-execute.test.js` | H-01 (apply), H-02, H-03, H-09 |
 | `hostile-model-output.test.js` | H-08 |
 | `source-destination.test.js` | H-04 (loader), H-10 |
 | `trust-evidence.test.js` | H-11 |
 | `enablement-surface.test.js` | H-12 |
-| `harness-invariants.test.js` | Coverage contract, false-PASS invariants, document binding, evidence integrity (no skip constructs), harness effect safety |
+| `harness-invariants.test.js` | Coverage contract, false-PASS invariants, document binding, static skip-construct scan (defense in depth), harness effect safety |
+| `evidence-completeness.test.js` | Outer completeness verifier and its adversarial regressions (SEC-02); not an evidence file itself |
 
 ## 4. Safety constraints
 
@@ -97,7 +102,11 @@ Only safe synthetic verification was used:
   is the expected-prefix assertion for the destination's fixed host.
 - **Processes:** `child_process.spawn` is replaced by an interceptor that records
   the call and returns an inert fake child. No framework binary and no
-  generated code is launched.
+  generated code is launched. The one real process the harness starts is the
+  outer completeness verifier's child (section 14a): `process.execPath` with
+  `shell: false`, a fixed argument list naming AISEC-7 evidence files only, a
+  minimal environment without `NODE_OPTIONS`, `AI_*` or tokens, and a finite
+  timeout.
 - **Providers:** scripted fakes, or the repository `MockProvider` wrapped
   in-process. The public-`main` cases need `config.js` to have resolved
   `AI_PROVIDER` to `mock`. Under any other value they **fail**, before any
@@ -348,75 +357,233 @@ Enforced by `harness-invariants.test.js` and `lib/outcomes.js`:
 - **Binding:** every current case must be confirmed in its declared file. Every
   case must appear in this document with its declared outcome. A behavior change
   fails the suite until the matrix is updated. This binding is a source-text
-  check. It shows a confirmation exists, not that it ran. Execution is covered
-  by section 14a.
+  check. It shows a confirmation exists, not that it ran. Execution is proven
+  at runtime by the per-file ledgers and the outer completeness verifier
+  (section 14a).
 
-### 14a. Evidence integrity: fail-closed execution (SEC-01)
+### 14a. Evidence integrity: complete execution (SEC-01, SEC-02, SEC-03)
 
-Valid AISEC-7 gate evidence on the supported Node 22 contract requires both:
+Exit code 0 does not prove complete evidence, and neither does `0 failed` /
+`0 skipped`, nor `confirmCase()` appearing in the source. On Node 22 a runner
+filter such as `--test-skip-pattern=H09`, given directly or through
+`NODE_OPTIONS`, removed the five H09 cases. They were not counted as skipped,
+and the reduced run still ended 73/73, exit 0 (SEC-02). `process.exit(0)` in an
+evidence file ended that file before its hooks, and the run still exited 0.
+
+Valid AISEC-7 evidence on the supported Node 22 contract requires **all** of
+the following:
+
+1. the complete expected execution manifest (`lib/evidence-manifest.js`) is
+   known: the evidence files, the tests each must execute, and the cases each
+   must confirm;
+2. every current-behavior registry case reaches a successful `confirmCase()`,
+   meaning the registry accepted its observed outcome;
+3. every harness control and integrity test executes;
+4. no mandatory test is skipped, todo or cancelled;
+5. no mandatory test or file disappears through a runner filter or shard, and
+   no test-selection option shapes the run;
+6. no mandatory case returns before its confirmation;
+7. no evidence file terminates before it reports all its tests and its
+   execution ledger;
+8. the observed test counts equal the mechanically expected counts exactly;
+9. failures = 0;
+10. the outer completeness verification itself passes.
+
+If any of these is unproven, the result is **INVALID SECURITY EVIDENCE**, not a
+partial PASS. The registry declares an expected outcome, but only an executed
+and accepted `confirmCase()` evidences it. `INSUFFICIENT_EVIDENCE` is a
+security classification for a property that cannot be observed (for example
+H11-C7). It does not permit a required test to go unexecuted.
+
+Execution validity and the security result are separate dimensions. Everything
+in this section decides only whether the evidence run is complete. It never
+reinterprets node:test pass/fail counts as the security matrix. A complete
+run still carries every FAIL, OWNER_DISPOSITION_REQUIRED and blocked target
+outcome of sections 6 to 13, unchanged.
+
+**SEC-01 (preserved).** The harness control, H01-C1, H05-C1, H05-C2,
+H06-C1..C4 and H07-C2 in `triage-cross-project.test.js` are registered through
+one guarded runner. When `AI_PROVIDER` does not resolve to `mock`, they fail
+with an `AISEC-7 evidence integrity (SEC-01)` error before the body starts, so
+no provider is constructed or called. `runPublicMain()` repeats the check.
+H07-C2 fails, and never skips, when every `AI_*` selector is already set. The
+`SEC-01 regression` test re-evaluates `config.js` under
+`AI_PROVIDER=aisec7-probe-nonexistent` and asserts four things: every guarded
+body fails with the evidence-integrity error; no body starts; no skip is
+requested; and there are zero `MockProvider`, `fetch` and spawn calls.
+
+**SEC-02 corrective, layer 1: per-file execution ledgers
+(`lib/execution-ledger.js`).** Every AISEC-7 test file, all seven evidence
+files and the verifier, creates its own module-local ledger. It registers
+every test from its own source as `nodeTest(name, ledger.track(name, fn))`, so
+node:test attributes each result to that file. The ledger keeps three facts
+apart: a test *completed* (its body returned), a case *confirmed* (the registry
+accepted the observed outcome) and a target row *evaluated*. Attempted,
+started and declared never count as confirmed. A file-level `after` hook
+releases the harness temp roots, publishes the ledger as a structured
+`AISEC7_LEDGER` diagnostic, and then **fails the file** in any of these cases:
+
+- an expected test did not complete;
+- a current-behavior case mapped to the file was not confirmed;
+- a declared control was not confirmed;
+- an own-test target row was not evaluated;
+- `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or `--test-shard`
+  is present in `process.execArgv` or `NODE_OPTIONS`.
+
+`track()` accepts only `(name, fn)`. An options object (skip, todo, only or
+timeout) in that position throws at registration. The required ids come from
+the registry mapping, not from a second hand-kept list.
+
+The per-file ledgers catch, inside a file that still runs:
+
+- name, skip and only filtering;
+- a case that returns before `confirmCase()`;
+- an options-based or in-body skip.
+
+They cannot see a file that never runs, or a process that exits before its
+hooks.
+
+**SEC-02 corrective, layer 2: outer completeness verifier
+(`evidence-completeness.test.js`, `lib/evidence-run.js`).** The verifier
+launches **one** supervised child: `process.execPath --test
+--test-reporter=<lib/evidence-reporter.js> <the seven evidence files>`, with
+`shell: false`, a fixed argv, `cwd` at the repository root, a 180 s timeout
+with SIGKILL and a 64 MiB output bound.
+
+The child environment is built from an allowlist: `SystemRoot`, `windir`,
+`TEMP`, `TMP`, `TMPDIR`, `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`,
+plus the `AISEC7_EVIDENCE_CHILD` marker. `NODE_OPTIONS`, `NODE_TEST_CONTEXT`,
+`AI_*` and tokens are never inherited, and the operator's own environment is
+not modified.
+
+Before launching, `runCompleteEvidence()` refuses the run if the verifier's
+own process carries a test-selection option. This is defense in depth, on top
+of the sanitized child.
+
+The child output is JSON lines, one runner event per line. The verifier
+accepts the run only if:
+
+- the child exited 0 with no signal and no spawn error;
+- the launched files are exactly the manifest;
+- every line parses, and the output is complete: it ends with a newline, and
+  exactly one terminal run summary comes last;
+- the terminal counts equal the run summary, which is
+  `tests = passed = 78`, with failed, cancelled, skipped and todo all 0;
+- there are exactly 78 test results, none from an unlaunched file and none
+  skipped, todo, failed or nested;
+- for each file, there is exactly one per-file summary with the file's exact
+  expected count, and the set of test results equals the file's expected test
+  set;
+- for each file, there is exactly one ledger whose completed tests, confirmed
+  cases, controls and evaluated targets equal the manifest, with no filter
+  recorded.
+
+Any parse error or exception is a rejection. "Could not parse" is never PASS.
+A `process.exit(0)` file is caught because node:test reports such a file as a
+single file-level result, with no per-file summary and no ledger.
+
+**Recursion avoidance.** The child file list is the registry-derived
+evidence-file manifest, and the verifier file is not in it. A manifest test
+checks that every `*.test.js` in the harness directory is either an evidence
+file or the verifier. `launchEvidenceRun()` refuses the verifier file by name.
+`runCompleteEvidence()` throws when the `AISEC7_EVIDENCE_CHILD` marker is
+present. Each of these guards is tested.
+
+**SEC-03 (addressed).** The static scan in `harness-invariants.test.js` is
+**defense in depth, not execution proof**. It covers the seven evidence files
+and the ledger, and rejects:
+
+- method calls (`.skip(`, `.todo(`, `.only(`);
+- `test.skip` references;
+- bracket access (`t["skip"]`);
+- option keys with any value or as shorthand (`{ skip: expr }`, `{ skip }`).
+
+A non-vacuity check proves that each listed form is caught. Source scanning
+cannot prove that anything ran, and the C1 statement that the static check
+showed no harness test could skip is withdrawn. Runtime completeness comes
+only from the ledgers and the outer verifier. The verifier, parser and
+reporter libraries are not scanned, because they must name the runner's
+skip/todo fields in order to reject them. Their own tests are bound by the
+verifier file's ledger and the top-level count.
+
+**Expected counts (mechanically derived, `lib/evidence-manifest.js`).**
 
 ```text
-test failures = 0
-mandatory AISEC-7 skipped tests = 0
+PRE-C2 AISEC-7 total                         = 78
+
+Outer evidence child expected total Y        = 78
+  57 current-behavior cases (one test each)
++  3 target rows with their own test (H03-T, H11-T, H12-C5)
++  2 triage harness tests (harness control, SEC-01 regression)
++ 16 harness-invariants tests
+= 78   (C2 adds no test to the evidence files; the 10 target rows mapped
+        to harness-invariants.test.js are evaluated by one invariant)
+
+POST-C2 top-level AISEC-7 expected total X   = Y + 16 verifier tests = 94
 ```
 
-A run that reports zero failures but skips any AISEC-7 test is **invalid
-evidence**, not a partial PASS. An unexecuted mandatory case does not keep a
-trustworthy PASS (or FAIL) just because the registry declares it. The
-registry declares the expected outcome; only an executed `confirmCase()`
-evidences it.
-
-`INSUFFICIENT_EVIDENCE` is a security evidence classification for a property
-that cannot be observed (for example H11-C7). It is not permission for a
-required executable test to skip silently while CI stays green.
-
-What the harness enforces:
-
-- **No skip path for the mock-provider cases.** The harness control, H01-C1,
-  H05-C1, H05-C2, H06-C1..C4 and H07-C2 in `triage-cross-project.test.js` are
-  registered through one guarded runner. When `AI_PROVIDER` does not resolve to
-  `mock`, the runner fails with an `AISEC-7 evidence integrity (SEC-01)` error
-  before the test body starts, so no provider is constructed or called.
-  `runPublicMain()` repeats the same check.
-- **H07-C2 fails, never skips,** when every `AI_*` selector is already set. The
-  harness never overrides real configuration, so it cannot execute that case
-  there.
-- **Execution ledger (`triage-cross-project.test.js`).** That file records every
-  case only after the registry accepted its observed outcome. A `test.after`
-  hook then fails the file unless the non-vacuity control and every
-  current-behavior case declared for the file reached confirmation in that run.
-- **No skip constructs anywhere in the harness.** `harness-invariants.test.js`
-  fails if any harness file contains a `skip`, `todo` or `only` test
-  construct. This is a static check.
-- **Regression.** A `SEC-01 regression` test re-evaluates `config.js` in
-  isolation under `AI_PROVIDER=aisec7-probe-nonexistent` (only when the variable
-  is unset, then restores it). It drives every guarded body through the same
-  runner and asserts all of the following:
-  - each body fails with the evidence-integrity error;
-  - no body starts and no skip is requested;
-  - zero `MockProvider` calls, zero `fetch` calls (stubbed) and zero spawns
-    (intercepted).
-
-Limits of this mechanism:
-
-- The runtime ledger covers `triage-cross-project.test.js`, the only harness
-  file with an environment-dependent path.
-- The other evidence files have no conditional execution path. For them the
-  guarantee is the static no-skip check plus node:test's own failure reporting.
-- There is no cross-file runtime ledger, because node:test runs each file in its
-  own process.
+The two numbers are distinct, and neither substitutes for the other. Y is
+enforced on every child run by the verifier. X is the count a complete
+top-level AISEC-7 run reports, `node --test "test/security/aisec-7/**/*.test.js"`,
+which `npm run test:unit` includes. The manifest pins both in
+`REVIEWED_COUNTS`, and a count-model test re-derives them from the registry and
+the declared test names. Adding, removing or renaming a test therefore fails
+until the manifest, the reviewed counts and this document are updated
+together. The parser test also proves that a self-consistent run with one test
+fewer or one test more is rejected.
 
 Observed on Node v22.23.3:
 
 | Run | Exit | Tests | Pass | Fail | Skipped |
 |---|---|---|---|---|---|
 | Before C1 (dc32f08), `AI_PROVIDER=aisec7-probe-nonexistent` | 0 | 76 | 68 | 0 | 8 |
-| After C1, AI_* unset (supported contract) | 0 | 78 | 78 | 0 | 0 |
-| After C1, `AI_PROVIDER=aisec7-probe-nonexistent` | 1 | 79 | 69 | 10 | 0 |
+| C1 (63c18b9), AI_* unset | 0 | 78 | 78 | 0 | 0 |
+| C1 (63c18b9), `--test-skip-pattern=H09` (SEC-02) | 0 | 73 | 73 | 0 | 0 |
+| C1 (63c18b9), `NODE_OPTIONS=--test-skip-pattern=H09` (SEC-02) | 0 | 73 | 73 | 0 | 0 |
+| C2, AI_* unset (supported contract) | 0 | 94 | 94 | 0 | 0 |
+| C2, `--test-skip-pattern=H09` | 1 | 95 | 86 | 9 | 0 |
+| C2, `NODE_OPTIONS=--test-skip-pattern=H09` | 1 | 95 | 86 | 9 | 0 |
+| C2, `--test-name-pattern=H0` | 1 | 47 | 39 | 8 | 0 |
+| C2, `--test-only` | 1 | 8 | 0 | 8 | 0 |
+| C2, `--test-skip-pattern=SEC-02` (verifier removed) | 1 | 86 | 78 | 8 | 0 |
+| C2, `AI_PROVIDER=aisec7-probe-nonexistent` | 1 | 95 | 85 | 10 | 0 |
 
-The after-C1 normal count is 76 + 2 new tests: the SEC-01 regression and the
-static no-skip check. In the adversarial run, 9 guarded cases fail plus the
-file-level ledger failure, which node:test reports as one extra failing test.
+Outer verifier probes. Each one is a supervised child over the full manifest,
+or a temporary mutated copy of one file; no tracked file is modified. Only
+NORMAL is accepted:
+
+| Probe | Child exit | Child tests / pass / fail / skip | Verifier | Valid evidence |
+|---|---|---|---|---|
+| NORMAL | 0 | 78 / 78 / 0 / 0 | accepted; all 57 cases confirmed | YES |
+| DIRECT_SKIP_PATTERN | 1 | 80 / 73 / 7 / 0 | rejected: H09-C1..C5 missing; 7 ledgers fail on the filter | NO |
+| NODE_OPTIONS_SKIP_PATTERN | 1 | 80 / 73 / 7 / 0 | rejected: same | NO |
+| NAME_PATTERN (`H0`) | 1 | 44 / 37 / 7 / 0 | rejected: tests missing; ledgers fail | NO |
+| TEST_ONLY | 1 | 7 / 0 / 7 / 0 | rejected: all tests missing; ledgers fail | NO |
+| WHOLE_FILE_REMOVAL (source-destination) | **0** | 68 / 68 / 0 / 0 | rejected: file not launched; 68 != 78 | NO |
+| PROBE_CONTROL (unmutated copy) | 0 | 78 / 78 / 0 / 0 | accepted (probes are not vacuous) | (control) |
+| NON_TRIAGE_EARLY_RETURN (H10-C3) | 1 | 79 / 78 / 1 / 0 | rejected: H10-C3 test passed but was never confirmed; ledger fails | NO |
+| DYNAMIC_SKIP (`{ skip: expr }`, H08-C4) | 1 | 79 / 77 / 1 / 1 | rejected: skipped result; H08-C4 not completed or confirmed | NO |
+| PREMATURE_EXIT_0 (trust-evidence) | **0** | 69 / 69 / 0 / 0 | rejected: no per-file summary, no ledger, 10 tests missing | NO |
+| SEC01_NON_MOCK_PROVIDER | 1 | 79 / 69 / 10 / 0 | rejected: 9 guarded cases fail closed with SEC-01; nothing skips | NO |
+
+Limits of this mechanism:
+
+- A test file is trusted to be the reviewed source. Code that deliberately
+  forges a ledger diagnostic or calls `confirmCase()` with a fabricated
+  observation is a source change visible in review, not a runner
+  configuration. The mechanism does not defend against it.
+- The verifier proves completeness of its own child run. A top-level
+  invocation that omits `evidence-completeness.test.js` gets no outer
+  verification, and is recognizable only by its count (X = 94 is required). A
+  top-level invocation of a subset of files that still includes the verifier
+  shows fewer than 94 tests at the top level, but the verifier's child still
+  runs and binds the complete 78-test manifest.
+- Early return in a harness meta test (not a case test) completes normally and
+  is not detected at runtime. Each harness test still has to complete without
+  throwing, and its name is bound by the manifest.
+- The child output contract was verified on Node 22.23.3. Another Node major
+  is outside the supported contract and fails closed if its reporter events
+  differ.
 
 ## 15. Real-effects prohibition confirmation
 
@@ -427,13 +594,20 @@ file-level ledger failure, which node:test reports as one extra failing test.
 - **Real destructive provider testing:** NO. No live endpoint is called.
 - **Hostile generated code on the operator host:** NO. Generated content is
   data only, and every spawn is intercepted.
-- **Uncontrolled process, resource or network activity:** NO.
-- **Filesystem mutation outside harness temp roots:** NO.
+- **Uncontrolled process, resource or network activity:** NO. The only real
+  process is the outer verifier's Node child (section 14a). It runs AISEC-7
+  evidence files only, under the same stubs, with no shell, no inherited
+  credentials and a finite timeout.
+- **Filesystem mutation outside harness temp roots:** NO. Adversarial probes
+  write mutated copies only into harness temp roots, and every ledger releases
+  its temp roots even when it fails.
 
 `harness-invariants.test.js` also scans the harness source on every run. It
-checks for direct `child_process` calls, direct `fetch` calls, network modules,
-URL literals other than the destination prefix assertion, and reads of
-non-allowlisted `process.env` names.
+checks for direct `child_process` calls (only `lib/evidence-run.js` may make
+exactly one, `childProcess.spawnSync(process.execPath, ...)` with
+`shell: false`), direct `fetch` calls, network modules, URL literals other than
+the destination prefix assertion, and reads of non-allowlisted `process.env`
+names.
 
 ## 16. Findings and corrective requirements
 
@@ -448,6 +622,20 @@ that evidence fail closed (section 14a). It changes only harness tests and this
 document. No product code is changed, and no security outcome changes. SEC-01
 stays OPEN until a fresh independent Security HEAVY re-review verifies it on the
 corrective HEAD. Every case still runs without any production change.
+
+**Harness corrective C2 (SEC-02, OD-AISEC-7-C2-SEC02).** The Security re-review
+of C1 found that the documented `failures = 0 / skipped = 0` rule could be met
+while mandatory tests never ran, for example through runner filters or
+`process.exit(0)` (SEC-02, MEDIUM, security-evidence completeness /
+runner-filter fail-open). It also found incomplete static skip detection
+(SEC-03, LOW).
+
+C2 binds complete execution through per-file ledgers and an outer
+completeness verifier, and it corrects the C1 overstatement about the static
+scan (section 14a). It preserves the SEC-01 correction. It changes only
+harness tests and this document. No product code is changed, and no security
+outcome changes. SEC-02 closure and the SEC-03 disposition belong to a fresh
+independent Security HEAVY re-review on the C2 HEAD.
 
 The reproduced gaps keep their existing owners and dispositions:
 
@@ -532,3 +720,10 @@ HEAD `dc32f08c7daa436788417e0c9e0256ebd1a33f13`. It touches only:
 - `triage-cross-project.test.js`;
 - `harness-invariants.test.js`;
 - this document.
+
+Corrective C2 (SEC-02) adds one more normal commit on top of the C1 HEAD
+`63c18b91df5418ac8ed86129c25ab241dffa69ff`. It touches only
+`test/security/aisec-7/**` (all seven evidence files, the new
+`evidence-completeness.test.js`, and the new `lib/evidence-manifest.js`,
+`lib/execution-ledger.js`, `lib/evidence-run.js` and `lib/evidence-reporter.js`)
+and this document.

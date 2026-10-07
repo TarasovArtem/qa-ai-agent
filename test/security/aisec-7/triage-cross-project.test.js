@@ -11,20 +11,30 @@
  * resolved AI_PROVIDER to "mock" at import time. Any other value FAILS them
  * before a provider is constructed or called (SEC-01): a real provider host can
  * never be reached from here, and a mandatory case can never skip while the run
- * stays green. An execution ledger then fails this file unless every mandatory
- * case in it reached its confirmation.
+ * stays green. The shared execution ledger (lib/execution-ledger.js, SEC-02)
+ * then fails this file unless every mandatory test, case and control in it
+ * reached completion or confirmation.
  *
  * XI-01 and XI-02 remain OPEN / MEDIUM / UNCHANGED. These tests reproduce
  * the gaps; they do not remediate, close, re-rate or waive anything.
  */
 
-const test = require("node:test");
+const nodeTest = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const fx = require("./lib/fixtures");
-const { CASES, confirmCase: registryConfirmCase } = require("./lib/registry");
-const { SCOPES } = require("./lib/outcomes");
+const { createEvidenceLedger } = require("./lib/execution-ledger");
+
+const ledger = createEvidenceLedger(__filename);
+const { confirmCase, confirmControl } = ledger;
+
+// Registered from this file so node:test attributes every result to it; the
+// ledger records completion and refuses test options (SEC-02).
+function test(name, fn) {
+  return nodeTest(name, ledger.track(name, fn));
+}
+test.after = nodeTest.after;
 
 const publicApi = require(path.join(fx.AI, "index.js"));
 const config = require(path.join(fx.AI, "config.js"));
@@ -43,25 +53,6 @@ test.after(() => fx.cleanupRoots());
 const EVIDENCE_INTEGRITY = "AISEC-7 evidence integrity (SEC-01)";
 const HARNESS_CONTROL = "harness-control";
 const SEC01_PROBE = "aisec7-probe-nonexistent";
-
-// Every current-behavior case declared for this file, plus the non-vacuity
-// control, must reach its confirmation in every run.
-const MANDATORY = [HARNESS_CONTROL, ...CASES
-  .filter((c) => c.scope === SCOPES.CURRENT_BEHAVIOR && c.file === path.basename(__filename))
-  .map((c) => c.id)];
-const executed = new Set();
-
-// Records a case only after the registry accepted its observed outcome.
-function confirmCase(id, controlHeld) {
-  const outcome = registryConfirmCase(id, controlHeld);
-  executed.add(id);
-  return outcome;
-}
-
-test.after(() => {
-  const missing = MANDATORY.filter((id) => !executed.has(id));
-  assert.deepEqual(missing, [], `${EVIDENCE_INTEGRITY}: mandatory evidence did not execute in this run: ${missing.join(", ")}`);
-});
 
 // Fails, never skips: a skipped mandatory case is invalid evidence.
 function requireMockProvider(resolvedProvider) {
@@ -114,7 +105,7 @@ mockEvidenceTest(HARNESS_CONTROL, "harness control: the wrapped MockProvider obs
   assert.equal(calls.length, 1);
   assert.ok(calls[0].userPrompt.includes(marker));
   assert.equal(report.sourceContext.projectId, PROJECT_B);
-  executed.add(HARNESS_CONTROL);
+  confirmControl(HARNESS_CONTROL);
 });
 
 // --- H-01 / H-05: XI-01 -----------------------------------------------------------
@@ -357,7 +348,9 @@ test("SEC-01 regression: with AI_PROVIDER=aisec7-probe-nonexistent every mock-on
       for (const entry of MOCK_EVIDENCE) {
         let entered = false;
         const skipped = [];
-        const context = { skip: (message) => skipped.push(message) };
+        // A stub context that records any skip request instead of skipping.
+        const context = {};
+        context.skip = (message) => skipped.push(message);
         await assert.rejects(
           runMockEvidence(resolved, async (t) => { entered = true; return entry.body(t); }, context),
           (error) => error.message.includes(EVIDENCE_INTEGRITY) && error.message.includes(SEC01_PROBE),

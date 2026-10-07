@@ -10,12 +10,22 @@
  * mode and headers are read from the stub's own call log.
  */
 
-const test = require("node:test");
+const nodeTest = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const fx = require("./lib/fixtures");
-const { confirmCase } = require("./lib/registry");
+const { createEvidenceLedger } = require("./lib/execution-ledger");
+
+const ledger = createEvidenceLedger(__filename);
+const { confirmCase } = ledger;
+
+// Registered from this file so node:test attributes every result to it; the
+// ledger records completion and refuses test options (SEC-02).
+function test(name, fn) {
+  return nodeTest(name, ledger.track(name, fn));
+}
+test.after = nodeTest.after;
 
 const { AzureDevOpsTestCaseDestination } = require(path.join(fx.AI, "destinations", "azure-devops-test-case-destination.js"));
 const { AzureDevOpsRequirementsProvider } = require(path.join(fx.AI, "providers", "azure-devops-requirements-provider.js"));

@@ -11,14 +11,24 @@
  * Audit, or makes private #22/#23 internals a supported surface.
  */
 
-const test = require("node:test");
+const nodeTest = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const fx = require("./lib/fixtures");
 const { OUTCOMES } = require("./lib/outcomes");
-const { confirmCase, targetOutcome } = require("./lib/registry");
+const { createEvidenceLedger } = require("./lib/execution-ledger");
+
+const ledger = createEvidenceLedger(__filename);
+const { confirmCase, targetOutcome } = ledger;
+
+// Registered from this file so node:test attributes every result to it; the
+// ledger records completion and refuses test options (SEC-02).
+function test(name, fn) {
+  return nodeTest(name, ledger.track(name, fn));
+}
+test.after = nodeTest.after;
 
 const TA = path.join(fx.AI, "test-automation");
 const publicApi = require(path.join(fx.AI, "index.js"));

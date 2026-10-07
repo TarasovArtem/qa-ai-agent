@@ -10,13 +10,23 @@
  * Generated content is data only and is never executed.
  */
 
-const test = require("node:test");
+const nodeTest = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const fx = require("./lib/fixtures");
-const { confirmCase } = require("./lib/registry");
+const { createEvidenceLedger } = require("./lib/execution-ledger");
+
+const ledger = createEvidenceLedger(__filename);
+const { confirmCase } = ledger;
+
+// Registered from this file so node:test attributes every result to it; the
+// ledger records completion and refuses test options (SEC-02).
+function test(name, fn) {
+  return nodeTest(name, ledger.track(name, fn));
+}
+test.after = nodeTest.after;
 
 const TA = path.join(fx.AI, "test-automation");
 const { generateChangeSet } = require(path.join(TA, "generate-change-set"));
