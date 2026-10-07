@@ -8,6 +8,8 @@ Decision date: **2026-10-07**
 
 Decision owner: **Product Owner**
 
+Corrective: `D-CONTROLLED-V1-PR220-C1 — APPROVED` (release-gate completeness, finding-disposition semantics, governance ordering and Release Contract provenance; the product strategy is unchanged)
+
 Repository baseline at decision recording:
 
 ```text
@@ -86,9 +88,9 @@ This decision does not waive security, governance or release readiness. Controll
 
 Mandatory prerequisites are:
 
-1. **AISEC-7 — Adversarial Security Test Harness** completes its required lifecycle for the Controlled v1.0 security claims.
+1. **AISEC-7 — Adversarial Security Test Harness** completes its required lifecycle for the Controlled v1.0 verification scope. That scope is bound to the capabilities actually enabled in Controlled v1.0, the applicable SADR-11 release dossier (§3.1), the applicable ODR/FI/FV requirements, and the applicable open security findings and restricted/disabled capabilities. AISEC-7 verification is not a substitute for missing implementation: a blocked, unavailable or unimplemented target control cannot become PASS merely because a harness exists. AISEC-7 does not satisfy the Type & Schema Boundary Audit.
 2. **Type & Schema Boundary Audit** completes as a distinct repository-wide gate. It is not absorbed by AISEC-7 and is not satisfied by documentation alone.
-3. All confirmed release-blocking findings affecting capabilities enabled in Controlled v1.0 are fixed, independently verified, or constrained by an explicit fail-closed supported-surface contract accepted through the required Product Owner/security disposition.
+3. Open security findings applicable to capabilities enabled in Controlled v1.0 remain release blockers until their required canonical disposition is satisfied. For such a finding, release eligibility requires either (A) an implementation/corrective fix **plus** independent verification, or (B) only where the finding's canonical disposition permits it, a separately **demonstrated and independently verified** trusted/provenance-bound fail-closed supported-surface contract. A Product Owner statement alone does not demonstrate the technical contract. Applicability to the enabled scope matters; this does not convert every open finding into a global release blocker.
 4. The human approval path used by Controlled v1.0 satisfies the canonical approval/presentation/security requirements, including all applicable return triggers and approval-authenticity requirements.
 5. Generated-change application preserves the approved-bytes == applied-bytes invariant and all associated package/input binding requirements.
 6. Controlled execution uses an explicitly supported, independently assessed execution environment. A Linux/isolated-runner-first v1.0 is acceptable; Windows generated-code execution is not implicitly supported merely because the controller can be launched from Windows.
@@ -96,6 +98,28 @@ Mandatory prerequisites are:
 8. Controlled-v1 release productization is completed: version/install/upgrade policy, supported package/API or CLI surface, consumer guidance, rollback lifecycle, and the minimal reusable integration required by the approved Release Contract.
 9. `qa-agent-demo` proves the external installed-consumer chain end-to-end under the supported surface and supported execution environment.
 10. Release evidence, CI, independent review, exact identity, merge topology and post-merge certification remain governed by the repository's existing lifecycle rules.
+11. The applicable AISEC-6 / SADR-11 capability-specific Controlled Release dossier (§3.1) is completed for every capability enabled in Controlled v1.0.
+
+### 3.1 Capability-specific Controlled Release dossier (AISEC-6 / SADR-11)
+
+Controlled v1.0 requires completion of the applicable capability-specific Controlled Release dossier defined by the AISEC-6 Security Architecture Decision Record (`docs/security-architecture-decision-record-v1.md` §15 and SADR-11) for every capability enabled in Controlled v1.0. Where applicable to the enabled scope, the dossier covers:
+
+1. the exact enabled capability inventory;
+2. the exact distribution and supported entrypoint inventory;
+3. the API / CLI / UI / workflow / package / import / replay surfaces;
+4. authenticated human/platform/invocation/project/repository binding;
+5. provider/source/destination/account/credential grant evidence;
+6. data audience, diagnostic, retention, persistence and sink dispositions;
+7. cross-project isolation evidence for both the permitted case and the denied/foreign-project case;
+8. verified disabled-path evidence for capabilities excluded from Controlled v1.0, including alternate supported entrypoints (§6);
+9. applicable `ODR-01`..`ODR-09` dispositions;
+10. applicable `FI-01`..`FI-11` implementation dependencies;
+11. applicable `FV-01`..`FV-11` independent verification requirements;
+12. exact finding/disposition applicability;
+13. independent release dossier evidence;
+14. a separate Product Owner release grant for the exact enabled scope.
+
+Applicability is capability-specific: ODR/FI/FV items not applicable to the enabled Controlled v1.0 scope are not required to be globally complete for Controlled v1.0. The AISEC-6 decisions are target architecture; architecture definition is not remediation, implementation or verification. Recording this prerequisite does not activate any ODR disposition, FI implementation or FV verification work.
 
 ## 4. Release Contract boundary
 
@@ -117,6 +141,8 @@ RC-12 Versioned release / install / upgrade
 ```
 
 A demo that stops at Test Design does not satisfy the intended Controlled v1.0 product-validation objective.
+
+Release Contract provenance: RC-01..RC-12 are the Product Owner-approved working release baseline (Release Contract v1.0, approved by the Product Owner on 2026-10-01; governance provenance Issues #198 and #199). The complete normative acceptance text of the Release Contract is not currently a tracked canonical repository artifact. Before RC-01..RC-12 can be used as final release-certification evidence, the normative acceptance contract must be placed under governed, canonical, versioned evidence and independently reviewed. This does not reopen or invalidate RC-01..RC-12 and adds no acceptance criteria.
 
 ## 5. Product architecture principles
 
@@ -155,9 +181,9 @@ It does not close, re-rate or waive any `AT-*`, `PI-*`, `TB-*`, `XI-*`, RP, SVR 
 
 In particular:
 
-- open findings that affect a capability enabled in Controlled v1.0 remain release blockers until their required disposition is satisfied;
-- findings associated only with a capability that remains disabled may be deferred only under an explicit fail-closed deferral contract and return trigger;
-- `XI-01` / `XI-02` and any successor finding retain their existing requirement: implementation/verification is required before the affected capability is enabled for Controlled Release;
+- open findings applicable to a capability enabled in Controlled v1.0 remain release blockers until their required canonical disposition is satisfied (§3 prerequisite 3); applicability to the enabled scope matters;
+- findings associated only with a capability excluded from or disabled in Controlled v1.0 may be deferred only under an explicit fail-closed deferral contract and return trigger, and only if the disablement/inaccessibility is independently evidenced across all relevant supported and alternate entrypoints — where they exist as supported or distributed surfaces: API, CLI, UI, workflow, package/export, import, replay, direct supported consumer path and any other documented supported surface. An owner decision or feature label alone is insufficient. Evidence is not required for surfaces that do not exist; it is required for every actual supported or distributed surface;
+- `XI-01` and `XI-02` remain `OPEN / MEDIUM / UNCHANGED`, with the existing owner disposition `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED`, which any successor finding retains: implementation **plus** independent verification is required before the affected capability is enabled for Controlled Release. Until then the affected capability/path must remain disabled, or be constrained by a separately demonstrated trusted/provenance-bound input contract that is independently verified where the applicable release-evidence boundary requires it. This decision is not XI remediation, closure, re-rating, waiver or risk acceptance;
 - approval authenticity, trusted reviewer presentation, credential isolation, project binding and execution authority remain distinct security concerns even when other findings on the same path are closed.
 
 ## 7. Governance and WIP
@@ -193,7 +219,7 @@ GOV-AUTO-1                         COMPLETE_ON_MAIN
 → Full Autonomy productization / release
 ```
 
-The exact implementation decomposition of the Controlled-v1 release-readiness work remains governed by PM-P0/release issues and later authorized implementation slices. This decision fixes the **ordering and product boundary**, not every implementation detail.
+The exact implementation decomposition of the Controlled-v1 release-readiness work remains governed by PM-P0/release issues and later authorized implementation slices. This decision fixes the **ordering and product boundary**, not every implementation detail. The "Controlled-v1 release blockers / required remediations" stage includes the applicable §3 prerequisite 3 finding dispositions and the applicable §3.1 dossier work; the governance ordering of the steps immediately following this decision is fixed in §9.
 
 ## 9. Canonical synchronization requirement
 
@@ -204,7 +230,24 @@ Until that synchronization is merged and post-merge certified, the repository co
 - this document records the **final Product Owner decision**;
 - the existing `ROADMAP.md` still records the previous canonical sequence and must not be represented as already synchronized.
 
-No engineering stage may exploit that temporary mismatch to bypass either set of safety requirements. The next governance action is the ROADMAP synchronization lifecycle.
+No engineering stage may exploit that temporary mismatch to bypass either set of safety requirements. The next governance action after certified completion of this decision record is the ROADMAP synchronization lifecycle (Issue #221).
+
+The Product Owner has fixed the governance ordering (`D-CONTROLLED-V1-PR220-C1 — APPROVED`) as:
+
+```text
+PR #220 certified completion
+→ Issue #221 canonical ROADMAP synchronization (merged + post-merge certified + canonically closed)
+→ AISEC-7 activation
+→ Type & Schema Boundary Audit
+→ applicable Controlled-v1 release blockers / remediation
+→ Controlled-v1 productization
+→ qa-agent-demo external E2E validation
+→ Controlled Release (separate Product Owner release grant)
+```
+
+Under `WIP = 1` these steps are strictly serial. AISEC-7 must not be activated, and no AISEC-7 repository mutation may occur, in parallel with the Issue #221 lifecycle.
+
+`OD-AISEC-7-START — PRE-AUTHORIZED` (Issue #222) remains in force and is not revoked. `D-CONTROLLED-V1-PR220-C1 — APPROVED` adds one activation prerequisite: the Issue #221 canonical ROADMAP synchronization must first be merged, post-merge certified and canonically closed. After that certified canonical closure, no additional Product Owner AISEC-7 start authorization is required, provided all other Issue #222 activation prerequisites still hold and AISEC-7 remains the canonical next security stage. Until then AISEC-7 is `PRE-AUTHORIZED / NOT ACTIVATED`. This document does not start Issue #221 or activate AISEC-7.
 
 ## 10. Reopening rule
 
@@ -219,7 +262,10 @@ Reopening the decision requires an explicit new Product Owner decision that iden
 This document does not by itself:
 
 - activate AISEC-7;
+- start Issue #221;
 - start the Type & Schema Boundary Audit;
+- activate any ODR disposition, FI implementation or FV verification work;
+- remediate, close, re-rate, waive or accept risk for any finding;
 - start package/public-API implementation;
 - change `package.json` exports/files;
 - enable a private #22/#23 deep import;
