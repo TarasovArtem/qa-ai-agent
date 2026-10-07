@@ -1129,8 +1129,14 @@ security/governance consistency review, Product Owner exact-head disposition,
 separate merge authorization, `STANDARD_TWO_PARENT` merge, fresh automatic
 push-event CI on the exact merge SHA and canonical lifecycle closure — and only
 if the exact current `main` HEAD/TREE is then freshly established, `WIP = 1` is
-reconfirmed and `AISEC-7` is still the canonical next security stage. No
-additional Product Owner start authorization is then required.
+reconfirmed, `AISEC-7` is still the canonical next security stage and all other
+Issue #222 activation prerequisites still hold. No additional Product Owner start
+authorization is then required. The conditions listed here do not replace
+Issue #222: the activation-time `AISEC-7` scope remains bound by Issue #222, and
+if an Issue #222 prerequisite fails, canonical sequencing changes before
+activation, or the authorized `AISEC-7` scope materially broadens, the Issue #222
+re-decision rule still applies and a new Product Owner decision is required
+where Issue #222 specifies it.
 
 **Provenance — what must never be claimed about this decision:**
 
@@ -3353,9 +3359,12 @@ ROADMAP sync) is the current sole WIP, and `AISEC-7` cannot start, and no
 (`OD-AISEC-7-START — PRE-AUTHORIZED`) is a pre-authorization only. It becomes
 effective only after Issue #221 is merged, post-merge certified and canonically
 closed, the exact current `main` HEAD/TREE is freshly established, `WIP = 1` is
-reconfirmed and `AISEC-7` is confirmed to remain the canonical next security
-stage; no additional Product Owner start authorization is then required (full
-conditions: [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
+reconfirmed, `AISEC-7` is confirmed to remain the canonical next security
+stage and all other Issue #222 activation prerequisites still hold; no
+additional Product Owner start authorization is then required. The
+activation-time scope and the Issue #222 re-decision rule remain governed by
+Issue #222 (see [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
+and Issue #222 for the complete activation contract).
 `AISEC-7` verification scope for Controlled v1.0 is bound by the decision
 artifact; it does not satisfy the distinct Type & Schema Boundary Audit, which
 follows it.
@@ -3774,11 +3783,22 @@ lifecycle scopes:
   includes: version/install/upgrade policy; a supported high-level package/API
   or CLI surface (separately designed, versioned, reviewed and
   compatibility-tested); external consumer guidance; rollback/version lifecycle;
-  the minimal reusable integration required by the approved Release Contract; the
-  supported execution-environment boundary; and `qa-agent-demo` proof through
-  supported surfaces only. Private/deep-import workarounds into repository-private
-  internals (including the `PRIVATE_GENERATIVE_SURFACE` #22/#23 implementation;
-  see [§14](#14-conformance-architecture-findings)) do not satisfy it.
+  and the minimal reusable integration required by the approved Release
+  Contract. It establishes the supported product surface that the later
+  Controlled-v1 gates consume. Private/deep-import workarounds into
+  repository-private internals (including the `PRIVATE_GENERATIVE_SURFACE`
+  #22/#23 implementation; see [§14](#14-conformance-architecture-findings)) do
+  not satisfy it.
+- **Separate Controlled-v1 release prerequisites (not productization).** The
+  explicitly supported, independently assessed execution environment remains a
+  separate Controlled-v1 release prerequisite and is not satisfied merely by
+  defining the productization boundary. `qa-agent-demo` external
+  installed-consumer E2E validation remains the distinct serial gate after
+  Controlled-v1 productization, as defined in [§8](#8-current-critical-path)
+  and the [Controlled v1
+  decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model).
+  Productization must provide the supported surface that this later validation
+  uses; it does not itself constitute that validation.
 - **Full-Autonomy productization / release** — deferred until after the Full
   Project Strict Audit ([§11](#11-full-project-strict-audit)) at the end of the
   Full Autonomy Program.
