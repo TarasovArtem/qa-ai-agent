@@ -30,7 +30,7 @@
   - The documented deterministic protected-path and framework-prefix barrier is enforced only in `buildGeneratedChangeSet()`.
   - The validation boundary does not enforce it, and neither does `applyApprovedGeneratedChangeSet()`, the boundary that actually writes files.
   - A change set the builder would reject passed validation, review-package rebuild and application in an offline probe.
-- The only *current operational* LLM path is CI failure triage (Groq, on pull requests). The same CI triage flow also runs GitHub run-history collection (`collect-history.js`, `npm run ai:history`) on test failure. Both are current operational remote-response surfaces for TSB-F06. Triage's output contract is open, and it is not bound to the failed tests it describes (**TSB-F04**). Its persisted-context input is consumed without a structural or size contract for the non-history top-level fields (**TSB-F07**, related to but distinct from XI-01; embedded `history` size/shape/projection remains owned by XI-02 and is excluded from TSB-F07).
+- The only *current operational* LLM path is CI failure triage: the `qa-ai-triage` job's AI failure analysis step (Groq, selected via `AI_PROVIDER=groq`, TSB-023). It runs for applicable test failures on every `cypress.yml` triggering event (`pull_request`, `push` to `main` and `workflow_dispatch`); only publication of the triage PR comment is gated to `pull_request` events. The same CI triage flow also runs GitHub run-history collection (`collect-history.js`, `npm run ai:history`) on test failure: inside each failing Cypress job, and, for a Playwright failure, in the `qa-ai-triage` job (the Playwright job itself does not run `ai:history`). Both are current operational remote-response surfaces for TSB-F06. Triage's output contract is open, and it is not bound to the failed tests it describes (**TSB-F04**). Its persisted-context input is consumed without a structural or size contract for the non-history top-level fields (**TSB-F07**, related to but distinct from XI-01; embedded `history` size/shape/projection remains owned by XI-02 and is excluded from TSB-F07).
 - **Existing findings preserved unchanged:**
   - `XI-01` and `XI-02` stay OPEN / MEDIUM.
   - `C2-SR-01` and `C2-SR-02` stay LOW / NON-BLOCKING / UNRESOLVED.
@@ -40,7 +40,7 @@
   - F04: triage;
   - F07: triage.
 - F02 and F05 are `CONDITIONAL` on narrower surface/consumer conditions.
-- F06 is `CONDITIONAL`. It is a blocker whenever an affected network-response-consuming capability or surface is in the enabled Controlled-v1 scope. The enumerated set is complete for the audited baseline (§20, TSB-F06 enumerated scope): the Groq and Gemini provider paths, CI triage GitHub history collection, the Jira and Azure DevOps requirement-source adapters, and the Azure DevOps test-case publishing destination. Triage model-text parsing is also covered.
+- F06 is `CONDITIONAL`. It is a blocker whenever an affected network-response-consuming capability or surface is in the enabled Controlled-v1 scope. The enumerated set is complete for the audited baseline (§20, TSB-F06 enumerated scope): the Groq and Gemini provider paths (private internal adapters with no package subpath export, selected through `AI_PROVIDER` / TSB-023), CI triage GitHub history collection, the Jira and Azure DevOps requirement-source adapters, and the Azure DevOps test-case publishing destination. Triage model-text parsing is also covered.
 
 ## 2. Exact baseline
 
@@ -617,7 +617,7 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-021 | Read once | Prompt guidance | Throws | `schema.test.js`, `loader.test.js`, `selector.test.js` | Private | Low (contained) | TRIAGE; future RAG (§24) | PARTIAL | — |
 | TSB-022 | Realpath resolved once | Root of all FS authority | Throws | `repository-root.test.js` | Exported | TB-09 | All | PARTIAL | TB-09 |
 | TSB-023 | Captured at import | Provider selection; credential | Fails loudly | `config.test.js`, `providers/index.test.js` | Implicit (env-only seam for `analyzeFailure.main`) | Low | TRIAGE / generation | PARTIAL | — |
-| TSB-024 | Read per run | GitHub API read with job token | Retries bounded | `collect-history*.test.js` | Indirect | TB-15; availability (unbounded response body) | TRIAGE (history collection) | PARTIAL | **TSB-F06**; TB-15 |
+| TSB-024 | Read per run | GitHub API read with job token | Retries bounded | `collect-history*.test.js` | Exported (root `collectHistory.main`) | TB-15; availability (unbounded response body) | TRIAGE (history collection) | PARTIAL | **TSB-F06**; TB-15 |
 | TSB-025 | n/a | Report write | Exit codes | `cli.test.js` | Internal | Low | Governance | PASS | — |
 | TSB-026 | n/a | Provider code in-process | Normalized errors | `provider-contract.test.js` | Private | TB-16 | All provider-using | PARTIAL | TB-16 |
 | TSB-027 | n/a | Network egress with key | Mapped codes | `groq-provider.test.js`, `gemini-provider.test.js` | Private | Availability | TRIAGE / generation | PARTIAL | **TSB-F06** |
@@ -780,7 +780,7 @@ TSB-012 process controls are sound but explicitly not a sandbox (TB-12/13/14). O
   - `HISTORY_RUNS` is coerced via `Number()` and clamped to 1..30.
   - `HISTORY_BRANCH` and `HISTORY_JOB_NAME` are free strings used as API query values.
   - `GITHUB_API_URL` is unpinned (`collect-history.js:305` falls back to `https://api.github.com` only when unset). That gap is existing TB-15 and is not re-raised.
-  - The GitHub API response body is parsed with `res.json()` (`collect-history.js:128`) and no byte cap. This runs in CI on test failure (`npm run ai:history`, `cypress.yml`), and `collectHistory.main` is a root export. → **TSB-F06**.
+  - The GitHub API response body is parsed with `res.json()` (`collect-history.js:128`) and no byte cap. This runs in CI on test failure (`npm run ai:history`, `cypress.yml`): inside each failing Cypress job, and, for a Playwright failure, in the `qa-ai-triage` job (the Playwright job itself does not run `ai:history`). `collectHistory.main` is a root export, so the §8C Public API classification of TSB-024 is `Exported (root collectHistory.main)`, parallel to root-exported `collectContext.main` (TSB-036). → **TSB-F06**.
 - **Governance CLI argv (TSB-025): PASS.** Allow-listed `--flag value` pairs, no environment fallback, an uncaught error never exits 0.
 
 ## 14. Providers / adapters
@@ -801,7 +801,8 @@ TSB-012 process controls are sound but explicitly not a sandbox (TB-12/13/14). O
 ## 15. Public API / package / CLI
 
 - **Export surface (TSB-033): PASS.**
-  - `package.json` `exports` exposes `.`, two provider subpaths, one destination subpath and `./package.json`.
+  - `package.json` `exports` exposes `.`, two requirement-source provider subpaths (`./providers/jira`, `./providers/azure-devops`), one destination subpath (`./destinations/azure-devops`) and `./package.json`.
+  - The Groq and Gemini LLM provider adapters have no package subpath export. They are private internal adapters, selected through `AI_PROVIDER` (TSB-023) and reached only through the exported analysis surface (`analyzeFailure.main`).
   - `files` excludes `generation/`, `generative-test-design/`, `test-automation/`, `evaluation/` and fixtures.
   - The #22/#23 authority chain is therefore not reachable through a supported import, matching Controlled-v1 prerequisite 7.
   - Evidence: `test/installation/package-surface.test.js`, `scripts/ai/package-boundary.test.js` and the external-repository installation proofs.
@@ -975,7 +976,7 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 | CURRENT BEHAVIOR | Only result count and required field types are checked. Item, `test` and `recommendedFix` objects are open. `test.title` / `specFile` and `recommendedFix.file` are model-asserted and unvalidated. There are no length bounds. Unknown fields persist into `ai-report.json` and the PR comment renders model-asserted identity. |
 | EXPECTED CONTRACT | The rule-7 identity contract enforced in code: result *i* corresponds to `failedTests[i]` by deterministic identity, or test identity is taken from context rather than the model. A closed, bounded result schema. Only application-validated fields reach the report and comment. |
 | SAFE EVIDENCE REFERENCE | Probe P-04 (§18). No existing test asserts result↔test binding or closed-key rejection for triage. |
-| SECURITY IMPACT | Integrity of advisory output on the current CI path (Groq on pull requests): a model (or injected failure text, PI-03 / 04) can attribute classification / `shouldCreateBug` / root cause to the wrong test, or to a test that does not exist, in a human-facing PR comment. No write, execute or publish authority (the policy ceiling of TSB-017 still applies). |
+| SECURITY IMPACT | Integrity of advisory output on the current CI path (Groq triage on `pull_request`, `push` to `main` and `workflow_dispatch` runs; the PR comment itself is published only on `pull_request` events): a model (or injected failure text, PI-03 / 04) can attribute classification / `shouldCreateBug` / root cause to the wrong test, or to a test that does not exist, in a human-facing PR comment. No write, execute or publish authority (the policy ceiling of TSB-017 still applies). |
 | ARCHITECTURE / API IMPACT | `ai-report.json` is the output contract of exported `analyzeFailure.main`. Closing the schema is a versioned output change. |
 | CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL` — only if CI failure triage / PR reporting is part of the Controlled-v1 enabled capability set (the same capability condition that governs XI-01 / XI-02). |
 | CORRECTIVE REQUIREMENT | Deterministic result↔test binding. Closed, bounded result schema. Report and comment derived only from validated fields. Pre-parse size bound (see TSB-F06). |
@@ -1014,7 +1015,7 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 | EXPECTED CONTRACT | A byte bound before buffering / parsing at every network adapter, and a character bound on triage model text, consistent with the generators' `MAX_*_RESPONSE_CHARS` discipline. |
 | SAFE EVIDENCE REFERENCE | Source references above. Contrast `generate-change-set.js` (`MAX_CHANGESET_RESPONSE_CHARS` checked before `JSON.parse`) and `automation-candidate-generator.js:676`. |
 | SECURITY IMPACT | Availability only (memory / CPU of the operator or CI process) from a misbehaving or compromised endpoint. Groq, Gemini and both Azure DevOps hosts are pinned in code. The Jira host (caller `baseUrl`) and the GitHub API host (`GITHUB_API_URL`, environment-configurable with an `https://api.github.com` fallback, `collect-history.js:305`) are not pinned; both are existing TB-15. No integrity or authority impact. |
-| ARCHITECTURE / API IMPACT | Adapter-internal; subpath-exported adapters, the destination and `collectHistory.main` keep their API. |
+| ARCHITECTURE / API IMPACT | Adapter-internal; the private Groq / Gemini adapters, the subpath-exported requirement-source adapters, the destination subpath and root-exported `collectHistory.main` keep their API. |
 | CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL`. Blocker whenever an affected network-response-consuming capability or surface is in the enabled Controlled-v1 scope. The affected surfaces are: (1) CI failure triage, which covers both GitHub run-history collection (`collect-history.js`, TSB-024) and, when the triage provider is Groq or Gemini, that provider path plus the triage model-text parse site (TSB-027, TSB-001); (2) the Groq or Gemini provider path for #22/#23 generation (TSB-027); (3) the Jira requirement-source adapter (TSB-028); (4) the Azure DevOps requirement-source adapter (TSB-029); (5) the Azure DevOps test-case publishing destination (TSB-031). Disabling only the Groq / Gemini / Jira / Azure requirement-source surfaces does **not** clear F06 while CI triage (history collection) or Azure DevOps test-case publishing is enabled. CI triage on the mock provider still runs GitHub history collection. F06 is clear only for a scope that enables none of the five surfaces. Not an unconditional blocker and not risk-accepted. |
 | CORRECTIVE REQUIREMENT | Streamed read with a byte cap before parse at every enumerated site; triage character cap. |
 | REVIEW REQUIREMENT | Standard independent review. |
@@ -1026,9 +1027,9 @@ The source search ran fresh at the audited baseline. It covered every non-test t
 
 | # | File | Symbol / function | Site | Boundary | Remote service | Byte bound | Controlled-v1 capability / surface | Classification |
 |---|---|---|---|---|---|---|---|---|
-| 1 | `scripts/ai/providers/groq-provider.js` | `GroqProvider.analyze` | `res.json()` `:145` | TSB-027 | Groq (pinned `api.groq.com`) | None | CI triage provider; #22/#23 generation | Current operational (CI triage on PRs); provider subpath export |
-| 2 | `scripts/ai/providers/gemini-provider.js` | `GeminiProvider.analyze` | `res.json()` `:170` | TSB-027 | Google Gemini (pinned `generativelanguage.googleapis.com`) | None | Triage / generation when `AI_PROVIDER=gemini` | Provider subpath export; not current CI |
-| 3 | `scripts/ai/collect-history.js` | `fetchJson` (called from `main`) | `res.json()` `:128` | TSB-024 | GitHub REST API (`GITHUB_API_URL`, unpinned, TB-15) | None | CI triage history collection | Current operational (`npm run ai:history` on test failure, Cypress and Playwright jobs); root export `collectHistory.main` |
+| 1 | `scripts/ai/providers/groq-provider.js` | `GroqProvider.analyze` | `res.json()` `:145` | TSB-027 | Groq (pinned `api.groq.com`) | None | CI triage provider; #22/#23 generation | Current operational (CI triage on `pull_request`, `push` to `main` and `workflow_dispatch` runs); private internal adapter, no package subpath export (selected via `AI_PROVIDER`, TSB-023; reached through exported `analyzeFailure.main`) |
+| 2 | `scripts/ai/providers/gemini-provider.js` | `GeminiProvider.analyze` | `res.json()` `:170` | TSB-027 | Google Gemini (pinned `generativelanguage.googleapis.com`) | None | Triage / generation when `AI_PROVIDER=gemini` | Private internal adapter, no package subpath export (selected via `AI_PROVIDER`, TSB-023; reached through exported `analyzeFailure.main`); not current CI |
+| 3 | `scripts/ai/collect-history.js` | `fetchJson` (called from `main`) | `res.json()` `:128` | TSB-024 | GitHub REST API (`GITHUB_API_URL`, unpinned, TB-15) | None | CI triage history collection | Current operational (`npm run ai:history` on test failure: inside each failing Cypress job, and in the `qa-ai-triage` job for a Playwright failure; the Playwright job itself does not run it); root export `collectHistory.main` |
 | 4 | `scripts/ai/providers/jira-requirements-provider.js` | `fetchAllIssues` (via `jiraFetch`) | `response.json()` `:627` | TSB-028 | Jira Cloud (caller `baseUrl`, TB-15) | None | Requirement source (RC-02) | Supported public surface (subpath export) |
 | 5 | `scripts/ai/providers/azure-devops-requirements-provider.js` | `fetchWiqlIds` (via `azureFetch`) | `response.json()` `:693` | TSB-029 | Azure DevOps (pinned `dev.azure.com`) | None | Requirement source (RC-02) | Supported public surface (subpath export) |
 | 6 | `scripts/ai/providers/azure-devops-requirements-provider.js` | `fetchAllWorkItems` (via `azureFetch`) | `response.json()` `:785` | TSB-029 | Azure DevOps (pinned `dev.azure.com`) | None | Requirement source (RC-02) | Supported public surface (subpath export) |
@@ -1097,8 +1098,8 @@ No boundary is scored `UNKNOWN`. Each item above is bounded and named.
 
 | Category | Findings |
 |---|---|
-| Current operational path | F04, F07 (CI triage on pull requests); F06 for the Groq adapter (CI triage provider) and for GitHub history collection (`collect-history.js`, run by `npm run ai:history` on test failure in the Cypress and Playwright CI jobs) |
-| Supported public API | F05 (`assertValidProjectProfile`); F04 / F07 output and input contract of `analyzeFailure.main`; F06: Groq / Gemini provider subpaths, Jira / Azure DevOps requirement-source subpath adapters, the Azure DevOps test-case destination subpath (`./destinations/azure-devops`, reached through exported `publishTestDesigns`), and root-exported `collectHistory.main` |
+| Current operational path | F04, F07 (CI triage for applicable test failures on `pull_request`, `push` to `main` and `workflow_dispatch` runs; only the triage PR comment publication is `pull_request`-only); F06 for the Groq adapter (CI triage provider) and for GitHub history collection (`collect-history.js`, run by `npm run ai:history` on test failure inside each failing Cypress job, and in the `qa-ai-triage` job for a Playwright failure; the Playwright job itself does not run it) |
+| Supported public API | F05 (`assertValidProjectProfile`); F04 / F07 output and input contract of `analyzeFailure.main`; F06: Jira / Azure DevOps requirement-source subpath adapters, the Azure DevOps test-case destination subpath (`./destinations/azure-devops`, reached through exported `publishTestDesigns`), root-exported `collectHistory.main`, and the Groq / Gemini provider paths reached through exported `analyzeFailure.main` (private internal adapters with no package subpath export, selected via `AI_PROVIDER` / TSB-023) |
 | Internal / private only (#23, not packaged) | F01, F02, F03 |
 | Platform-specific | TSB-U01 |
 | Future / hypothetical | F02's latent consumer case |
