@@ -137,6 +137,7 @@ const { validateAutomationPlan } = require("../generation/automation-plan");
 const {
   computeDigest: computeChangeSetDigest,
   LABEL_PLAN_BINDING,
+  LABEL_FILE_CONTENT,
   recomputeChangeSetDigest,
 } = require("./generated-change-set");
 const {
@@ -146,6 +147,7 @@ const {
 } = require("./change-set-application");
 const {
   recomputeAppliedChangeSetRecordDigest,
+  validateAppliedChangeSetRecord,
 } = require("./applied-change-set-record");
 const {
   SUPPORTED_FRAMEWORKS,
@@ -586,6 +588,34 @@ function isPlainObjectLike(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// TSB-F03: binds an already schema-validated APPLIED record one-to-one to
+// the change set it names. #23F records one entry per change, in change-set
+// order, so entry i must describe change i exactly: same path and operation,
+// beforeDigest null for CREATE / the change's own baseContentDigest for
+// MODIFY, and afterDigest equal to the digest of the change's approved
+// `content` under #23D's own LABEL_FILE_CONTENT (the identity #23F wrote and
+// recorded). Counts must match and change-set paths must be unique, so no
+// entry is extra, missing or duplicated. Returns the first mismatch reason,
+// or null when bound.
+function bindRecordToChangeSet(recordChanges, changeSetChanges) {
+  if (!Array.isArray(changeSetChanges) || changeSetChanges.length === 0) return "CHANGESET_CHANGES_INVALID";
+  if (recordChanges.length !== changeSetChanges.length) return "CHANGE_COUNT_MISMATCH";
+  const seenPaths = new Set();
+  for (let i = 0; i < changeSetChanges.length; i += 1) {
+    const change = changeSetChanges[i];
+    const entry = recordChanges[i];
+    if (!isPlainObjectLike(change) || typeof change.path !== "string" || typeof change.content !== "string") return `CHANGE_INVALID:${i}`;
+    if (seenPaths.has(change.path)) return `CHANGESET_DUPLICATE_PATH:${i}`;
+    seenPaths.add(change.path);
+    if (entry.path !== change.path) return `PATH_MISMATCH:${i}`;
+    if (entry.operation !== change.operation) return `OPERATION_MISMATCH:${i}`;
+    const expectedBefore = change.operation === "MODIFY" ? change.baseContentDigest : null;
+    if (entry.beforeDigest !== expectedBefore) return `BEFORE_DIGEST_MISMATCH:${i}`;
+    if (entry.afterDigest !== computeChangeSetDigest(LABEL_FILE_CONTENT, change.content)) return `AFTER_DIGEST_MISMATCH:${i}`;
+  }
+  return null;
+}
+
 /**
  * Executes an already #23F-APPLIED GeneratedChangeSet through a narrowly
  * allowlisted, bounded child-process runner, after independently
@@ -683,6 +713,20 @@ async function executeAppliedChangeSet(input) {
   }
   if (!Array.isArray(recordSnapshot.changes) || recordSnapshot.changes.length === 0) {
     return { ok: false, errors: [err("$.appliedChangeSetRecord.changes", ERROR_CODES.MISSING_FIELD, "$.appliedChangeSetRecord.changes must be a non-empty array")], automationExecutionRecord: null };
+  }
+
+  // TSB-F03: a self-consistent recordDigest plus the checks above is not
+  // authority. The record must satisfy the closed AppliedChangeSetRecord v1
+  // schema, and its entries must correspond one-to-one to the change set's
+  // changes with afterDigest bound to the approved content - before any
+  // filesystem revalidation and before any spawn.
+  const recordSchema = validateAppliedChangeSetRecord(recordSnapshot);
+  if (!recordSchema.ok) {
+    return { ok: false, errors: recordSchema.errors.map((e) => err(`$.appliedChangeSetRecord${e.path.slice(1)}`, e.code, e.message)), automationExecutionRecord: null };
+  }
+  const bindingFailure = bindRecordToChangeSet(recordSnapshot.changes, changeSetSnapshot.changes);
+  if (bindingFailure !== null) {
+    return { ok: false, errors: [err("$.appliedChangeSetRecord.changes", ERROR_CODES.INVALID_REFERENCE, `$.appliedChangeSetRecord.changes do not correspond one-to-one to the approved generatedChangeSet.changes (${bindingFailure})`)], automationExecutionRecord: null };
   }
 
   // 4. repositoryRoot resolution - first real filesystem access.

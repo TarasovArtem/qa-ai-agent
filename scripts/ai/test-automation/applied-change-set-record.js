@@ -313,12 +313,38 @@ function buildAppliedChangeSetRecord(input) {
     return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "input could not be read")] };
   }
 
-  const errors = [];
-
   if (!isPlainRecord(snapshot)) {
     return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "$ must be an object")] };
   }
-  const unknown = Object.keys(snapshot).filter((k) => !TOP_LEVEL_ALLOWED_KEYS.includes(k));
+  const errors = [];
+  collectRecordFieldErrors(snapshot, TOP_LEVEL_ALLOWED_KEYS, errors);
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  const recordContent = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: KIND,
+    projectId: snapshot.projectId,
+    changeSetDigest: snapshot.changeSetDigest,
+    reviewPackageDigest: snapshot.reviewPackageDigest,
+    reviewRecordDigest: snapshot.reviewRecordDigest,
+    changes: snapshot.changes,
+    status: snapshot.status,
+    appliedAt: snapshot.appliedAt,
+  };
+
+  const recordDigest = computeDigest(DIGEST_LABEL_RECORD, recordContent);
+
+  return { ok: true, appliedChangeSetRecord: deepFreeze({ ...recordContent, recordDigest }) };
+}
+
+// The single field-level contract shared by construction and consumption:
+// closed keys (against `allowedKeys`), every scalar field, and every change
+// entry including in-record path uniqueness. Appends bounded errors.
+function collectRecordFieldErrors(snapshot, allowedKeys, errors) {
+  const unknown = Object.keys(snapshot).filter((k) => !allowedKeys.includes(k));
   unknown.forEach((k) => errors.push(err(`$.${k}`, ERROR_CODES.UNKNOWN_FIELD, `$.${k} is not a recognized field`)));
 
   if (!isValidId(snapshot.projectId)) {
@@ -359,26 +385,43 @@ function buildAppliedChangeSetRecord(input) {
       }
     });
   }
+}
 
+/**
+ * TSB-F03: consumption-time schema validation of an AppliedChangeSetRecord v1
+ * that a later stage (e.g. #23G controlled execution) is about to rely on.
+ * The record is read exactly once into an own-data snapshot; then the closed
+ * v1 schema the builder enforces is re-established (`kind`, `schemaVersion`,
+ * closed top-level and per-change keys, every field's shape, non-empty
+ * bounded unique `changes`) and `recordDigest` must equal the digest
+ * recomputed over the snapshot. A self-consistent digest alone is never
+ * accepted as proof of shape - the digest is unkeyed (see the module
+ * docstring). Shape only: binding the record to a GeneratedChangeSet is the
+ * consumer's job.
+ *
+ * Returns `{ ok: true, errors: [] }` or `{ ok: false, errors }`.
+ */
+function validateAppliedChangeSetRecord(appliedChangeSetRecord) {
+  const snapshot = snapshotOwnData(appliedChangeSetRecord);
+  if (!isPlainRecord(snapshot)) {
+    return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "$ must be an AppliedChangeSetRecord v1 object")] };
+  }
+  const errors = [];
+  if (snapshot.kind !== KIND) {
+    errors.push(err("$.kind", ERROR_CODES.INVALID_TYPE, `$.kind must be ${KIND}`));
+  }
+  if (snapshot.schemaVersion !== SCHEMA_VERSION) {
+    errors.push(err("$.schemaVersion", ERROR_CODES.INVALID_TYPE, `$.schemaVersion must be ${SCHEMA_VERSION}`));
+  }
+  collectRecordFieldErrors(snapshot, [...TOP_LEVEL_ALLOWED_KEYS, "recordDigest"], errors);
   if (errors.length > 0) {
     return { ok: false, errors };
   }
-
-  const recordContent = {
-    schemaVersion: SCHEMA_VERSION,
-    kind: KIND,
-    projectId: snapshot.projectId,
-    changeSetDigest: snapshot.changeSetDigest,
-    reviewPackageDigest: snapshot.reviewPackageDigest,
-    reviewRecordDigest: snapshot.reviewRecordDigest,
-    changes: snapshot.changes,
-    status: snapshot.status,
-    appliedAt: snapshot.appliedAt,
-  };
-
-  const recordDigest = computeDigest(DIGEST_LABEL_RECORD, recordContent);
-
-  return { ok: true, appliedChangeSetRecord: deepFreeze({ ...recordContent, recordDigest }) };
+  const recomputed = recomputeAppliedChangeSetRecordDigest(snapshot);
+  if (recomputed === null || recomputed !== snapshot.recordDigest) {
+    return { ok: false, errors: [err("$.recordDigest", ERROR_CODES.INVALID_VALUE, "$ content does not match its own stored recordDigest")] };
+  }
+  return { ok: true, errors: [] };
 }
 
 /**
@@ -411,4 +454,5 @@ module.exports = {
   deepFreeze,
   buildAppliedChangeSetRecord,
   recomputeAppliedChangeSetRecordDigest,
+  validateAppliedChangeSetRecord,
 };

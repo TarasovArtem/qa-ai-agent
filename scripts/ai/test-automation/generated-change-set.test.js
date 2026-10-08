@@ -9,6 +9,9 @@ const {
   LIMITS,
   DIGEST_PATTERN,
   LABEL_FILE_CONTENT,
+  LABEL_PLAN_BINDING,
+  LABEL_CONTEXT_BINDING,
+  LABEL_CHANGESET,
   isProtectedPath,
   isValidUnicodeText,
   isValidDigest,
@@ -730,6 +733,190 @@ test("validateGeneratedChangeSet rejects an already-valid GeneratedChangeSet whe
   const oversizedContext = validContext({ repositoryEvidence: evidenceArray(LIMITS.MAX_REPOSITORY_EVIDENCE_ITEMS + 1) });
   const check = validateGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: oversizedContext, generatedChangeSet: built.generatedChangeSet });
   assert.equal(check.ok, false);
+});
+
+// --- TSB-F01: consumer-side revalidation of builder-bypassing artifacts -------
+//
+// Every forgery below is assembled by hand (never by buildGeneratedChangeSet)
+// and carries plan-binding, context-binding and self digests recomputed over
+// its own forged content, so a rejection can only come from contract
+// revalidation - never from stale-digest detection.
+
+function forgeChangeSet({ plan, context, changes, extra = {} }) {
+  const content = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: KIND,
+    projectId: plan.projectId,
+    automationPlanId: plan.id,
+    automationPlanDigest: computeDigest(LABEL_PLAN_BINDING, plan),
+    repositoryContextDigest: computeDigest(LABEL_CONTEXT_BINDING, context),
+    changes,
+    ...extra,
+  };
+  return { ...content, changeSetDigest: computeDigest(LABEL_CHANGESET, content) };
+}
+
+function createChange(p, content = "describe('x', () => {});") {
+  return { operation: "CREATE", path: p, baseContentDigest: null, content };
+}
+
+function planFor(paths) {
+  return validPlan({ plannedChanges: paths.map((p) => ({ path: p, operation: "CREATE", purpose: "x" })) });
+}
+
+function assertRejectedWith(result, code, pathPrefix) {
+  assert.equal(result.ok, false, "a builder-bypassing artifact must be rejected");
+  assert.ok(
+    result.errors.some((e) => e.code === code && e.path.startsWith(pathPrefix)),
+    `expected a deliberate ${code} at ${pathPrefix}; got ${JSON.stringify(result.errors)}`,
+  );
+}
+
+function validateForged(plan, context, generatedChangeSet) {
+  return validateGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, generatedChangeSet, expectedProjectId: "proj-1" });
+}
+
+const NEW_SPEC = "cypress/e2e/tests/new_spec.cy.js";
+
+test("TSB-F01 control: the forging helper reproduces the builder's exact artifact, which validates (non-vacuity)", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const changes = [createChange(NEW_SPEC)];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const forged = forgeChangeSet({ plan, context, changes });
+  assert.deepEqual(forged, JSON.parse(JSON.stringify(built.generatedChangeSet)));
+  assert.equal(recomputeChangeSetDigest(forged), forged.changeSetDigest);
+  const check = validateForged(plan, context, forged);
+  assert.equal(check.ok, true, JSON.stringify(check.errors));
+});
+
+test("TSB-F01 direct: unknown top-level key on a self-consistent change set is rejected", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [createChange(NEW_SPEC)], extra: { approved: true } });
+  assertRejectedWith(validateForged(plan, context, forged), "UNKNOWN_FIELD", "$.generatedChangeSet.approved");
+});
+
+test("TSB-F01 direct: unknown change key on a self-consistent change set is rejected", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [{ ...createChange(NEW_SPEC), mode: "0755" }] });
+  assertRejectedWith(validateForged(plan, context, forged), "UNKNOWN_FIELD", "$.generatedChangeSet.changes[0].mode");
+});
+
+test("TSB-F01 direct: out-of-plan target is a deliberate bounded INVALID_REFERENCE, never an exception", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [createChange("cypress/e2e/tests/not_planned.cy.js")] });
+  let result;
+  assert.doesNotThrow(() => { result = validateForged(plan, context, forged); });
+  assertRejectedWith(result, "INVALID_REFERENCE", "$.generatedChangeSet.changes[0].path");
+});
+
+test("TSB-F01 direct: a planned change with no corresponding change-set entry is rejected", () => {
+  const plan = planFor([NEW_SPEC, "cypress/e2e/tests/second_spec.cy.js"]);
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [createChange(NEW_SPEC)] });
+  assertRejectedWith(validateForged(plan, context, forged), "MISSING_FIELD", "$.generatedChangeSet.changes");
+});
+
+test("TSB-F01 direct: a duplicate change-set path is rejected", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [createChange(NEW_SPEC), createChange(NEW_SPEC, "describe('dup', () => {});")] });
+  assertRejectedWith(validateForged(plan, context, forged), "DUPLICATE_ID", "$.generatedChangeSet.changes[1].path");
+});
+
+test("TSB-F01 direct: an operation that differs from the planned operation is rejected", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [{ operation: "MODIFY", path: NEW_SPEC, baseContentDigest: baseDigestFor("old"), content: "new" }] });
+  assertRejectedWith(validateForged(plan, context, forged), "INVALID_VALUE", "$.generatedChangeSet.changes[0].operation");
+});
+
+for (const outside of ["src/evil.js", "package-scripts.js", ".github/workflows/ci.yml", "playwright/tests/x.spec.js"]) {
+  test(`TSB-F01 direct: framework-prefix escape (${outside}) carried by an in-plan, self-consistent change set is rejected`, () => {
+    const plan = planFor([outside]);
+    const context = validContext();
+    const forged = forgeChangeSet({ plan, context, changes: [createChange(outside)] });
+    assertRejectedWith(validateForged(plan, context, forged), "INVALID_PATH", "$.generatedChangeSet.changes[0].path");
+  });
+}
+
+for (const protectedPath of ["cypress/e2e/package.json", "cypress/e2e/tests/.env", "cypress/.github/workflows/x.yml", "cypress/node_modules/x.js", "cypress/secrets/a.js"]) {
+  test(`TSB-F01 direct: protected target (${protectedPath}) inside the framework prefix is rejected`, () => {
+    const plan = planFor([protectedPath]);
+    const context = validContext();
+    const forged = forgeChangeSet({ plan, context, changes: [createChange(protectedPath)] });
+    assertRejectedWith(validateForged(plan, context, forged), "INVALID_PATH", "$.generatedChangeSet.changes[0].path");
+  });
+}
+
+test("TSB-F01 direct: a change set whose order differs from plannedChanges order is not the canonical artifact and is rejected", () => {
+  const second = "cypress/e2e/tests/second_spec.cy.js";
+  const plan = planFor([NEW_SPEC, second]);
+  const context = validContext();
+  const forged = forgeChangeSet({ plan, context, changes: [createChange(second), createChange(NEW_SPEC)] });
+  assertRejectedWith(validateForged(plan, context, forged), "INVALID_REFERENCE", "$.generatedChangeSet");
+});
+
+test("TSB-F01 direct: a MODIFY whose baseContentDigest is stale against the bound context is rejected even with a recomputed self-digest", () => {
+  const plan = existingModifyPlan();
+  const context = existingModifyContext();
+  const forged = forgeChangeSet({ plan, context, changes: [{ operation: "MODIFY", path: "cypress/e2e/tests/existing_spec.cy.js", baseContentDigest: baseDigestFor("something else"), content: "describe('new', () => {});" }] });
+  assertRejectedWith(validateForged(plan, context, forged), "INVALID_VALUE", "$.generatedChangeSet.changes[0].baseContentDigest");
+});
+
+test("TSB-F01 direct: accessor-backed field is read exactly once; validation never approves one value while the digest covers another", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const genuine = forgeChangeSet({ plan, context, changes: [createChange(NEW_SPEC)] });
+  // The stored self-digest covers a DIFFERENT plan binding than the one the
+  // binding check would see on the first read.
+  const otherPlanDigest = computeDigest(LABEL_PLAN_BINDING, validPlan({ id: "plan-OTHER" }));
+  const { changeSetDigest: _ignored, ...genuineContent } = genuine;
+  const hostileDigest = computeDigest(LABEL_CHANGESET, { ...genuineContent, automationPlanDigest: otherPlanDigest });
+  let reads = 0;
+  const hostile = {};
+  for (const [k, v] of Object.entries(genuine)) {
+    if (k === "automationPlanDigest") {
+      Object.defineProperty(hostile, k, { enumerable: true, get() { reads += 1; return reads === 1 ? v : otherPlanDigest; } });
+    } else {
+      hostile[k] = k === "changeSetDigest" ? hostileDigest : v;
+    }
+  }
+  const result = validateForged(plan, context, hostile);
+  assert.equal(reads, 1, "the change set must be snapshotted once by the validator itself");
+  assert.equal(result.ok, false, "one stable snapshot must be validated; its self-digest does not match");
+});
+
+test("TSB-F01 direct: a Proxy-backed change set has every key read at most once by the validator", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const genuine = forgeChangeSet({ plan, context, changes: [createChange(NEW_SPEC)] });
+  const reads = new Map();
+  const prox = new Proxy({ ...genuine }, {
+    get(t, k, r) {
+      reads.set(k, (reads.get(k) || 0) + 1);
+      return Reflect.get(t, k, r);
+    },
+  });
+  const result = validateForged(plan, context, prox);
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  for (const [k, n] of reads) assert.equal(n, 1, `key ${String(k)} was read ${n} times`);
+});
+
+test("TSB-F01 direct: a throwing accessor fails closed with a bounded error and no leaked detail", () => {
+  const plan = validPlan();
+  const context = validContext();
+  const genuine = forgeChangeSet({ plan, context, changes: [createChange(NEW_SPEC)] });
+  const hostile = { ...genuine };
+  Object.defineProperty(hostile, "changes", { enumerable: true, get() { throw new Error("SECRET_TSB_F01_GETTER"); } });
+  let result;
+  assert.doesNotThrow(() => { result = validateForged(plan, context, hostile); });
+  assert.equal(result.ok, false);
+  assert.ok(!JSON.stringify(result).includes("SECRET_TSB_F01_GETTER"));
 });
 
 // --- production source hygiene -------------------------------------------------
