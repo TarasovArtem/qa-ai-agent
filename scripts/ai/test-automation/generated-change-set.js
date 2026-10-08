@@ -118,6 +118,16 @@ const LIMITS = Object.freeze({
 const FRAMEWORK_PATH_PREFIX = Object.freeze({ cypress: "cypress/", playwright: "playwright/" });
 
 const CHANGE_ALLOWED_KEYS = Object.freeze(["operation", "path", "baseContentDigest", "content"]);
+const TOP_LEVEL_ALLOWED_KEYS = Object.freeze([
+  "schemaVersion",
+  "kind",
+  "projectId",
+  "automationPlanId",
+  "automationPlanDigest",
+  "repositoryContextDigest",
+  "changes",
+  "changeSetDigest",
+]);
 
 // Roadmap #23D Section 36: repository areas AutomationPlan v1 has no
 // authorization vocabulary to exempt, and #23D never invents one - these
@@ -571,10 +581,28 @@ function buildGeneratedChangeSet({ automationPlan, repositoryContext, changes, e
  * artifact it is asked to validate was actually produced by
  * buildGeneratedChangeSet() in this same process).
  *
+ * TSB-F01: a self-consistent digest proves nothing about the contract (the
+ * digest is unkeyed and recomputable), so after the binding/self-digest
+ * checks the change set is re-derived with buildGeneratedChangeSet() itself
+ * from the same plan/context snapshots and its own `changes`, and must be
+ * canonically identical to the result. The builder is the single source of
+ * truth for closed change keys, exact one-to-one plannedChanges
+ * correspondence (path, operation, duplicates, extras, missing entries),
+ * safe canonical paths, the framework prefix, the protected-path policy,
+ * CREATE/MODIFY context semantics, base-content digests and every bound -
+ * nothing is re-implemented here, so the two cannot drift. Every input,
+ * including `generatedChangeSet`, is first read exactly once into an
+ * own-data snapshot; only that snapshot is validated, so a getter/Proxy can
+ * never present one value to one check and another to the next. Callers
+ * that go on to USE the change set must consume their own snapshot (as
+ * #23E review-package construction and #23F application do), never re-read
+ * the original object.
+ *
  * Returns `{ ok: true }` or `{ ok: false, errors }`.
  */
 function validateGeneratedChangeSet({ automationPlan, repositoryContext, generatedChangeSet, expectedProjectId } = {}) {
-  if (!isPlainRecord(generatedChangeSet) || generatedChangeSet.kind !== KIND || generatedChangeSet.schemaVersion !== SCHEMA_VERSION) {
+  const changeSetSnapshot = snapshotOwnData(generatedChangeSet);
+  if (!isPlainRecord(changeSetSnapshot) || changeSetSnapshot.kind !== KIND || changeSetSnapshot.schemaVersion !== SCHEMA_VERSION) {
     return { ok: false, errors: [err("$.generatedChangeSet", ERROR_CODES.INVALID_TYPE, "$.generatedChangeSet must be a valid GeneratedChangeSet v1")] };
   }
 
@@ -596,22 +624,41 @@ function validateGeneratedChangeSet({ automationPlan, repositoryContext, generat
     return { ok: false, errors: contextErrors };
   }
 
-  if (expectedProjectId !== undefined && generatedChangeSet.projectId !== expectedProjectId) {
+  if (expectedProjectId !== undefined && changeSetSnapshot.projectId !== expectedProjectId) {
     return { ok: false, errors: [err("$.generatedChangeSet.projectId", ERROR_CODES.PROJECT_MISMATCH, "does not match the expected project")] };
   }
 
   const freshPlanDigest = computeDigest(LABEL_PLAN_BINDING, planSnapshot);
-  if (freshPlanDigest !== generatedChangeSet.automationPlanDigest) {
+  if (freshPlanDigest !== changeSetSnapshot.automationPlanDigest) {
     return { ok: false, errors: [err("$.generatedChangeSet.automationPlanDigest", ERROR_CODES.INVALID_REFERENCE, "does not match the current automationPlan content (stale or mismatched plan)")] };
   }
   const freshContextDigest = computeDigest(LABEL_CONTEXT_BINDING, contextSnapshot);
-  if (freshContextDigest !== generatedChangeSet.repositoryContextDigest) {
+  if (freshContextDigest !== changeSetSnapshot.repositoryContextDigest) {
     return { ok: false, errors: [err("$.generatedChangeSet.repositoryContextDigest", ERROR_CODES.INVALID_REFERENCE, "does not match the current repositoryContext content (stale or mismatched context)")] };
   }
 
-  const recomputed = recomputeChangeSetDigest(generatedChangeSet);
-  if (recomputed === null || recomputed !== generatedChangeSet.changeSetDigest) {
+  const recomputed = recomputeChangeSetDigest(changeSetSnapshot);
+  if (recomputed === null || recomputed !== changeSetSnapshot.changeSetDigest) {
     return { ok: false, errors: [err("$.generatedChangeSet.changeSetDigest", ERROR_CODES.INVALID_VALUE, "$.generatedChangeSet content does not match its own stored digest")] };
+  }
+
+  // TSB-F01: closed top-level schema.
+  const schemaErrors = [];
+  collectUnknownKeyErrors(changeSetSnapshot, TOP_LEVEL_ALLOWED_KEYS, "$.generatedChangeSet", schemaErrors);
+  if (schemaErrors.length > 0) {
+    return { ok: false, errors: schemaErrors };
+  }
+
+  // TSB-F01: re-derive the full construction-time contract with the builder
+  // itself (see the docstring above). Builder errors are bounded
+  // `{path, code, message}` values; `$.changes...` paths are re-rooted at
+  // this artifact so the deliberate rejection names the offending entry.
+  const rebuilt = buildGeneratedChangeSet({ automationPlan: planSnapshot, repositoryContext: contextSnapshot, changes: changeSetSnapshot.changes, expectedProjectId });
+  if (!rebuilt.ok) {
+    return { ok: false, errors: rebuilt.errors.map((e) => (e.path.startsWith("$.changes") ? err(`$.generatedChangeSet${e.path.slice(1)}`, e.code, e.message) : e)) };
+  }
+  if (canonicalStringify(rebuilt.generatedChangeSet) !== canonicalStringify(changeSetSnapshot)) {
+    return { ok: false, errors: [err("$.generatedChangeSet", ERROR_CODES.INVALID_REFERENCE, "$.generatedChangeSet is not the canonical GeneratedChangeSet derived from the validated automationPlan/repositoryContext and its own changes")] };
   }
 
   return { ok: true, errors: [] };

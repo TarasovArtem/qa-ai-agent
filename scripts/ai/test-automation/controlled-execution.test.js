@@ -12,6 +12,7 @@ const { buildGeneratedChangeSetReviewPackage } = require("./generated-change-set
 const { buildGeneratedChangeSetReviewRecord } = require("./generated-change-set-review-record");
 const { applyApprovedGeneratedChangeSet } = require("./change-set-application");
 const { computeDigest: aerComputeDigest, DIGEST_LABEL_RECORD: AER_DIGEST_LABEL } = require("./automation-execution-record");
+const { DIGEST_LABEL_RECORD: AER_RECORD_LABEL } = require("./applied-change-set-record");
 
 const {
   MAX_EXECUTION_TIMEOUT_MS,
@@ -965,4 +966,196 @@ test("AUTHORITY: no dynamic require/import of a generated path anywhere in this 
   // module requires - never a runtime `require(someVariable)`.
   const dynamicRequire = /require\(\s*[a-zA-Z_$][\w$]*\s*\)/.test(src.replace(/require\("[^"]*"\)/g, "").replace(/require\('[^']*'\)/g, ""));
   assert.equal(dynamicRequire, false);
+});
+
+// --- TSB-F03: applied record <-> change set binding, zero spawn ----------------
+//
+// Every forged record recomputes recordDigest over its own forged content and
+// keeps changeSetDigest/projectId/status valid, so a rejection can only come
+// from consumption-time schema validation or record<->change-set binding.
+
+const F03_SPEC = "cypress/e2e/tests/new_spec.cy.js";
+const F03_PLANTED = "cypress/e2e/tests/planted_spec.cy.js";
+const F03_PLANTED_CONTENT = "describe('planted, never reviewed', () => {});";
+
+function f03Forge(record, mutate) {
+  const { recordDigest: _drop, ...rest } = JSON.parse(JSON.stringify(record));
+  mutate(rest);
+  return { ...rest, recordDigest: aerComputeDigest(AER_RECORD_LABEL, rest) };
+}
+
+function f03Plant(root, relPath, content) {
+  fs.writeFileSync(path.join(root, ...relPath.split("/")), content, "utf8");
+  return gcsComputeDigest(LABEL_FILE_CONTENT, content);
+}
+
+async function f03AssertZeroSpawn(root, chain, appliedChangeSetRecord, { generatedChangeSet = chain.generatedChangeSet } = {}) {
+  const realSpawn = childProcess.spawn;
+  let spawnCalls = 0;
+  childProcess.spawn = () => { spawnCalls += 1; throw new Error("must not spawn"); };
+  try {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: chain.plan, generatedChangeSet, appliedChangeSetRecord, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, false, "a record not bound to the change set must never execute");
+    assert.equal(res.automationExecutionRecord, null);
+    assert.equal(spawnCalls, 0, "NO child process may be spawned");
+    assert.ok(res.errors.length > 0 && res.errors.every((e) => e.path.startsWith("$.appliedChangeSetRecord")), JSON.stringify(res.errors));
+    return res;
+  } finally {
+    childProcess.spawn = realSpawn;
+  }
+}
+
+// Two CREATE specs, built and applied by the real builders.
+function f03BuildTwoSpecChain(root) {
+  const plan = { ...plan1(), plannedChanges: [
+    { path: F03_SPEC, operation: "CREATE", purpose: "x" },
+    { path: "cypress/e2e/tests/second_spec.cy.js", operation: "CREATE", purpose: "y" },
+  ] };
+  const context = context1();
+  const changes = [
+    { operation: "CREATE", path: F03_SPEC, baseContentDigest: null, content: "describe('first', () => {});" },
+    { operation: "CREATE", path: "cypress/e2e/tests/second_spec.cy.js", baseContentDigest: null, content: "describe('second', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkg = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkg.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const rec = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  const applied = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkg.reviewPackage, reviewRecord: rec.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(applied.ok, true, JSON.stringify(applied.errors));
+  return { plan, context, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applied.appliedChangeSetRecord };
+}
+
+test("TSB-F03 control: an unmodified record round-tripped through the forging helper still executes (non-vacuity)", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const same = f03Forge(chain.appliedChangeSetRecord, () => {});
+  assert.equal(same.recordDigest, chain.appliedChangeSetRecord.recordDigest);
+  await withMockSpawn(async (getCall) => {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: chain.plan, generatedChangeSet: chain.generatedChangeSet, appliedChangeSetRecord: same, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, true, JSON.stringify(res.errors));
+    assert.ok(getCall() !== null);
+  });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03 (P-03): record naming an on-disk spec absent from the change set, with zero-filled review digests, is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const plantedDigest = f03Plant(root, F03_PLANTED, F03_PLANTED_CONTENT);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => {
+    r.reviewPackageDigest = `sha256:${"0".repeat(64)}`;
+    r.reviewRecordDigest = `sha256:${"0".repeat(64)}`;
+    r.changes = [{ operation: "CREATE", path: F03_PLANTED, beforeDigest: null, afterDigest: plantedDigest, status: "APPLIED" }];
+  });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: record carrying an EXTRA executable spec absent from the change set is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const plantedDigest = f03Plant(root, F03_PLANTED, F03_PLANTED_CONTENT);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => {
+    r.changes.push({ operation: "CREATE", path: F03_PLANTED, beforeDigest: null, afterDigest: plantedDigest, status: "APPLIED" });
+  });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: record MISSING one of the change set's changes is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = f03BuildTwoSpecChain(root);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => { r.changes = r.changes.slice(0, 1); });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: record entry PATH mismatch (renamed to another on-disk spec) is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const plantedDigest = f03Plant(root, F03_PLANTED, F03_PLANTED_CONTENT);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => { r.changes[0].path = F03_PLANTED; r.changes[0].afterDigest = plantedDigest; });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: record entry OPERATION mismatch is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => { r.changes[0].operation = "MODIFY"; r.changes[0].beforeDigest = gcsComputeDigest(LABEL_FILE_CONTENT, "old"); });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: forged afterDigest matching substituted on-disk bytes (not the approved content) is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const substitutedDigest = f03Plant(root, F03_SPEC, "describe('substituted after approval', () => {});");
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => { r.changes[0].afterDigest = substitutedDigest; });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: CREATE record entry with a non-null beforeDigest is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => { r.changes[0].beforeDigest = gcsComputeDigest(LABEL_FILE_CONTENT, "old"); });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("TSB-F03: duplicate record entry for the same change is refused - zero spawn", async () => {
+  const root = makeRoot();
+  const chain = buildChain(root);
+  const forged = f03Forge(chain.appliedChangeSetRecord, (r) => { r.changes.push({ ...r.changes[0] }); });
+  await f03AssertZeroSpawn(root, chain, forged);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+const F03_SCHEMA_FORGERIES = [
+  ["unknown top-level record field", (r) => { r.executionApproved = true; }],
+  ["unknown record change field", (r) => { r.changes[0].argv = ["--config", "x"]; }],
+  ["malformed appliedAt", (r) => { r.appliedAt = "not-a-timestamp"; }],
+  ["malformed review digest", (r) => { r.reviewRecordDigest = "zero"; }],
+  ["wrong record kind", (r) => { r.kind = "SomethingElse"; }],
+];
+
+for (const [name, mutate] of F03_SCHEMA_FORGERIES) {
+  test(`TSB-F03: ${name} with a self-consistent recordDigest is refused - zero spawn`, async () => {
+    const root = makeRoot();
+    const chain = buildChain(root);
+    await f03AssertZeroSpawn(root, chain, f03Forge(chain.appliedChangeSetRecord, mutate));
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+}
+
+test("TSB-F03 positive: a real CREATE + MODIFY application executes - record binding accepts genuine MODIFY before/after digests", async () => {
+  const root = makeRoot();
+  const existing = "cypress/e2e/tests/existing_spec.cy.js";
+  const oldContent = "describe('old', () => {});";
+  fs.writeFileSync(path.join(root, ...existing.split("/")), oldContent, "utf8");
+  const plan = { ...plan1(), plannedChanges: [
+    { path: F03_SPEC, operation: "CREATE", purpose: "x" },
+    { path: existing, operation: "MODIFY", purpose: "y" },
+  ] };
+  const context = { ...context1(), repositoryEvidence: [...context1().repositoryEvidence, { evidenceRef: { location: existing }, content: oldContent }] };
+  const changes = [
+    { operation: "CREATE", path: F03_SPEC, baseContentDigest: null, content: "describe('x', () => {});" },
+    { operation: "MODIFY", path: existing, baseContentDigest: gcsComputeDigest(LABEL_FILE_CONTENT, oldContent), content: "describe('new', () => {});" },
+  ];
+  const built = buildGeneratedChangeSet({ automationPlan: plan, repositoryContext: context, changes });
+  assert.equal(built.ok, true, JSON.stringify(built.errors));
+  const pkg = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: "proj-1" });
+  const decisions = pkg.reviewPackage.reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const rec = buildGeneratedChangeSetReviewRecord({ reviewPackage: pkg.reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  const applied = applyApprovedGeneratedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet, reviewPackage: pkg.reviewPackage, reviewRecord: rec.reviewRecord, appliedAt: APPLIED_AT });
+  assert.equal(applied.ok, true, JSON.stringify(applied.errors));
+  await withMockSpawn(async (getCall) => {
+    const res = await executeAppliedChangeSet({ expectedProjectId: "proj-1", repositoryRoot: root, automationPlan: plan, generatedChangeSet: built.generatedChangeSet, appliedChangeSetRecord: applied.appliedChangeSetRecord, executedAt: EXECUTED_AT });
+    assert.equal(res.ok, true, JSON.stringify(res.errors));
+    const args = getCall().args;
+    assert.equal(args[args.indexOf("--spec") + 1], `${F03_SPEC},${existing}`);
+  });
+  fs.rmSync(root, { recursive: true, force: true });
 });

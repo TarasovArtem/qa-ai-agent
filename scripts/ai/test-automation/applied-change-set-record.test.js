@@ -14,6 +14,7 @@ const {
   computeDigest,
   buildAppliedChangeSetRecord,
   recomputeAppliedChangeSetRecordDigest,
+  validateAppliedChangeSetRecord,
 } = require("./applied-change-set-record");
 
 const VALID_DIGEST = "sha256:" + "4".repeat(64);
@@ -242,6 +243,94 @@ test("SOURCE INTEGRITY: this module's own source file contains zero NUL bytes", 
     }
   }
   assert.equal(hasNul, false);
+});
+
+// --- TSB-F03: consumption-time AppliedChangeSetRecord schema validation -------
+//
+// Every forgery recomputes recordDigest over its own forged content, so a
+// rejection can only come from schema validation, never digest detection.
+
+function selfDigested(content) {
+  const { recordDigest: _drop, ...rest } = content;
+  return { ...rest, recordDigest: computeDigest("applied-change-set-record:v1", rest) };
+}
+
+function builtRecord(overrides = {}) {
+  const result = buildAppliedChangeSetRecord(validInput(overrides));
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  return JSON.parse(JSON.stringify(result.appliedChangeSetRecord));
+}
+
+test("TSB-F03 record schema: a builder-produced record (and a plain deserialized copy of it) validates", () => {
+  const result = buildAppliedChangeSetRecord(validInput());
+  assert.equal(validateAppliedChangeSetRecord(result.appliedChangeSetRecord).ok, true);
+  const check = validateAppliedChangeSetRecord(builtRecord());
+  assert.equal(check.ok, true, JSON.stringify(check.errors));
+});
+
+const F03_RECORD_FORGERIES = [
+  ["unknown top-level field", (r) => { r.executionApproved = true; }, "UNKNOWN_FIELD", "$.executionApproved"],
+  ["unknown change field", (r) => { r.changes[0].runAs = "root"; }, "UNKNOWN_FIELD", "$.changes[0].runAs"],
+  ["wrong kind", (r) => { r.kind = "AutomationExecutionRecord"; }, "INVALID_TYPE", "$.kind"],
+  ["wrong schemaVersion", (r) => { r.schemaVersion = 2; }, "INVALID_TYPE", "$.schemaVersion"],
+  ["malformed review digest", (r) => { r.reviewPackageDigest = "zero"; }, "INVALID_VALUE", "$.reviewPackageDigest"],
+  ["malformed appliedAt", (r) => { r.appliedAt = "yesterday"; }, "INVALID_VALUE", "$.appliedAt"],
+  ["malformed change operation", (r) => { r.changes[0].operation = "DELETE"; }, "INVALID_ENUM", "$.changes[0].operation"],
+  ["malformed change afterDigest", (r) => { r.changes[0].afterDigest = "sha256:XYZ"; }, "INVALID_VALUE", "$.changes[0].afterDigest"],
+  ["malformed change status", (r) => { r.changes[0].status = "EXECUTED"; }, "INVALID_ENUM", "$.changes[0].status"],
+  ["control character in change path", (r) => { r.changes[0].path = "cypress/e2e/a\u0000.cy.js"; }, "INVALID_PATH", "$.changes[0].path"],
+  ["duplicate change path", (r) => { r.changes.push({ ...r.changes[0] }); }, "DUPLICATE_ID", "$.changes[1].path"],
+  ["empty changes", (r) => { r.changes = []; }, "MISSING_FIELD", "$.changes"],
+  ["non-array changes", (r) => { r.changes = { 0: r.changes[0] }; }, "MISSING_FIELD", "$.changes"],
+  ["missing projectId", (r) => { delete r.projectId; }, "INVALID_TYPE", "$.projectId"],
+];
+
+for (const [name, mutate, code, at] of F03_RECORD_FORGERIES) {
+  test(`TSB-F03 record schema: ${name} with a recomputed, self-consistent recordDigest is rejected`, () => {
+    const forged = builtRecord();
+    mutate(forged);
+    const record = selfDigested(forged);
+    assert.equal(recomputeAppliedChangeSetRecordDigest(record), record.recordDigest, "fixture must be self-consistent");
+    const result = validateAppliedChangeSetRecord(record);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.code === code && e.path === at), `expected ${code} at ${at}; got ${JSON.stringify(result.errors)}`);
+  });
+}
+
+test("TSB-F03 record schema: a recordDigest that does not match the record's own content is rejected", () => {
+  const record = builtRecord();
+  record.status = "APPLICATION_FAILED_ROLLED_BACK";
+  const result = validateAppliedChangeSetRecord(record);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "$.recordDigest"), JSON.stringify(result.errors));
+});
+
+test("TSB-F03 record schema: non-object, cyclic and throwing-accessor inputs fail closed with bounded errors", () => {
+  for (const input of [null, undefined, "x", 1, []]) {
+    assert.equal(validateAppliedChangeSetRecord(input).ok, false);
+  }
+  const cyclic = builtRecord();
+  cyclic.changes[0].self = cyclic;
+  assert.equal(validateAppliedChangeSetRecord(cyclic).ok, false);
+  const hostile = builtRecord();
+  Object.defineProperty(hostile, "changes", { enumerable: true, get() { throw new Error("SECRET_TSB_F03_GETTER"); } });
+  let result;
+  assert.doesNotThrow(() => { result = validateAppliedChangeSetRecord(hostile); });
+  assert.equal(result.ok, false);
+  assert.ok(!JSON.stringify(result).includes("SECRET_TSB_F03_GETTER"));
+});
+
+test("TSB-F03 record schema: each field of the record is read exactly once (own-data snapshot)", () => {
+  const record = builtRecord();
+  const reads = new Map();
+  const prox = new Proxy(record, {
+    get(t, k, r) {
+      reads.set(k, (reads.get(k) || 0) + 1);
+      return Reflect.get(t, k, r);
+    },
+  });
+  assert.equal(validateAppliedChangeSetRecord(prox).ok, true);
+  for (const [k, n] of reads) assert.equal(n, 1, `key ${String(k)} was read ${n} times`);
 });
 
 test("AUTHORITY: this module never imports fs/child_process/network/provider/Git", () => {

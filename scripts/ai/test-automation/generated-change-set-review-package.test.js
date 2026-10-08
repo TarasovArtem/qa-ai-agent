@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildGeneratedChangeSet, computeDigest: gcsComputeDigest, LABEL_FILE_CONTENT } = require("./generated-change-set");
+const { buildGeneratedChangeSet, computeDigest: gcsComputeDigest, LABEL_FILE_CONTENT, LABEL_PLAN_BINDING, LABEL_CONTEXT_BINDING, LABEL_CHANGESET } = require("./generated-change-set");
 const { buildGeneratedChangeSetReviewPackage, recomputeReviewPackageDigest, LIMITS, DIGEST_LABEL_PACKAGE, DIGEST_LABEL_TARGET, DIGEST_LABEL_TARGET_CONTENT } = require("./generated-change-set-review-package");
 
 function validPlan(overrides = {}) {
@@ -229,6 +229,53 @@ test(`review target count exactly equals GeneratedChangeSet.changes.length (boun
   const result = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: built.generatedChangeSet });
   assert.equal(result.ok, true, JSON.stringify(result.errors));
   assert.equal(result.reviewPackage.reviewTargets.length, 50);
+});
+
+// --- TSB-F01: review-package construction refuses builder-bypassing change sets -
+//
+// Each change set is hand-assembled (never by buildGeneratedChangeSet) with
+// every binding and self digest recomputed over the forged content, so the
+// refusal can only come from contract revalidation.
+
+function forgeChangeSet(plan, context, changes) {
+  const content = {
+    schemaVersion: 1,
+    kind: "GeneratedChangeSet",
+    projectId: plan.projectId,
+    automationPlanId: plan.id,
+    automationPlanDigest: gcsComputeDigest(LABEL_PLAN_BINDING, plan),
+    repositoryContextDigest: gcsComputeDigest(LABEL_CONTEXT_BINDING, context),
+    changes,
+  };
+  return { ...content, changeSetDigest: gcsComputeDigest(LABEL_CHANGESET, content) };
+}
+
+const TSB_F01_PACKAGE_CASES = [
+  ["protected target", "cypress/e2e/package.json", true, "INVALID_PATH"],
+  ["out-of-prefix target", "src/evil.js", true, "INVALID_PATH"],
+  ["out-of-plan target", "cypress/e2e/tests/not_planned.cy.js", false, "INVALID_REFERENCE"],
+];
+
+for (const [name, target, inPlan, code] of TSB_F01_PACKAGE_CASES) {
+  test(`TSB-F01 review package: ${name} in a self-consistent change set is refused with a bounded error, never built`, () => {
+    const plan = inPlan ? validPlan({ plannedChanges: [{ path: target, operation: "CREATE", purpose: "x" }] }) : validPlan();
+    const context = validContext();
+    const generatedChangeSet = forgeChangeSet(plan, context, [{ operation: "CREATE", path: target, baseContentDigest: null, content: "describe('x', () => {});" }]);
+    let result;
+    assert.doesNotThrow(() => { result = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet, expectedProjectId: "proj-1" }); });
+    assert.equal(result.ok, false, "a review package must never be built for a builder-rejected target");
+    assert.equal(result.reviewPackage, undefined);
+    assert.ok(result.errors.some((e) => e.code === code && e.path === "$.generatedChangeSet.changes[0].path"), JSON.stringify(result.errors));
+  });
+}
+
+test("TSB-F01 review package control: the same forging helper on a legitimate change set builds the identical package (non-vacuity)", () => {
+  const { plan, context, generatedChangeSet } = buildValidCreateChangeSet();
+  const forged = forgeChangeSet(plan, context, JSON.parse(JSON.stringify(generatedChangeSet.changes)));
+  const fromBuilder = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet, expectedProjectId: "proj-1" });
+  const fromForged = buildGeneratedChangeSetReviewPackage({ automationPlan: plan, repositoryContext: context, generatedChangeSet: forged, expectedProjectId: "proj-1" });
+  assert.equal(fromForged.ok, true, JSON.stringify(fromForged.errors));
+  assert.equal(fromForged.reviewPackage.packageDigest, fromBuilder.reviewPackage.packageDigest);
 });
 
 // --- domain separation ---------------------------------------------------------

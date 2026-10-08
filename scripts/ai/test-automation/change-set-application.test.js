@@ -2267,3 +2267,167 @@ test("N21 snapshot: getter-backed reviewPackage.packageDigest (forged approved d
   assert.equal(res.errors[0].path, "$.reviewPackage", "rejected at the N-21 package-integrity boundary");
   cleanup(root);
 });
+
+// --- TSB-F01: application refuses builder-bypassing change sets, zero writes ---
+//
+// Each chain is hand-assembled: a self-consistent change set (binding and self
+// digests recomputed over the forged content), a self-consistent review package
+// presenting exactly those bytes, and a genuine APPROVE record over that package.
+// The #23E gate therefore accepts the approval, so only #23D consumer-side
+// revalidation can refuse - before repositoryRoot is touched.
+
+const { LABEL_PLAN_BINDING, LABEL_CONTEXT_BINDING, LABEL_CHANGESET } = require("./generated-change-set");
+
+function f01ForgeApprovedChain({ plan, context, changes, extra = {}, mapChange = (c) => c }) {
+  const changeSetContent = {
+    schemaVersion: 1,
+    kind: "GeneratedChangeSet",
+    projectId: plan.projectId,
+    automationPlanId: plan.id,
+    automationPlanDigest: gcsComputeDigest(LABEL_PLAN_BINDING, plan),
+    repositoryContextDigest: gcsComputeDigest(LABEL_CONTEXT_BINDING, context),
+    changes: changes.map(mapChange),
+    ...extra,
+  };
+  const generatedChangeSet = { ...changeSetContent, changeSetDigest: gcsComputeDigest(LABEL_CHANGESET, changeSetContent) };
+  const evidence = new Map(context.repositoryEvidence.map((e) => [e.evidenceRef.location, e.content]));
+  const purposes = new Map(plan.plannedChanges.map((c) => [c.path, c.purpose]));
+  const reviewTargets = changes.map((c) => {
+    const existingContent = c.operation === "MODIFY" ? evidence.get(c.path) : null;
+    const purpose = purposes.get(c.path) || "Forged purpose for an unplanned target.";
+    const targetContent = { operation: c.operation, path: c.path, purpose, baseContentDigest: c.baseContentDigest, existingContent, proposedContent: c.content };
+    return {
+      ...targetContent,
+      proposedContentDigest: reviewComputeDigest(DIGEST_LABEL_TARGET_CONTENT, c.content),
+      targetDigest: reviewComputeDigest(DIGEST_LABEL_TARGET, targetContent),
+    };
+  });
+  const reviewPackage = {
+    schemaVersion: 1,
+    kind: "GeneratedChangeSetReviewPackage",
+    projectId: plan.projectId,
+    framework: plan.framework,
+    automationPlanId: plan.id,
+    changeSetDigest: generatedChangeSet.changeSetDigest,
+    automationPlanDigest: generatedChangeSet.automationPlanDigest,
+    repositoryContextDigest: generatedChangeSet.repositoryContextDigest,
+    reviewTargets,
+  };
+  reviewPackage.packageDigest = recomputeReviewPackageDigest(reviewPackage);
+  const decisions = reviewTargets.map((t) => ({ operation: t.operation, path: t.path, targetDigest: t.targetDigest, decision: "APPROVE" }));
+  const rec = buildGeneratedChangeSetReviewRecord({ reviewPackage, reviewerId: "reviewer-1", reviewedAt: "2026-08-28T10:00:00.000Z", decisions });
+  assert.equal(rec.ok, true, JSON.stringify(rec.errors));
+  assert.equal(validateApprovedGeneratedChangeSetReview(reviewPackage, rec.reviewRecord, { expectedProjectId: plan.projectId }).ok, true, "the forged approval must pass the #23E gate so the test isolates #23D revalidation");
+  return { plan, context, generatedChangeSet, reviewPackage, reviewRecord: rec.reviewRecord };
+}
+
+function f01TreeSnapshot(root) {
+  const out = [];
+  (function walk(dir) {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const abs = path.join(dir, name);
+      const st = fs.lstatSync(abs);
+      const rel = path.relative(root, abs).split(path.sep).join("/");
+      if (st.isDirectory()) {
+        out.push(`${rel}/`);
+        walk(abs);
+      } else {
+        out.push(`${rel}:${crypto.createHash("sha256").update(fs.readFileSync(abs)).digest("hex")}`);
+      }
+    }
+  })(root);
+  return out;
+}
+
+function f01AssertRefusedBeforeFs(root, chain, code, pathPrefix) {
+  const before = f01TreeSnapshot(root);
+  const { result: res, calls } = n21WithFsSpy(() => apply(root, chain));
+  assert.equal(res.ok, false, "a builder-bypassing change set must never be applied");
+  assert.equal(res.appliedChangeSetRecord, null);
+  assert.deepEqual(calls, [], "refusal must happen before any filesystem access (repositoryRoot is never inspected)");
+  assert.deepEqual(f01TreeSnapshot(root), before, "zero filesystem mutation anywhere under repositoryRoot");
+  assert.ok(
+    res.errors.some((e) => e.code === code && e.path.startsWith(pathPrefix)),
+    `expected a deliberate ${code} at ${pathPrefix}; got ${JSON.stringify(res.errors)}`,
+  );
+}
+
+function f01Create(p, content = "describe('forged', () => {});") {
+  return { operation: "CREATE", path: p, baseContentDigest: null, content };
+}
+
+function f01PlanFor(paths) {
+  return plan1({ plannedChanges: paths.map((p) => ({ path: p, operation: "CREATE", purpose: "x" })) });
+}
+
+test("TSB-F01 application control: the forging helper on legitimate inputs reproduces the builder chain and applies (non-vacuity)", () => {
+  const root = makeRootWithExisting();
+  const genuine = buildChain();
+  const forged = f01ForgeApprovedChain({ plan: genuine.plan, context: genuine.context, changes: rp32MutableCopy(genuine.generatedChangeSet.changes) });
+  assert.equal(forged.generatedChangeSet.changeSetDigest, genuine.generatedChangeSet.changeSetDigest);
+  assert.equal(forged.reviewPackage.packageDigest, genuine.reviewPackage.packageDigest);
+  const res = apply(root, forged);
+  assert.equal(res.ok, true, JSON.stringify(res.errors));
+  cleanup(root);
+});
+
+const F01_NEW = "cypress/e2e/tests/new_spec.cy.js";
+const F01_APPLICATION_CASES = [
+  ["protected target inside the framework prefix", () => {
+    const p = "cypress/e2e/package.json";
+    return { chain: f01ForgeApprovedChain({ plan: f01PlanFor([p]), context: context1(), changes: [f01Create(p, "{\"scripts\":{\"postinstall\":\"x\"}}")] }), code: "INVALID_PATH", at: "$.generatedChangeSet.changes[0].path" };
+  }],
+  ["protected .env target inside the framework prefix", () => {
+    const p = "cypress/e2e/tests/.env";
+    return { chain: f01ForgeApprovedChain({ plan: f01PlanFor([p]), context: context1(), changes: [f01Create(p, "TOKEN=x")] }), code: "INVALID_PATH", at: "$.generatedChangeSet.changes[0].path" };
+  }],
+  ["framework-prefix escape", () => {
+    const p = "outside_framework.js";
+    return { chain: f01ForgeApprovedChain({ plan: f01PlanFor([p]), context: context1(), changes: [f01Create(p)] }), code: "INVALID_PATH", at: "$.generatedChangeSet.changes[0].path" };
+  }],
+  ["out-of-plan target", () => ({
+    chain: f01ForgeApprovedChain({ plan: f01PlanFor([F01_NEW]), context: context1(), changes: [f01Create("cypress/e2e/tests/not_planned.cy.js")] }),
+    code: "INVALID_REFERENCE",
+    at: "$.generatedChangeSet.changes[0].path",
+  })],
+  ["missing planned change", () => ({
+    chain: f01ForgeApprovedChain({ plan: f01PlanFor([F01_NEW, "cypress/e2e/tests/second_spec.cy.js"]), context: context1(), changes: [f01Create(F01_NEW)] }),
+    code: "MISSING_FIELD",
+    at: "$.generatedChangeSet.changes",
+  })],
+  ["duplicate path", () => ({
+    chain: f01ForgeApprovedChain({ plan: f01PlanFor([F01_NEW]), context: context1(), changes: [f01Create(F01_NEW, "describe('a', () => {});"), f01Create(F01_NEW, "describe('b', () => {});")] }),
+    code: "DUPLICATE_ID",
+    at: "$.generatedChangeSet.changes[1].path",
+  })],
+  ["unknown top-level key", () => ({
+    chain: f01ForgeApprovedChain({ plan: f01PlanFor([F01_NEW]), context: context1(), changes: [f01Create(F01_NEW)], extra: { humanApproved: true } }),
+    code: "UNKNOWN_FIELD",
+    at: "$.generatedChangeSet.humanApproved",
+  })],
+  ["unknown change key", () => ({
+    chain: f01ForgeApprovedChain({ plan: f01PlanFor([F01_NEW]), context: context1(), changes: [f01Create(F01_NEW)], mapChange: (c) => ({ ...c, mode: "0755" }) }),
+    code: "UNKNOWN_FIELD",
+    at: "$.generatedChangeSet.changes[0].mode",
+  })],
+];
+
+for (const [name, make] of F01_APPLICATION_CASES) {
+  test(`TSB-F01 application: ${name} in a self-consistent, APPROVED chain is refused before any filesystem access, zero writes`, () => {
+    const root = makeRootWithExisting();
+    const { chain, code, at } = make();
+    f01AssertRefusedBeforeFs(root, chain, code, at);
+    cleanup(root);
+  });
+}
+
+test("TSB-F01 application: getter-backed change set whose single read yields a protected target is refused, zero writes", () => {
+  const root = makeRootWithExisting();
+  const p = "cypress/e2e/package.json";
+  const forged = f01ForgeApprovedChain({ plan: f01PlanFor([p]), context: context1(), changes: [f01Create(p)] });
+  const counter = { reads: 0 };
+  const hostile = rp32WithAccessor(forged.generatedChangeSet, "changes", (_n, v) => v, counter);
+  f01AssertRefusedBeforeFs(root, { ...forged, generatedChangeSet: hostile }, "INVALID_PATH", "$.generatedChangeSet.changes[0].path");
+  assert.equal(counter.reads, 1);
+  cleanup(root);
+});
