@@ -13,7 +13,7 @@ The core safety principle is simple:
 
 > **AI proposes. Deterministic code validates. Humans authorize authority escalation.**
 
-This README is intentionally short as a landing page. For governance compatibility it also remains the authoritative **entry point/index** for completed-track detailed engineering evidence. The versioned evidence body in [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) is **incorporated by reference into this README evidence record** rather than duplicated inline.
+This README is intentionally short as a landing page. For governance compatibility it also remains the authoritative **entry point/index** for completed-track detailed engineering evidence. [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) is the compact evidence index, and the complete pre-refactor evidence body is preserved byte-for-byte in [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md). Both are **incorporated by reference into this README evidence record** rather than duplicated inline.
 
 ---
 
@@ -181,7 +181,8 @@ Start with the **[Documentation Home](docs/README.md)**.
 | Topic | Source |
 |---|---|
 | System overview | [`docs/system-overview.md`](docs/system-overview.md) |
-| Completed-track engineering evidence | [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) |
+| Completed-track evidence index | [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) |
+| Frozen pre-refactor historical evidence archive | [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md) |
 | Canonical project lifecycle / roadmap | [`ROADMAP.md`](ROADMAP.md) |
 | Security model, AI-provider boundary and operational limitations | [`SECURITY.md`](SECURITY.md) |
 | RTI-7 requirements-source provider contract | [`PROVIDERS.md`](PROVIDERS.md) |
@@ -220,15 +221,15 @@ A GitHub Wiki may be added later for tutorials, demos, FAQs, onboarding, or othe
 - Production CI represents one real project; second-project portability proofs do not imply a second permanent production deployment.
 - Architectural/package portability does not by itself mean a public registry release or unrestricted autonomous operation.
 
-See [`SECURITY.md`](SECURITY.md), [`ROADMAP.md`](ROADMAP.md), and [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) for exact boundaries/evidence ownership.
+See [`SECURITY.md`](SECURITY.md), [`ROADMAP.md`](ROADMAP.md), [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md), and [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md) for exact boundaries/evidence ownership.
 
 ## Detailed engineering history
 
-The detailed completed-track evidence formerly embedded in this README is preserved in [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) and incorporated by reference into this README evidence record. This heading is retained as the stable README evidence entry point required by canonical governance references.
+The detailed completed-track evidence formerly embedded in this README is preserved byte-for-byte in [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md). [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) is the compact navigation/index layer. Both are incorporated by reference into this README evidence record. This heading is retained as the stable README evidence entry point required by canonical governance references.
 
 ## Roadmap RTI — Requirements & Test-Design Integration
 
-RTI-1 through RTI-8 detailed contract/evidence history is preserved in [`docs/engineering-history-v1.md#5-rti--requirements--test-design-integration`](docs/engineering-history-v1.md#5-rti--requirements--test-design-integration), with current closure state in [`ROADMAP.md`](ROADMAP.md), the RTI-7 authoring contract in [`PROVIDERS.md`](PROVIDERS.md), and the RTI-8 publishing contract in [`PUBLISHING.md`](PUBLISHING.md).
+RTI-1 through RTI-8K exact historical chronology, PR/merge identities, review/corrective outcomes and closure-state evidence are preserved in [`docs/engineering-history-archive-v1.md#roadmap-rti--requirements--test-design-integration`](docs/engineering-history-archive-v1.md#roadmap-rti--requirements--test-design-integration). Current closure state is owned by [`ROADMAP.md`](ROADMAP.md); durable RTI-7 and RTI-8 contracts remain in [`PROVIDERS.md`](PROVIDERS.md) and [`PUBLISHING.md`](PUBLISHING.md).
 
 The compact compatibility examples below preserve the README locations explicitly referenced by `PROVIDERS.md` and `PUBLISHING.md`; exhaustive behavior, security rules, defaults, and carried debt remain in those owning contract documents.
 
@@ -282,6 +283,7 @@ Azure DevOps Services is the supported deployment scope for this adapter; see [`
 ```js
 const qa = require("qa-ai-agent");
 
+// readyRequirements must contain only requirements that passed the RTI-3 quality gate as READY.
 const testDesigns = qa.generateTestDesigns(readyRequirements);
 const result = await qa.publishTestDesigns(destination, { testDesigns });
 // result.destinationId, result.allSucceeded, result.items[]
@@ -307,11 +309,31 @@ The destination is Azure DevOps Test Case publishing under the RTI-8 contract. S
 
 ## AI Test Design & Test Automation (#22/#23)
 
-The completed-track #22/#23 authority-escalation and implementation evidence is preserved in [`docs/engineering-history-v1.md#3-generative-test-design--test-automation-2223`](docs/engineering-history-v1.md#3-generative-test-design--test-automation-2223). Current security authority remains in [`SECURITY.md`](SECURITY.md).
+The complete historical #22/#23 stage-by-stage record — including #22B–#22F and #23B–#23G — is preserved in [`docs/engineering-history-archive-v1.md#ai-test-design--test-automation-2223`](docs/engineering-history-archive-v1.md#ai-test-design--test-automation-2223). Current security authority remains in [`SECURITY.md`](SECURITY.md).
 
 ## Full Project Independence — Terminal Audit and Final Re-Audit
 
-The completed architectural-independence evidence and its maturity boundary are preserved in [`docs/engineering-history-v1.md#4-full-project-independence--package-boundary-history`](docs/engineering-history-v1.md#4-full-project-independence--package-boundary-history). Formal release/productization state remains separate and is owned by [`ROADMAP.md`](ROADMAP.md).
+The complete architectural-independence terminal definition, acquisition/upgrade evidence, proof tags, verdict and maturity boundaries are preserved in [`docs/engineering-history-archive-v1.md#roadmap-fpi-2--terminal-audit--full-project-independence`](docs/engineering-history-archive-v1.md#roadmap-fpi-2--terminal-audit--full-project-independence). Formal release/productization state remains separate and is owned by [`ROADMAP.md`](ROADMAP.md).
+
+## Package Maturity vs. Architectural Independence
+
+The complete historical section referenced by `ROADMAP.md` is preserved at [`docs/engineering-history-archive-v1.md#package-maturity-vs-architectural-independence`](docs/engineering-history-archive-v1.md#package-maturity-vs-architectural-independence). It remains explicit that evidence tags are not release tags, architectural independence is not npm/CLI/reusable-CI product maturity, the external-project integration proof was not a permanent deployment, and ID-3 remains a separate productization/release concern.
+
+## Solo-maintainer governance profile (SG1)
+
+The SG1 record referenced by `ROADMAP.md` is preserved verbatim in [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md), including the historical required-check configuration, strict up-to-date mode, no admin bypass, no required reviewer count, and the deliberate treatment of `Cypress - firefox` / `QA AI triage`.
+
+## #19.7F-B4B precedent
+
+The #19.7F-B4B precedent referenced by `ROADMAP.md`, including the organic workflow-run evidence, is preserved verbatim in [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md).
+
+## Roadmap-by-roadmap historical record
+
+The exact pre-refactor roadmap-by-roadmap history — including CS6/CS7 and the completed-track implementation/review/corrective/merge evidence — is preserved in [`docs/engineering-history-archive-v1.md`](docs/engineering-history-archive-v1.md).
+
+## Roadmap closure state
+
+The exact pre-refactor closure-state block referenced by `ROADMAP.md` is preserved at [`docs/engineering-history-archive-v1.md#roadmap-closure-state`](docs/engineering-history-archive-v1.md#roadmap-closure-state).
 
 ## Repository Evidence and Branch Retention Policy
 
@@ -320,18 +342,20 @@ The normative policy formerly embedded here is preserved without semantic change
 ## Repository documentation model
 
 ```text
-README.md                         landing page + authoritative evidence index
+README.md                            landing page + authoritative evidence index
    |
-   +-- docs/README.md             documentation navigation
-   +-- docs/system-overview.md    technical orientation
+   +-- docs/README.md                documentation navigation
+   +-- docs/system-overview.md       technical orientation
    +-- docs/engineering-history-v1.md
-   |                              completed-track detailed evidence
+   |                                 compact completed-track evidence index
+   +-- docs/engineering-history-archive-v1.md
+   |                                 byte-identical pre-refactor evidence archive
    +-- docs/repository-evidence-retention-policy-v1.md
-   |                              normative retention policy
-   +-- SECURITY.md                operational security / AI-provider boundary
-   +-- ROADMAP.md                 current lifecycle/status/sequence
-   +-- PROVIDERS.md               RTI-7 requirements-source provider contract
-   +-- PUBLISHING.md              RTI-8 publishing/destination contract
+   |                                 normative retention policy
+   +-- SECURITY.md                   operational security / AI-provider boundary
+   +-- ROADMAP.md                    current lifecycle/status/sequence
+   +-- PROVIDERS.md                  RTI-7 requirements-source provider contract
+   +-- PUBLISHING.md                 RTI-8 publishing/destination contract
 ```
 
 ## License
