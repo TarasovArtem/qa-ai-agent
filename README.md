@@ -230,6 +230,81 @@ The detailed completed-track evidence formerly embedded in this README is preser
 
 RTI-1 through RTI-8 detailed contract/evidence history is preserved in [`docs/engineering-history-v1.md#5-rti--requirements--test-design-integration`](docs/engineering-history-v1.md#5-rti--requirements--test-design-integration), with current closure state in [`ROADMAP.md`](ROADMAP.md), the RTI-7 authoring contract in [`PROVIDERS.md`](PROVIDERS.md), and the RTI-8 publishing contract in [`PUBLISHING.md`](PUBLISHING.md).
 
+The compact compatibility examples below preserve the README locations explicitly referenced by `PROVIDERS.md` and `PUBLISHING.md`; exhaustive behavior, security rules, defaults, and carried debt remain in those owning contract documents.
+
+### RTI-7B — Jira Reference Requirements Provider
+
+```js
+const { loadRequirementsFromProvider } = require("qa-ai-agent");
+const { JiraRequirementsProvider } = require("qa-ai-agent/providers/jira");
+
+const provider = new JiraRequirementsProvider({
+  id: "company-jira-prod",
+  baseUrl: "https://company.atlassian.net",
+  email: "bot@company.com",
+  apiToken: process.env.JIRA_API_TOKEN,
+  jql: "project = PROJ AND type = Story ORDER BY key ASC",
+  fieldMap: { acceptanceCriteria: "customfield_12345" }, // optional
+  maxItems: 1000,   // optional; default 1000
+  timeoutMs: 10000, // optional; default 10000
+});
+
+const requirements = await loadRequirementsFromProvider(provider);
+```
+
+The current adapter uses Jira Cloud REST API v3 `POST /rest/api/3/search/jql`. See [`PROVIDERS.md`](PROVIDERS.md) for the normative RTI-7 contract and complete safety/identity rules.
+
+### RTI-7F — Azure DevOps Requirements Provider
+
+```js
+const { loadRequirementsFromProvider } = require("qa-ai-agent");
+const { AzureDevOpsRequirementsProvider } = require("qa-ai-agent/providers/azure-devops");
+
+const provider = new AzureDevOpsRequirementsProvider({
+  id: "azure-prod",
+  organization: "contoso",
+  project: "MyProject",
+  wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] = 'Bug'",
+  auth: { type: "pat", token: process.env.AZURE_DEVOPS_PAT },
+  fieldMap: { acceptanceCriteria: "Custom.AC" }, // optional
+  typeMap: { Feature: "requirement" },           // optional
+  maxItems: 1000,   // optional; default 1000
+  timeoutMs: 10000, // optional; default 10000
+});
+
+const requirements = await loadRequirementsFromProvider(provider);
+```
+
+Azure DevOps Services is the supported deployment scope for this adapter; see [`PROVIDERS.md`](PROVIDERS.md) for the authoritative contract and vendor-specific limits.
+
+### RTI-8B — Generic Publishing Core
+
+```js
+const qa = require("qa-ai-agent");
+
+const testDesigns = qa.generateTestDesigns(readyRequirements);
+const result = await qa.publishTestDesigns(destination, { testDesigns });
+// result.destinationId, result.allSucceeded, result.items[]
+```
+
+`publishTestDesigns` is the vendor-neutral publishing boundary. See [`PUBLISHING.md`](PUBLISHING.md) for validation, atomicity/failure semantics, side-effect rules, and the destination contract.
+
+### RTI-8F — Azure DevOps Test Case Destination
+
+```js
+const { AzureDevOpsTestCaseDestination } = require("qa-ai-agent/destinations/azure-devops");
+
+const destination = new AzureDevOpsTestCaseDestination({
+  id: "azure-tests-prod",
+  organization: "contoso",
+  project: "MyProject",
+  auth: { type: "pat", token: process.env.AZURE_DEVOPS_PAT },
+  // timeoutMs is optional; default 15000; bounds [1000, 120000]
+});
+```
+
+The destination is Azure DevOps Test Case publishing under the RTI-8 contract. Source and destination vendor identities are independent; a Jira source does not imply a Jira destination.
+
 ## AI Test Design & Test Automation (#22/#23)
 
 The completed-track #22/#23 authority-escalation and implementation evidence is preserved in [`docs/engineering-history-v1.md#3-generative-test-design--test-automation-2223`](docs/engineering-history-v1.md#3-generative-test-design--test-automation-2223). Current security authority remains in [`SECURITY.md`](SECURITY.md).
