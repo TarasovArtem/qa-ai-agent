@@ -105,4 +105,6 @@ Frozen source blob:
 
 `engineering-history-archive-v1.md` reuses that exact blob, so the detailed historical evidence is preserved without semantic compression or transcription drift.
 
+Frozen archive link semantics: `engineering-history-archive-v1.md` is an immutable, byte-identical historical evidence snapshot, not a current live-navigation contract. Its internal relative links are historical snapshot content preserved exactly as frozen source bytes; they retain their original repository-root context and may not resolve correctly from the relocated `docs/` path. For live/current navigation use the root [`README.md`](../README.md), this file, and the current owning documents ([`ROADMAP.md`](../ROADMAP.md), [`SECURITY.md`](../SECURITY.md), [`PROVIDERS.md`](../PROVIDERS.md), [`PUBLISHING.md`](../PUBLISHING.md)). Links *into* the archive and archive anchors referenced by current documents remain subject to normal link integrity.
+
 The root README remains the stable evidence entry/index surface. This compact file is its navigation layer for completed-track evidence. `ROADMAP.md` remains authoritative for current lifecycle/status/sequence.
