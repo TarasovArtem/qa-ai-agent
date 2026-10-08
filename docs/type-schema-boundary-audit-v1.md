@@ -4,7 +4,7 @@
 |---|---|
 | Artifact | `docs/type-schema-boundary-audit-v1.md` |
 | Gate | Type & Schema Boundary Audit (distinct Controlled-v1 gate; ROADMAP §7, `OD-CONTROLLED-V1-RELEASE-MODEL` §3 item 2) |
-| Authority | `OD-TYPE-SCHEMA-AUDIT-START` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-ARTIFACT-RECOVERY` — APPROVED |
+| Authority | `OD-TYPE-SCHEMA-AUDIT-START` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-ARTIFACT-RECOVERY` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-C1` — APPROVED (artifact corrective C1: SR-AD-01..04) |
 | Issue | #226 (OPEN / ACTIVE) |
 | Branch | `audit/type-schema-boundary-audit` |
 | Nature | Read-only audit. No remediation, no finding closure, no risk acceptance, no release grant. |
@@ -15,8 +15,8 @@
 
 - All 439 tracked files were enumerated and each has exactly one classification. 0 are `UNKNOWN — REVIEW REQUIRED`. All 180 relevant non-test files map to at least one boundary.
 - **46 material trust/type boundaries:**
-  - 19 `PASS`
-  - 19 `PARTIAL`
+  - 18 `PASS`
+  - 20 `PARTIAL`
   - 8 `GAP`
   - 0 `UNKNOWN`
   - 0 `NOT_APPLICABLE`
@@ -29,17 +29,17 @@
   - The documented deterministic protected-path and framework-prefix barrier is enforced only in `buildGeneratedChangeSet()`.
   - The validation boundary does not enforce it, and neither does `applyApprovedGeneratedChangeSet()`, the boundary that actually writes files.
   - A change set the builder would reject passed validation, review-package rebuild and application in an offline probe.
-- The only *current operational* LLM path is CI failure triage (Groq, on pull requests). Its output contract is open, and it is not bound to the failed tests it describes (**TSB-F04**). Its persisted-context input is consumed without a structural or size contract (**TSB-F07**, related to but distinct from XI-01/XI-02).
+- The only *current operational* LLM path is CI failure triage (Groq, on pull requests). Its output contract is open, and it is not bound to the failed tests it describes (**TSB-F04**). Its persisted-context input is consumed without a structural or size contract for the non-history top-level fields (**TSB-F07**, related to but distinct from XI-01; embedded `history` size/shape/projection remains owned by XI-02 and is excluded from TSB-F07).
 - **Existing findings preserved unchanged:**
   - `XI-01` and `XI-02` stay OPEN / MEDIUM.
   - `C2-SR-01` and `C2-SR-02` stay LOW / NON-BLOCKING / UNRESOLVED.
-- **Controlled-v1 blockers:** none of the new findings is an unconditional blocker. Four are `CONDITIONAL` blockers, each tied to a named capability:
+- **Controlled-v1 blockers:** none of the new findings is an unconditional blocker. All seven are `CONDITIONAL`:
   - F01: safe application;
   - F03: controlled execution;
   - F04: triage;
   - F07: triage.
 - F02 and F05 are `CONDITIONAL` on narrower surface/consumer conditions.
-- F06 is `NO`.
+- F06 is `CONDITIONAL` on the enabled Controlled-v1 scope including an affected network surface: the Groq or Gemini provider path, or the Jira or Azure DevOps requirement-source adapter.
 
 ## 2. Exact baseline
 
@@ -462,8 +462,9 @@ In the table below:
 | Knowledge unit | `validateKnowledgeUnit` | **No** | **No** | No | No (projected `{id, statement}` only) | No | No |
 | RequirementModel / TestCaseModel / AutomationCandidate / AutomationPlan v1 | `generation/*.js` | Yes | Yes | Snapshot in generators | Yes (generators) | No | No |
 | GeneratedChangeSet v1 | `buildGeneratedChangeSet` | Yes | Yes | Yes | Yes | Yes | No |
-| GeneratedChangeSet v1 (validation) | `validateGeneratedChangeSet` | **No** | **No** | Snapshot | Snapshot | Recomputed only | No |
-| GCS review package | `buildGeneratedChangeSetReviewPackage` | Derived | Yes | Yes | Yes | Yes | No |
+| GeneratedChangeSet v1 (validation) | `validateGeneratedChangeSet` | **No** | **No** | **No / caller-dependent** (snapshots plan and context; reads `generatedChangeSet` live) | **No / caller-dependent** (plan / context only) | Recomputed only | No |
+| GCS review package | `buildGeneratedChangeSetReviewPackage` | Derived | Yes | Yes (deep-frozen snapshot of plan, context and change set before validating, `review-package.js:117-119`) | Yes | Yes | No |
+| GeneratedChangeSet (application consumption) | `applyApprovedGeneratedChangeSet` | **No** (operation enum + path syntax) | n/a | Yes (deep-frozen snapshot of all five inputs before validating, `change-set-application.js:795-799`) | Yes | Recomputed only (via `validateGeneratedChangeSet` on the snapshot) | No |
 | GCS review record | `buildGeneratedChangeSetReviewRecord` | Yes | Yes | Yes | Yes | Yes | No |
 | GCS approval gate | `validateApprovedGeneratedChangeSetReview` | **No** (digest + status only) | n/a | Snapshot | Snapshot | Recomputed only | No |
 | TestDesign review record / gate | `buildTestDesignReviewRecord` / `validateApprovedTestDesignReview` | Build yes; gate **no** | Yes | Build yes | Build yes | Yes | No |
@@ -548,7 +549,7 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-005 | Bound (1,000,000); strict parse | Closed | Plan↔candidate binding; framework tree (H08-C8) | — | Bound to candidate | n/a | Yes |
 | TSB-006 | Bound (1,200,000); strict parse | Provider keys `{operation,path,content}` only | Builder: plan correspondence, base digests | Builder: prefix + protected-path | Digests computed locally, never provider-supplied | n/a | Yes; bounded attempts (H08-C1) |
 | TSB-007 | Same bound and parse | Same | Same builder | Same builder | Same | Requires new review | Yes |
-| TSB-008 | Snapshot of own data | Closed keys, bounds, NUL / surrogate checks | Plan correspondence; CREATE / MODIFY vs context | Framework prefix (`:498`); `isProtectedPath` (`:502`) | Domain-separated digests | n/a | Yes |
+| TSB-008 | Snapshot of own data | Closed keys, bounds, NUL / surrogate checks | Plan correspondence; CREATE / MODIFY vs context | Framework prefix (`:498`); `isProtectedPath` (`:502`); Windows path-normalization equivalence (short names, ADS, trailing characters) not affirmatively evidenced (TB-10 / TSB-U02) | Domain-separated digests | n/a | Yes |
 | TSB-009 | kind / schemaVersion only | **None** on `changes[]` or top level | projectId; plan / context / self digests | **None** | Unkeyed self-digest | n/a | Fails on digest mismatch only |
 | TSB-010 | Snapshots | Operation enum + safe canonical path (`:898`) | Approval binding per change (`:700`); base digest vs actual | Containment / symlink / hardlink / case; **no** prefix or protected-path re-check | Unkeyed digests; reviewer opaque | `validateApprovedGeneratedChangeSetReview` | Yes for checked properties |
 | TSB-011 | Snapshots | Record: digest + status + non-empty only | Record↔change-set digest; **no** `changes[]` correspondence | On-disk digest re-check; classifier | Unkeyed; approval not re-verified (H02-C5) | Applied-record presence | Yes for checked properties |
@@ -599,13 +600,13 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-005 | Snapshot | None | Bounded | `automation-plan-generator.test.js`, H08-C8 | Private | Low | RC-05 | PASS | — |
 | TSB-006 | Snapshot | None (proposal only) | Bounded | `generate-change-set.test.js`, H08-C1..C4 | Private | Low | RC-06 | PASS | — |
 | TSB-007 | Snapshot | None | Bounded | `regenerate-change-set.test.js` | Private | Low (PI-04 inherited) | RC-06 | PASS | — |
-| TSB-008 | Snapshot + deep freeze | None | `{path, code, message}` | `generated-change-set.test.js`, H08-C3 | Private | Low | RC-06 | PASS | — |
-| TSB-009 | Snapshot | Gates TSB-010 / 014 | Single error | Digest / stale tests only (`:364-387`); P-01 | Private | **Write scope** via consumers | APPLY | GAP | **TSB-F01** |
-| TSB-010 | Pre-write and final revalidation; documented TOCTOU window (TB-11) | LOCAL WRITE | Rollback; record status | `change-set-application.test.js`, H01 / H02; P-01, P-02 | Private | LOCAL WRITE outside policy scope | APPLY | GAP | **TSB-F01**; TB-01 / 02 / 03 / 11 |
+| TSB-008 | Snapshot + deep freeze | None | `{path, code, message}` | `generated-change-set.test.js`, H08-C3 (protected-path refusal evidenced for canonical spellings only; Windows normalization variants unexercised, TSB-U02) | Private | Low | RC-06 | PARTIAL | TB-10 (via TSB-U02) |
+| TSB-009 | Plan / context snapshotted; `generatedChangeSet` read live (accessor safety caller-dependent; both in-tree callers pass a deep-frozen snapshot) | Gates TSB-010 / 014 | Single error | Digest / stale tests only (`:364-387`); P-01 | Private | **Write scope** via consumers | APPLY | GAP | **TSB-F01** |
+| TSB-010 | Deep-frozen snapshots of all inputs before validation (`:795-799`); pre-write and final revalidation; documented TOCTOU window (TB-11) | LOCAL WRITE | Rollback; record status | `change-set-application.test.js`, H01 / H02; P-01, P-02 | Private | LOCAL WRITE outside policy scope | APPLY | GAP | **TSB-F01**; TB-01 / 02 / 03 / 11 |
 | TSB-011 | On-disk digest re-check before spawn | CODE EXECUTION | No spawn on failed checks | `controlled-execution.test.js`, H02-C5 (FAIL), H09; P-03 | Private | Execution of an unreviewed in-repo target | EXEC | GAP | **TSB-F03**; TB-01 / TB-18 |
 | TSB-012 | Applied bytes re-verified (H09-C4) | CODE EXECUTION (not sandboxed) | Status enum | H09-C1..C5 | Private | TB-12 / 13 / 14 inherited | EXEC (Linux-first, prerequisite 6) | PARTIAL | TB-12 / 13 / 14 |
 | TSB-013 | Frozen | Evidence | — | `automation-execution-record.test.js` | Private | Low | RC-08 / RC-09 | PASS | — |
-| TSB-014 | Frozen | Review presentation | Throws on undefined purpose (caught by #23F) | `generated-change-set-review-package.test.js`, H03; P-01 | Private | Inherits TSB-F01 | APPLY | PARTIAL | TSB-F01 (inherited); H03-T |
+| TSB-014 | Deep-frozen snapshots of all inputs before validation (`:117-119`) | Review presentation | Throws on undefined purpose (caught by #23F) | `generated-change-set-review-package.test.js`, H03; P-01 | Private | Inherits TSB-F01 | APPLY | PARTIAL | TSB-F01 (inherited); H03-T |
 | TSB-015 | Snapshot / freeze (RP-32) | Approval | — | `generated-change-set-review-record.test.js:260-270`, H02-C1; P-02 | Private | Approval gate weaker than documented | APPLY | GAP | **TSB-F02**; AT-07, TB-01 |
 | TSB-016 | Build frozen | None in-tree | — | `test-design-review-record.test.js` | Private | Latent | Only if made authority-bearing | PARTIAL | **TSB-F02** |
 | TSB-017 | New object | Report flags | — | `agent-policy.test.js`, H08-C7 | Indirect | Positive control | TRIAGE | PASS | — |
@@ -630,7 +631,7 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-036 | n/a | Writes `context.json` | Throws | `collect-context-runcli.test.js` | Exported | Low (caller code) | TRIAGE | PARTIAL | — |
 | TSB-037 | Read once | Provider egress; report | Fails on bad JSON | AISEC-7 H05 (FAIL); P-06 | `analyzeFailure.main` | Cross-project data to provider (XI-01) | TRIAGE | GAP | XI-01; **TSB-F07** |
 | TSB-038 | Read once | Prompt | Null on ineligible | AISEC-7 H06 (FAIL) | Same | XI-02 | TRIAGE | GAP | XI-02 |
-| TSB-039 | Read once | Aggregated context | Skips | `aggregate-browser-context.test.js` | Exported | Low | TRIAGE | PARTIAL | **TSB-F07** |
+| TSB-039 | Read once | Aggregated context | Skips | `aggregate-browser-context.test.js` | Exported | Low | TRIAGE | PARTIAL | **TSB-F07** (non-history fields); embedded `history` → XI-02 |
 | TSB-040 | Base state re-checked | Repeat writes | — | H02-C3 / C4 | Private | TB-02 / 03 | APPLY | GAP | TB-02, TB-03 (ODR-02) |
 | TSB-041 | n/a | REMOTE CREATE / UPDATE (comment) | Warn-only | `format-pr-comment.test.js`, `pr-comment-client.test.js`, H11-C8 / C9 | Workflow | TB-07 / TB-08; F04 rendering | TRIAGE | PARTIAL | **TSB-F04**; TB-07, TB-08 |
 | TSB-042 | Frozen | None | Reason codes | `manifest.test.js`, `validation.test.js`, `wave*.test.js` | Internal | Low | Governance | PASS | — |
@@ -639,7 +640,7 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-045 | n/a | CI gate | `INFRA_ERROR` | `audit-drift-check.test.js`, `branch-inventory.test.js` | n/a | Low | RC-11 | PASS | — |
 | TSB-046 | n/a | Evidence validity | Fails on incompleteness | `evidence-completeness.test.js`, `harness-invariants.test.js` | n/a | Positive control | Release prerequisite 1 | PASS | — |
 
-**Matrix totals:** 46 boundaries — 19 PASS, 19 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE. Every GAP and PARTIAL row names either a finding or the inherited existing item it traces to, or explains why no finding was raised (TSB-021, TSB-023, TSB-032, TSB-036: residual openness is contained or documented by design and has no authority path).
+**Matrix totals:** 46 boundaries — 18 PASS, 20 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE. Every GAP and PARTIAL row names either a finding or the inherited existing item it traces to, or explains why no finding was raised (TSB-021, TSB-023, TSB-032, TSB-036: residual openness is contained or documented by design and has no authority path). TSB-008 is PARTIAL, not PASS, because the Windows normalization / protected-path property is unevidenced (existing TB-10, TSB-U02). No new finding is raised for it and TB-10 keeps its recorded status and severity.
 
 ## 9. LLM / provider boundaries
 
@@ -672,7 +673,7 @@ The system prompt declares the identity contract — rule 7, `qa-agent-prompt.js
 
 ## 10. GeneratedChangeSet / generated-code authority
 
-**Construction (TSB-008): PASS.** `buildGeneratedChangeSet` (`generated-change-set.js:415`):
+**Construction (TSB-008): PARTIAL.** `buildGeneratedChangeSet` (`generated-change-set.js:415`):
 
 - snapshots its inputs;
 - enforces closed change keys and bounds;
@@ -682,10 +683,17 @@ The system prompt declares the identity contract — rule 7, `qa-agent-prompt.js
 - computes base-content digests locally;
 - emits a deep-frozen object.
 
+These properties are affirmatively evidenced (`generated-change-set.test.js`, H08-C3) for canonical path spellings. The protected-path property is not affirmatively evidenced across platforms. Nothing in this audit or in the existing tests exercises whether `isProtectedPath` and the prefix check hold against Windows path-normalization variants (8.3 short names, alternate data streams, trailing dots/spaces). That is existing TB-10, recorded here as TSB-U02. The boundary is therefore scored PARTIAL, not PASS. TB-10 keeps its existing status and severity, and no new finding is raised for the same underlying issue.
+
 **Validation / consumption (TSB-009, TSB-010): GAP.**
 
 - `validateGeneratedChangeSet` (`:576-618`) re-verifies only kind/schemaVersion, `projectId`, plan and context digests, and the change set's own self-digest.
-- `buildGeneratedChangeSetReviewPackage` (`review-package.js:127`) relies solely on that validator.
+- **Snapshot / accessor safety is caller-supplied, not validator-supplied.** `validateGeneratedChangeSet` snapshots `automationPlan` and `repositoryContext` (`:582-588`), but reads `generatedChangeSet` live: `kind`, `schemaVersion`, `projectId`, the stored digests, and the rest-spread inside `recomputeChangeSetDigest` (`:624`). On its own it is therefore **not** accessor-safe for the change set. Both in-tree callers supply that property:
+  - review-package construction deep-freezes own-data snapshots of all three inputs before calling it (`review-package.js:117-119`);
+  - approved change-set application does the same for all five inputs (`change-set-application.js:795-799`).
+
+  No current accessor/TOCTOU exploit is claimed, because every current caller passes a snapshot. The property belongs to those caller boundaries. Any future caller that passes a live object would not inherit it.
+- `buildGeneratedChangeSetReviewPackage` (`review-package.js:127`) relies solely on that validator for contract checks.
 - `applyApprovedGeneratedChangeSet` (`change-set-application.js:774`) re-checks only the operation enum and safe/canonical path syntax (`:898`), then the filesystem containment properties.
 
 None of the three re-establishes:
@@ -802,13 +810,13 @@ TSB-012 process controls are sound but explicitly not a sandbox (TB-12/13/14). O
 No database or persistent store exists. Persistence consists of JSON artifacts under `reports/ai/` plus objects a caller may serialize between #23 stages.
 
 - **TSB-037 (context → analyzer): GAP.** XI-01 already establishes that persisted context is not bound to the invocation. This audit additionally finds that the analyzer re-establishes *no structural or size contract* when it consumes that context:
-  - `relevantFiles`, `collectorWarnings`, `knownProjectConstraints` and `history` are forwarded verbatim into the prompt (`qa-agent-prompt.js:231-242`).
+  - `relevantFiles`, `collectorWarnings` and `knownProjectConstraints` are forwarded verbatim into the prompt (`qa-agent-prompt.js:231-242`). Embedded `history` is forwarded by the same code (`:238`), but its size, shape and projection are owned by XI-02 (TSB-038) and are not counted here.
   - Probe P-06: a 2 MiB `relevantFiles` entry produced a ~2.1 million-character prompt. The collector's 20 KiB per-file and 150 KiB total caps are not re-applied.
   - The same probe showed the prompt carrying the context file's `knownProjectConstraints` rather than the validated invocation profile's. This sub-observation is evidence within XI-01's scope and is cited, not re-rated.
 
-  → **TSB-F07**.
-- **TSB-038 (embedded history):** XI-02, unchanged.
-- **TSB-039 (cross-job aggregation): PARTIAL.** Labels are defaulted and nested context is unvalidated. Same consumer-side contract gap → TSB-F07.
+  → **TSB-F07** (the non-history top-level fields only).
+- **TSB-038 (embedded history):** XI-02, unchanged. Embedded `history` size/shape/projection remains owned by XI-02 and is excluded from TSB-F07.
+- **TSB-039 (cross-job aggregation): PARTIAL.** Labels are defaulted and nested context is unvalidated. The consumer-side contract gap for the non-history fields → TSB-F07. Embedded `history` → XI-02.
 - **TSB-040 (approval reuse and replay):** existing TB-02 / TB-03, H02-C3 / C4, ODR-02.
 - **#23 stage objects.** Every stage re-verifies only unkeyed self-digests (TB-01). TSB-F01 / F02 / F03 are the schema-level consequences at the three consumers that grant authority.
 
@@ -862,7 +870,7 @@ TSB-F06 is supported directly by source (`response.json()` / `res.json()` sites 
 
 **AISEC-7 harness cross-reference.**
 
-- PASS cases support TSB-006, TSB-008, TSB-017, TSB-043 and TSB-046.
+- PASS cases support TSB-006, TSB-008 (canonical spellings only; TSB-008 stays PARTIAL per TSB-U02), TSB-017, TSB-043 and TSB-046.
 - FAIL / target cases (H01, H02-C1 / C3 / C4 / C5, H03-T, H05, H06, H11-C7) are existing evidence for inherited items and are not re-scored.
 - No existing test exercises a structurally invalid but self-consistent object at the TSB-009, TSB-011 or TSB-015 consumers, nor the triage result↔test binding. Those absences are part of the F01–F04 evidence.
 
@@ -879,7 +887,12 @@ C2-SR-01: LOW / NON-BLOCKING / UNRESOLVED
 C2-SR-02: LOW / NON-BLOCKING / UNRESOLVED
 ```
 
-**XI-01 / XI-02.** TSB-F07 shares their path (persisted context → analyzer) but records a distinct property: the structural and size contract at consumption, not provenance or project binding. It does not alter either XI disposition. Remediating TSB-F07 would not satisfy XI-01 or XI-02, and remediating XI-01 or XI-02 would not by itself satisfy TSB-F07. The P-06 observation that context-carried constraints displace the invocation profile's is evidence inside XI-01's existing scope.
+**XI-01 / XI-02.** TSB-F07 shares their path (persisted context → analyzer).
+
+- **XI-01.** TSB-F07 records a distinct property on that path: the structural and size contract at consumption, not provenance or project binding.
+- **XI-02.** The two do not overlap in scope. Embedded `history` size, shape and projection are owned by XI-02 and are excluded from TSB-F07. TSB-F07 covers only the remaining non-history top-level inputs: `relevantFiles`, `collectorWarnings`, `knownProjectConstraints`, and the non-history top-level shape/size contract.
+
+TSB-F07 does not alter either XI disposition. Remediating TSB-F07 would not satisfy XI-01 or XI-02. Remediating XI-01 or XI-02 would not by itself satisfy TSB-F07's non-history fields. The P-06 observation that context-carried constraints displace the invocation profile's is evidence inside XI-01's existing scope.
 
 **C2-SR-01 / C2-SR-02.** These are carried AISEC-7 review debt, recorded in ROADMAP (AISEC-7 closure evidence) as `LOW / NON-BLOCKING / UNRESOLVED`. Their content is not restated in the repository, and this audit does not reinterpret them.
 
@@ -900,9 +913,9 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 | EXPECTED CONTRACT | Every consumer that grants authority (review-package construction and application) re-establishes the full GeneratedChangeSet v1 contract the builder enforces, independent of how the object was produced, as AISEC-3 §20, AISEC-2 C6 and SADR-07 "current repository facts" already describe. |
 | SAFE EVIDENCE REFERENCE | Probe P-01 (§18): a builder-rejected target (outside `cypress/` or a protected basename), carried in a self-consistent change set, passes `validateGeneratedChangeSet`, review-package rebuild and an APPROVE record, and is written by `applyApprovedGeneratedChangeSet` into a temp root. Contrast: H08-C1 / C3 (generation path, PASS) and `generated-change-set.test.js:364-387` (digest / stale cases only). |
 | SECURITY IMPACT | The deterministic, model-independent protected-area barrier is not enforced where filesystem authority is exercised. A change set that reaches review by any path other than the builder — persisted / deserialized between stages, altered in transit with a recomputed digest, or a future producer — can obtain LOCAL WRITE to repository areas outside `cypress/` / `playwright/` (for example `package.json`, workflow or config files) subject only to human review. The approval identity is itself unauthenticated (TB-01 / AT-07). |
-| ARCHITECTURE / API IMPACT | Private (#23 is excluded from the package). Requires a shared consumer-side revalidation primitive reused by TSB-009 / 010 / 014. Prior AISEC documentation overstates the barrier and should be read with this finding. |
+| ARCHITECTURE / API IMPACT | Private (#23 is excluded from the package). Requires a shared consumer-side revalidation primitive reused by TSB-009 / 010 / 014. Today `validateGeneratedChangeSet` is not itself accessor-safe for `generatedChangeSet` (it reads it live). Snapshot/freeze safety is supplied by its two callers, review-package construction (`review-package.js:117-119`) and approved change-set application (`change-set-application.js:795-799`). No current accessor exploit is claimed, because both callers pass deep-frozen snapshots. Prior AISEC documentation overstates the barrier and should be read with this finding. |
 | CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL` — blocker when generated-change safe application (#23F; the "Safe application" step of the Controlled-v1 chain) is enabled. Not a blocker for a scope with application disabled. |
-| CORRECTIVE REQUIREMENT | Consumer-side validation re-derives and enforces closed keys, plan correspondence, framework prefix and protected-path policy (a single source of truth with the builder) before any review-package construction or write, and fails closed deliberately on out-of-plan targets rather than by incidental exception. Negative tests for builder-bypassing self-consistent objects at each consumer. |
+| CORRECTIVE REQUIREMENT | Consumer-side validation re-derives and enforces closed keys, plan correspondence, framework prefix and protected-path policy (a single source of truth with the builder) before any review-package construction or write, and fails closed deliberately on out-of-plan targets rather than by incidental exception. Any reusable shared consumption-time revalidation primitive intended to act as an independent trust boundary must itself be accessor-safe. It must snapshot its authoritative input (including the change set) into own-data form before validating, rather than relying on callers to have done so. Negative tests for builder-bypassing self-consistent objects at each consumer, and for accessor-backed inputs passed directly to the primitive. |
 | REVIEW REQUIREMENT | Independent HEAVY Security plus Architecture review of the corrective. Fresh AISEC-7-style negative cases at all three consumers. |
 | DISPOSITION | OPEN — IMPLEMENTATION REQUIRED |
 
@@ -996,7 +1009,7 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 | SAFE EVIDENCE REFERENCE | Source references above. Contrast `generate-change-set.js` (`MAX_CHANGESET_RESPONSE_CHARS` checked before `JSON.parse`) and `automation-candidate-generator.js:676`. |
 | SECURITY IMPACT | Availability only (memory / CPU of the operator or CI process) from a misbehaving or compromised endpoint. Hosts are pinned except Jira (TB-15). No integrity or authority impact. |
 | ARCHITECTURE / API IMPACT | Adapter-internal; subpath-exported adapters keep their API. |
-| CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: NO`. Hardening; may be included in the SADR-11 dossier of enabled adapters. |
+| CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL`. Blocker for each affected surface that is in the enabled Controlled-v1 scope: the Groq provider path (TSB-027, including the triage model-text parse site TSB-001 when triage uses it), the Gemini provider path (TSB-027), the Jira requirement-source adapter (TSB-028) and the Azure DevOps requirement-source adapter (TSB-029). Not a blocker for a scope that enables none of these surfaces (for example, mock provider and file-based requirements only). Not an unconditional blocker and not risk-accepted. |
 | CORRECTIVE REQUIREMENT | Streamed read with a byte cap before parse; triage character cap. |
 | REVIEW REQUIREMENT | Standard independent review. |
 | DISPOSITION | OPEN — IMPLEMENTATION REQUIRED |
@@ -1009,25 +1022,26 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 | SEVERITY | LOW |
 | BOUNDARY | TSB-037, TSB-039 |
 | CATEGORY | Producer-side bounds not re-established at consumption |
+| SCOPE | The non-history top-level context inputs: `relevantFiles`, `collectorWarnings`, `knownProjectConstraints`, and the remaining non-history top-level shape/size contract. **Excluded:** embedded `history`. Its size, shape and projection remain owned by XI-02 (TSB-038) and are not part of this finding. |
 | FILES / SYMBOLS | `analyze-failure.js`: `readContext` (`:55`), `buildFailureReport` (`:651`). `qa-agent-prompt.js`: `buildUserPrompt` (`:231-242`). `aggregate-browser-context.js`: `readBrowserInputs`. Producer caps in `collect-context.js` (`MAX_FILE_BYTES`, `MAX_TOTAL_RELEVANT_BYTES`). |
-| CURRENT BEHAVIOR | `context.json` (and aggregated browser inputs) are `JSON.parse`d. `relevantFiles`, `collectorWarnings`, `knownProjectConstraints` and `history` are forwarded verbatim into the provider prompt with no shape validation and no re-application of producer caps. |
-| EXPECTED CONTRACT | The analyzer validates the context against a closed, bounded schema equal to the collector's output contract (or re-projects it) before prompt construction, independent of provenance. |
+| CURRENT BEHAVIOR | `context.json` (and aggregated browser inputs) are `JSON.parse`d. `relevantFiles`, `collectorWarnings` and `knownProjectConstraints` are forwarded verbatim into the provider prompt with no shape validation and no re-application of producer caps. (Embedded `history` is forwarded by the same code; that behavior is XI-02's.) |
+| EXPECTED CONTRACT | The analyzer validates the non-history context fields against a closed, bounded schema equal to the collector's output contract (or re-projects them) before prompt construction, independent of provenance. The embedded `history` contract is defined by the XI-02 corrective. |
 | SAFE EVIDENCE REFERENCE | Probe P-06 (§18). |
 | SECURITY IMPACT | Unbounded, unvalidated content can be sent to a credentialed external provider (cost / availability, plus confidentiality amplification of the XI-01 path). Prompt size and shape depend on whoever wrote the file. |
-| ARCHITECTURE / API IMPACT | Analyzer input contract of exported `analyzeFailure.main`. Distinct from XI-01 (provenance / binding) and XI-02 (embedded history eligibility), and neither re-rates nor absorbs them. |
+| ARCHITECTURE / API IMPACT | Analyzer input contract of exported `analyzeFailure.main`. Distinct from XI-01 (provenance / binding). Non-overlapping with XI-02, which owns embedded `history` size/shape/projection. Neither re-rated nor absorbed. |
 | CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL` — same capability condition as XI-01 / XI-02 (triage enabled). |
-| CORRECTIVE REQUIREMENT | Consumer-side closed, bounded context schema (or deterministic re-projection with caps) before any provider call. Negative tests for oversized / misshapen fields. |
+| CORRECTIVE REQUIREMENT | Consumer-side closed, bounded schema for the non-history context fields (or deterministic re-projection with caps) before any provider call, composed with the XI-02 corrective for embedded `history`. Negative tests for oversized / misshapen non-history fields. |
 | REVIEW REQUIREMENT | Independent Security review, co-ordinated with the XI-01 / XI-02 correctives (SADR-05 / FI-05). |
 | DISPOSITION | OPEN — IMPLEMENTATION REQUIRED |
 
-**New finding totals:** 7 — 1 MEDIUM (F01), 6 LOW (F02–F07). Controlled-v1 blocker classification: 0 YES, 6 CONDITIONAL (F01, F02, F03, F04, F05, F07), 1 NO (F06), 0 UNKNOWN.
+**New finding totals:** 7 — 1 MEDIUM (F01), 6 LOW (F02–F07). Controlled-v1 blocker classification: 0 YES, 7 CONDITIONAL (F01, F02, F03, F04, F05, F06, F07), 0 NO, 0 UNKNOWN.
 
 ## 21. Unknown / insufficient evidence
 
 | ID | Item | Why insufficient | Effect on this audit |
 |---|---|---|---|
 | TSB-U01 | Controlled execution on Windows | Node 22 refuses `.cmd` under `shell:false` (EINVAL), so execution yields `EXECUTION_ERROR`; 6 unit cases skip on Windows | Platform-specific, fail-closed; consistent with Controlled-v1 prerequisite 6; no finding |
-| TSB-U02 | TB-10 Windows path normalization (short names, alternate data streams, trailing characters) against `isProtectedPath` | Not empirically exercised here | Existing TB-10 unchanged; TSB-F01 makes the denylist absent at consumption regardless |
+| TSB-U02 | TB-10 Windows path normalization (short names, alternate data streams, trailing characters) against `isProtectedPath` | Not empirically exercised here or by existing tests; no affirmative cross-platform evidence | TSB-008 scored PARTIAL (not PASS) on this basis. Existing TB-10 unchanged in status and severity; no new finding. TSB-F01 makes the denylist absent at consumption regardless |
 | TSB-U03 | Real-provider truncation / safety-block behavior (`finish_reason` / `finishReason`) | No live-provider testing authorized | Downstream parsers fail closed on malformed text; recorded only |
 | TSB-U04 | Substance of `C2-SR-01` / `C2-SR-02` | Content not restated in tracked files | Preserved as labels and dispositions only |
 | TSB-U05 | Operational behavior of governance 1F with a live CI-evidence adapter | Tooling not CI-wired; no live adapter exists | TSB-043 PARTIAL |
@@ -1044,8 +1058,8 @@ No boundary is scored `UNKNOWN`. Each item above is bounded and named.
 | TSB-F03 | LOW | CONDITIONAL | Controlled execution (#23G / RC-08) enabled |
 | TSB-F04 | LOW | CONDITIONAL | CI failure triage / PR reporting in the enabled scope |
 | TSB-F05 | LOW | CONDITIONAL | ProjectProfile-consuming capabilities exposed through the supported external surface |
-| TSB-F06 | LOW | NO | — |
-| TSB-F07 | LOW | CONDITIONAL | CI failure triage in the enabled scope (same as XI-01 / XI-02) |
+| TSB-F06 | LOW | CONDITIONAL | Groq or Gemini provider path, or Jira or Azure DevOps requirement-source adapter, in the enabled scope (per affected surface) |
+| TSB-F07 | LOW | CONDITIONAL | CI failure triage in the enabled scope (same as XI-01 / XI-02); non-history context fields only |
 | XI-01 / XI-02 | MEDIUM | Unchanged existing disposition | `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED` |
 
 **Path classification.**
@@ -1059,7 +1073,7 @@ No boundary is scored `UNKNOWN`. Each item above is bounded and named.
 | Future / hypothetical | F02's latent consumer case |
 | Governance-only | none |
 
-The Controlled-v1 target chain explicitly includes human approval → safe application → controlled execution (`OD-CONTROLLED-V1-RELEASE-MODEL` §1). If that chain is enabled as planned, F01 and F03 become blockers. This audit **does not approve Controlled Release**.
+The Controlled-v1 target chain explicitly includes human approval → safe application → controlled execution (`OD-CONTROLLED-V1-RELEASE-MODEL` §1). If that chain is enabled as planned, F01 and F03 become blockers. If triage on Groq is in scope, F04, F06 and F07 also become blockers. This audit **does not approve Controlled Release**.
 
 ## 23. Remediation dependency graph
 
@@ -1068,6 +1082,7 @@ SADR-07 / FI-07 (deterministic authority)            SADR-02 / AT-07 / TB-01 (ap
         |                                                        |
         v                                                        v
 [R1] shared consumer-side contract revalidation  ----->  TSB-F02 gate re-derivation
+     (itself accessor-safe: snapshots its own input)
         |            \                                   (independent; may land with R1)
         v             v
      TSB-F01        TSB-F03  (also needs record<->change-set binding)
@@ -1077,7 +1092,8 @@ SADR-07 / FI-07 (deterministic authority)            SADR-02 / AT-07 / TB-01 (ap
 
 SADR-05 / FI-05 (XI-01, XI-02; existing, separately authorized)
         |
-        +--> TSB-F07 consumer-side context schema/caps  (co-design; neither satisfies the other)
+        +--> TSB-F07 consumer-side schema/caps for NON-HISTORY context fields
+        |        (co-design; neither satisfies the other; embedded history stays with XI-02)
         |
         +--> TSB-F04 result<->test binding + closed report schema  (versioned ai-report.json)
                     ^
@@ -1128,10 +1144,11 @@ AUDIT:                 Type & Schema Boundary Audit v1 — repository-wide
 BASELINE:              9e09027c1973171b168ae25edbfecae79e4a2dc3 / TREE d7c8c497d487c90ba3d6bcb135970aef1b8a9f35
 TRACKED FILES:         439 (55 BOUNDARY_SURFACE, 47 CONTRACT_MODEL, 78 BOUNDARY_SUPPORT,
                        226 TEST / FIXTURE, 33 NO_RELEVANT_BOUNDARY, 0 UNKNOWN)
-BOUNDARIES:            46 (19 PASS, 19 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE)
+BOUNDARIES:            46 (18 PASS, 20 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE)
+                       TSB-008 PARTIAL (TB-10 / TSB-U02; no new finding)
 UNIT TESTS (Node 22):  5627 / 5618 pass / 0 fail / 9 skip
 NEW FINDINGS:          7 — TSB-F01 MEDIUM; TSB-F02..F07 LOW; all OPEN
-CONTROLLED-V1:         CONDITIONAL blockers F01, F02, F03, F04, F05, F07; F06 NO
+CONTROLLED-V1:         CONDITIONAL blockers F01, F02, F03, F04, F05, F06, F07; none NO
 EXISTING:              XI-01 / XI-02 OPEN / MEDIUM / UNCHANGED;
                        C2-SR-01 / C2-SR-02 LOW / NON-BLOCKING / UNRESOLVED
 UNKNOWN / INSUFFICIENT: TSB-U01..U06 (bounded; no boundary scored UNKNOWN)
