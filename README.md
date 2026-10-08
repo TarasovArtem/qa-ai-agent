@@ -13,7 +13,7 @@ The core safety principle is simple:
 
 > **AI proposes. Deterministic code validates. Humans authorize authority escalation.**
 
-This README is intentionally short. Detailed architecture, security, governance, audit, and contract documentation lives in [`docs/`](docs/README.md).
+This README is intentionally short as a landing page. For governance compatibility it also remains the authoritative **entry point/index** for completed-track detailed engineering evidence; the preserved versioned evidence record is [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md).
 
 ---
 
@@ -60,11 +60,11 @@ QA AI Agent explores that problem with explicit boundaries:
 
 ### Platform and integration
 
-- provider-neutral AI abstraction
-- Mock, Groq, and Gemini provider implementations
+- provider-neutral AI abstraction with Mock, Groq, and Gemini implementations
 - Cypress and Playwright framework adapters
 - package/public API boundary for external consumers
-- Jira and Azure DevOps provider/destination subpaths
+- Jira and Azure DevOps **requirements-source provider** subpaths
+- Azure DevOps **test-design destination** subpath
 - project-owned configuration and knowledge boundaries
 
 ### Safety and governance
@@ -84,13 +84,13 @@ QA AI Agent explores that problem with explicit boundaries:
 | Cypress + Playwright failure triage | Implemented and CI-integrated |
 | AI Test Design | Implemented |
 | AI Test Automation | Implemented with approval and controlled-execution boundaries |
-| Multi-provider abstraction | Implemented; provider rollout remains explicitly controlled |
-| Multi-project/package boundary | Proven through external-consumer work |
+| Multi-provider abstraction | Implemented; Groq is the real CI-wired provider, Gemini is not CI-wired, and no automatic cross-provider fallback exists |
+| Multi-project/package boundary | Proven through external-consumer work; normal repository CI still represents one real production project and the second-project integration proof is not a permanent production deployment |
 | Security architecture | Threat model, verification strategy, isolation and privilege analyses exist |
 | Governance automation | Active development workstream |
 | Formal product release | Governed separately; see the canonical roadmap and release-model documents |
 
-For exact lifecycle state, merged milestones, open work, and evidence, use [`ROADMAP.md`](ROADMAP.md). The roadmap — not this summary table — is the canonical status source.
+For exact lifecycle state, merged milestones, open work, and current evidence, use [`ROADMAP.md`](ROADMAP.md). The roadmap — not this summary table — is the canonical status/sequence source.
 
 ## Architecture at a glance
 
@@ -118,7 +118,7 @@ For exact lifecycle state, merged milestones, open work, and evidence, use [`ROA
 
 The two paths have different authority levels. Failure triage is analysis/reporting oriented; the generative path can eventually reach filesystem mutation and process execution, so it passes through stronger validation and approval gates.
 
-See [`docs/system-overview.md`](docs/system-overview.md) for the technical overview and [`SECURITY.md`](SECURITY.md) for the authoritative security boundaries.
+See [`docs/system-overview.md`](docs/system-overview.md) for technical orientation and [`SECURITY.md`](SECURITY.md) for authoritative operational security boundaries.
 
 ## Development quick start
 
@@ -154,14 +154,25 @@ npm run firefox
 npm run test:e2e:playwright
 ```
 
-### Run the current offline AI evaluation
+### Run offline AI evaluation
+
+Reactive/failure-triage evaluation remains the v5 subject:
+
+```bash
+npm run eval:ai:v5
+npm run eval:regression:v5
+```
+
+Test Design evaluation is the separate v6 subject:
 
 ```bash
 npm run eval:ai:v6
 npm run eval:regression:v6
 ```
 
-Provider credentials and live-provider behavior are intentionally not implied by these local commands. See [`PROVIDERS.md`](PROVIDERS.md) and [`SECURITY.md`](SECURITY.md) before configuring live-provider execution.
+See [`docs/evaluation-execution-policy-v1.md`](docs/evaluation-execution-policy-v1.md) for the distinction.
+
+Live AI-provider configuration is governed by [`SECURITY.md`](SECURITY.md). [`PROVIDERS.md`](PROVIDERS.md) documents the separate RTI-7 **Requirements Source Provider** authoring contract, not the Mock/Groq/Gemini AI-provider abstraction.
 
 ## Documentation
 
@@ -170,11 +181,13 @@ Start with the **[Documentation Home](docs/README.md)**.
 | Topic | Source |
 |---|---|
 | System overview | [`docs/system-overview.md`](docs/system-overview.md) |
+| Completed-track engineering evidence | [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) |
 | Canonical project lifecycle / roadmap | [`ROADMAP.md`](ROADMAP.md) |
-| Security model and operational boundaries | [`SECURITY.md`](SECURITY.md) |
-| AI/provider contracts | [`PROVIDERS.md`](PROVIDERS.md) |
-| Publishing / destination integration | [`PUBLISHING.md`](PUBLISHING.md) |
+| Security model, AI-provider boundary and operational limitations | [`SECURITY.md`](SECURITY.md) |
+| RTI-7 requirements-source provider contract | [`PROVIDERS.md`](PROVIDERS.md) |
+| RTI-8 publishing / destination integration | [`PUBLISHING.md`](PUBLISHING.md) |
 | Governance process | [`docs/governance-process-v3.md`](docs/governance-process-v3.md) |
+| Repository evidence/branch-retention policy | [`docs/repository-evidence-retention-policy-v1.md`](docs/repository-evidence-retention-policy-v1.md) |
 | Governance automation design | [`docs/gov-auto-1-design-reconciliation-v1.md`](docs/gov-auto-1-design-reconciliation-v1.md) |
 | Agentic threat model | [`docs/agentic-threat-model-v1.md`](docs/agentic-threat-model-v1.md) |
 | Security verification strategy | [`docs/agentic-security-verification-strategy-v1.md`](docs/agentic-security-verification-strategy-v1.md) |
@@ -182,11 +195,18 @@ Start with the **[Documentation Home](docs/README.md)**.
 | Package surface | [`docs/package-surface-v2.md`](docs/package-surface-v2.md) |
 | QA generation contracts | [`docs/qa-generation-contracts-v1.md`](docs/qa-generation-contracts-v1.md) |
 
-## Documentation policy
+## Documentation authority and Wiki policy
 
-Repository documentation is the source of truth for versioned technical, security, architecture, and governance material.
+The root README remains the governance-compatible entry point for project purpose and completed-track evidence navigation. Detailed evidence is preserved in version-controlled repository documents rather than kept only in Git history.
 
-A GitHub Wiki may be added later for tutorials, demos, FAQs, onboarding, or other human-friendly guidance, but it should not become the canonical source for security contracts, governance decisions, architecture boundaries, or lifecycle evidence.
+A GitHub Wiki may be added later for tutorials, demos, FAQs, onboarding, or other human-friendly guidance, but it **must not** become authoritative for:
+
+- architecture;
+- security;
+- governance;
+- public contracts;
+- lifecycle evidence/status;
+- release state.
 
 ## Important limitations
 
@@ -194,29 +214,49 @@ A GitHub Wiki may be added later for tutorials, demos, FAQs, onboarding, or othe
 - Automatic GitHub issue creation is not part of the current failure-triage authority model.
 - Review-record integrity is not the same thing as reviewer identity authentication.
 - Controlled execution is **not** an operating-system sandbox.
-- Provider availability, credentials, and rollout are deployment/governance concerns, not assumptions of the core abstraction.
+- Controlled execution on Windows is currently unsupported under the present `shell:false`/`.cmd` execution model; see `SECURITY.md`.
+- There is **no automatic cross-provider fallback**.
+- Groq is the real CI-wired AI provider; Gemini is implemented but not CI-wired.
+- Production CI represents one real project; second-project portability proofs do not imply a second permanent production deployment.
 - Architectural/package portability does not by itself mean a public registry release or unrestricted autonomous operation.
 
-See [`SECURITY.md`](SECURITY.md) and [`ROADMAP.md`](ROADMAP.md) for exact boundaries and status.
+See [`SECURITY.md`](SECURITY.md), [`ROADMAP.md`](ROADMAP.md), and [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) for exact boundaries/evidence ownership.
+
+## Detailed engineering history
+
+The detailed completed-track evidence formerly embedded in this README is preserved in [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md). This heading is retained as the stable README evidence entry point required by canonical governance references.
+
+## Roadmap RTI — Requirements & Test-Design Integration
+
+RTI-1 through RTI-8 detailed contract/evidence history is preserved in [`docs/engineering-history-v1.md#5-rti--requirements--test-design-integration`](docs/engineering-history-v1.md#5-rti--requirements--test-design-integration), with current closure state in [`ROADMAP.md`](ROADMAP.md), the RTI-7 authoring contract in [`PROVIDERS.md`](PROVIDERS.md), and the RTI-8 publishing contract in [`PUBLISHING.md`](PUBLISHING.md).
+
+## AI Test Design & Test Automation (#22/#23)
+
+The completed-track #22/#23 authority-escalation and implementation evidence is preserved in [`docs/engineering-history-v1.md#3-generative-test-design--test-automation-2223`](docs/engineering-history-v1.md#3-generative-test-design--test-automation-2223). Current security authority remains in [`SECURITY.md`](SECURITY.md).
+
+## Full Project Independence — Terminal Audit and Final Re-Audit
+
+The completed architectural-independence evidence and its maturity boundary are preserved in [`docs/engineering-history-v1.md#4-full-project-independence--package-boundary-history`](docs/engineering-history-v1.md#4-full-project-independence--package-boundary-history). Formal release/productization state remains separate and is owned by [`ROADMAP.md`](ROADMAP.md).
+
+## Repository Evidence and Branch Retention Policy
+
+The normative policy formerly embedded here is preserved without semantic change in [`docs/repository-evidence-retention-policy-v1.md`](docs/repository-evidence-retention-policy-v1.md). That policy does not itself authorize deletion, closure, merge, or any other repository mutation.
 
 ## Repository documentation model
 
 ```text
-README.md
+README.md                         landing page + authoritative evidence index
    |
-   +-- project landing page / quick start
-   |
-   +-- docs/README.md
-   |      |
-   |      +-- architecture & contracts
-   |      +-- security & assurance
-   |      +-- governance & release
-   |      +-- audits & evidence
-   |
-   +-- SECURITY.md     authoritative security boundary
-   +-- ROADMAP.md      authoritative lifecycle/status record
-   +-- PROVIDERS.md    provider integration contract
-   +-- PUBLISHING.md   publishing/destination contract
+   +-- docs/README.md             documentation navigation
+   +-- docs/system-overview.md    technical orientation
+   +-- docs/engineering-history-v1.md
+   |                              completed-track detailed evidence
+   +-- docs/repository-evidence-retention-policy-v1.md
+   |                              normative retention policy
+   +-- SECURITY.md                operational security / AI-provider boundary
+   +-- ROADMAP.md                 current lifecycle/status/sequence
+   +-- PROVIDERS.md               RTI-7 requirements-source provider contract
+   +-- PUBLISHING.md              RTI-8 publishing/destination contract
 ```
 
 ## License
