@@ -38,7 +38,11 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified implementation baseline (AISEC-7 merge):
+Latest certified implementation baseline (Type & Schema Boundary Audit merge):
+  main: 7a4e4b9a7d9bab82d4258eee488075b70ba8aa75
+  TREE: 9a01c6399b982e88c27c01a4994ca54992de74db
+
+Historical certification anchor (AISEC-7 merge):
   main: 94c4057b6c9f07bf2cb49d92e92a523fa60c5e8d
   TREE: 0334fffb1b7fbdaa9c361548c2fbea43aa807bda
 
@@ -46,11 +50,17 @@ Historical RTI certification anchor (not the current repository HEAD):
   main: ca9bfa051206ea4e2f96741f276c660dcc6444ac
 ```
 
-`94c4057b6c9f07bf2cb49d92e92a523fa60c5e8d` is the `AISEC-7` implementation
-merge, post-merge certified on its exact SHA (see [AISEC-7 closure
-evidence](#aisec-7-closure-evidence) in §8); it is the certified baseline this
-`AISEC-7` canonical closure sync was authored against, not a claim about any
-later `main` HEAD. `ca9bfa051206ea4e2f96741f276c660dcc6444ac` is preserved as
+`7a4e4b9a7d9bab82d4258eee488075b70ba8aa75` is the Type & Schema Boundary Audit
+implementation merge (PR #227), post-merge certified on its exact SHA (see
+[Type & Schema Boundary Audit closure
+evidence](#type--schema-boundary-audit-closure-evidence) in §8); it is the
+latest certified implementation baseline and the baseline this Type & Schema
+Boundary Audit canonical closure sync was authored against, not a claim about
+any later `main` HEAD. `94c4057b6c9f07bf2cb49d92e92a523fa60c5e8d` is the
+`AISEC-7` implementation merge, post-merge certified on its exact SHA (see
+[AISEC-7 closure evidence](#aisec-7-closure-evidence) in §8); it remains a
+historically valid certification anchor and is no longer the latest certified
+baseline. `ca9bfa051206ea4e2f96741f276c660dcc6444ac` is preserved as
 the historical commit the RTI Integrated Audit's targeted re-verification
 (`RTIA-B01`/`RTIA-I01` closure) certified. See [§15](#15-final-target-state)
 and README's own RTI section for the full RTI evidence chain.
@@ -526,7 +536,10 @@ is also `COMPLETE_ON_MAIN` for research/design (see
 [closure evidence](#aisec-6-closure-evidence)). `AISEC-7` — Adversarial
 Security Test Harness — is also `COMPLETE_ON_MAIN` (PR #224; see
 [closure evidence](#aisec-7-closure-evidence)). The distinct Type & Schema
-Boundary Audit is `NOT_STARTED / NEXT / NOT ACTIVATED` (see
+Boundary Audit is also `COMPLETE_ON_MAIN` (PR #227; see [closure
+evidence](#type--schema-boundary-audit-closure-evidence)); it was a separate
+lifecycle, not satisfied by `GOV-AUTO-1`. Applicable Controlled-v1 release
+blockers / required remediations are `NOT_STARTED / NEXT / NOT ACTIVATED` (see
 [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
 record grants no activation, start or implementation authority.
 
@@ -710,7 +723,10 @@ not a replacement for them.
 governance gate -- a whole-project, non-sampling Type & Schema Boundary Audit --
 is **not** part of `GOV-AUTO-1` and is **not** satisfied, certified or
 canonicalized by it. `GOV-AUTO-1` tooling may later help that audit, but tooling
-is not certification.
+is not certification. *(Present-day note: that audit has since run as its own
+separate lifecycle and is `COMPLETE_ON_MAIN` — PR #227; see [Type & Schema
+Boundary Audit closure evidence](#type--schema-boundary-audit-closure-evidence).
+`GOV-AUTO-1` did not satisfy or certify it.)*
 
 **Implementation surface and CI.** A future implementation may add
 `scripts/governance/**`, `governance/**` manifests, tests and adversarial
@@ -1028,7 +1044,10 @@ post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-eviden
 and so is `AISEC-6` (see [closure evidence](#aisec-6-closure-evidence)).
 `AISEC-7` has since also become `COMPLETE_ON_MAIN` (see
 [closure evidence](#aisec-7-closure-evidence)); the distinct Type & Schema
-Boundary Audit is `NOT_STARTED / NEXT / NOT ACTIVATED` (see the
+Boundary Audit is also `COMPLETE_ON_MAIN` (PR #227; see [closure
+evidence](#type--schema-boundary-audit-closure-evidence)), and applicable
+Controlled-v1 release blockers / required remediations are
+`NOT_STARTED / NEXT / NOT ACTIVATED` (see the
 [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 The decision itself and the internal `MEM`/`RAG`/`LEARN` order are unchanged;
 the later Controlled v1 decision places the first product release before `MEM`.
@@ -1106,6 +1125,9 @@ This is a sequencing/product-boundary decision, **not risk acceptance**:
 
 - The **Type & Schema Boundary Audit** remains a distinct repository-wide gate,
   required before Controlled v1.0; it is not absorbed or satisfied by `AISEC-7`.
+  *(Present-day: it has since completed as its own lifecycle —
+  `COMPLETE_ON_MAIN`, PR #227; its findings `TSB-F01`..`TSB-F07` remain `OPEN`.
+  See [closure evidence](#type--schema-boundary-audit-closure-evidence).)*
 - No `AT-*`, `PI-*`, `TB-*`, `XI-*`, RP, SVR or other security finding is
   closed, re-rated, waived or remediated. Open findings applicable to
   capabilities enabled in Controlled v1.0 remain release blockers until their
@@ -1124,16 +1146,19 @@ under `WIP = 1`:
 PR #220 certified completion                     COMPLETE
 → Issue #221 canonical ROADMAP synchronization   CLOSED / COMPLETED
 → AISEC-7                                        COMPLETE_ON_MAIN (PR #224)
-→ Type & Schema Boundary Audit                   NOT_STARTED / NEXT / NOT ACTIVATED
+→ Type & Schema Boundary Audit                   COMPLETE_ON_MAIN (PR #227)
 → applicable Controlled-v1 release blockers / remediation
-→ Controlled-v1 productization
-→ qa-agent-demo external E2E validation
+                                                 NOT_STARTED / NEXT / NOT ACTIVATED
+→ Controlled-v1 productization                   NOT_STARTED
+→ qa-agent-demo external E2E validation          NOT_STARTED
 → Controlled Release (separate Product Owner release grant)
+                                                 NOT APPROVED
 ```
 
 *(Status annotations above are present-day; the order is the decision's own.
 When the decision was recorded, Issue #221 was `ACTIVE / SOLE WIP` and the third
-step was `AISEC-7` activation.)*
+step was `AISEC-7` activation; at the `AISEC-7` closure sync the fourth step was
+`NOT_STARTED / NEXT / NOT ACTIVATED`.)*
 
 **`AISEC-7` — present-day completion note.** At the time of this decision,
 `AISEC-7` was `NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY
@@ -1145,12 +1170,14 @@ activation contract remains recorded in Issue #222). `AISEC-7` has since been
 implemented, independently reviewed (Architecture and Security `HEAVY`),
 owner-dispositioned, merged and post-merge certified, and is
 `COMPLETE_ON_MAIN` (PR #224; see [AISEC-7 closure
-evidence](#aisec-7-closure-evidence)). The Type & Schema Boundary Audit is the
-canonical next eligible Controlled-v1 gate: `NOT_STARTED / NEXT / NOT
-ACTIVATED`. `AISEC-7` does not execute, satisfy, absorb, certify or authorize
-it, and its start requires its own separate authorization. Issue #222 remains
-`OPEN` until the `AISEC-7` canonical closure sync completes its own governed
-lifecycle.
+evidence](#aisec-7-closure-evidence)). `AISEC-7` did not execute, satisfy,
+absorb, certify or authorize the Type & Schema Boundary Audit; that audit ran
+under its own separate authorization (Issue #226) and is now `COMPLETE_ON_MAIN`
+(PR #227; see [Type & Schema Boundary Audit closure
+evidence](#type--schema-boundary-audit-closure-evidence)). The `AISEC-7`
+canonical closure sync merged via PR #225 and Issue #222 is `CLOSED /
+COMPLETED`. Applicable Controlled-v1 release blockers / required remediations
+are the canonical next eligible stage: `NOT_STARTED / NEXT / NOT ACTIVATED`.
 
 **Provenance — what must never be claimed about this decision:**
 
@@ -1186,10 +1213,12 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  OD-CONTROLLED-V1-RELEASE-MODEL / PR #220 (MERGED / POST-MERGE CERTIFIED)
   →  Issue #221 Controlled-v1 ROADMAP sync (CLOSED / COMPLETED)
   →  AISEC-7 (COMPLETE_ON_MAIN; PR #224)
-  →  Type & Schema Boundary Audit (NOT_STARTED / NEXT / NOT ACTIVATED;
-       distinct Controlled-v1 gate)
+  →  Type & Schema Boundary Audit (COMPLETE_ON_MAIN; PR #227;
+       MERGED + POST-MERGE CERTIFIED; distinct Controlled-v1 gate)
   →  applicable Controlled-v1 release blockers / required remediations
+       (NOT_STARTED / NEXT / NOT ACTIVATED)
   →  Controlled-v1 supported package/API/CLI/productization boundary
+       (NOT_STARTED)
   →  qa-agent-demo external E2E validation
   →  QA AI Agent v1.0 Controlled Agent Release (NOT APPROVED;
        separate PO release grant required)
@@ -1201,18 +1230,26 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (AISEC-7 canonical closure sync).** Per the [Controlled v1
+**Current sequence (Type & Schema Boundary Audit canonical closure sync).** Per
+the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
 `MEM`/`RAG`/`LEARN`, whose internal order is unchanged. Issue #221 is closed /
-completed, and `AISEC-7` is `COMPLETE_ON_MAIN` (see [AISEC-7 closure
-evidence](#aisec-7-closure-evidence)). The `AISEC-7` canonical closure sync
-(Issue #222) is the only active governance lifecycle until its own certified
-lifecycle completes. The Type & Schema Boundary Audit is the canonical next
-eligible gate (`NOT_STARTED / NEXT / NOT ACTIVATED`); "NEXT" designates
-eligibility only, not activation. This sync does not start the Type & Schema
-Boundary Audit, activate any `MEM`/`RAG`/`LEARN` stage or approve Controlled
-Release (`NOT APPROVED`). The steps after `AISEC-6` are strictly serial under
+completed, `AISEC-7` is `COMPLETE_ON_MAIN` (see [AISEC-7 closure
+evidence](#aisec-7-closure-evidence)) and Issue #222 is closed / completed. The
+Type & Schema Boundary Audit implementation is already merged and post-merge
+certified and the audit is `COMPLETE_ON_MAIN` (PR #227; see [Type & Schema
+Boundary Audit closure evidence](#type--schema-boundary-audit-closure-evidence)).
+Its canonical closure sync (Issue #226, `OPEN`) is the only active governance
+lifecycle and the sole WIP (`WIP = 1`) until its own certified lifecycle
+completes. Applicable Controlled-v1 release blockers / required remediations
+are the canonical next eligible stage (`NOT_STARTED / NEXT / NOT ACTIVATED`)
+and become eligible only after this canonical closure completes; "NEXT"
+designates sequencing eligibility only, not activation or implementation
+authority. This sync does not start any remediation or architecture decision,
+does not close, waive or accept risk for any finding, does not activate any
+`MEM`/`RAG`/`LEARN` stage and does not approve Controlled Release
+(`NOT APPROVED`). The steps after `AISEC-6` are strictly serial under
 `WIP = 1`.
 
 This is the canonical future sequence following the [subsequent owner
@@ -1260,8 +1297,10 @@ closure, not merely its readiness or the start of its execution. See
 for the `MEM`/`RAG`/`LEARN` stage detail and why `RAG` sits between
 `MEM-6` and `MEM-7`. The preceding transition rules are historical: the Gate,
 `AISEC-1`-`AISEC-6` and `GOV-AUTO-1` have since completed (`AISEC-4`-`AISEC-6`
-for research/design), and so has `AISEC-7` (see [AISEC-7 closure
-evidence](#aisec-7-closure-evidence)). The Type & Schema Boundary Audit is
+for research/design), and so have `AISEC-7` (see [AISEC-7 closure
+evidence](#aisec-7-closure-evidence)) and the Type & Schema Boundary Audit (see
+[closure evidence](#type--schema-boundary-audit-closure-evidence)). Applicable
+Controlled-v1 release blockers / required remediations are
 `NOT_STARTED / NEXT / NOT ACTIVATED`, and this sync activates nothing.
 
 **Slice lifecycle status semantics.** This project's governance already
@@ -1425,10 +1464,13 @@ The Controlled v1 decision (PR #220) is merged and post-merge certified, and its
 canonical ROADMAP synchronization (Issue #221) is closed / completed. `AISEC-7`
 is `COMPLETE_ON_MAIN` (PR #224; see [AISEC-7 closure
 evidence](#aisec-7-closure-evidence)). The Type & Schema Boundary Audit is
-`NOT_STARTED / NEXT / NOT ACTIVATED` (see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
+`COMPLETE_ON_MAIN` (PR #227; see [closure
+evidence](#type--schema-boundary-audit-closure-evidence)); its findings
+`TSB-F01`..`TSB-F07` remain `OPEN`. Applicable Controlled-v1 release blockers /
+required remediations are `NOT_STARTED / NEXT / NOT ACTIVATED` (see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 Controlled Release is `NOT APPROVED`. `D-1` and `D-3` remain `DEFERRED`. No
-Type & Schema Boundary Audit, `MEM`/`RAG`/`LEARN` or other downstream execution
-is started or activated by this state.
+remediation, architecture decision, `MEM`/`RAG`/`LEARN` or other downstream
+execution is started or activated by this state.
 
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
 "RTI Integrated Audit READY") describe *past* states of this project and
@@ -2583,6 +2625,192 @@ final canonical lifecycle closure. Issue
 closure is reserved for PM/PO after this sync's governed lifecycle completes.
 This implementation is not independent review approval or merge authorization.
 
+*(Historical point-in-time record as of the `AISEC-7` canonical closure sync.
+Present-day: that sync merged via PR #225 and Issue #222 is `CLOSED /
+COMPLETED`; the Type & Schema Boundary Audit has since run under its own
+authorization and is `COMPLETE_ON_MAIN` — see [Type & Schema Boundary Audit
+closure evidence](#type--schema-boundary-audit-closure-evidence).)*
+
+### Type & Schema Boundary Audit closure evidence
+
+```text
+Stage:                 Type & Schema Boundary Audit
+Status:                COMPLETE_ON_MAIN
+                       (implementation merged and post-merge certified;
+                       canonical lifecycle closure is pending this ROADMAP
+                       sync's own certification)
+Management Issue:      #226 — OPEN during this closure-sync lifecycle
+Implementation PR:     #227 — MERGED
+Artifact:              docs/type-schema-boundary-audit-v1.md
+final reviewed HEAD:   fbe68f7b56592d1e18c0615f61c8b8ca841c4174
+reviewed TREE:         9a01c6399b982e88c27c01a4994ca54992de74db
+exact-head PR CI:      Cypress E2E Tests / run 37768690650 / run number 584
+                       event pull_request / exact HEAD
+                       fbe68f7b56592d1e18c0615f61c8b8ca841c4174 / 7/7 SUCCESS
+audit review class:    HEAVY
+Senior Software Developer / Engineer HEAVY: APPROVED
+Security HEAVY:        APPROVED
+blocking audit-artifact defects: 0
+blocking security-audit defects: 0
+unauthorized risk acceptance:    NONE
+owner exact-head finding disposition:
+                       OD-TYPE-SCHEMA-AUDIT-FINDING-DISPOSITION — APPROVED
+merge authorization:   OD-TYPE-SCHEMA-AUDIT-MERGE — APPROVED
+merge SHA:             7a4e4b9a7d9bab82d4258eee488075b70ba8aa75
+merge method:          STANDARD_TWO_PARENT
+parent1:               9e09027c1973171b168ae25edbfecae79e4a2dc3
+parent2:               fbe68f7b56592d1e18c0615f61c8b8ca841c4174
+merge TREE:            9a01c6399b982e88c27c01a4994ca54992de74db
+TREE preserved:        YES (merge TREE = reviewed TREE)
+post-merge CI:         Cypress E2E Tests / run 37773244861 / run number 585
+                       event push / branch main / attempt 1
+                       exact merge SHA 7a4e4b9a7d9bab82d4258eee488075b70ba8aa75
+                       completed / success / 7/7 SUCCESS
+post-merge certification: PASS
+
+Inventory:             439 baseline tracked files
+                         55 BOUNDARY_SURFACE
+                         47 CONTRACT_MODEL
+                         78 BOUNDARY_SUPPORT
+                        226 TEST / FIXTURE
+                         33 NO_RELEVANT_BOUNDARY
+                          0 UNKNOWN
+                       180 relevant non-test files
+Material boundaries:   46 total
+                       16 PASS / 22 PARTIAL / 8 GAP / 0 UNKNOWN / 0 N/A
+
+New product findings:  7 (1 MEDIUM / 6 LOW; all OPEN; all CONDITIONAL)
+  TSB-F01:             MEDIUM / OPEN / CONDITIONAL
+  TSB-F02:             LOW / OPEN / CONDITIONAL
+  TSB-F03:             LOW / OPEN / CONDITIONAL
+  TSB-F04:             LOW / OPEN / CONDITIONAL
+  TSB-F05:             LOW / OPEN / CONDITIONAL
+  TSB-F06:             LOW / OPEN / CONDITIONAL
+  TSB-F07:             LOW / OPEN / CONDITIONAL
+  closed / waived / risk-accepted / remediated: NONE
+
+Existing findings (unchanged by the audit or this sync):
+  XI-01:               OPEN / MEDIUM / UNCHANGED
+  XI-02:               OPEN / MEDIUM / UNCHANGED
+  owner disposition (both XI findings):
+    IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED
+  C2-SR-01:            LOW / NON-BLOCKING / UNRESOLVED
+  C2-SR-02:            LOW / NON-BLOCKING / UNRESOLVED
+  TB-01 / TB-10 / TB-15: UNCHANGED
+
+ADV-01:                security advisory (bounded timeout/body-read time
+                       behavior); accepted by Product Owner as a downstream
+                       TSB-F06 corrective requirement; NOT a separate audit
+                       finding; no re-rating of TSB-F06 severity/status
+
+Controlled Release:    NOT APPROVED
+full autonomy:         NOT APPROVED
+MEM/RAG/LEARN:         NOT ACTIVATED
+Next mainline stage:   applicable Controlled-v1 release blockers / required
+                       remediation — NOT_STARTED / NEXT / NOT ACTIVATED
+Closure-sync authority: OD-TYPE-SCHEMA-AUDIT-CANONICAL-CLOSURE — APPROVED
+Closure-sync review class: LIGHT
+```
+
+The Type & Schema Boundary Audit delivered the repository-wide, non-sampling
+audit artifact
+[`docs/type-schema-boundary-audit-v1.md`](docs/type-schema-boundary-audit-v1.md),
+reviewed under `HEAVY` Senior Software Developer / Engineer and Security review
+on the exact identities above, owner-dispositioned at that exact head,
+separately merge-authorized, merged with a `STANDARD_TWO_PARENT` merge whose
+TREE equals the reviewed TREE, and post-merge certified on a fresh push-event CI
+run on the exact merge SHA.
+
+**Meaning of the audit's `COMPLETE_ON_MAIN`.** Audit completion is evidence and
+finding classification, **not remediation**. It does **not** mean:
+
+- any `TSB-F01`..`TSB-F07` finding is fixed, closed, waived or risk-accepted —
+  all seven remain `OPEN` and `CONDITIONAL`;
+- `XI-01`/`XI-02` are remediated or closed;
+- any capability is authorized for enablement;
+- Controlled Release or Full Autonomy is approved.
+
+Disabling or excluding a capability from the Controlled-v1 supported scope is
+**not** risk acceptance: it only determines whether a conditional finding is a
+release blocker for that release scope, and the finding stays `OPEN`.
+
+**Owner finding disposition (preserved as approved by
+`OD-TYPE-SCHEMA-AUDIT-FINDING-DISPOSITION`):**
+
+- `TSB-F01` — implementation required before Controlled v1 when Safe
+  Application is enabled; for the target Controlled-v1 Safe Application chain
+  it is a **release blocker**. Future corrective review requires `HEAVY`
+  Architecture + Security review.
+- `TSB-F03` — implementation required before Controlled v1 when Controlled
+  Execution is enabled; for target Controlled Execution it is a **release
+  blocker**. Preferred sequencing may coordinate `TSB-F01` + `TSB-F03` into one
+  consumer-revalidation hardening stream if scope remains justified.
+- `TSB-F05` — architecture decision required before implementation; if the
+  Controlled-v1 supported surface uses ProjectProfile-consuming capabilities it
+  is a **release blocker until architecture decision + remediation**. This
+  disposition does **not** authorize breaking public-contract narrowing; any
+  compatibility / versioning / deprecation decision or breaking contract change
+  requires its own separately governed architecture decision and implementation
+  authorization.
+- `TSB-F06` — implementation required for every affected network surface
+  enabled in Controlled v1; future corrective design includes the `ADV-01`
+  bounded-time requirement.
+- `TSB-F02` — `OPEN`; deferred as a Controlled-v1 blocker only while no
+  supported enabled consumer relies solely on the affected approval gates; if
+  such a consumer is introduced it becomes a **release blocker /
+  implementation required**.
+- `TSB-F04` — if triage / PR reporting is disabled and outside the
+  Controlled-v1 supported scope, not a blocker for that release scope; if
+  enabled, **release blocker / implementation required before enablement**.
+- `TSB-F07` — same triage capability condition as `TSB-F04`; its future
+  corrective is coordinated with `XI-01`/`XI-02`, but the scopes remain
+  distinct.
+- `XI-01`/`XI-02` remain
+  `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED`.
+
+**Preferred remediation sequencing — NOT ACTIVATED.** This is planning /
+sequencing only under `WIP = 1` (no parallel engineering streams). It does
+**not** authorize implementation and does **not** activate remediation. The
+approved preferred order is:
+
+1. `TSB-F01` + `TSB-F03` — authority escalation / Safe Application /
+   Controlled Execution hardening;
+2. `TSB-F05` — architecture decision first, then implementation only if
+   applicable;
+3. `TSB-F06` + `ADV-01` — enabled network surfaces and bounded-time
+   requirement;
+4. `TSB-F02` — only if a dependent supported consumer is introduced;
+5. `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` — before triage capability
+   enablement.
+
+This record states no remediation branch, PR, implementation scope or technical
+design beyond that approved disposition.
+
+**Next stage.** Applicable Controlled-v1 release blockers / required
+remediations (including the `TSB-F05` architecture decision where applicable)
+are the canonical next eligible stage: `NOT_STARTED / NEXT / NOT ACTIVATED`.
+"NEXT" designates sequencing eligibility only; each remediation or architecture
+decision requires its own separate authorization. This sync starts no
+remediation, implements nothing, accepts no risk, authorizes no capability
+enablement and changes no package/public API. Controlled-v1 productization
+remains `NOT_STARTED`, Controlled Release remains `NOT APPROVED`, and
+`MEM`/`RAG`/`LEARN` remain `NOT ACTIVATED`.
+
+Authority for this ROADMAP-only implementation is
+`OD-TYPE-SCHEMA-AUDIT-CANONICAL-CLOSURE — APPROVED`; its review class is
+`LIGHT` (ROADMAP-only canonical lifecycle/status synchronization; no
+executable, runtime, security-enforcement, workflow, package or API surface
+change). The proposed canonical truth-sync must itself complete PM
+identity/scope verification → governed PR → fresh automatic exact-head CI →
+independent `LIGHT` documentation/governance review → separate Product Owner
+merge authorization → `STANDARD_TWO_PARENT` merge → fresh automatic push-event
+CI on the exact merge SHA → post-merge certification before final canonical
+lifecycle closure. Issue
+[#226](https://github.com/TarasovArtem/qa-ai-agent/issues/226) remains OPEN
+until this ROADMAP sync itself passes review, merge and post-merge
+certification; its closure is reserved for PM/PO. This implementation is not
+independent review approval or merge authorization.
+
 ### GOV-AUTO-1 design/reconciliation evidence
 
 This section records the point-in-time state at that certification. Later-wave
@@ -3291,7 +3519,10 @@ lifecycles (see [AISEC-4 closure evidence](#aisec-4-closure-evidence),
 [AISEC-5 closure evidence](#aisec-5-closure-evidence) and
 [AISEC-6 closure evidence](#aisec-6-closure-evidence)), and `AISEC-7` has
 since become `COMPLETE_ON_MAIN` (see [AISEC-7 closure
-evidence](#aisec-7-closure-evidence)). The Type & Schema Boundary Audit is
+evidence](#aisec-7-closure-evidence)), and so has the Type & Schema Boundary
+Audit as its own separate lifecycle (see [closure
+evidence](#type--schema-boundary-audit-closure-evidence)). Applicable
+Controlled-v1 release blockers / required remediations are
 `NOT_STARTED / NEXT / NOT ACTIVATED` (see
 [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
 sync grants no activation.
@@ -3445,8 +3676,10 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   AISEC-6 is also COMPLETE_ON_MAIN for research/design; see
   [AISEC-6 closure evidence](#aisec-6-closure-evidence). AISEC-7 is also
   COMPLETE_ON_MAIN (PR #224); see [AISEC-7 closure evidence](#aisec-7-closure-evidence).
-  The distinct Type & Schema Boundary Audit is NOT_STARTED / NEXT /
-  NOT ACTIVATED, and this sync activates nothing)
+  The distinct Type & Schema Boundary Audit is COMPLETE_ON_MAIN (PR #227;
+  post-merge certified; see §8 closure evidence). Applicable Controlled-v1
+  release-blocker remediation / architecture decisions are NOT_STARTED /
+  NEXT / NOT ACTIVATED, and this sync activates nothing)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -3492,16 +3725,18 @@ NON-BLOCKING / UNRESOLVED`.
 `COMPLETE_ON_MAIN`: the Adversarial Security Test Harness lifecycle is complete.
 This does not mean the product is secure in every enabled capability, that
 Controlled Release or Full Autonomy is approved, that `XI-01`/`XI-02` are
-remediated, that the `AISEC-6` `FI`/`FV` dependencies are implemented, or that
-the Type & Schema Boundary Audit has been executed. Its earlier activation
-contract (`OD-AISEC-7-START — PRE-AUTHORIZED`, Issue
+remediated, or that the `AISEC-6` `FI`/`FV` dependencies are implemented. Its
+earlier activation contract (`OD-AISEC-7-START — PRE-AUTHORIZED`, Issue
 [#222](https://github.com/TarasovArtem/qa-ai-agent/issues/222), conditional on
 Issue #221's certified closure) is historical and remains recorded in Issue #222
 and [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model).
-The distinct Type & Schema Boundary Audit is the canonical next eligible
-Controlled-v1 gate: `NOT_STARTED / NEXT / NOT ACTIVATED`; `AISEC-7` does not
-execute, satisfy, absorb, certify or authorize it, and it requires its own
-separate authorization.
+`AISEC-7` did not execute, satisfy, absorb, certify or authorize the distinct
+Type & Schema Boundary Audit; that audit ran under its own separate
+authorization and is `COMPLETE_ON_MAIN` (PR #227; post-merge certified; see
+[closure evidence](#type--schema-boundary-audit-closure-evidence)). The next
+eligible gate is applicable Controlled-v1 release-blocker remediation /
+architecture decisions: `NOT_STARTED / NEXT / NOT ACTIVATED`, each requiring
+its own separate authorization.
 
 `GOV-AUTO-1` ([§6](#gov-auto-1--governance-pre-review-framework)) is not an AISEC stage: by owner decision (§7) it is
 sequenced after `AISEC-3` and before `AISEC-4`, and `AISEC-4`'s own scope is
@@ -3537,8 +3772,9 @@ decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 (§7), `MEM`, `RAG` and `LEARN` belong to the **Full Autonomy Program**. None of
 them is a prerequisite for the QA AI Agent v1.0 Controlled Agent Release; all of
 them come after that release checkpoint ([§8](#8-current-critical-path)), and
-none is activated by the Issue #221 ROADMAP sync, by `AISEC-7` or by its
-canonical closure sync. They are deferred, not
+none is activated by the Issue #221 ROADMAP sync, by `AISEC-7` or its
+canonical closure sync, or by the Type & Schema Boundary Audit or its canonical
+closure sync. They are deferred, not
 cancelled, and their internal order remains `MEM-1..MEM-6 → RAG-1..RAG-12 →
 MEM-7..MEM-9 → LEARN-1..LEARN-9`. The architecture and security rationale below
 is unchanged.
@@ -3875,10 +4111,10 @@ NOT_STARTED / FULL-AUTONOMY GATE
 autonomy-wide audit within the Full Autonomy Program and remains after
 `MEM`/`RAG`/`LEARN`. It is **not** the release-specific prerequisite for the QA
 AI Agent v1.0 Controlled Agent Release: Controlled v1.0 has its own earlier
-release-specific path (`AISEC-7` — now `COMPLETE_ON_MAIN` — the distinct Type &
-Schema Boundary Audit,
-applicable release blockers, Controlled-v1 productization and `qa-agent-demo`
-validation — see the [Controlled v1
+release-specific path (`AISEC-7` and the distinct Type & Schema Boundary Audit,
+both now `COMPLETE_ON_MAIN`; applicable release blockers / remediation, still
+pending as `NOT_STARTED / NEXT / NOT ACTIVATED`; Controlled-v1 productization
+and `qa-agent-demo` validation — see the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model) and
 [§8](#8-current-critical-path)).
 
@@ -3915,7 +4151,9 @@ lifecycle scopes:
 
 - **Controlled-v1 productization** — required before the QA AI Agent v1.0
   Controlled Agent Release and after the applicable Controlled-v1 release
-  blockers/remediations ([§8](#8-current-critical-path)). At minimum it
+  blockers/remediations ([§8](#8-current-critical-path)), which are still
+  pending (`NOT_STARTED / NEXT / NOT ACTIVATED`; the preceding Type & Schema
+  Boundary Audit is `COMPLETE_ON_MAIN`). At minimum it
   includes: version/install/upgrade policy; a supported high-level package/API
   or CLI surface (separately designed, versioned, reviewed and
   compatibility-tested); external consumer guidance; rollback/version lifecycle;
@@ -4049,7 +4287,10 @@ has since completed its research/design lifecycle (`COMPLETE_ON_MAIN`; see
 and so is `AISEC-6` (see [AISEC-6 closure evidence](#aisec-6-closure-evidence)).
 `AISEC-7` is also `COMPLETE_ON_MAIN` (PR #224; see [AISEC-7 closure
 evidence](#aisec-7-closure-evidence)). The distinct Type & Schema Boundary Audit
-is `NOT_STARTED / NEXT / NOT ACTIVATED`; no sync grants it activation or
+is also `COMPLETE_ON_MAIN` (PR #227; see [closure
+evidence](#type--schema-boundary-audit-closure-evidence)); applicable
+Controlled-v1 release blockers / required remediations are
+`NOT_STARTED / NEXT / NOT ACTIVATED`, and no sync grants them activation or
 implementation authority. See
 [§6](#gov-auto-1--governance-pre-review-framework) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
@@ -4067,17 +4308,24 @@ TREE:                            429af1e56427e64872e8137e8fbfe1c0e6628274
 Issue #221:                      CLOSED / COMPLETED (Controlled-v1 canonical ROADMAP sync)
 AISEC-7:                         COMPLETE_ON_MAIN (PR #224; merge
                                  94c4057b6c9f07bf2cb49d92e92a523fa60c5e8d)
-active governance lifecycle:     AISEC-7 canonical closure sync (Issue #222 OPEN)
-Type & Schema Boundary Audit:    NOT_STARTED / NEXT / DISTINCT CONTROLLED-V1 GATE /
-                                 NOT ACTIVATED
+Issue #222:                      CLOSED / COMPLETED (AISEC-7 canonical closure sync; PR #225)
+Type & Schema Boundary Audit:    COMPLETE_ON_MAIN (PR #227; merge
+                                 7a4e4b9a7d9bab82d4258eee488075b70ba8aa75)
+active governance lifecycle:     Type & Schema Boundary Audit canonical closure sync
+                                 (Issue #226 OPEN / SOLE WIP)
+Audit findings:                  TSB-F01..TSB-F07 OPEN (1 MEDIUM / 6 LOW;
+                                 all CONDITIONAL)
 XI-01 / XI-02:                   OPEN / MEDIUM / UNCHANGED
+next eligible:                   applicable Controlled-v1 release blockers /
+                                 required remediations
+                                 NOT_STARTED / NEXT / NOT ACTIVATED
 MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
 Controlled Release:              NOT APPROVED
 Full autonomy:                   NOT APPROVED
 
 Canonical release sequence:
   AISEC-7 COMPLETE_ON_MAIN
-  → Type & Schema Boundary Audit
+  → Type & Schema Boundary Audit COMPLETE_ON_MAIN
   → applicable Controlled-v1 release blockers / required remediations
   → Controlled-v1 supported package/API/CLI/productization boundary
   → qa-agent-demo external E2E validation
@@ -4094,7 +4342,9 @@ Conceptually, Controlled v1.0 is built on the current completed layers (core
 pipelines #1-#23, RTI and the proven installation boundary — see
 [§4](#4-completed-major-tracks)), guided by the completed `AISEC-1`..`AISEC-6`
 research/design (target architecture, not implemented controls) and the
-completed `AISEC-7` adversarial harness (evidence, not remediation), plus a future,
+completed `AISEC-7` adversarial harness (evidence, not remediation) and the
+completed Type & Schema Boundary Audit (finding classification, not
+remediation), plus a future,
 not-yet-designed
 **Controlled-v1 supported product surface** between external consumers such as
 `qa-agent-demo` and the private internal implementation. The Memory, Retrieval /
