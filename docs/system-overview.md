@@ -1,8 +1,8 @@
 # QA AI Agent — System Overview
 
-This document provides a technical orientation to the current QA AI Agent architecture without duplicating the full security, governance, roadmap, and contract records.
+This document provides a technical orientation to the current QA AI Agent architecture without duplicating the full security, governance, roadmap, and completed-track evidence records.
 
-For normative boundaries and exact lifecycle state, use the owning documents linked throughout this page.
+For normative boundaries and exact lifecycle state, use the owning documents linked throughout this page. For completed-track detailed engineering evidence formerly embedded in the root README, use [`engineering-history-v1.md`](engineering-history-v1.md) via the stable evidence index in [`../README.md`](../README.md).
 
 ## 1. System purpose
 
@@ -74,15 +74,17 @@ The knowledge layer is curated, schema-validated, bounded, and selected before t
 
 ### 3.5 AI provider boundary
 
-Core reasoning code consumes a provider abstraction rather than depending directly on one vendor. Provider adapters own vendor-specific authentication/transport/envelope handling, while core logic owns prompt construction, validation, policy, and reporting.
+Core reasoning consumes an AI-provider abstraction rather than depending directly on one vendor. AI-provider adapters own vendor-specific authentication/transport/envelope handling, while core logic owns prompt construction, validation, policy, and reporting.
 
-Provider implementations include:
+AI-provider implementations include:
 
-- Mock — deterministic/offline testing;
-- Groq — live-provider implementation used by the project;
-- Gemini — independent provider implementation proving the abstraction across a different API shape.
+- **Mock** — deterministic/offline testing;
+- **Groq** — real provider wired to the repository's CI path;
+- **Gemini** — independent provider implementation proving the abstraction across a different API shape; not CI-wired.
 
-See [`../PROVIDERS.md`](../PROVIDERS.md) for provider-specific contracts and rollout details.
+Provider selection is explicit and there is **no automatic cross-provider fallback**.
+
+The authoritative operational AI-provider/credential/rollout boundary is [`../SECURITY.md`](../SECURITY.md). Do **not** confuse this with [`../PROVIDERS.md`](../PROVIDERS.md), which is the separate RTI-7 **Requirements Source Provider** authoring contract for adapters such as Jira and Azure DevOps.
 
 ### 3.6 Validation and policy
 
@@ -151,7 +153,7 @@ execution evidence / bounded regeneration
 
 The important boundary is not simply whether code was generated. It is whether generated material has been validated, reviewed, authorized for mutation, and authorized for execution under the applicable controls.
 
-Controlled execution limits how the orchestrator launches tests, but it is not an operating-system sandbox. Generated code loaded by the chosen test framework ultimately executes with the authority available to that host process. The precise security statement is maintained in [`../SECURITY.md`](../SECURITY.md).
+Controlled execution limits how the orchestrator launches tests, but it is not an operating-system sandbox. Generated code loaded by the chosen test framework ultimately executes with the authority available to that host process. Controlled execution on Windows is currently unsupported under the documented `shell:false`/`.cmd` limitation. The precise security statement is maintained in [`../SECURITY.md`](../SECURITY.md).
 
 ## 6. Public/package boundary
 
@@ -162,22 +164,22 @@ The package boundary supports external-consumer integration without requiring co
 See:
 
 - [`package-surface-v2.md`](package-surface-v2.md)
-- [`../PROVIDERS.md`](../PROVIDERS.md)
-- [`../PUBLISHING.md`](../PUBLISHING.md)
+- [`../PROVIDERS.md`](../PROVIDERS.md) — RTI-7 requirements-source provider subpaths/contract
+- [`../PUBLISHING.md`](../PUBLISHING.md) — RTI-8 destination/publishing contract
 
-Package portability and architectural independence should not be confused with a formal unrestricted public release. Release state is governed separately by the roadmap and controlled-release decisions.
+Package portability and architectural independence should not be confused with a formal unrestricted public release. Release state is governed separately by the roadmap and controlled-release decisions. The external-consumer/second-project proofs establish capability, not a second permanent production deployment.
 
 ## 7. Trust boundaries
 
 Important trust boundaries include, at minimum:
 
-- LLM/provider responses;
+- LLM/AI-provider responses;
 - generated QA artifacts and change sets;
 - review/approval records;
 - project profiles and configuration;
 - environment variables and credentials;
 - source/attachment paths;
-- external provider/destination payloads;
+- external requirements-source provider and publishing-destination payloads;
 - tool/process execution;
 - package/public API contracts.
 
@@ -187,7 +189,7 @@ The repository-wide audit of type/schema and runtime validation boundaries is do
 
 Security is documented in multiple layers because the questions are different:
 
-- [`../SECURITY.md`](../SECURITY.md) — operational security boundary and known limitations;
+- [`../SECURITY.md`](../SECURITY.md) — operational security boundary, AI-provider/credential rules, and known limitations;
 - [`agentic-threat-model-v1.md`](agentic-threat-model-v1.md) — threat inventory and risk reasoning;
 - [`agentic-security-verification-strategy-v1.md`](agentic-security-verification-strategy-v1.md) — verification strategy;
 - [`security-architecture-decision-record-v1.md`](security-architecture-decision-record-v1.md) — architecture security decisions;
@@ -203,11 +205,12 @@ Engineering work is separated into lifecycle phases rather than treating impleme
 The governance documentation includes:
 
 - [`governance-process-v3.md`](governance-process-v3.md) — current versioned governance-process record;
+- [`repository-evidence-retention-policy-v1.md`](repository-evidence-retention-policy-v1.md) — normative repository evidence/branch-retention policy preserved from the pre-refactor README;
 - [`gov-auto-1-design-reconciliation-v1.md`](gov-auto-1-design-reconciliation-v1.md) — governance automation design/reconciliation;
 - [`controlled-v1-release-model-owner-decision-v1.md`](controlled-v1-release-model-owner-decision-v1.md) — controlled-release decision record;
-- [`../ROADMAP.md`](../ROADMAP.md) — canonical lifecycle/status history.
+- [`../ROADMAP.md`](../ROADMAP.md) — canonical current lifecycle/status/sequence.
 
-This overview intentionally does not reproduce exact PR/HEAD/TREE/CI identities because those are lifecycle evidence and become stale quickly. They belong in the roadmap, PRs, issues, and versioned governance records.
+This overview intentionally does not reproduce exact PR/HEAD/TREE/CI identities because those are lifecycle evidence and become stale quickly. They belong in the roadmap, PRs, issues, and versioned governance/evidence records.
 
 ## 10. Evaluation and regression protection
 
@@ -215,21 +218,28 @@ The project contains offline evaluation/regression infrastructure intended to de
 
 Evaluation execution policy is documented in [`evaluation-execution-policy-v1.md`](evaluation-execution-policy-v1.md).
 
-Repository scripts currently include versioned evaluation/regression commands through v6; the root README exposes the current v6 commands for convenience.
+The versioned subjects are additive rather than simple replacements:
 
-## 11. Documentation ownership model
+- **v1–v5** — reactive/failure-triage evaluation history; v5 is the current triage-oriented command set;
+- **v6** — Test Design evaluation, a different subject.
 
-To prevent the root README from becoming a second roadmap or architecture specification, documentation responsibilities are split deliberately:
+The root README labels both command sets explicitly rather than describing v6 as a universal replacement for v1–v5.
+
+## 11. Documentation ownership / evidence routing
+
+This overview does not redefine the repository's established authority tiers. It describes where readers should go while preserving the root README's governance role as the stable evidence entry point.
 
 | Document | Responsibility |
 |---|---|
-| `README.md` | project landing page and quick start |
-| `docs/README.md` | documentation navigation |
-| `docs/system-overview.md` | stable technical orientation |
-| `ROADMAP.md` | lifecycle state and delivery history |
-| `SECURITY.md` | operational security authority/boundaries |
-| `PROVIDERS.md` | provider integration contract |
-| `PUBLISHING.md` | destination/publishing contract |
-| versioned `docs/*.md` | scoped architecture, governance, research, audit, and assurance records |
+| `README.md` | project landing page, quick start, stable completed-track evidence index/anchors |
+| `docs/README.md` | non-normative documentation navigation |
+| `docs/system-overview.md` | technical orientation only |
+| `docs/engineering-history-v1.md` | preserved completed-track detailed engineering evidence referenced through README |
+| `ROADMAP.md` | canonical current lifecycle/status/sequence and delivery-state record |
+| `SECURITY.md` | operational security and AI-provider/credential authority/boundaries |
+| `PROVIDERS.md` | RTI-7 Requirements Source Provider authoring contract |
+| `PUBLISHING.md` | RTI-8 destination/publishing contract |
+| `docs/repository-evidence-retention-policy-v1.md` | normative evidence/branch-retention policy |
+| other versioned `docs/*.md` | scoped architecture, governance, research, audit, assurance and historical records according to each document |
 
-This split keeps first-time navigation lightweight while preserving exact, version-controlled evidence where it belongs.
+This split keeps first-time navigation lightweight without deleting or silently weakening version-controlled evidence or governance policy.
