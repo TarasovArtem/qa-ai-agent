@@ -4,7 +4,7 @@
 |---|---|
 | Artifact | `docs/type-schema-boundary-audit-v1.md` |
 | Gate | Type & Schema Boundary Audit (distinct Controlled-v1 gate; ROADMAP §7, `OD-CONTROLLED-V1-RELEASE-MODEL` §3 item 2) |
-| Authority | `OD-TYPE-SCHEMA-AUDIT-START` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-ARTIFACT-RECOVERY` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-C1` — APPROVED (artifact corrective C1: SR-AD-01..04) |
+| Authority | `OD-TYPE-SCHEMA-AUDIT-START` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-ARTIFACT-RECOVERY` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-C1` — APPROVED (artifact corrective C1: SR-AD-01..04); `OD-TYPE-SCHEMA-AUDIT-C2` — APPROVED (artifact corrective C2: SR-AD-05..06) |
 | Issue | #226 (OPEN / ACTIVE) |
 | Branch | `audit/type-schema-boundary-audit` |
 | Nature | Read-only audit. No remediation, no finding closure, no risk acceptance, no release grant. |
@@ -15,21 +15,22 @@
 
 - All 439 tracked files were enumerated and each has exactly one classification. 0 are `UNKNOWN — REVIEW REQUIRED`. All 180 relevant non-test files map to at least one boundary.
 - **46 material trust/type boundaries:**
-  - 18 `PASS`
-  - 20 `PARTIAL`
+  - 16 `PASS`
+  - 22 `PARTIAL`
   - 8 `GAP`
   - 0 `UNKNOWN`
   - 0 `NOT_APPLICABLE`
-- The six LLM *generation* paths (#22/#23) are the strongest boundaries in the repository. Each one:
+- The six LLM *generation* paths (#22/#23, TSB-002..007) are the strongest boundaries in the repository. Model output is attacker/provider-controlled input on every one of them. Each one:
   - bounds the raw response before parsing;
   - parses strictly (trim, then `JSON.parse`, with no fence stripping);
   - enforces a closed, bounded schema;
-  - routes through a deterministic builder that applies plan, path and protected-area policy.
+  - binds to its validated upstream artifact.
+- Model generation itself applies no path or protected-area policy. Only the two code-proposal paths (TSB-006 change-set generation, TSB-007 regeneration) route their output through the deterministic `buildGeneratedChangeSet()` builder (TSB-008), which enforces the framework prefix and protected-path policy. That builder's protected-path refusal is evidenced for canonical spellings only. Windows path-normalization / alias variants are unevidenced (existing TB-10, TSB-U02). TSB-006, TSB-007 and TSB-008 are therefore `PARTIAL`, not `PASS`. TSB-002..005 are `PASS` on their own parse / schema / binding evidence and receive no builder-mediated protected-path credit. No new finding is raised and TB-10 is unchanged.
 - The material weakness is a recurring pattern on the **consumption** side. Contracts are enforced fully when an object is *constructed*. When the same object is later *validated or consumed*, the check is mostly self-digest equality plus a few fields. Every self-digest is unkeyed and can be recomputed by the caller (TB-01), so it cannot stand in for re-establishing the contract. The most consequential instance is **TSB-F01 (MEDIUM)**:
   - The documented deterministic protected-path and framework-prefix barrier is enforced only in `buildGeneratedChangeSet()`.
   - The validation boundary does not enforce it, and neither does `applyApprovedGeneratedChangeSet()`, the boundary that actually writes files.
   - A change set the builder would reject passed validation, review-package rebuild and application in an offline probe.
-- The only *current operational* LLM path is CI failure triage (Groq, on pull requests). Its output contract is open, and it is not bound to the failed tests it describes (**TSB-F04**). Its persisted-context input is consumed without a structural or size contract for the non-history top-level fields (**TSB-F07**, related to but distinct from XI-01; embedded `history` size/shape/projection remains owned by XI-02 and is excluded from TSB-F07).
+- The only *current operational* LLM path is CI failure triage (Groq, on pull requests). The same CI triage flow also runs GitHub run-history collection (`collect-history.js`, `npm run ai:history`) on test failure. Both are current operational remote-response surfaces for TSB-F06. Triage's output contract is open, and it is not bound to the failed tests it describes (**TSB-F04**). Its persisted-context input is consumed without a structural or size contract for the non-history top-level fields (**TSB-F07**, related to but distinct from XI-01; embedded `history` size/shape/projection remains owned by XI-02 and is excluded from TSB-F07).
 - **Existing findings preserved unchanged:**
   - `XI-01` and `XI-02` stay OPEN / MEDIUM.
   - `C2-SR-01` and `C2-SR-02` stay LOW / NON-BLOCKING / UNRESOLVED.
@@ -39,7 +40,7 @@
   - F04: triage;
   - F07: triage.
 - F02 and F05 are `CONDITIONAL` on narrower surface/consumer conditions.
-- F06 is `CONDITIONAL` on the enabled Controlled-v1 scope including an affected network surface: the Groq or Gemini provider path, or the Jira or Azure DevOps requirement-source adapter.
+- F06 is `CONDITIONAL`. It is a blocker whenever an affected network-response-consuming capability or surface is in the enabled Controlled-v1 scope. The enumerated set is complete for the audited baseline (§20, TSB-F06 enumerated scope): the Groq and Gemini provider paths, CI triage GitHub history collection, the Jira and Azure DevOps requirement-source adapters, and the Azure DevOps test-case publishing destination. Triage model-text parsing is also covered.
 
 ## 2. Exact baseline
 
@@ -514,14 +515,14 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-021 | Knowledge corpus | `knowledge/schema.js`, `loader.js`, `selector.js`, `knowledge/units/*.json` | `validateKnowledgeUnit`, `loadProjectKnowledgeUnits`, `selectKnowledge` | JSON files (core plus project dir) | Repository / project authors | Repository-trusted | Knowledge unit schema |
 | TSB-022 | repositoryRoot | `repository-root.js`, `context-utils.js`, `change-set-application.js` | `validateRepositoryRoot`, `resolveRepositoryRoot` | Caller path string | Caller / orchestrator | Caller-trusted | Absolute existing directory |
 | TSB-023 | AI provider environment | `config.js`, `providers/index.js`, `cypress.yml` | Module-level `PROVIDER`/`MODEL`/`API_KEY` (`config.js:20`) | `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY` | Operator / workflow | Ambient | Closed provider-name switch |
-| TSB-024 | Collector / history environment | `collect-context.js`, `collect-history.js`, `runtime-framework-selector.js` | `getMetadata`, history `main`, `selectRuntimeAdapter` | `GITHUB_*`, `HISTORY_*`, `QA_FRAMEWORK`, `TEST_BROWSER` | Operator / workflow | Ambient | Closed framework map; clamped run count |
+| TSB-024 | Collector / history environment | `collect-context.js`, `collect-history.js`, `runtime-framework-selector.js` | `getMetadata`, history `main`, `selectRuntimeAdapter` | `GITHUB_*`, `HISTORY_*`, `QA_FRAMEWORK`, `TEST_BROWSER`; GitHub REST JSON (`fetchJson`, `res.json()` at `collect-history.js:128`) | Operator / workflow; GitHub API response | Ambient | Closed framework map; clamped run count |
 | TSB-025 | Governance CLI argv | `stages/1f/cli.js` | `parseArgs` | argv | Operator | Untrusted | Allow-listed flags |
 | TSB-026 | Provider object contract | `provider-contract.js`, `provider-error.js`, `providers/index.js`, `mock-provider.js` | `validateProvider`, `validateProviderResponse`, `createProvider` | Provider object and return value | Provider implementation | Code-reviewed implementation | `analyze({systemPrompt,userPrompt}) → Promise<string>` |
 | TSB-027 | Groq / Gemini HTTP envelope | `groq-provider.js`, `gemini-provider.js` | `analyze` (`res.json()` at `:145` / `:170`) | HTTPS response | Provider service / network | Untrusted | Vendor envelope (choices / candidates) |
 | TSB-028 | Jira source adapter | `jira-requirements-provider.js` | `assertValidJiraProviderConfig`, `jiraFetch`, `normalizeIssue` | Config; REST JSON (`:627`) | Operator config; issue authors | Untrusted payload | Closed config; ADF depth ≤ 64 |
 | TSB-029 | Azure DevOps source adapter | `azure-devops-requirements-provider.js` | `assertValidAzureDevOpsProviderConfig`, `azureFetch`, `normalizeWorkItem` | Config; REST JSON (`:693`, `:785`) | Operator config; work-item authors | Untrusted payload | Closed config; HTML depth ≤ 64 |
 | TSB-030 | Requirements source executor | `requirements-source-provider.js` | `loadRequirementsFromProvider` | Caller provider output | Provider implementation | Untrusted | RequirementArtifact[] |
-| TSB-031 | Publishing executor and destination | `test-design-publishing.js`, `azure-devops-test-case-destination.js` | `publishTestDesigns`, destination `publish` | Designs; destination result | Caller config; remote service | Untrusted result | Closed request/result |
+| TSB-031 | Publishing executor and destination | `test-design-publishing.js`, `azure-devops-test-case-destination.js` | `publishTestDesigns`, destination `publish` | Designs; destination result; Azure DevOps REST JSON (`response.json()` at `azure-devops-test-case-destination.js:322`) | Caller config; remote service | Untrusted result | Closed request/result |
 | TSB-032 | Runner report adapters | `adapters/*.js`, `normalized-failure.js`, `context-utils.js`, `scripts/diagnostics/*.sh` | Report readers, `walkSuite` | Cypress / Playwright JSON reports, screenshots | Test and application content | Untrusted | NormalizedFailure (implicit) |
 | TSB-033 | Package export surface | `package.json`, `scripts/ai/index.js` | `exports`, `files` | `require("qa-ai-agent")` | External consumer | External | 19 named exports + 3 subpaths |
 | TSB-034 | Requirements file / RequirementArtifact | `requirements-file.js`, `requirement-artifact.js` | `loadRequirementsFromFile`, `assertValidRequirementArtifact` | JSON file; caller objects | Requirement authors / caller | Untrusted | RTI-1 / RTI-2 |
@@ -547,8 +548,8 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-003 | Bound; strict parse | Closed, bounded | Cross-model reference validation | Data-labelled | Bound to validated RequirementModel | n/a | Yes |
 | TSB-004 | Bound (`:676`); strict parse | Closed | Candidate / framework / evidence binding | Framework authorization | Bound to input models | n/a | Yes |
 | TSB-005 | Bound (1,000,000); strict parse | Closed | Plan↔candidate binding; framework tree (H08-C8) | — | Bound to candidate | n/a | Yes |
-| TSB-006 | Bound (1,200,000); strict parse | Provider keys `{operation,path,content}` only | Builder: plan correspondence, base digests | Builder: prefix + protected-path | Digests computed locally, never provider-supplied | n/a | Yes; bounded attempts (H08-C1) |
-| TSB-007 | Same bound and parse | Same | Same builder | Same builder | Same | Requires new review | Yes |
+| TSB-006 | Bound (1,200,000); strict parse | Provider keys `{operation,path,content}` only | Builder: plan correspondence, base digests | Not applied by generation itself; enforced only at the deterministic `buildGeneratedChangeSet()` builder (TSB-008): prefix + protected-path. Canonical spellings evidenced; Windows path-normalization / alias variants unevidenced (TB-10 / TSB-U02) | Digests computed locally, never provider-supplied | n/a | Yes; bounded attempts (H08-C1) |
+| TSB-007 | Same bound and parse | Same | Same builder | Same builder-mediated policy as TSB-006, with the same Windows alias evidence gap (TB-10 / TSB-U02) | Same | Requires new review | Yes |
 | TSB-008 | Snapshot of own data | Closed keys, bounds, NUL / surrogate checks | Plan correspondence; CREATE / MODIFY vs context | Framework prefix (`:498`); `isProtectedPath` (`:502`); Windows path-normalization equivalence (short names, ADS, trailing characters) not affirmatively evidenced (TB-10 / TSB-U02) | Domain-separated digests | n/a | Yes |
 | TSB-009 | kind / schemaVersion only | **None** on `changes[]` or top level | projectId; plan / context / self digests | **None** | Unkeyed self-digest | n/a | Fails on digest mismatch only |
 | TSB-010 | Snapshots | Operation enum + safe canonical path (`:898`) | Approval binding per change (`:700`); base digest vs actual | Containment / symlink / hardlink / case; **no** prefix or protected-path re-check | Unkeyed digests; reviewer opaque | `validateApprovedGeneratedChangeSetReview` | Yes for checked properties |
@@ -565,14 +566,14 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-021 | `JSON.parse` per file | Required fields, enums, dates; **open**; no length bound | Project-scope rule for project source type | Projection to `{id, statement}`, 5 units / 2000 chars | Duplicate-id rejection | — | Throws on invalid unit |
 | TSB-022 | String / control chars / absolute / realpath / directory | — | — | Containment helpers downstream | Caller-trusted (TB-09) | — | Yes |
 | TSB-023 | Enum switch on provider; `AI_MODEL` unvalidated | — | — | Provider checks own key / model | — | — | Unknown provider → CONFIGURATION error |
-| TSB-024 | Closed framework map; `HISTORY_RUNS` clamped (coerces) | — | — | `GITHUB_API_URL` unpinned (TB-15) | Platform env | Job token | Mostly |
+| TSB-024 | Closed framework map; `HISTORY_RUNS` clamped (coerces); GitHub API body `res.json()` with **no byte cap** (`:128`) | — | — | `GITHUB_API_URL` unpinned (TB-15) | Platform env | Job token | Mostly |
 | TSB-025 | Allow-list | Pairs only; regexes | Event / phase enums | Output dir lexically contained | — | — | Yes; uncaught error → 6 |
 | TSB-026 | `analyze` is a function; return is a non-empty string | — | — | Contract string-only (TB-16) | — | — | Yes |
 | TSB-027 | `res.json()` with **no byte cap** | Text extraction only | finish / truncation reason not inspected (U-03) | Pinned host; timeout | TLS | API key | Yes on shape |
 | TSB-028 | `response.json()` with **no byte cap** | Response / issue shape validated | ADF depth bound | https-only, no redirects; no host allowlist (TB-15) | TLS | Operator token | Yes |
 | TSB-029 | `response.json()` with **no byte cap** | Shape validated; HTML ≤ 200,000 chars, depth ≤ 64 | Type map | Host constructed; no redirects | TLS | Operator PAT | Yes |
 | TSB-030 | Full RequirementArtifact validation | Closed | Collision / identity model | Data-only | Provider label | — | Yes, atomic |
-| TSB-031 | Closed request / result | Accessor-safe; canonical frozen copies | Result↔design correspondence | Destination host constructed | No source / destination identity cross-check (AT-04 / TB-05) | Caller credential | Yes on result; no rollback of remote effects |
+| TSB-031 | Closed request / result; destination `response.json()` with **no byte cap** (`:322`) | Accessor-safe; canonical frozen copies | Result↔design correspondence | Destination host constructed | No source / destination identity cross-check (AT-04 / TB-05) | Caller credential | Yes on result; no rollback of remote effects |
 | TSB-032 | `JSON.parse`; tolerant walk | Not schema-validated | — | Report path containment; stack bounded (message unbounded by design) | — | — | Warns, skips |
 | TSB-033 | `exports` map; `files` excludes `#22/#23` | — | — | Private modules unreachable via exports | — | — | Install tests |
 | TSB-034 | Closed, accessor-safe, bounded | Yes | Duplicate ids | 5 MiB cap; containment | `source` provenance derived internally | — | Yes, atomic |
@@ -598,8 +599,8 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-003 | Snapshot | None | Bounded | `test-case-model-generator.test.js`, `cross-model-validation.test.js` | Private | Low | RC-04 | PASS | — |
 | TSB-004 | Snapshot | None | Bounded | `automation-candidate-generator.test.js` | Private | Low | RC-05 | PASS | — |
 | TSB-005 | Snapshot | None | Bounded | `automation-plan-generator.test.js`, H08-C8 | Private | Low | RC-05 | PASS | — |
-| TSB-006 | Snapshot | None (proposal only) | Bounded | `generate-change-set.test.js`, H08-C1..C4 | Private | Low | RC-06 | PASS | — |
-| TSB-007 | Snapshot | None | Bounded | `regenerate-change-set.test.js` | Private | Low (PI-04 inherited) | RC-06 | PASS | — |
+| TSB-006 | Snapshot | None (proposal only) | Bounded | `generate-change-set.test.js`, H08-C1..C4 (builder-mediated protected-path refusal evidenced for canonical spellings only; Windows normalization / alias variants unexercised, TSB-U02) | Private | Low | RC-06 | PARTIAL | TB-10 (via TSB-U02) |
+| TSB-007 | Snapshot | None | Bounded | `regenerate-change-set.test.js` (same builder-mediated property; Windows normalization / alias variants unexercised, TSB-U02) | Private | Low (PI-04 inherited) | RC-06 | PARTIAL | TB-10 (via TSB-U02) |
 | TSB-008 | Snapshot + deep freeze | None | `{path, code, message}` | `generated-change-set.test.js`, H08-C3 (protected-path refusal evidenced for canonical spellings only; Windows normalization variants unexercised, TSB-U02) | Private | Low | RC-06 | PARTIAL | TB-10 (via TSB-U02) |
 | TSB-009 | Plan / context snapshotted; `generatedChangeSet` read live (accessor safety caller-dependent; both in-tree callers pass a deep-frozen snapshot) | Gates TSB-010 / 014 | Single error | Digest / stale tests only (`:364-387`); P-01 | Private | **Write scope** via consumers | APPLY | GAP | **TSB-F01** |
 | TSB-010 | Deep-frozen snapshots of all inputs before validation (`:795-799`); pre-write and final revalidation; documented TOCTOU window (TB-11) | LOCAL WRITE | Rollback; record status | `change-set-application.test.js`, H01 / H02; P-01, P-02 | Private | LOCAL WRITE outside policy scope | APPLY | GAP | **TSB-F01**; TB-01 / 02 / 03 / 11 |
@@ -616,14 +617,14 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-021 | Read once | Prompt guidance | Throws | `schema.test.js`, `loader.test.js`, `selector.test.js` | Private | Low (contained) | TRIAGE; future RAG (§24) | PARTIAL | — |
 | TSB-022 | Realpath resolved once | Root of all FS authority | Throws | `repository-root.test.js` | Exported | TB-09 | All | PARTIAL | TB-09 |
 | TSB-023 | Captured at import | Provider selection; credential | Fails loudly | `config.test.js`, `providers/index.test.js` | Implicit (env-only seam for `analyzeFailure.main`) | Low | TRIAGE / generation | PARTIAL | — |
-| TSB-024 | Read per run | GitHub API read with job token | Retries bounded | `collect-history*.test.js` | Indirect | TB-15 | TRIAGE | PARTIAL | TB-15 |
+| TSB-024 | Read per run | GitHub API read with job token | Retries bounded | `collect-history*.test.js` | Indirect | TB-15; availability (unbounded response body) | TRIAGE (history collection) | PARTIAL | **TSB-F06**; TB-15 |
 | TSB-025 | n/a | Report write | Exit codes | `cli.test.js` | Internal | Low | Governance | PASS | — |
 | TSB-026 | n/a | Provider code in-process | Normalized errors | `provider-contract.test.js` | Private | TB-16 | All provider-using | PARTIAL | TB-16 |
 | TSB-027 | n/a | Network egress with key | Mapped codes | `groq-provider.test.js`, `gemini-provider.test.js` | Private | Availability | TRIAGE / generation | PARTIAL | **TSB-F06** |
 | TSB-028 | n/a | Network egress with token | Mapped | `jira-requirements-provider.test.js` | Subpath export | Availability; TB-15 | RC-02 | PARTIAL | **TSB-F06**; TB-15 |
 | TSB-029 | n/a | Network egress with PAT | Mapped | `azure-devops-requirements-provider.test.js` | Subpath export | Availability | RC-02 | PARTIAL | **TSB-F06** |
 | TSB-030 | Frozen | None | Atomic | `requirements-source-provider.test.js` | Exported | Low | RC-02 | PASS | — |
-| TSB-031 | Frozen copies | REMOTE CREATE | Partial-failure semantics | `test-design-publishing.test.js`, destination tests | Exported + subpath | AT-04 / TB-05 / TB-19 | If publishing enabled | PARTIAL | AT-04, TB-05, TB-19 |
+| TSB-031 | Frozen copies | REMOTE CREATE | Partial-failure semantics | `test-design-publishing.test.js`, destination tests | Exported + subpath | AT-04 / TB-05 / TB-19; availability (unbounded destination response body) | If publishing enabled | PARTIAL | **TSB-F06**; AT-04, TB-05, TB-19 |
 | TSB-032 | n/a | Context content | Warnings | Adapter tests, `cypress-equivalence.test.js` | Private | Low (producer side) | TRIAGE | PARTIAL | — |
 | TSB-033 | n/a | Distribution | — | `package-surface.test.js`, `package-boundary.test.js`, installation proofs | Is the API | Low | RC-01 / RC-12 | PASS | — |
 | TSB-034 | Frozen | None | Atomic | `requirements-file.test.js`, `requirement-artifact.test.js` | Exported | Low | RC-02 | PASS | — |
@@ -640,19 +641,22 @@ The matrix is split into three tables keyed by the same IDs.
 | TSB-045 | n/a | CI gate | `INFRA_ERROR` | `audit-drift-check.test.js`, `branch-inventory.test.js` | n/a | Low | RC-11 | PASS | — |
 | TSB-046 | n/a | Evidence validity | Fails on incompleteness | `evidence-completeness.test.js`, `harness-invariants.test.js` | n/a | Positive control | Release prerequisite 1 | PASS | — |
 
-**Matrix totals:** 46 boundaries — 18 PASS, 20 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE. Every GAP and PARTIAL row names either a finding or the inherited existing item it traces to, or explains why no finding was raised (TSB-021, TSB-023, TSB-032, TSB-036: residual openness is contained or documented by design and has no authority path). TSB-008 is PARTIAL, not PASS, because the Windows normalization / protected-path property is unevidenced (existing TB-10, TSB-U02). No new finding is raised for it and TB-10 keeps its recorded status and severity.
+**Matrix totals:** 46 boundaries — 16 PASS, 22 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE. Every GAP and PARTIAL row names either a finding or the inherited existing item it traces to, or explains why no finding was raised (TSB-021, TSB-023, TSB-032, TSB-036: residual openness is contained or documented by design and has no authority path). TSB-006, TSB-007 and TSB-008 are PARTIAL, not PASS, for one shared reason. Model-generated change-set output (TSB-006 / TSB-007) is attacker/provider-controlled input. Its protected-path enforcement happens only at the deterministic `buildGeneratedChangeSet()` builder (TSB-008). That builder's refusal is evidenced for canonical spellings, but the Windows path-normalization / alias property is unevidenced (existing TB-10, TSB-U02). The complete security property therefore cannot be scored PASS on any of the three. No new finding is raised for it and TB-10 keeps its recorded status and severity.
 
 ## 9. LLM / provider boundaries
 
-**Generation paths (TSB-002..007): PASS.** All six (requirement model, test-case model, automation candidate, automation plan, change set, regeneration) share the same discipline:
+**Generation paths (TSB-002..005: PASS; TSB-006, TSB-007: PARTIAL).** Model output is attacker/provider-controlled input on all six paths (requirement model, test-case model, automation candidate, automation plan, change set, regeneration). All six share the same parsing discipline:
 
 1. a pre-parse character bound on the raw response;
 2. `JSON.parse(response.trim())` with no fence stripping or substring extraction;
 3. a closed, bounded schema;
-4. binding to the validated upstream artifact;
-5. for code proposals, the deterministic builder of TSB-008.
+4. binding to the validated upstream artifact.
 
-The AISEC-7 H-08 cases (C1–C4, C8) confirm that out-of-plan, protected, authority-field, invented-reference and foreign-plan outputs are refused, with zero writes and zero spawns.
+Model generation itself applies no path or protected-area policy. That policy belongs to the deterministic GeneratedChangeSet builder, not to generation. Only the two code-proposal paths, TSB-006 and TSB-007, pass their output to `buildGeneratedChangeSet()` (TSB-008), which enforces the framework prefix and the protected-path denylist. TSB-002..005 receive no builder-mediated protected-path credit. Their PASS rests on their own parse / schema / binding evidence; the plan's framework-tree check (H08-C8) belongs to TSB-005's own schema.
+
+The builder-mediated credit for TSB-006 / TSB-007 is PARTIAL. Protected-path refusal is evidenced for canonical spellings. Windows path-normalization / alias variants (8.3 short names, alternate data streams, trailing dots/spaces) are not evidenced (existing TB-10, TSB-U02). That is the same uncertainty that makes TSB-008 PARTIAL. No new defect is implied beyond it.
+
+The AISEC-7 H-08 cases (C1–C4, C8) confirm that out-of-plan, protected (canonical spellings), authority-field, invented-reference and foreign-plan outputs are refused, with zero writes and zero spawns.
 
 **Triage path (TSB-001): GAP.** It is the outlier:
 
@@ -775,7 +779,8 @@ TSB-012 process controls are sound but explicitly not a sandbox (TB-12/13/14). O
   - `QA_FRAMEWORK` resolves through a closed map.
   - `HISTORY_RUNS` is coerced via `Number()` and clamped to 1..30.
   - `HISTORY_BRANCH` and `HISTORY_JOB_NAME` are free strings used as API query values.
-  - `GITHUB_API_URL` is unpinned. That gap is existing TB-15 and is not re-raised.
+  - `GITHUB_API_URL` is unpinned (`collect-history.js:305` falls back to `https://api.github.com` only when unset). That gap is existing TB-15 and is not re-raised.
+  - The GitHub API response body is parsed with `res.json()` (`collect-history.js:128`) and no byte cap. This runs in CI on test failure (`npm run ai:history`, `cypress.yml`), and `collectHistory.main` is a root export. → **TSB-F06**.
 - **Governance CLI argv (TSB-025): PASS.** Allow-listed `--flag value` pairs, no environment fallback, an uncaught error never exits 0.
 
 ## 14. Providers / adapters
@@ -790,6 +795,7 @@ TSB-012 process controls are sound but explicitly not a sandbox (TB-12/13/14). O
 - **Publishing (TSB-031): PARTIAL.**
   - Structurally exemplary: closed, accessor-safe, frozen canonical copies; destination results are treated as untrusted.
   - The residual issues are authorization and replay: no source/destination identity cross-check (AT-04 / TB-05) and no idempotency (TB-19). These existing items are not re-raised.
+  - The Azure DevOps test-case destination (subpath `./destinations/azure-devops`) parses the creation response with `response.json()` (`azure-devops-test-case-destination.js:322`) and no byte cap. Its host is pinned to `dev.azure.com`. → **TSB-F06**.
 - **Runner report adapters (TSB-032): PARTIAL.** Reports are parsed tolerantly and not schema-validated. This is the producer side; containment checks are present, stacks are bounded, and messages are intentionally unbounded. The consumer-side consequence is captured by TSB-F07.
 
 ## 15. Public API / package / CLI
@@ -866,11 +872,11 @@ Each skip states that the ubuntu CI runner executes it. A first attempt accident
 | P-05 | Is ProjectProfile closed, bounded and accessor-safe? | Accessor values change after validation; unknown keys, control characters and a 100,000-character `displayName` accepted; live object returned. Sibling ProjectKnowledgeConfig rejects an unknown key. | TSB-F05 |
 | P-06 | Are producer bounds re-applied at context consumption? | ~2.1 million-character prompt from a 2 MiB `relevantFiles` entry; context-carried constraints used instead of the profile's. | TSB-F07 (and XI-01 context) |
 
-TSB-F06 is supported directly by source (`response.json()` / `res.json()` sites in §8A) and needs no probe.
+TSB-F06 is supported directly by source and needs no probe. The full enumeration of 6 files and 7 remote-response parse sites, plus its exclusions, is in §20 (TSB-F06 enumerated scope).
 
 **AISEC-7 harness cross-reference.**
 
-- PASS cases support TSB-006, TSB-008 (canonical spellings only; TSB-008 stays PARTIAL per TSB-U02), TSB-017, TSB-043 and TSB-046.
+- PASS cases support TSB-006 and TSB-008 for canonical spellings only (both stay PARTIAL per TB-10 / TSB-U02, as does TSB-007 through the same builder), TSB-017, TSB-043 and TSB-046.
 - FAIL / target cases (H01, H02-C1 / C3 / C4 / C5, H03-T, H05, H06, H11-C7) are existing evidence for inherited items and are not re-scored.
 - No existing test exercises a structurally invalid but self-consistent object at the TSB-009, TSB-011 or TSB-015 consumers, nor the triage result↔test binding. Those absences are part of the F01–F04 evidence.
 
@@ -1001,18 +1007,43 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 |---|---|
 | ID | TSB-F06 |
 | SEVERITY | LOW |
-| BOUNDARY | TSB-001, TSB-027, TSB-028, TSB-029 |
+| BOUNDARY | TSB-001, TSB-024, TSB-027, TSB-028, TSB-029, TSB-031 |
 | CATEGORY | Unbounded input before structural validation (availability) |
-| FILES / SYMBOLS | `groq-provider.js:145`, `gemini-provider.js:170`, `jira-requirements-provider.js:627`, `azure-devops-requirements-provider.js:693`, `:785` (`json()` on the full body). `analyze-failure.js:614` (no response-length bound). |
-| CURRENT BEHAVIOR | Bodies are buffered and parsed in full before any shape check. The six generators bound model text *after* the adapter returns; triage applies no bound at all. |
+| FILES / SYMBOLS | `json()` on the full remote body, at 7 sites in 6 files: `groq-provider.js:145` and `gemini-provider.js:170` (`analyze`), `collect-history.js:128` (`fetchJson`), `jira-requirements-provider.js:627` (`fetchAllIssues`), `azure-devops-requirements-provider.js:693` (`fetchWiqlIds`) and `:785` (`fetchAllWorkItems`), `azure-devops-test-case-destination.js:322` (`attemptCreate`). Plus `analyze-failure.js:614` (triage model text; no response-length bound). The complete list is in "TSB-F06 enumerated scope" below. |
+| CURRENT BEHAVIOR | Remote response bodies are buffered and parsed in full before any shape check, at every enumerated site: provider envelopes, the GitHub API history responses consumed by CI triage history collection, requirement-source payloads and the Azure DevOps test-case creation response. The six generators bound model text *after* the adapter returns; triage applies no bound at all. |
 | EXPECTED CONTRACT | A byte bound before buffering / parsing at every network adapter, and a character bound on triage model text, consistent with the generators' `MAX_*_RESPONSE_CHARS` discipline. |
 | SAFE EVIDENCE REFERENCE | Source references above. Contrast `generate-change-set.js` (`MAX_CHANGESET_RESPONSE_CHARS` checked before `JSON.parse`) and `automation-candidate-generator.js:676`. |
-| SECURITY IMPACT | Availability only (memory / CPU of the operator or CI process) from a misbehaving or compromised endpoint. Hosts are pinned except Jira (TB-15). No integrity or authority impact. |
-| ARCHITECTURE / API IMPACT | Adapter-internal; subpath-exported adapters keep their API. |
-| CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL`. Blocker for each affected surface that is in the enabled Controlled-v1 scope: the Groq provider path (TSB-027, including the triage model-text parse site TSB-001 when triage uses it), the Gemini provider path (TSB-027), the Jira requirement-source adapter (TSB-028) and the Azure DevOps requirement-source adapter (TSB-029). Not a blocker for a scope that enables none of these surfaces (for example, mock provider and file-based requirements only). Not an unconditional blocker and not risk-accepted. |
-| CORRECTIVE REQUIREMENT | Streamed read with a byte cap before parse; triage character cap. |
+| SECURITY IMPACT | Availability only (memory / CPU of the operator or CI process) from a misbehaving or compromised endpoint. Groq, Gemini and both Azure DevOps hosts are pinned in code. The Jira host (caller `baseUrl`) and the GitHub API host (`GITHUB_API_URL`, environment-configurable with an `https://api.github.com` fallback, `collect-history.js:305`) are not pinned; both are existing TB-15. No integrity or authority impact. |
+| ARCHITECTURE / API IMPACT | Adapter-internal; subpath-exported adapters, the destination and `collectHistory.main` keep their API. |
+| CONTROLLED-V1 RELEASE IMPACT | `CONTROLLED_V1_BLOCKER: CONDITIONAL`. Blocker whenever an affected network-response-consuming capability or surface is in the enabled Controlled-v1 scope. The affected surfaces are: (1) CI failure triage, which covers both GitHub run-history collection (`collect-history.js`, TSB-024) and, when the triage provider is Groq or Gemini, that provider path plus the triage model-text parse site (TSB-027, TSB-001); (2) the Groq or Gemini provider path for #22/#23 generation (TSB-027); (3) the Jira requirement-source adapter (TSB-028); (4) the Azure DevOps requirement-source adapter (TSB-029); (5) the Azure DevOps test-case publishing destination (TSB-031). Disabling only the Groq / Gemini / Jira / Azure requirement-source surfaces does **not** clear F06 while CI triage (history collection) or Azure DevOps test-case publishing is enabled. CI triage on the mock provider still runs GitHub history collection. F06 is clear only for a scope that enables none of the five surfaces. Not an unconditional blocker and not risk-accepted. |
+| CORRECTIVE REQUIREMENT | Streamed read with a byte cap before parse at every enumerated site; triage character cap. |
 | REVIEW REQUIREMENT | Standard independent review. |
 | DISPOSITION | OPEN — IMPLEMENTATION REQUIRED |
+
+#### TSB-F06 enumerated scope
+
+The source search ran fresh at the audited baseline. It covered every non-test tracked file for `fetch(`, `fetchImpl(`, `res.json()`, `response.json()`, `.text()`, `arrayBuffer()`, `http(s).get/request`, and Octokit / `gh api` usage. It found **6 files and 7 remote-response parse sites**. None enforces a byte bound before the body is consumed. No `content-length` check, reader cap or `maxBytes` exists in any of the 6 files.
+
+| # | File | Symbol / function | Site | Boundary | Remote service | Byte bound | Controlled-v1 capability / surface | Classification |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `scripts/ai/providers/groq-provider.js` | `GroqProvider.analyze` | `res.json()` `:145` | TSB-027 | Groq (pinned `api.groq.com`) | None | CI triage provider; #22/#23 generation | Current operational (CI triage on PRs); provider subpath export |
+| 2 | `scripts/ai/providers/gemini-provider.js` | `GeminiProvider.analyze` | `res.json()` `:170` | TSB-027 | Google Gemini (pinned `generativelanguage.googleapis.com`) | None | Triage / generation when `AI_PROVIDER=gemini` | Provider subpath export; not current CI |
+| 3 | `scripts/ai/collect-history.js` | `fetchJson` (called from `main`) | `res.json()` `:128` | TSB-024 | GitHub REST API (`GITHUB_API_URL`, unpinned, TB-15) | None | CI triage history collection | Current operational (`npm run ai:history` on test failure, Cypress and Playwright jobs); root export `collectHistory.main` |
+| 4 | `scripts/ai/providers/jira-requirements-provider.js` | `fetchAllIssues` (via `jiraFetch`) | `response.json()` `:627` | TSB-028 | Jira Cloud (caller `baseUrl`, TB-15) | None | Requirement source (RC-02) | Supported public surface (subpath export) |
+| 5 | `scripts/ai/providers/azure-devops-requirements-provider.js` | `fetchWiqlIds` (via `azureFetch`) | `response.json()` `:693` | TSB-029 | Azure DevOps (pinned `dev.azure.com`) | None | Requirement source (RC-02) | Supported public surface (subpath export) |
+| 6 | `scripts/ai/providers/azure-devops-requirements-provider.js` | `fetchAllWorkItems` (via `azureFetch`) | `response.json()` `:785` | TSB-029 | Azure DevOps (pinned `dev.azure.com`) | None | Requirement source (RC-02) | Supported public surface (subpath export) |
+| 7 | `scripts/ai/destinations/azure-devops-test-case-destination.js` | `attemptCreate` (destination `publish`) | `response.json()` `:322` | TSB-031 | Azure DevOps (pinned `dev.azure.com`) | None | Test-design publishing (if enabled) | Supported public surface (subpath `./destinations/azure-devops`, via exported `publishTestDesigns`) |
+
+The triage model-text parse (`analyze-failure.js:614`, TSB-001) is in F06 as a model-text bound, not as a network parse site.
+
+**Considered and excluded:**
+
+- `JSON.parse(response.trim())` / `JSON.parse(rawResponse.trim())` in the six generator modules (TSB-002..007). These parse provider-returned strings that were already consumed at sites 1–2, and they apply a pre-parse character bound.
+- `kernel/revalidation.js` `adapter.fetch(...)`. This is an injected interface; no in-tree network implementation exists (U-05).
+- `pr-comment-client.js` `github.rest.issues.listComments` / `createComment`. The response is consumed inside the platform-supplied Octokit client (`actions/github-script`); the repository holds no remote-body parse site, and the listing is page-bounded (`per_page: 100`). This is recorded under TSB-041 and is not an F06 site.
+- All tests and fixtures. Local-file `JSON.parse` sites belong to other boundaries (for example TSB-032 and TSB-037..039).
+
+This enumeration is complete for the audited baseline.
 
 ### TSB-F07 — Persisted triage context is consumed without a structural or size contract
 
@@ -1041,7 +1072,7 @@ Other existing `AT-*` / `PI-*` / `TB-*` items cited in §8–§17 keep their rec
 | ID | Item | Why insufficient | Effect on this audit |
 |---|---|---|---|
 | TSB-U01 | Controlled execution on Windows | Node 22 refuses `.cmd` under `shell:false` (EINVAL), so execution yields `EXECUTION_ERROR`; 6 unit cases skip on Windows | Platform-specific, fail-closed; consistent with Controlled-v1 prerequisite 6; no finding |
-| TSB-U02 | TB-10 Windows path normalization (short names, alternate data streams, trailing characters) against `isProtectedPath` | Not empirically exercised here or by existing tests; no affirmative cross-platform evidence | TSB-008 scored PARTIAL (not PASS) on this basis. Existing TB-10 unchanged in status and severity; no new finding. TSB-F01 makes the denylist absent at consumption regardless |
+| TSB-U02 | TB-10 Windows path normalization (short names, alternate data streams, trailing characters) against `isProtectedPath` | Not empirically exercised here or by existing tests; no affirmative cross-platform evidence | TSB-008 (the builder) and TSB-006 / TSB-007 (model-generated change-set paths whose protected-path enforcement is that builder) scored PARTIAL (not PASS) on this basis. Existing TB-10 unchanged in status and severity; no new finding. TSB-F01 makes the denylist absent at consumption regardless |
 | TSB-U03 | Real-provider truncation / safety-block behavior (`finish_reason` / `finishReason`) | No live-provider testing authorized | Downstream parsers fail closed on malformed text; recorded only |
 | TSB-U04 | Substance of `C2-SR-01` / `C2-SR-02` | Content not restated in tracked files | Preserved as labels and dispositions only |
 | TSB-U05 | Operational behavior of governance 1F with a live CI-evidence adapter | Tooling not CI-wired; no live adapter exists | TSB-043 PARTIAL |
@@ -1058,7 +1089,7 @@ No boundary is scored `UNKNOWN`. Each item above is bounded and named.
 | TSB-F03 | LOW | CONDITIONAL | Controlled execution (#23G / RC-08) enabled |
 | TSB-F04 | LOW | CONDITIONAL | CI failure triage / PR reporting in the enabled scope |
 | TSB-F05 | LOW | CONDITIONAL | ProjectProfile-consuming capabilities exposed through the supported external surface |
-| TSB-F06 | LOW | CONDITIONAL | Groq or Gemini provider path, or Jira or Azure DevOps requirement-source adapter, in the enabled scope (per affected surface) |
+| TSB-F06 | LOW | CONDITIONAL | Any affected network-response-consuming capability / surface in the enabled scope (per affected surface): CI triage (GitHub history collection, plus the Groq / Gemini triage provider path), Groq / Gemini generation, the Jira requirement-source adapter, the Azure DevOps requirement-source adapter, or the Azure DevOps test-case publishing destination |
 | TSB-F07 | LOW | CONDITIONAL | CI failure triage in the enabled scope (same as XI-01 / XI-02); non-history context fields only |
 | XI-01 / XI-02 | MEDIUM | Unchanged existing disposition | `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED` |
 
@@ -1066,14 +1097,14 @@ No boundary is scored `UNKNOWN`. Each item above is bounded and named.
 
 | Category | Findings |
 |---|---|
-| Current operational path | F04, F07 (CI triage on pull requests); F06 for the Groq adapter |
-| Supported public API | F05 (`assertValidProjectProfile`); F04 / F07 output and input contract of `analyzeFailure.main`; F06 Jira / Azure subpath adapters |
+| Current operational path | F04, F07 (CI triage on pull requests); F06 for the Groq adapter (CI triage provider) and for GitHub history collection (`collect-history.js`, run by `npm run ai:history` on test failure in the Cypress and Playwright CI jobs) |
+| Supported public API | F05 (`assertValidProjectProfile`); F04 / F07 output and input contract of `analyzeFailure.main`; F06: Groq / Gemini provider subpaths, Jira / Azure DevOps requirement-source subpath adapters, the Azure DevOps test-case destination subpath (`./destinations/azure-devops`, reached through exported `publishTestDesigns`), and root-exported `collectHistory.main` |
 | Internal / private only (#23, not packaged) | F01, F02, F03 |
 | Platform-specific | TSB-U01 |
 | Future / hypothetical | F02's latent consumer case |
 | Governance-only | none |
 
-The Controlled-v1 target chain explicitly includes human approval → safe application → controlled execution (`OD-CONTROLLED-V1-RELEASE-MODEL` §1). If that chain is enabled as planned, F01 and F03 become blockers. If triage on Groq is in scope, F04, F06 and F07 also become blockers. This audit **does not approve Controlled Release**.
+The Controlled-v1 target chain explicitly includes human approval → safe application → controlled execution (`OD-CONTROLLED-V1-RELEASE-MODEL` §1). If that chain is enabled as planned, F01 and F03 become blockers. If triage is in scope, F04, F06 and F07 also become blockers. For F06 that holds whichever provider triage uses, because GitHub history collection runs in the triage flow independently of the provider. F06 is also a blocker if any other enumerated F06 surface is enabled. This audit **does not approve Controlled Release**.
 
 ## 23. Remediation dependency graph
 
@@ -1098,7 +1129,11 @@ SADR-05 / FI-05 (XI-01, XI-02; existing, separately authorized)
         +--> TSB-F04 result<->test binding + closed report schema  (versioned ai-report.json)
                     ^
                     |
-              TSB-F06 triage pre-parse bound (shares the parse site); adapter byte caps independent
+              TSB-F06 triage pre-parse bound (shares the parse site)
+
+TSB-F06 network byte caps (independent of the above; one corrective per site, may share a helper):
+     Groq / Gemini adapters (TSB-027) ; collect-history fetchJson (TSB-024; TB-15 host remains separate)
+     Jira / Azure DevOps requirement adapters (TSB-028/029) ; Azure DevOps test-case destination (TSB-031)
 
 TSB-F05: architecture decision (public validator compatibility)  -->  closed snapshotting ProjectProfile
          --> prerequisite for any authentic profile<->root<->context join (SADR-01, XI-01)
@@ -1144,8 +1179,9 @@ AUDIT:                 Type & Schema Boundary Audit v1 — repository-wide
 BASELINE:              9e09027c1973171b168ae25edbfecae79e4a2dc3 / TREE d7c8c497d487c90ba3d6bcb135970aef1b8a9f35
 TRACKED FILES:         439 (55 BOUNDARY_SURFACE, 47 CONTRACT_MODEL, 78 BOUNDARY_SUPPORT,
                        226 TEST / FIXTURE, 33 NO_RELEVANT_BOUNDARY, 0 UNKNOWN)
-BOUNDARIES:            46 (18 PASS, 20 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE)
-                       TSB-008 PARTIAL (TB-10 / TSB-U02; no new finding)
+BOUNDARIES:            46 (16 PASS, 22 PARTIAL, 8 GAP, 0 UNKNOWN, 0 NOT_APPLICABLE)
+                       TSB-006 / TSB-007 / TSB-008 PARTIAL (TB-10 / TSB-U02; no new finding)
+TSB-F06 SCOPE:         6 files / 7 remote-response parse sites (complete; §20) + triage model text
 UNIT TESTS (Node 22):  5627 / 5618 pass / 0 fail / 9 skip
 NEW FINDINGS:          7 — TSB-F01 MEDIUM; TSB-F02..F07 LOW; all OPEN
 CONTROLLED-V1:         CONDITIONAL blockers F01, F02, F03, F04, F05, F06, F07; none NO
