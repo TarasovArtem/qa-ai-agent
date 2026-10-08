@@ -2,7 +2,7 @@
 
 This document provides a technical orientation to the current QA AI Agent architecture without duplicating the full security, governance, roadmap, and completed-track evidence records.
 
-For normative boundaries and exact lifecycle state, use the owning documents linked throughout this page. For completed-track detailed engineering evidence formerly embedded in the root README, use [`engineering-history-v1.md`](engineering-history-v1.md) via the stable evidence index in [`../README.md`](../README.md).
+For normative boundaries and exact lifecycle state, use the owning documents linked throughout this page. For completed-track engineering evidence, start from the stable evidence index in [`../README.md`](../README.md), which leads to the compact evidence index [`engineering-history-v1.md`](engineering-history-v1.md). The detailed historical implementation/governance chronology formerly embedded in the root README is preserved in the frozen archive [`engineering-history-archive-v1.md`](engineering-history-archive-v1.md).
 
 ## 1. System purpose
 
@@ -234,7 +234,8 @@ This overview does not redefine the repository's established authority tiers. It
 | `README.md` | project landing page, quick start, stable completed-track evidence index/anchors |
 | `docs/README.md` | non-normative documentation navigation |
 | `docs/system-overview.md` | technical orientation only |
-| `docs/engineering-history-v1.md` | preserved completed-track detailed engineering evidence referenced through README |
+| `docs/engineering-history-v1.md` | compact completed-track evidence index referenced through README |
+| `docs/engineering-history-archive-v1.md` | frozen detailed historical evidence archive (byte-identical pre-refactor README evidence body) |
 | `ROADMAP.md` | canonical current lifecycle/status/sequence and delivery-state record |
 | `SECURITY.md` | operational security and AI-provider/credential authority/boundaries |
 | `PROVIDERS.md` | RTI-7 Requirements Source Provider authoring contract |

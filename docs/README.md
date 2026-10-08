@@ -10,7 +10,8 @@ When documents overlap, use the document that owns the relevant contract/state. 
 
 - [`ROADMAP.md`](../ROADMAP.md) — canonical current lifecycle/status/sequence and durable delivery-state record.
 - [`README.md`](../README.md) — project landing page plus authoritative entry point/index for completed-track detailed engineering evidence.
-- [`engineering-history-v1.md`](engineering-history-v1.md) — versioned completed-track technical evidence incorporated by the README evidence index.
+- [`engineering-history-v1.md`](engineering-history-v1.md) — compact completed-track evidence index incorporated by the README evidence index; it routes to the frozen archive for detailed evidence.
+- [`engineering-history-archive-v1.md`](engineering-history-archive-v1.md) — frozen, byte-identical pre-refactor detailed historical evidence archive (the detailed completed-track evidence body formerly embedded in the root README).
 - [`SECURITY.md`](../SECURITY.md) — authoritative operational security boundaries, including the Mock/Groq/Gemini AI-provider boundary and known limitations.
 - [`PROVIDERS.md`](../PROVIDERS.md) — RTI-7 **Requirements Source Provider** authoring contract; this is not the Mock/Groq/Gemini AI-provider contract.
 - [`PUBLISHING.md`](../PUBLISHING.md) — RTI-8 Test Design Destination/publishing contract.
@@ -27,7 +28,8 @@ If a future GitHub Wiki is introduced, it **must not** be authoritative for arch
 
 - [`../README.md`](../README.md) — project summary, capabilities, maturity snapshot, architecture-at-a-glance, essential commands, limitations, and stable evidence-entry anchors.
 - [`system-overview.md`](system-overview.md) — current technical orientation to the reactive failure-triage and generative test-design/test-automation paths.
-- [`engineering-history-v1.md`](engineering-history-v1.md) — preserved detailed completed-track engineering evidence formerly embedded in the root README.
+- [`engineering-history-v1.md`](engineering-history-v1.md) — compact completed-track evidence index.
+- [`engineering-history-archive-v1.md`](engineering-history-archive-v1.md) — frozen detailed historical evidence archive, preserved byte-for-byte from the pre-refactor root README.
 - [`../ROADMAP.md`](../ROADMAP.md) — exact current lifecycle/status/sequence and delivery-state history.
 
 ### Security and trust model
@@ -75,7 +77,7 @@ If a future GitHub Wiki is introduced, it **must not** be authoritative for arch
 |---|---|
 | What is QA AI Agent? | [`../README.md`](../README.md) |
 | How do the main runtime paths fit together? | [`system-overview.md`](system-overview.md) |
-| Where is completed-track detailed engineering evidence? | [`../README.md#detailed-engineering-history`](../README.md#detailed-engineering-history) → [`engineering-history-v1.md`](engineering-history-v1.md) |
+| Where is completed-track detailed engineering evidence? | [`../README.md#detailed-engineering-history`](../README.md#detailed-engineering-history) → [`engineering-history-v1.md`](engineering-history-v1.md) (compact index) → [`engineering-history-archive-v1.md`](engineering-history-archive-v1.md) (frozen detailed archive) |
 | What is complete or currently in progress? | [`../ROADMAP.md`](../ROADMAP.md) |
 | What authority does the AI have? | [`../SECURITY.md`](../SECURITY.md) |
 | How do Mock/Groq/Gemini AI providers fit in? | [`../SECURITY.md`](../SECURITY.md) and [`system-overview.md#35-ai-provider-boundary`](system-overview.md#35-ai-provider-boundary) |
@@ -108,7 +110,7 @@ The root README should remain useful to a first-time reader while also satisfyin
 - stable evidence-entry headings/anchors required by canonical references;
 - links to the versioned detailed evidence and owning contract documents.
 
-Long implementation chronology and worked contract evidence should live in version-controlled owning documents such as `engineering-history-v1.md`, not be duplicated across the landing page.
+Long implementation chronology and worked contract evidence should live in version-controlled owning documents — the compact index `engineering-history-v1.md` and the frozen detailed archive `engineering-history-archive-v1.md` — not be duplicated across the landing page.
 
 ## What may belong in a future Wiki
 
