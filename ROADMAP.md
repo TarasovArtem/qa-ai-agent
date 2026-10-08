@@ -2739,14 +2739,19 @@ release blocker for that release scope, and the finding stays `OPEN`.
 
 - `TSB-F01` — implementation required before Controlled v1 when Safe
   Application is enabled; for the target Controlled-v1 Safe Application chain
-  it is a **release blocker**.
+  it is a **release blocker**. Future corrective review requires `HEAVY`
+  Architecture + Security review.
 - `TSB-F03` — implementation required before Controlled v1 when Controlled
   Execution is enabled; for target Controlled Execution it is a **release
   blocker**. Preferred sequencing may coordinate `TSB-F01` + `TSB-F03` into one
   consumer-revalidation hardening stream if scope remains justified.
 - `TSB-F05` — architecture decision required before implementation; if the
   Controlled-v1 supported surface uses ProjectProfile-consuming capabilities it
-  is a **release blocker until architecture decision + remediation**.
+  is a **release blocker until architecture decision + remediation**. This
+  disposition does **not** authorize breaking public-contract narrowing; any
+  compatibility / versioning / deprecation decision or breaking contract change
+  requires its own separately governed architecture decision and implementation
+  authorization.
 - `TSB-F06` — implementation required for every affected network surface
   enabled in Controlled v1; future corrective design includes the `ADV-01`
   bounded-time requirement.
@@ -2762,6 +2767,21 @@ release blocker for that release scope, and the finding stays `OPEN`.
   distinct.
 - `XI-01`/`XI-02` remain
   `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED`.
+
+**Preferred remediation sequencing — NOT ACTIVATED.** This is planning /
+sequencing only under `WIP = 1` (no parallel engineering streams). It does
+**not** authorize implementation and does **not** activate remediation. The
+approved preferred order is:
+
+1. `TSB-F01` + `TSB-F03` — authority escalation / Safe Application /
+   Controlled Execution hardening;
+2. `TSB-F05` — architecture decision first, then implementation only if
+   applicable;
+3. `TSB-F06` + `ADV-01` — enabled network surfaces and bounded-time
+   requirement;
+4. `TSB-F02` — only if a dependent supported consumer is introduced;
+5. `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` — before triage capability
+   enablement.
 
 This record states no remediation branch, PR, implementation scope or technical
 design beyond that approved disposition.
