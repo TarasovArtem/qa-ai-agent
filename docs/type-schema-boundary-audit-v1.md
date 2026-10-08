@@ -4,7 +4,7 @@
 |---|---|
 | Artifact | `docs/type-schema-boundary-audit-v1.md` |
 | Gate | Type & Schema Boundary Audit (distinct Controlled-v1 gate; ROADMAP §7, `OD-CONTROLLED-V1-RELEASE-MODEL` §3 item 2) |
-| Authority | `OD-TYPE-SCHEMA-AUDIT-START` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-ARTIFACT-RECOVERY` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-C1` — APPROVED (artifact corrective C1: SR-AD-01..04); `OD-TYPE-SCHEMA-AUDIT-C2` — APPROVED (artifact corrective C2: SR-AD-05..06) |
+| Authority | `OD-TYPE-SCHEMA-AUDIT-START` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-ARTIFACT-RECOVERY` — APPROVED; `OD-TYPE-SCHEMA-AUDIT-C1` — APPROVED (artifact corrective C1: SR-AD-01..04); `OD-TYPE-SCHEMA-AUDIT-C2` — APPROVED (artifact corrective C2: SR-AD-05..06); `OD-TYPE-SCHEMA-AUDIT-C3` — APPROVED (artifact corrective C3: SR-AD-07..09) |
 | Issue | #226 (OPEN / ACTIVE) |
 | Branch | `audit/type-schema-boundary-audit` |
 | Nature | Read-only audit. No remediation, no finding closure, no risk acceptance, no release grant. |
