@@ -4,6 +4,8 @@ Status: FROZEN COMPLETED-TRACK EVIDENCE RECORD
 
 This document preserves the detailed engineering evidence that previously lived only in the root `README.md` before DOC-REF-1. It is an archival technical-evidence record, not the source of current lifecycle state.
 
+For governance compatibility, this versioned file is **incorporated by reference into the root README's completed-track evidence record**. The root README remains the stable evidence entry point/anchor surface; this file holds the detailed body so the landing page can stay concise without deleting evidence.
+
 - Current execution sequence/status: [`../ROADMAP.md`](../ROADMAP.md)
 - Current operational security boundaries: [`../SECURITY.md`](../SECURITY.md)
 - Requirements-source provider contract: [`../PROVIDERS.md`](../PROVIDERS.md)
