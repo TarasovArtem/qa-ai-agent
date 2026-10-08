@@ -13,7 +13,7 @@ The core safety principle is simple:
 
 > **AI proposes. Deterministic code validates. Humans authorize authority escalation.**
 
-This README is intentionally short as a landing page. For governance compatibility it also remains the authoritative **entry point/index** for completed-track detailed engineering evidence; the preserved versioned evidence record is [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md).
+This README is intentionally short as a landing page. For governance compatibility it also remains the authoritative **entry point/index** for completed-track detailed engineering evidence. The versioned evidence body in [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) is **incorporated by reference into this README evidence record** rather than duplicated inline.
 
 ---
 
@@ -224,7 +224,7 @@ See [`SECURITY.md`](SECURITY.md), [`ROADMAP.md`](ROADMAP.md), and [`docs/enginee
 
 ## Detailed engineering history
 
-The detailed completed-track evidence formerly embedded in this README is preserved in [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md). This heading is retained as the stable README evidence entry point required by canonical governance references.
+The detailed completed-track evidence formerly embedded in this README is preserved in [`docs/engineering-history-v1.md`](docs/engineering-history-v1.md) and incorporated by reference into this README evidence record. This heading is retained as the stable README evidence entry point required by canonical governance references.
 
 ## Roadmap RTI — Requirements & Test-Design Integration
 
