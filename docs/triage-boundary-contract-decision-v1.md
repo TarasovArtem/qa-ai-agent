@@ -1,631 +1,350 @@
 # Triage Boundary Contract Decision v1
 
-Status: DESIGN CORRECTIVE C1 / NOT IMPLEMENTED / NOT MERGED  
-Authority: `OD-TRIAGE-BOUNDARY-DESIGN — APPROVED`; `OD-TRIAGE-BOUNDARY-DESIGN-C1 — APPROVED`  
+Status: DESIGN CORRECTIVE C2 / NOT IMPLEMENTED / NOT MERGED  
+Authority: `OD-TRIAGE-BOUNDARY-DESIGN — APPROVED`; `OD-TRIAGE-BOUNDARY-DESIGN-C1 — APPROVED`; `OD-TRIAGE-BOUNDARY-DESIGN-C2 — APPROVED`  
 Review class: `HEAVY`  
-Required independent reviews after C1: Senior Architecture re-review + Security review  
 Baseline main: `acf127024ea1fe76eb9945e8bbf26d32b54cb772`  
 Baseline TREE: `651f40ff95f1f4a6d90739f5ae6f2a15b588c8ab`  
-Previous rejected design HEAD: `9040725187c21c2d78d96370ce399562cd79b243`
+Previous rejected HEADs: `9040725187c21c2d78d96370ce399562cd79b243`, `5c80ed103b29c595a54a00a92e9cee09ac464c58`  
+Previous C1 TREE: `846be8323241150a5de3d3c13567489ba7c6745d`
 
-## 1. Decision purpose
+## 1. Purpose and lifecycle boundary
 
-This document defines the remediation design for the single active WIP:
+Single active WIP:
 
 `TSB-F04 + TSB-F07 + XI-01 + XI-02`.
 
-It is a design contract only. It does not close, waive, re-rate or risk-accept any finding and does not authorize implementation or merge.
+This document defines design only. It does not authorize implementation, merge, finding closure, waiver, re-rating or risk acceptance.
 
-The four findings remain separate governance identities even though they share one runtime triage data flow. A single internal contract authority may implement common validation primitives, but closure evidence must remain independently traceable to each finding.
+C1 already resolved `ARCH-B01`, `ARCH-M01..M04`, `ARCH-m01..m05`, `ARCH-I03`, `ARCH-I04`, plus the GitHub Actions side of `ARCH-B02`. C2 resolves the remaining `ARCH-C1-B01` local/direct decision and the two minor findings `ARCH-C1-m01` and `ARCH-C1-m02`.
 
-This C1 corrects the Architecture review findings `ARCH-B01`, `ARCH-B02`, `ARCH-M01..M04`, `ARCH-m01..m05`, and clarifies `ARCH-I03` / `ARCH-I04`.
+Product Owner decision: **FULL PROJECT INDEPENDENCE / LOCAL EXECUTION remains supported**. It is versioned, not withdrawn or converted to expected failure.
 
-## 2. Canonical finding ownership
+## 2. Finding ownership
 
-### TSB-F04 — provider triage output contract and binding
+### TSB-F04
 
-Canonical problem: provider analysis output is only partially shape-validated and is not strongly bound to the exact failed-test evidence being analyzed. Unknown keys are accepted, result cardinality/order/identity are not closed against the current failed-test set, and model-supplied test identity can reach downstream report/comment surfaces.
+Owns the closed provider-result schema, bounded fields, exact result cardinality, exact result-to-failed-test binding, rejection of stale/duplicate/missing/unknown results, and authoritative test identity reconstructed from the local validated failure snapshot before report persistence.
 
-TSB-F04 owns:
+It does not own provider transport or `SEC-F06-I1`.
 
-- the closed provider-result structural contract;
-- bounded provider-visible result fields;
-- exact result cardinality;
-- deterministic binding of each result to the current failed-test input;
-- rejection of duplicate, missing, stale or mismatched result identity;
-- authoritative failed-test identity sourced from the local validated failure snapshot, not from model text;
-- fail-closed consumption before `ai-report.json` is persisted.
+### TSB-F07
 
-It does not own provider transport retry policy or `SEC-F06-I1`.
+Owns the closed bounded non-History persisted `context.json` contract, real Cypress/Playwright variants, snapshots, total artifact bound and fail-closed read/consume behavior.
 
-### TSB-F07 — persisted triage context contract, excluding History semantics
+It does not receive closure credit for embedded History; that is XI-02.
 
-Canonical problem: persisted triage context is accepted with permissive shape and insufficient explicit field/cap validation before later triage consumption.
+### XI-01
 
-TSB-F07 owns the non-History persisted context boundary, including:
+Owns binding of persisted context to independently trusted **current invocation** state. Values copied from persisted context never become their own trust anchor.
 
-- exact top-level context fields;
-- exact nested metadata/test-result/failure/relevant-file/correlation shapes;
-- bounded arrays, strings, maps and total artifact size;
-- rejection of unknown fields at governed persisted boundaries;
-- deterministic snapshotting before subsequent use;
-- fail-closed read/aggregate/analyze behavior for malformed non-History context.
+C2 defines two explicit modes:
 
-TSB-F07 does **not** receive closure credit for the canonical XI-02 embedded-History replay gap. Embedded `context.history` handling belongs to XI-02.
+- `github-actions-v1`
+- `local-v1`
 
-### XI-01 — trusted current invocation to persisted-context binding
+There is no implicit fallback between modes.
 
-Canonical problem: ProjectProfile identity plus repository-root containment is insufficient if a stale context from another project/run is copied into the expected path and relabelled with the current project id.
+### XI-02
 
-XI-01 owns relationship validation between independently trusted current invocation state and the persisted context consumed by triage.
+Owns closed `history.json` variants, project/framework eligibility, bounded metrics, rejection of embedded `context.history`, one authoritative History projection for prompt/report, and `H06-C1`/`H06-C2` closure evidence.
 
-It must bind the persisted context to independently validated current-run evidence where such evidence exists. Values copied from the persisted context itself are never allowed to become their own trust anchor.
+## 3. Selected architecture
 
-### XI-02 — History artifact, embedded-History replay, projection and consistency
-
-Canonical problem: History is intentionally cross-run evidence, but both the separate `history.json` artifact and any embedded `context.history` material can become replay/substitution channels if they are not governed by one explicit authority.
-
-XI-02 explicitly owns:
-
-- the `history.json` persisted schema;
-- available/unavailable History variants;
-- project/framework eligibility of usable History;
-- numeric consistency and bounded fields;
-- projection of only approved aggregate History to provider-visible context;
-- rejection or deterministic removal of embedded `context.history` as an independent History source;
-- the invariant that prompt-visible History and report-visible History derive from the same validated authoritative projection;
-- preservation of `no usable history` versus legitimate zero-count History.
-
-This directly covers the canonical gap:
-
-`ineligible separate history does not clear embedded context history`.
-
-AISEC-7 `H06-C1` and `H06-C2` are mandatory XI-02 closure evidence.
-
-## 3. Boundary ownership matrix
-
-| Boundary | Producer / source | Consumer | Trust owner | Finding |
-| --- | --- | --- | --- | --- |
-| Provider analysis JSON | LLM/provider | `analyze-failure.js` | closed response schema + exact failed-test binding + authoritative local identity | TSB-F04 |
-| `reports/ai/context.json` non-History fields | collector / browser aggregator | analyzer/report/prompt | closed persisted schema + bounds | TSB-F07 |
-| Current invocation ↔ persisted context | validated ProjectProfile/root + validated current CI tuple when present | analyzer | independent identity equality / freshness | XI-01 |
-| Separate `history.json`, embedded `context.history`, prompt/report History | history collector / persisted artifacts | analyzer/prompt/report | single validated History authority + projection | XI-02 |
-
-Overlap is intentional at validation seams, not at finding identity.
-
-The analyzer is the authoritative XI-01 fail-closed gate. The aggregator may validate inputs for correctness, but aggregator refusal is not sufficient security enforcement because raw context may still remain on disk and be consumed later.
-
-## 4. Current data flow and trust classification
-
-Current operational flow:
-
-1. Target bootstrap supplies ProjectProfile and repository root.
-2. `collect-context.js` validates them, collects adapter/runtime evidence and persists `reports/ai/context.json`.
-3. `collect-history.js` validates profile/root, aggregates prior CI history and persists `reports/ai/history.json`.
-4. Browser artifacts may be combined by `aggregate-browser-context.js`.
-5. `analyze-failure.js` reads persisted context/history, enriches context, builds prompts and invokes a provider.
-6. Provider text is bounded by TSB-F06 before parse and partially validated afterward.
-7. Analysis is persisted to `ai-report.json`.
-
-Trust classes:
-
-- Provider output: untrusted/provider-controlled.
-- ProjectProfile snapshot: trusted only after TSB-F05 central inspection.
-- Repository root: trusted only after existing root validation.
-- Persisted context/history: untrusted at each read boundary even though repository-local.
-- Test failure content, relevant files and historical evidence: evidence, never authority.
-- Environment/CI values: not trusted merely because they exist; they become trusted only after a dedicated current-invocation validator establishes presence, format and execution-context preconditions.
-
-## 5. Selected architecture
-
-### One internal triage-boundary authority — SELECTED
-
-Introduce one non-public internal module, tentatively:
+Use one non-public internal authority, tentatively:
 
 `scripts/ai/triage-boundary-contract.js`
 
-It owns canonical validation/snapshot primitives for:
+It owns validation/snapshot helpers for context, invocation binding, History and provider-result binding.
 
-- persisted triage context;
-- current invocation binding;
-- separate/embedded History handling;
-- provider-result binding.
+It remains internal: no new root export, package export or package `files` expansion.
 
-The module should remain a leaf/internal authority where practical and must not be root-exported or added to package exports.
+It must not depend on excluded runtime modules such as `normalized-failure.js` unless package evidence proves they are shipped without changing package scope.
 
-It must not depend on excluded package-only implementation modules (for example `normalized-failure.js`) unless installed-package evidence proves that dependency is shipped safely without changing package publication scope.
+Rejected: duplicated validators, self-digest-only provenance, disabling local execution, fake CI variables for local execution, cryptographic signing/key management.
 
-### Rejected alternatives
+## 4. Persisted context contract — TSB-F07
 
-- duplicated ad-hoc validators in each caller;
-- self-digest-only provenance;
-- signing/encryption/key-management scope expansion.
+Future implementation defines `PersistedTriageContextV1`.
 
-Cryptographic authenticity is not required by these findings. If implementation proves otherwise, STOP for Product Owner design disposition.
+Required properties:
 
-## 6. Persisted context contract — TSB-F07
+- `schemaVersion: 1`;
+- explicit total byte cap enforced before complete buffering/parsing;
+- closed top-level/nested shapes;
+- real `{found:false}` and `{found:true, totals, specs[]}` test-result variants;
+- nullable Cypress stats where currently legitimate;
+- Cypress suite/status;
+- optional Playwright `projectId`/`projectName`;
+- null correlation values where current producers use them;
+- bounded `knownProjectConstraints`, warnings and relevant files;
+- existing relevant-file limits preserved: 20 KiB per file, 150 KiB aggregate;
+- no silent consumer truncation of legitimate long errors; choose a measured bounded maximum and reject over-bound artifacts;
+- detached authoritative snapshots after validation.
 
-Implementation must define a closed `PersistedTriageContextV1` internal artifact contract.
+`metadata` includes governed project/framework/repository/commit/branch/run/event/browser fields plus XI-01 fields:
 
-### 6.1 Versioning and supported contract impact
+- `runAttempt`: required in `github-actions-v1`, `null` in `local-v1`;
+- `localInvocationId`: required in `local-v1`, `null` in `github-actions-v1`.
 
-`context.json` is a supported artifact/behavior contract even though it is not a root export.
+Persisted invocation fields are evidence only. The analyzer obtains expected values independently from current runtime state.
 
-Newly produced context should carry `schemaVersion: 1`, subject to HEAVY review approval.
+For failure-bearing context, persisted constraints equal the validated ProjectProfile snapshot. The legitimate zero-failure producer case may keep `knownProjectConstraints: []`.
 
-Legacy/unversioned context must not be silently normalized. If a currently supported legitimate consumer requires legacy acceptance, implementation must STOP for Product Owner disposition rather than add a permissive fallback.
+Embedded `context.history` is not accepted; XI-02 owns its rejection.
 
-### 6.2 Total artifact byte bound
-
-The implementation must define an explicit maximum byte size for `context.json` and enforce it before complete buffering/parsing at every governed read boundary.
-
-The exact constant must be justified from current legitimate fixtures plus bounded producer maxima. It may not be left effectively unbounded.
-
-### 6.3 Closed top-level shape
-
-The governed persisted form includes only fields proven necessary by current producers/consumers, including:
-
-- `schemaVersion`
-- `generatedAt`
-- `metadata`
-- `testResults`
-- `failedTests`
-- `relevantFiles`
-- `knownProjectConstraints`
-- `warnings`
-- `browserCorrelation` where legitimately present, including `null` where current producers use null
-- `frameworkCorrelation` where legitimately present, including `null` where current producers use null
-
-`context.history` is not accepted as an independent History source. Its disposition is governed by XI-02, not TSB-F07.
-
-Ephemeral analyzer fields such as `relevantKnowledge` are not persisted unless independently justified.
-
-### 6.4 Metadata
-
-`metadata` must be closed and bounded with explicit nullable/optional semantics for current producer fields such as:
-
-- project identity;
-- framework;
-- repository;
-- commit;
-- branch;
-- run id;
-- event;
-- browser;
-- CI-related provenance.
-
-`projectId` reuses TSB-F05 ProjectProfile semantics.
-
-### 6.5 `testResults` actual variants
-
-The contract must model the real supported variants rather than a generic numeric summary:
-
-- `{ found: false, ...governed-current-fields }`
-- `{ found: true, totals, specs[] , ...governed-current-fields }`
-
-Cypress per-spec statistics may be nullable where current producer evidence permits null.
-
-Do not impose arithmetic consistency rules that current Cypress aggregation semantics do not guarantee.
-
-### 6.6 `failedTests` real variants
-
-The closed schema must be derived from actual supported Cypress and Playwright producer outputs, not from `normalized-failure.js` alone.
-
-It must account for legitimate fields including:
-
-- common identity/failure fields;
-- Cypress `suite` / `status` where produced;
-- optional Playwright per-failure `projectId` / `projectName` where produced.
-
-The new contract module must not import an excluded implementation module merely to define this schema.
-
-### 6.7 Legitimate long error messages
-
-Current Cypress error messages may be legitimately long and are not currently producer-truncated.
-
-C1 selects this compatibility rule:
-
-- do not silently truncate at the consumer;
-- define a bounded artifact/field maximum high enough for measured legitimate fixtures;
-- reject artifacts that exceed the governed maximum;
-- if measured current supported fixtures exceed the proposed maximum, adjust the design constant before implementation rather than breaking valid traffic.
-
-Producer-side truncation is not selected because it would change evidence semantics.
-
-### 6.8 Relevant files
-
-Preserve existing producer limits:
-
-- 20 KiB per relevant file content;
-- 150 KiB aggregate relevant-file content.
-
-Consumption must re-enforce those limits plus bounded path/count/entry shape.
-
-### 6.9 Constraints
-
-`knownProjectConstraints` must be a closed bounded string array.
-
-For contexts containing one or more failures, XI-01 requires equality with the authoritative ProjectProfile snapshot.
-
-For the legitimate zero-failure producer case, `knownProjectConstraints: []` is accepted and is not required to deep-equal a non-empty profile constraint list. This exception is valid only on the zero-failure path and must not be generalized to failure-bearing contexts.
-
-### 6.10 Warnings and correlation
-
-Warnings must be bounded dense strings.
-
-Correlation objects use existing projection vocabularies and may be `null` where current supported producer behavior allows it. Unknown nested material is rejected.
-
-## 7. XI-01 trusted invocation binding
-
-### 7.1 Authoritative gate
+## 5. XI-01 common gate
 
 The analyzer is the authoritative XI-01 enforcement point.
 
-Do not change `aggregateBrowserContext.main({ repositoryRoot })` to require ProjectProfile under this design; that would change a root-exported signature and requires separate authority.
+Do not change the root-exported `aggregateBrowserContext.main({repositoryRoot})` signature. Aggregator checks are defense-in-depth only; analyzer revalidates raw persisted context even if aggregation refused input.
 
-The analyzer must validate/bind the persisted context even if aggregation previously refused an input.
+Before any provider call or report persistence, all modes require:
 
-### 7.2 Trusted ProjectProfile/root checks
+1. validated ProjectProfile;
+2. validated repository root and context-file containment;
+3. `context.metadata.projectId === validatedProjectProfile.id`;
+4. for failure-bearing context, exact constraints equality;
+5. selection and validation of exactly one trusted invocation mode;
+6. exact persisted-context binding to that trusted invocation.
 
-Always require before any report persistence or provider call:
+Zero-failure context is not exempt from these checks.
 
-1. `context.metadata.projectId === validatedProjectProfile.id`;
-2. root containment of the context file under the validated repository root;
-3. for failure-bearing context, `knownProjectConstraints` equals the validated ProjectProfile snapshot constraints.
+## 6. `github-actions-v1` — CI trust model
 
-These checks alone do **not** close H05-C2.
+### 6.1 Mode predicate
 
-### 7.3 Validated current CI invocation tuple — selected H05-C2 control
+The supported CI predicate is exactly:
 
-For supported GitHub Actions triage flows, define an internal `TrustedInvocationV1` from independently supplied runtime state, not from `context.json`.
+`GITHUB_ACTIONS === "true"`.
 
-Required current-run fields:
+If true, all mandatory tuple fields must exist and validate. Missing/partial/invalid state fails closed and must not fall back to local mode.
 
-- repository identity;
-- commit SHA;
-- run ID.
+If false, GitHub variables such as `GITHUB_REPOSITORY` do not grant XI-01 CI authority by themselves.
 
-Optional/secondary fields may include workflow/event/branch only where current workflow semantics make them stable and independently available.
+### 6.2 Trusted tuple
 
-The validator must:
+Build detached `TrustedInvocationV1` from current process runtime values:
 
-1. read these values from the current CI runtime source;
-2. verify that the process is actually in the supported CI mode before granting them authority;
-3. validate strict field formats and non-empty normalized values;
-4. build a detached trusted snapshot;
-5. compare persisted `metadata.repository`, `metadata.commit`, and `metadata.runId` against that trusted snapshot before provider invocation or report persistence.
+- `GITHUB_REPOSITORY`;
+- `GITHUB_SHA`;
+- `GITHUB_RUN_ID`;
+- `GITHUB_RUN_ATTEMPT`.
 
-The persisted context may never supply or override the expected tuple.
+Validate strict formats and non-empty normalized values before trusting them.
 
-### 7.4 Freshness / replay policy
+Persisted metadata must exactly match repository, SHA, run ID and run attempt.
 
-For the supported same-run triage path, exact equality to the trusted current repository/SHA/run ID is the freshness rule.
+### 6.3 Freshness
 
-A context from another run — even from the same project — is not valid current triage input and fails closed.
+Freshness is exact equality of:
 
-This directly closes stale/foreign-run relabel case `H05-C2`.
+`repository + SHA + run ID + run attempt`.
 
-### 7.5 Absence and local/direct invocation
+Context from another repository, commit, run or another attempt of the same run fails closed.
 
-Outside the supported CI path, absence of an independently trusted current repository/SHA/run tuple must not silently degrade to "trust the persisted metadata".
+This resolves `ARCH-C1-m01`: `GITHUB_RUN_ATTEMPT` is mandatory when GitHub Actions mode is active.
 
-Rules:
+This resolves `ARCH-C1-m02`: CI-mode selection is the explicit `GITHUB_ACTIONS === "true"` predicate; contradictory or incomplete CI state fails closed.
 
-- if a root-exported/direct caller performs persisted-context analysis and no trusted current tuple exists, XI-01 must fail closed unless a separately validated internal invocation object is supplied through an already authorized supported contract;
-- this C1 does not authorize adding a new public parameter or export to obtain such a tuple;
-- if implementation proves a supported direct/local flow requires successful persisted-context analysis without an independently trusted tuple, STOP — Product Owner versioned-contract decision required.
+## 7. `local-v1` — direct/local trust model
 
-### 7.6 Framework binding and Playwright
+### 7.1 Versioned runtime contract
 
-The analyzer does **not** currently possess a trusted framework merely because `resolveFrameworkId(undefined)` defaults to `cypress`.
+No new JavaScript function parameter or export is introduced.
 
-That defaulting selector must not be used as XI-01 authority.
+Use a narrow environment/orchestration contract:
 
-Framework equality is enforced only where a non-defaulted trusted runtime framework identity is explicitly validated from the current supported invocation.
+- `QA_AI_INVOCATION_MODE=local-v1`
+- `QA_AI_INVOCATION_ID=<fresh random id>`
 
-Until such an authority exists, project/run binding must not falsely reject legitimate Playwright triage by assuming Cypress.
+`local-v1` is selected only when:
 
-### 7.7 H05-C2 closure evidence
+- `GITHUB_ACTIONS !== "true"`;
+- `QA_AI_INVOCATION_MODE === "local-v1"`;
+- `QA_AI_INVOCATION_ID` passes the closed validation contract.
 
-AISEC-7 `H05-C2` is a mandatory XI-01 closure test and must flip from current-behavior FAIL to fail-closed PASS.
+Unknown/missing mode, missing/invalid id, or contradictory `GITHUB_ACTIONS=true` + `local-v1` fails closed.
 
-The test must prove that a stale/foreign context relabelled with the current project id and copied constraints is rejected because repository/SHA/run do not match the independently trusted current invocation tuple.
+### 7.2 Trusted local invocation id
 
-## 8. XI-02 History contract
+The invoking/orchestrating process generates **one fresh id before context production** and preserves it unchanged across the stages of that same local invocation.
 
-### 8.1 Separate available History record
+Minimum requirement: at least 128 bits of cryptographically random entropy in a closed bounded encoding. Timestamps, paths, self-digests and predictable counters are insufficient as the sole id.
 
-The currently produced available `history.json` fields are:
+The trusted expected value is the current runtime `QA_AI_INVOCATION_ID`, not the copy stored in `context.json`.
 
-- `available: true`
-- `projectId`
-- `framework`
-- `browser`
-- `branch`
-- `runsConsidered`
-- `passes`
-- `failures`
-- `retryPasses`
-- `generatedAt`
+`collect-context.js` persists the id into `context.metadata.localInvocationId`.
 
-Close and bound this object.
+`analyze-failure.js` independently validates the current runtime id and requires exact equality with the persisted id before provider invocation or report persistence.
 
-Preserve numeric invariants:
+The analyzer must not generate a replacement id after context has already been produced.
 
-- metrics are non-negative integers;
+### 7.3 Local freshness and H05-C2
+
+For `local-v1`, freshness is:
+
+`validated ProjectProfile + validated repository-root containment + exact localInvocationId equality`.
+
+Repository/commit/run-id equality is not mandatory for local mode because the certified external installation proof uses a temporary external repository that is not required to be a Git checkout and currently has `runId: null`.
+
+A stale context from a prior local invocation therefore fails because its invocation id differs, even if someone changes `projectId` and copies current constraints.
+
+The persisted id cannot self-authorize: copying/editing `context.json` does not change the independently supplied current runtime id.
+
+### 7.4 FULL PROJECT INDEPENDENCE
+
+The existing installed-package local pipeline remains a positive success proof.
+
+Future implementation updates `test/installation/external-repository-proof.test.js` to establish one fresh `local-v1` id in the child-process environment before `collectContext` and `analyzeFailure` run.
+
+The proof must continue to show all four generic stages succeed outside the source checkout from the real installed package.
+
+It must **not** set `GITHUB_ACTIONS=true` merely to satisfy XI-01.
+
+Its existing `GITHUB_REPOSITORY` value may remain for History/API behavior but is non-authoritative for XI-01 while `GITHUB_ACTIONS !== "true"`.
+
+This is a versioned invocation requirement, not withdrawal of local execution.
+
+### 7.5 Local closure tests
+
+H05-C2 closure evidence must include both modes.
+
+Local tests must prove:
+
+- valid fresh `local-v1` pipeline succeeds;
+- stale prior-invocation context is rejected under a new current invocation id;
+- missing/malformed local id fails closed;
+- `GITHUB_REPOSITORY` alone cannot create CI authority;
+- fake CI environment is unnecessary;
+- zero-failure local context is still bound before report persistence.
+
+## 8. Framework binding
+
+`resolveFrameworkId(undefined) -> cypress` is not trusted XI-01 framework evidence.
+
+Framework equality is enforced only where a non-defaulted trusted runtime/configuration value is independently validated.
+
+Legitimate Playwright triage must not be rejected by an implicit Cypress default.
+
+## 9. XI-02 History contract
+
+The separate available History record remains closed/bounded around current fields such as projectId, framework, browser, branch, runsConsidered, passes, failures, retryPasses and generatedAt.
+
+Preserve:
+
+- non-negative integer metrics;
 - `passes + failures === runsConsidered`;
-- `retryPasses <= passes`.
+- `retryPasses <= passes`;
+- explicit upper bounds.
 
-Add explicit upper bounds to prevent absurd but arithmetically consistent values.
+Unavailable History is a distinct closed variant with bounded reason text.
 
-### 8.2 Unavailable History record
+Persisted/analyzer input `context.history` is rejected at the persisted-context/analyzer boundary. This closure credit belongs to XI-02, not TSB-F07.
 
-Define a closed bounded unavailable variant.
+Provider-visible and report-visible History come only from the same detached validated projection of separate `history.json`.
 
-Reason text must be bounded. Consumer rejection of oversized/unusable reason text is allowed without changing `SEC-F06-I1`; this design does not authorize diagnostic-policy remediation.
+History remains intentionally cross-run; it is not required to equal the current run/invocation id. Wrong-project, wrong-framework, malformed or unbounded History becomes `no usable history`, never fabricated zero History.
 
-### 8.3 Embedded `context.history` — explicit canonical rule
+History must not be read/projected before context validation and XI-01 binding.
 
-Persisted/analyzer input `context.history` is never an independent trusted History source.
+Mandatory closure evidence:
 
-The implementation must choose one deterministic closed-schema behavior:
+- `H06-C1`: ineligible separate History cannot survive through embedded context History;
+- `H06-C2`: prompt/report History derive from the same validated projection.
 
-- reject a persisted context carrying embedded `history`, or
-- strip/ignore it before authoritative snapshot creation.
+## 10. TSB-F04 provider-result contract
 
-Selected design rule: **reject embedded `context.history` at the persisted-context/analyzer boundary** so stale History cannot survive as hidden state.
+TSB-F06 raw text bounds remain upstream.
 
-This rejection is attributed to XI-02 closure evidence, not TSB-F07.
+Parsed provider output uses a closed envelope and closed bounded result objects containing current semantic fields plus internal `failureRef`.
 
-### 8.4 Single authoritative provider-visible History source
+Failure refs are generated locally before the provider call from authoritative failed-test snapshots and remain unique even for identical failures by including stable local position/index plus deterministic fingerprint material.
 
-Provider-visible History may come only from the separately read, XI-02-validated `history.json` projection.
+Require exactly one result per expected ref, no unknown refs, no duplicates, no omissions and exact cardinality.
 
-No other embedded History value may reach the prompt.
+Refs prove set membership/correlation, not truth of AI reasoning.
 
-The report-visible History field and prompt-visible History field must be constructed from the same detached validated projection object.
+Final report/comment test identity comes from the local authoritative failed-test snapshot, not model title/spec text. `recommendedFix.file` remains advisory model output.
 
-Required invariant:
+`failureRef` is internal and need not become a persisted `ai-report.json` field. If implementation requires persisting it as a supported output field, STOP for Product Owner disposition.
 
-`promptHistory === reportHistory` semantically, derived from one authoritative projection snapshot.
+## 11. Snapshot / TOCTOU and fail-closed order
 
-### 8.5 Eligibility
+Validators return detached authoritative snapshots. Never validate an object and then reread caller-controlled/proxy/accessor-backed state as authority.
 
-Usable History must satisfy the existing canonical project/framework eligibility rules, including only intentionally retained documented Cypress legacy compatibility.
+Required analyzer order:
 
-History is intentionally cross-run, so it is not required to match current commit/run ID.
-
-Wrong-project, wrong-framework, malformed or unbounded History becomes `no usable history`, never fabricated zero History.
-
-### 8.6 Ordering / existing default read hazard
-
-The current `buildFailureReport()` default History read must not consume History before authoritative context validation/binding.
-
-History acquisition/projection must occur only after the validated context snapshot and XI-01 binding have succeeded.
-
-### 8.7 H06 closure evidence
-
-AISEC-7 tests are mandatory:
-
-- `H06-C1`: ineligible separate History cannot be bypassed by embedded `context.history`;
-- `H06-C2`: prompt-visible History and report-visible History are equal because both derive from the same validated projection.
-
-Both currently reproduce the gap and must be flipped to closure PASS evidence.
-
-## 9. TSB-F04 provider-result contract
-
-The existing TSB-F06 raw text cap remains upstream. TSB-F04 governs the parsed structure and binding.
-
-### 9.1 Envelope and result item
-
-The response is a closed envelope containing exactly the governed `results` array.
-
-Each result retains current semantic analysis fields:
-
-- `test`
-- `classification`
-- `confidence`
-- `summary`
-- `rootCause`
-- `evidence`
-- `recommendedFix`
-- `shouldCreateBug`
-- `shouldRetry`
-
-and an internal protocol field:
-
-- `failureRef`
-
-All nested objects/arrays/strings are closed and bounded.
-
-### 9.2 Unique local failure references
-
-Failure references are generated locally **before** the provider call from the authoritative failed-test snapshot.
-
-They must remain unique even for two failures with identical title/spec/error content.
-
-Selected design: reference identity includes a stable local position/index plus deterministic bounded fingerprint material, for example conceptually:
-
-`f:<index>:<fingerprint>`
-
-The exact serialization is an implementation detail, but index/unique local position is mandatory.
-
-The provider only echoes the reference. It never creates authority.
-
-### 9.3 Exact result-set binding
-
-Require:
-
-- exactly one result per expected `failureRef`;
-- no unknown refs;
-- no duplicate refs;
-- no omitted refs;
-- result count exactly equals failure count.
-
-References bind set membership, cardinality and result-to-failure correlation. They do **not** prove semantic correctness of AI classification/root cause text.
-
-### 9.4 Authoritative report identity
-
-After reference matching, model-supplied identity is not authoritative.
-
-The final `ai-report.json` and PR-comment identity must be reconstructed from the locally retained authoritative failed-test snapshot.
-
-At minimum:
-
-- authoritative test title comes from the local failed-test snapshot;
-- authoritative spec/file identity comes from the local failed-test snapshot;
-- model-supplied title/spec identity cannot rename the failure in the report;
-- any `recommendedFix.file` or equivalent model-controlled path remains advisory model output and must not be represented as authoritative source identity.
-
-If retaining model identity fields is useful for diagnostics, they must be either validated against authoritative identity or excluded from authoritative downstream rendering.
-
-### 9.5 Is `failureRef` persisted?
-
-Selected design: `failureRef` is an internal provider protocol/binding field and is **not required to become a supported persisted `ai-report.json` field**.
-
-The analyzer consumes it to join each result to the authoritative local failure snapshot and may omit it from the final report.
-
-If implementation needs to persist it as a stable output contract field, STOP for Product Owner versioned-contract disposition.
-
-## 10. Snapshot and TOCTOU semantics
-
-Validators return detached authoritative snapshots.
-
-Do not:
-
-`validate object -> later reread caller-controlled object`.
-
-This applies to:
-
-- persisted context;
-- trusted invocation state;
-- History projection;
-- provider result binding.
-
-Direct in-memory calls must not permit accessors/proxies/post-validation mutation to alter authoritative consumed state.
-
-## 11. Fail-closed ordering
-
-Required analyzer ordering:
-
-1. validate ProjectProfile and repository root;
-2. construct/validate trusted current invocation tuple where supported;
-3. bounded-read and parse context;
-4. validate/snapshot non-History persisted context;
+1. validate ProjectProfile/root;
+2. select/validate exactly one invocation mode and trusted snapshot;
+3. bounded-read/parse context;
+4. validate/snapshot non-History context;
 5. enforce XI-01 binding/freshness;
-6. reject embedded `context.history` under XI-02;
-7. bounded-read/validate/project separate `history.json`;
-8. compute permitted runtime enrichment;
-9. construct prompt from authoritative snapshots;
-10. invoke provider only if failures require provider analysis;
-11. enforce existing TSB-F06 raw response bound;
-12. parse provider JSON;
-13. enforce TSB-F04 closed result contract + exact refs;
-14. reconstruct authoritative result identities from local failed-test snapshots;
-15. persist report/downstream side effects.
+6. reject embedded History;
+7. bounded-read/validate/project separate History;
+8. compute permitted enrichment;
+9. build prompt;
+10. call provider only when failures require it;
+11. apply existing TSB-F06 bound;
+12. parse;
+13. apply TSB-F04 closed result contract/ref binding;
+14. reconstruct authoritative identities;
+15. persist report/downstream effects.
 
-### Zero-failure path
+Malformed/unbound zero-failure context writes no report.
 
-The zero-failure path is not exempt from mandatory context validation and XI-01 binding.
+## 12. Versioned contract impact
 
-No `ai-report.json` may be persisted from an unvalidated or unbound persisted context merely because the failure count is zero.
+`EXPORT SURFACE IMPACT = NONE`.
 
-Provider invocation may be skipped for zero failures, but validation/binding must happen first.
+No new root export, package export or exported-function parameter is proposed.
 
-### Aggregator
+`SUPPORTED CONTRACT IMPACT = VERSIONED / IMPLEMENTATION AUTHORIZATION REQUIRED`.
 
-Aggregator validation is defense-in-depth and producer-quality enforcement. The analyzer remains the authoritative final fail-closed gate.
+Future implementation affects:
 
-## 12. Supported contract and versioning impact
+- `context.json` -> `PersistedTriageContextV1`;
+- `history.json` closed variants;
+- provider result protocol;
+- authoritative `ai-report.json` identity semantics;
+- stricter persisted-input behavior of exported triage functions;
+- invocation environment contract:
+  - GitHub Actions: `GITHUB_ACTIONS=true` + repository/SHA/run/run-attempt;
+  - local/direct: `QA_AI_INVOCATION_MODE=local-v1` + fresh `QA_AI_INVOCATION_ID`.
 
-The previous statement `PUBLIC API IMPACT = NONE` was too broad.
+Before production implementation, separate Product Owner implementation authorization must explicitly cover these versioned supported-contract changes.
 
-C1 distinguishes:
+If implementation requires a new root/package export, exported-function signature parameter, package `files` expansion, or persisted `failureRef`, STOP for separate Product Owner contract decision.
 
-### Export surface impact
+## 13. Compatibility
 
-`EXPORT SURFACE IMPACT = NONE`
+GitHub Actions compatibility must be proved for current pull-request/external CI semantics with same-run/same-attempt equality. Repository evidence indicates no workflow mutation is needed; if implementation proves otherwise, STOP before editing workflows.
 
-No new root export or package export is proposed.
+Local/direct compatibility is preserved through the new invocation environment contract. The external installation proof stays a successful local proof and is updated rather than converted to CI or expected failure.
 
-### Supported artifact / behavior contract impact
-
-`SUPPORTED CONTRACT IMPACT = VERSIONED / IMPLEMENTATION AUTHORIZATION REQUIRED`
-
-The future implementation changes accepted/produced internal artifacts and root-exported function behavior even if export names/signatures remain unchanged.
-
-Contract surfaces requiring explicit implementation-time versioned treatment:
-
-- persisted `context.json` -> `PersistedTriageContextV1`;
-- persisted `history.json` -> closed History variants;
-- provider triage result protocol -> `failureRef` + closed result schema;
-- `ai-report.json` identity semantics -> authoritative local failed-test identity; no mandatory persisted `failureRef` under this design;
-- `analyzeFailure.main` accepted persisted inputs become stricter;
-- `aggregateBrowserContext.main` consumed artifact acceptance becomes stricter, without changing its root-export signature;
-- `collectContext.main` produces versioned closed context;
-- `collectHistory.main` produces closed History variants.
-
-Before production implementation, Product Owner implementation authorization must explicitly cover these versioned supported-contract changes.
-
-If implementation requires a root-export signature change, new export, or persisted `failureRef` output field:
-
-`STOP — VERSIONED PUBLIC/OUTPUT CONTRACT AUTHORIZATION REQUIRED`.
-
-## 13. Migration and compatibility
-
-Supported current CI is expected to remain compatible because it produces fresh artifacts in the same run, but this is a hypothesis that implementation tests must prove.
-
-Compatibility requirements include:
-
-- Cypress context variant fidelity;
-- Playwright optional project fields;
-- nullable correlations;
-- zero-failure constraints behavior;
-- installed-package fixtures currently carrying unversioned hand-written contexts.
-
-`test/installation/external-repository-proof.test.js` must be updated/proved as part of future implementation because it models installed-package behavior and hand-written context fixtures.
-
-No permissive legacy fallback is authorized merely to keep old fixtures green.
-
-If a real supported user workflow relies on long-lived unversioned artifacts, STOP for Product Owner disposition.
+No permissive legacy artifact fallback is authorized merely to keep fixtures green. A real supported long-lived legacy-artifact workflow requires Product Owner disposition.
 
 ## 14. Public/package constraints
 
-No package export or package `files` expansion is proposed.
+No export or package `files` expansion is proposed.
 
-The new internal module must only depend on modules present in the installed package when used by installed-package runtime paths.
+The internal contract module may only depend on runtime files that are actually shipped for installed-package paths.
 
-Do not import excluded `normalized-failure.js` from the new contract authority unless package evidence proves it is shipped safely without changing package scope.
+`SECURITY.md` is expected to require implementation-time synchronization of artifact/version/invocation-boundary descriptions. C2 itself does not modify it.
 
-`SECURITY.md` is expected to require implementation-time synchronization of supported artifact/version/boundary descriptions. This C1 does not edit SECURITY.md.
+## 15. Preserved scope
 
-## 15. TSB-F02 disposition
+`TSB-F02 = OPEN / LOW / CONDITIONAL`; trigger remains false.
 
-`TSB-F02 = OPEN / LOW / CONDITIONAL`.
-
-Trigger remains false.
-
-This design does not add a supported dependent consumer of TSB-F02 review gates.
-
-If implementation would introduce one:
-
-`STOP — TSB-F02 OWNER DISPOSITION REQUIRED`.
-
-## 16. SEC-F06-I1 disposition
+If implementation introduces a supported dependent consumer of TSB-F02 gates: `STOP — TSB-F02 OWNER DISPOSITION REQUIRED`.
 
 `SEC-F06-I1 = OPEN / PRESERVED / OUTSIDE SCOPE`.
 
-This design does not redesign the invalid-JSON diagnostic path.
+No remediation or implicit absorption is authorized.
 
-Bounded consumer-side handling of History reason/validation errors does not claim SEC-F06-I1 remediation.
+Preserve TSB-F01/F03/F05/F06 controls, finding severities, WIP=1, package/root export surface, FULL PROJECT INDEPENDENCE, deterministic fail-closed behavior and unrelated debt.
 
-If implementation requires changing SEC-F06-I1 semantics:
-
-`STOP — PRODUCT OWNER SCOPE EXPANSION REQUIRED`.
-
-## 17. Proposed future implementation surface
-
-Production implementation remains NOT AUTHORIZED.
+## 16. Proposed future implementation surface — NOT AUTHORIZED
 
 Expected production surface:
 
@@ -634,169 +353,100 @@ Expected production surface:
 - `scripts/ai/collect-history.js`
 - `scripts/ai/aggregate-browser-context.js`
 - `scripts/ai/analyze-failure.js`
-- `scripts/ai/qa-agent-prompt.js` only where refs/History projection need prompt wiring
-- `scripts/ai/providers/mock-provider.js` to echo/produce the internal failure refs used by tests/evaluation
+- `scripts/ai/qa-agent-prompt.js` only where needed
+- `scripts/ai/providers/mock-provider.js`
 
 Expected test/security/doc surface:
 
 - NEW `scripts/ai/triage-boundary-contract.test.js`
-- `scripts/ai/collect-context.test.js`
-- `scripts/ai/collect-history.test.js`
-- `scripts/ai/aggregate-browser-context.test.js`
-- `scripts/ai/analyze-failure.test.js`
-- `scripts/ai/qa-agent-prompt.test.js`
+- existing collect-context/history/aggregate/analyze/prompt tests
 - `test/security/aisec-7/triage-cross-project.test.js`
 - `test/security/aisec-7/hostile-model-output.test.js`
 - `test/security/aisec-7/lib/registry.js`
 - `test/installation/external-repository-proof.test.js`
 - `SECURITY.md`
 
-Workflow changes are not expected.
+Workflow changes are not expected. The external installation proof test change is expected and does not weaken its local-execution claim.
 
-If implementation proves workflow mutation is required to establish a trusted current invocation tuple, STOP for Product Owner scope/contract disposition before editing workflows.
+## 17. Required adversarial matrix
 
-## 18. Required test and adversarial matrix
+At minimum prove:
 
-### TSB-F07 context
+- valid Cypress/Playwright contexts and real shape variants;
+- unknown/malformed/sparse/oversized context rejection;
+- total context cap and relevant-file limits;
+- snapshot/proxy/accessor mutation resistance;
+- GitHub Actions exact repository/SHA/run/run-attempt binding;
+- cross-attempt rejection;
+- explicit CI predicate and no fallback to local;
+- successful `local-v1` installed-package execution;
+- stale local invocation-id rejection;
+- missing/malformed local contract rejection;
+- wrong project/constraints rejection;
+- Playwright not forced to Cypress;
+- embedded History rejection plus H06-C1/H06-C2;
+- exact provider result refs/cardinality and authoritative local test identity;
+- no report/provider side effect after mandatory failure;
+- zero-failure binding;
+- unchanged package/root exports and exported-function signatures;
+- TSB-F01/F03/F05/F06 regressions green;
+- current seven-job CI green.
 
-- valid fresh Cypress context accepted;
-- valid fresh Playwright context accepted;
-- `{found:false}` and `{found:true, totals, specs[]}` variants accepted as appropriate;
-- nullable Cypress stats accepted where current producers allow them;
-- Cypress suite/status retained;
-- optional Playwright projectId/projectName retained;
-- null correlations accepted where legitimate;
-- zero-failure `knownProjectConstraints: []` accepted;
-- unknown keys rejected;
-- malformed/sparse/oversized arrays rejected;
-- total `context.json` byte cap enforced;
-- relevant-file 20 KiB / 150 KiB limits re-enforced;
-- legitimate long assertion-message fixture within chosen bound accepted;
-- over-bound message/artifact rejected;
-- snapshot mutation/accessor/proxy attacks cannot alter consumed state;
-- no provider call after mandatory context rejection.
-
-### XI-01 binding
-
-- wrong projectId rejected;
-- copied current projectId plus stale foreign repository/SHA/run rejected (`H05-C2`);
-- changed failure-bearing constraints rejected against ProjectProfile snapshot;
-- root containment enforced;
-- persisted metadata cannot self-authorize expected repository/SHA/run;
-- absent trusted CI tuple outside supported CI fails closed unless separately authorized internal trust input exists;
-- Playwright triage is not rejected by implicit Cypress default;
-- analyzer enforces binding even when raw context remains after aggregator refusal.
-
-### XI-02 History
-
-- valid separate History accepted/projected;
-- malformed metrics rejected/downgraded;
-- wrong project rejected;
-- wrong framework rejected;
-- documented Cypress legacy behavior tested if retained;
-- unavailable distinct from legitimate zero History;
-- embedded `context.history` rejected;
-- `H06-C1` proves ineligible separate History cannot survive via embedded context History;
-- `H06-C2` proves prompt/report History derive from the same validated projection;
-- provider receives only approved aggregate metrics;
-- no History read/projection before context validation/XI-01 binding.
-
-### TSB-F04 provider output
-
-- exact valid result set accepted;
-- unknown fields rejected;
-- missing/duplicate/unknown refs rejected;
-- cardinality mismatch rejected;
-- refs remain unique for identical failure content through local position identity;
-- stale result set rejected when refs differ;
-- authoritative title/spec in report comes from local snapshot even if model returns a wrong title/spec;
-- model recommended-fix file remains advisory, not authoritative identity;
-- oversized fields rejected;
-- invalid result causes no report write/downstream side effect;
-- `failureRef` omission from final report verified unless separately authorized.
-
-### Zero-failure ordering
-
-- malformed/unbound zero-failure context writes no report;
-- valid bound zero-failure context may produce its legitimate no-failure report without provider invocation.
-
-### Regression/package
-
-- TSB-F01/F03/F05/F06 controls remain green;
-- package/root export names unchanged;
-- installed-package proof updated and passing;
-- new internal module requires only shipped runtime dependencies;
-- AISEC-7 registry current-behavior FAIL entries for H05-C2/H06-C1/H06-C2 are updated only when implementation actually closes them;
-- current seven-job CI remains green.
-
-## 19. Finding-to-control traceability
+## 18. Finding-to-control traceability
 
 | Finding | Required closure evidence |
 | --- | --- |
 | TSB-F04 | closed provider schema; bounded fields; unique local refs; exact result-set binding; authoritative local test identity; fail-before-report tests |
-| TSB-F07 | versioned closed non-History context schema; real Cypress/Playwright variants; byte/field/count bounds; authoritative snapshots; producer+consumer validation |
-| XI-01 | ProjectProfile/root binding + validated current repository/SHA/run tuple; exact same-run freshness; `H05-C2` fail-closed evidence; analyzer as authoritative gate |
-| XI-02 | closed separate History variants; embedded `context.history` rejection; project/framework eligibility; one authoritative projection for prompt/report; `H06-C1` and `H06-C2` closure evidence |
+| TSB-F07 | versioned closed non-History context schema; real Cypress/Playwright variants; byte/field/count bounds; snapshots; producer+consumer validation |
+| XI-01 | ProjectProfile/root binding; explicit mode; GitHub repository/SHA/run/run-attempt freshness; local invocation-id freshness; mode-specific H05-C2 evidence; analyzer gate |
+| XI-02 | closed separate History; embedded-History rejection; eligibility; one prompt/report projection; H06-C1/H06-C2 |
 
-No row may be closed solely as a side effect of another row's control.
+No finding closes merely as a side effect of another control.
 
-## 20. Preserved invariants and debt
+## 19. Corrective disposition
 
-Preserve:
+Preserved as resolved from C1 review:
 
-- WIP = 1;
-- TSB-F01/F03/F05/F06 controls;
-- root/package export surface;
-- deterministic fail-closed behavior;
-- no caller-controlled trust elevation;
-- no self-digest-only provenance;
-- no implicit stale/replayed context trust;
-- bounded persisted/model inputs;
-- current finding severities;
-- `TSB-F02` OPEN/CONDITIONAL with trigger false;
-- `SEC-F06-I1` OPEN/PRESERVED/outside scope;
-- unrelated findings/debt unchanged.
+- `ARCH-B01`
+- `ARCH-M01..M04`
+- `ARCH-m01..m05`
+- `ARCH-I03/I04`
+- CI side of `ARCH-B02`
 
-`failureRef` proves correlation/set membership, not model truth. AI classification/root-cause text can still be semantically wrong; that remains model-quality risk, not provenance authority.
+C2 dispositions:
 
-## 21. STOP conditions for implementation authorization/planning
+- `ARCH-C1-B01` — addressed by explicit supported `local-v1` runtime contract, fresh invocation id, positive external installation proof, and mode-specific H05-C2 evidence;
+- `ARCH-C1-m01` — addressed by mandatory `GITHUB_RUN_ATTEMPT` and cross-attempt rejection;
+- `ARCH-C1-m02` — addressed by exact predicate `GITHUB_ACTIONS === "true"` and fail-closed partial/contradictory state.
 
-STOP if review or implementation discovery shows:
+Preserved INFO:
 
-- a new root export/package export/signature change is required;
-- persisted `failureRef` must become a new supported output field without separate authorization;
-- supported direct/local persisted-context analysis cannot work safely without a new trusted invocation contract;
-- workflow mutation is required to create trusted current-run identity;
-- `SEC-F06-I1` must be remediated in this lifecycle;
-- TSB-F02 trigger becomes true;
+- pull-request SHA equality remains compatible;
+- embedded History rejection remains compatible;
+- package/export constraints remain unchanged.
+
+## 20. STOP conditions
+
+STOP before implementation/expansion if review or implementation discovery shows:
+
+- local execution requires a new root/package export or exported-function signature change;
+- the selected local invocation runtime contract cannot establish safe freshness without material orchestration redesign;
 - cryptographic signing/key management is required;
-- a supported legacy artifact workflow requires permissive fallback;
-- findings need waiver/re-rating/risk acceptance instead of remediation;
-- unrelated production scope is required.
+- workflow mutation is required for trusted CI identity;
+- persisted `failureRef` must become a supported output field;
+- TSB-F02 trigger becomes true;
+- SEC-F06-I1 must be changed;
+- a supported legacy workflow needs permissive fallback;
+- unrelated finding remediation is required;
+- waiver/re-rating/risk acceptance is needed instead of remediation.
 
-## 22. C1 review disposition map
+## 21. Lifecycle boundary
 
-Architecture corrective coverage:
+C2 ends at:
 
-- `ARCH-B01` — addressed by §§2, 8, 18, 19: XI-02 owns embedded History, authoritative projection, prompt/report equality, H06-C1/C2.
-- `ARCH-B02` — addressed by §7: validated current repository/SHA/run tuple, exact same-run freshness, H05-C2.
-- `ARCH-M01` — addressed by §12: export surface unchanged but supported artifact/behavior contracts are versioned impacts requiring implementation authorization.
-- `ARCH-M02` — addressed by §9.4: authoritative report identity comes from local failed-test snapshot.
-- `ARCH-M03` — addressed by §6: real context variants, nulls, zero-failure constraints, long-message policy and total byte cap requirement.
-- `ARCH-M04` — addressed by §7.6: default Cypress selector is not trusted framework authority.
-- `ARCH-m01` — addressed by §7.1: analyzer is XI-01 gate; aggregator signature unchanged.
-- `ARCH-m02` — addressed by §§3, 11: analyzer independently fails closed even if raw context remains.
-- `ARCH-m03` — addressed by §11 zero-failure ordering.
-- `ARCH-m04` — addressed by §9.2 unique refs using local position/index.
-- `ARCH-m05` — addressed by §§14, 17, 18: mock provider, AISEC registry, SECURITY.md, installation proof and package-dependency constraint.
-- `ARCH-I03` — addressed by §§5, 8.6: leaf authority and History read after context binding.
-- `ARCH-I04` — addressed by §§9.3, 20: refs bind correlation/cardinality, not semantic correctness.
+`DESIGN C2 COMMIT -> EXACT-HEAD CI -> READY FOR INDEPENDENT HEAVY ARCHITECTURE RE-REVIEW`.
 
-## 23. Lifecycle boundary
-
-This corrected design is ready only for a **new independent exact-head HEAVY Architecture re-review** after exact-head CI succeeds.
-
-Only after Architecture approval may the same exact HEAD proceed to independent HEAVY Security design review.
+Only after Architecture approval may the same exact HEAD proceed to separate HEAVY Security design review.
 
 Implementation: `NOT AUTHORIZED`  
 Merge: `NOT AUTHORIZED`  
