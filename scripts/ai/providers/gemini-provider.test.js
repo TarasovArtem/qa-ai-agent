@@ -7,8 +7,11 @@ const { ProviderError, PROVIDER_ERROR_CODES } = require("./provider-error");
 
 // Fakes global fetch's Response shape just enough for GeminiProvider - no
 // real network access anywhere in this file.
-function fakeResponse({ ok = true, status = 200, body }) {
-  return { ok, status, json: async () => body };
+// TSB-F06: a real Web Response (status-derived `ok`, a real body stream),
+// since the adapter now reads the body through the bounded stream reader
+// rather than calling `.json()`.
+function fakeResponse({ status = 200, body }) {
+  return new Response(body === undefined ? null : JSON.stringify(body), { status });
 }
 
 function generateContentBody(text) {
@@ -121,7 +124,7 @@ test("GeminiProvider: missing model throws CONFIGURATION, non-retryable", () => 
 // --- HTTP error mapping ----------------------------------------------------
 
 async function analyzeExpectingError(status) {
-  const p = provider({ fetchImpl: async () => fakeResponse({ ok: false, status }) });
+  const p = provider({ fetchImpl: async () => fakeResponse({ status }) });
   try {
     await p.analyze({ systemPrompt: "sys", userPrompt: "user" });
     assert.fail(`expected HTTP ${status} to throw`);
@@ -238,13 +241,7 @@ test("GeminiProvider.analyze: the fetch call receives an AbortSignal", async () 
 
 test("GeminiProvider: HTTP 200 with an unparseable JSON body throws INVALID_RESPONSE, non-retryable", async () => {
   const p = provider({
-    fetchImpl: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => {
-        throw new Error("Unexpected token");
-      },
-    }),
+    fetchImpl: async () => new Response("not json {", { status: 200 }),
   });
   await assert.rejects(
     () => p.analyze({ systemPrompt: "sys", userPrompt: "user" }),
@@ -315,7 +312,7 @@ test("GeminiProvider.analyze: exactly one fetchImpl call per analyze() call - no
   const p = provider({
     fetchImpl: async () => {
       calls += 1;
-      return fakeResponse({ ok: false, status: 429 });
+      return fakeResponse({ status: 429 });
     },
   });
   await assert.rejects(() => p.analyze({ systemPrompt: "sys", userPrompt: "user" }));
@@ -332,4 +329,179 @@ test("GeminiProvider.analyze: exactly one fetchImpl call on success", async () =
   });
   await p.analyze({ systemPrompt: "sys", userPrompt: "user" });
   assert.equal(calls, 1);
+});
+
+// --- TSB-F06 + ADV-01: bounded response body / body-read time -------------
+
+const { MAX_RESPONSE_BYTES } = require("./gemini-provider");
+
+const SAFE_STALL_TEST = { timeout: 5000 };
+
+function stallingBody(prefix = "") {
+  const bytes = new TextEncoder().encode(prefix);
+  let sent = false;
+  return new ReadableStream({
+    pull(c) {
+      if (!sent && bytes.length > 0) {
+        sent = true;
+        c.enqueue(bytes);
+        return undefined;
+      }
+      return new Promise(() => {});
+    },
+  });
+}
+
+// A valid envelope whose serialized UTF-8 size is exactly `n` bytes.
+function envelopeOfExactBytes(n) {
+  const base = Buffer.byteLength(JSON.stringify(generateContentBody("")));
+  const text = "a".repeat(n - base);
+  const json = JSON.stringify(generateContentBody(text));
+  assert.equal(Buffer.byteLength(json), n);
+  return { json, text };
+}
+
+async function expectProviderError(p, code, retryable) {
+  return assert.rejects(
+    () => p.analyze({ systemPrompt: "sys", userPrompt: "user" }),
+    (err) => {
+      assert.ok(err instanceof ProviderError);
+      assert.equal(err.code, code);
+      assert.equal(err.retryable, retryable);
+      return true;
+    }
+  );
+}
+
+test("GeminiProvider: MAX_RESPONSE_BYTES is 32 MiB", () => {
+  assert.equal(MAX_RESPONSE_BYTES, 32 * 1024 * 1024);
+});
+
+test("GeminiProvider: a response body of exactly MAX_RESPONSE_BYTES is accepted unchanged", async () => {
+  const { json, text } = envelopeOfExactBytes(MAX_RESPONSE_BYTES);
+  const p = provider({ fetchImpl: async () => new Response(json, { status: 200 }) });
+  const result = await p.analyze({ systemPrompt: "sys", userPrompt: "user" });
+  assert.equal(result.length, text.length);
+});
+
+test("GeminiProvider: a response body one byte over MAX_RESPONSE_BYTES is INVALID_RESPONSE, non-retryable, and never reaches the caller", async () => {
+  const { json } = envelopeOfExactBytes(MAX_RESPONSE_BYTES + 1);
+  const p = provider({ fetchImpl: async () => new Response(json, { status: 200 }) });
+  await assert.rejects(
+    () => p.analyze({ systemPrompt: "sys", userPrompt: "user" }),
+    (err) => {
+      assert.ok(err instanceof ProviderError);
+      assert.equal(err.code, PROVIDER_ERROR_CODES.INVALID_RESPONSE);
+      assert.equal(err.retryable, false);
+      assert.equal(err.message, "Gemini API response body exceeded the maximum of 33554432 bytes");
+      assert.equal(err.cause, undefined);
+      return true;
+    }
+  );
+});
+
+test("GeminiProvider: a never-ending 200 body is cut off at the byte cap (no Content-Length)", async () => {
+  const chunk = new Uint8Array(1024 * 1024).fill(0x61);
+  const body = new ReadableStream({
+    pull(c) {
+      c.enqueue(chunk);
+    },
+  });
+  const p = provider({ fetchImpl: async () => new Response(body, { status: 200 }) });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.INVALID_RESPONSE, false);
+});
+
+test("GeminiProvider: an oversized declared Content-Length is rejected before the body is read", async () => {
+  let pulls = 0;
+  const body = new ReadableStream({
+    pull(c) {
+      pulls += 1;
+      c.enqueue(new Uint8Array(16));
+    },
+  });
+  const p = provider({
+    fetchImpl: async () => new Response(body, { status: 200, headers: { "content-length": String(MAX_RESPONSE_BYTES + 1) } }),
+  });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.INVALID_RESPONSE, false);
+  assert.ok(pulls <= 1, `pulls=${pulls}`);
+});
+
+test("GeminiProvider: a 200 body that never produces a first chunk ends at timeoutMs as TIMEOUT, retryable (ADV-01)", SAFE_STALL_TEST, async () => {
+  const p = provider({ fetchImpl: async () => new Response(stallingBody(), { status: 200 }), timeoutMs: 50 });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.TIMEOUT, true);
+});
+
+test("GeminiProvider: a 200 body that stalls after a partial chunk ends at timeoutMs as TIMEOUT (ADV-01)", SAFE_STALL_TEST, async () => {
+  const p = provider({ fetchImpl: async () => new Response(stallingBody('{"partial":'), { status: 200 }), timeoutMs: 50 });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.TIMEOUT, true);
+});
+
+test("GeminiProvider: a slow-drip 200 body is bounded by one per-request deadline, not reset per chunk (ADV-01)", SAFE_STALL_TEST, async () => {
+  const body = new ReadableStream({
+    async pull(c) {
+      await new Promise((r) => setTimeout(r, 5));
+      c.enqueue(new Uint8Array([0x20]));
+    },
+  });
+  const started = Date.now();
+  const p = provider({ fetchImpl: async () => new Response(body, { status: 200 }), timeoutMs: 80 });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.TIMEOUT, true);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test("GeminiProvider: the request deadline spans headers + body - time spent before headers counts against the body read", SAFE_STALL_TEST, async () => {
+  const p = provider({
+    fetchImpl: async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      return new Response(stallingBody(), { status: 200 });
+    },
+    timeoutMs: 60,
+  });
+  const started = Date.now();
+  await expectProviderError(p, PROVIDER_ERROR_CODES.TIMEOUT, true);
+  assert.ok(Date.now() - started < 1000);
+});
+
+test("GeminiProvider: after a successful bounded read the deadline is cleared (the signal never fires later)", async () => {
+  let captured;
+  const p = provider({
+    fetchImpl: async (url, init) => {
+      captured = init.signal;
+      return fakeResponse({ body: generateContentBody("ok") });
+    },
+    timeoutMs: 20,
+  });
+  await p.analyze({ systemPrompt: "sys", userPrompt: "user" });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(captured.aborted, false);
+});
+
+test("GeminiProvider: a huge hostile error body is never read - the HTTP status mapping is unchanged", SAFE_STALL_TEST, async () => {
+  let pulls = 0;
+  const body = new ReadableStream({
+    pull(c) {
+      pulls += 1;
+      c.enqueue(new Uint8Array(1024 * 1024));
+    },
+  });
+  const p = provider({ fetchImpl: async () => new Response(body, { status: 503 }) });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.UNKNOWN, true);
+  assert.ok(pulls <= 1, `pulls=${pulls}`);
+});
+
+test("GeminiProvider: malformed UTF-8 in a 200 body is INVALID_RESPONSE (fail closed)", async () => {
+  const p = provider({ fetchImpl: async () => new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 }) });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.INVALID_RESPONSE, false);
+});
+
+test("GeminiProvider: an invalid-JSON body error message never echoes body content", async () => {
+  const p = provider({ fetchImpl: async () => new Response("<html>SECRET-UPSTREAM-PAGE</html>", { status: 200 }) });
+  await assert.rejects(
+    () => p.analyze({ systemPrompt: "sys", userPrompt: "user" }),
+    (err) => {
+      assert.equal(err.code, PROVIDER_ERROR_CODES.INVALID_RESPONSE);
+      assert.ok(!err.message.includes("SECRET"), err.message);
+      return true;
+    }
+  );
 });

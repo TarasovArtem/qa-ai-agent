@@ -1910,3 +1910,104 @@ test("D1-C1 analyze-failure.computeRelevantKnowledge(): knowledge-config binding
     /PROJECT_KNOWLEDGE_CONFIG_PROJECT_MISMATCH/
   );
 });
+
+// --- TSB-F06: triage model-text character bound (before JSON.parse) ---------
+
+const { MAX_TRIAGE_RESPONSE_CHARS, main: analyzeMain } = require("./analyze-failure");
+
+// A valid triage response (one goodItem()) padded to exactly `n` UTF-16
+// code units, using `padUnit` (1 or 2 code units) for the padding.
+function triageResponseOfExactLength(n, padUnit = "x") {
+  const base = JSON.stringify({ results: [goodItem()], pad: "" }).length;
+  const room = n - base;
+  const unitLen = padUnit.length;
+  const pad = padUnit.repeat(Math.floor(room / unitLen)) + "x".repeat(room % unitLen);
+  const text = JSON.stringify({ results: [goodItem()], pad });
+  assert.equal(text.length, n);
+  return text;
+}
+
+function countingProvider(text) {
+  const p = {
+    calls: 0,
+    analyze: async () => {
+      p.calls += 1;
+      return text;
+    },
+  };
+  return p;
+}
+
+test("TSB-F06 triage: MAX_TRIAGE_RESPONSE_CHARS is 1,000,000 (the automation-plan generator's own pre-parse bound)", () => {
+  assert.equal(MAX_TRIAGE_RESPONSE_CHARS, 1000000);
+});
+
+test("TSB-F06 triage: a model response of exactly MAX_TRIAGE_RESPONSE_CHARS is accepted and parsed", async () => {
+  const provider = countingProvider(triageResponseOfExactLength(MAX_TRIAGE_RESPONSE_CHARS));
+  const out = await rpa(provider, context, { sleep: noopSleep });
+  assert.equal(out.results.length, 1);
+  assert.equal(provider.calls, 1);
+});
+
+test("TSB-F06 triage: MAX_TRIAGE_RESPONSE_CHARS + 1 is rejected before JSON.parse, with exactly one provider call", async () => {
+  const provider = countingProvider(triageResponseOfExactLength(MAX_TRIAGE_RESPONSE_CHARS + 1));
+  await assert.rejects(
+    () => rpa(provider, context, { sleep: noopSleep, maxAttempts: 3 }),
+    (err) => {
+      assert.equal(err.message, `AI provider response exceeds the maximum of ${MAX_TRIAGE_RESPONSE_CHARS} characters.`);
+      return true;
+    }
+  );
+  assert.equal(provider.calls, 1, "an oversized response is never retried");
+});
+
+test("TSB-F06 triage: a large malicious non-JSON text is rejected by the size bound, never reaching JSON.parse", async (t) => {
+  const parse = t.mock.method(JSON, "parse");
+  const hostile = "SECRET-INJECTION " + "{".repeat(5 * MAX_TRIAGE_RESPONSE_CHARS);
+  await assert.rejects(() => rpa(countingProvider(hostile), context, { sleep: noopSleep }), (err) => {
+    assert.match(err.message, /exceeds the maximum of 1000000 characters/);
+    assert.ok(!err.message.includes("SECRET"));
+    return true;
+  });
+  assert.equal(parse.mock.calls.filter((c) => c.arguments[0] === hostile || (typeof c.arguments[0] === "string" && c.arguments[0].length > MAX_TRIAGE_RESPONSE_CHARS)).length, 0);
+});
+
+test("TSB-F06 triage: the bound counts UTF-16 code units (String length), like the generators' MAX_*_RESPONSE_CHARS", async () => {
+  // "😀" is one code point but two UTF-16 code units.
+  const exact = triageResponseOfExactLength(MAX_TRIAGE_RESPONSE_CHARS, "😀");
+  assert.ok([...exact].length < exact.length, "fixture really contains surrogate pairs");
+  const ok = await rpa(countingProvider(exact), context, { sleep: noopSleep });
+  assert.equal(ok.results.length, 1);
+
+  const over = triageResponseOfExactLength(MAX_TRIAGE_RESPONSE_CHARS + 1, "😀");
+  assert.ok([...over].length <= MAX_TRIAGE_RESPONSE_CHARS, "fewer code points than the bound, yet over it in code units");
+  await assert.rejects(() => rpa(countingProvider(over), context, { sleep: noopSleep }), /exceeds the maximum of 1000000 characters/);
+});
+
+test("TSB-F06 triage: buildFailureReport rejects oversized model text - no report object is produced", async () => {
+  const provider = countingProvider(triageResponseOfExactLength(MAX_TRIAGE_RESPONSE_CHARS + 1));
+  await assert.rejects(() => bfr(structuredClone(context), { provider, history: null, relevantKnowledge: [] }), /exceeds the maximum of 1000000 characters/);
+  assert.equal(provider.calls, 1);
+});
+
+test("TSB-F06 triage: main() fails closed on oversized model text and writes no ai-report.json", async (t) => {
+  const target = d1FreshTarget("tsb-f06-af-main");
+  const savedExitCode = process.exitCode;
+  t.after(() => {
+    process.exitCode = savedExitCode;
+  });
+  t.mock.method(console, "log", () => {});
+  const error = t.mock.method(console, "error", () => {});
+  let calls = 0;
+  t.mock.method(MockProvider.prototype, "analyze", async () => {
+    calls += 1;
+    return triageResponseOfExactLength(MAX_TRIAGE_RESPONSE_CHARS + 1);
+  });
+
+  await analyzeMain({ projectProfile: D1_CALLER_PROFILE, repositoryRoot: target });
+
+  assert.equal(calls, 1);
+  assert.equal(process.exitCode, 1);
+  assert.ok(error.mock.calls.some((c) => c.arguments.join(" ").includes("exceeds the maximum of 1000000 characters")));
+  assert.equal(fs.existsSync(path.join(target, "reports", "ai", "ai-report.json")), false);
+});

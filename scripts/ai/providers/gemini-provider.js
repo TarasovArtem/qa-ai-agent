@@ -22,9 +22,15 @@
 
 const { ProviderError, PROVIDER_ERROR_CODES } = require("./provider-error");
 const { API_KEY, MODEL } = require("../config");
+const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("../bounded-response");
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_TIMEOUT_MS = 30000;
+// TSB-F06: byte cap on the response envelope - identical value and
+// derivation to groq-provider.js's MAX_RESPONSE_BYTES (no generator's
+// practical pre-parse MAX_*_RESPONSE_CHARS bound, at worst-case 6-byte
+// JSON escaping per UTF-16 code unit, can be falsely rejected).
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 // HTTP status -> generic ProviderError code/retryable. Deliberately no
 // Gemini-specific codes - only the shared, provider-neutral
@@ -58,6 +64,27 @@ function mapHttpError(status) {
   // fail identically on retry.
   return new ProviderError(`Gemini API request failed (HTTP ${status})`, {
     code: PROVIDER_ERROR_CODES.UNKNOWN,
+    retryable: false,
+  });
+}
+
+// TSB-F06 + ADV-01: bounded body-read failure -> the existing generic
+// codes, exactly mirroring groq-provider.js's mapBodyReadError().
+function mapBodyReadError(err, timeoutMs) {
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.ABORTED) {
+    return new ProviderError(`Gemini API request timed out after ${timeoutMs}ms`, {
+      code: PROVIDER_ERROR_CODES.TIMEOUT,
+      retryable: true,
+    });
+  }
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.TOO_LARGE) {
+    return new ProviderError(`Gemini API response body exceeded the maximum of ${MAX_RESPONSE_BYTES} bytes`, {
+      code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
+      retryable: false,
+    });
+  }
+  return new ProviderError("Gemini API returned a response that was not valid JSON", {
+    code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
     retryable: false,
   });
 }
@@ -141,6 +168,7 @@ class GeminiProvider {
         signal: controller.signal,
       });
     } catch (err) {
+      clearTimeout(timer);
       // AbortController firing (our own timeout) vs. any other fetch
       // failure (DNS, connection reset, TLS, etc.) are different generic
       // codes even though both surface as a thrown error from fetch() -
@@ -157,23 +185,22 @@ class GeminiProvider {
         retryable: true,
         cause: err,
       });
-    } finally {
-      clearTimeout(timer);
     }
 
     if (!res.ok) {
+      clearTimeout(timer);
       throw mapHttpError(res.status);
     }
 
+    // TSB-F06 + ADV-01: identical to GroqProvider - the per-request
+    // deadline stays armed through the bounded body read.
     let body;
     try {
-      body = await res.json();
+      body = await readBoundedResponseJson(res, { maxBytes: MAX_RESPONSE_BYTES, signal: controller.signal, label: "Gemini API" });
     } catch (err) {
-      throw new ProviderError("Gemini API returned a response that was not valid JSON", {
-        code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
-        retryable: false,
-        cause: err,
-      });
+      throw mapBodyReadError(err, this.timeoutMs);
+    } finally {
+      clearTimeout(timer);
     }
 
     // Covers every "no usable text" shape uniformly (missing candidates,
@@ -193,4 +220,4 @@ class GeminiProvider {
   }
 }
 
-module.exports = { GeminiProvider };
+module.exports = { GeminiProvider, MAX_RESPONSE_BYTES };

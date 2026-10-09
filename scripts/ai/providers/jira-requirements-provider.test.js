@@ -1206,3 +1206,179 @@ test("RTI-7B: priority and labels are source-provided values, deduplicated", asy
     }
   );
 });
+
+// --- TSB-F06 + ADV-01: bounded response body / body-read time ----------------
+// Real local HTTP server + real fetch (no external network). The module's
+// byte cap is internal (the subpath export surface is unchanged), so the
+// value is stated here: 32 MiB per search-page response.
+
+const JIRA_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+// A valid search page whose serialized UTF-8 size is exactly `n` bytes.
+function searchPayloadOfExactBytes(n) {
+  const base = Buffer.byteLength(JSON.stringify({ issues: [], pad: "" }));
+  const json = JSON.stringify({ issues: [], pad: "p".repeat(n - base) });
+  assert.equal(Buffer.byteLength(json), n);
+  return json;
+}
+
+test("TSB-F06 Jira: a search-page body of exactly 32 MiB is accepted", async () => {
+  const json = searchPayloadOfExactBytes(JIRA_MAX_RESPONSE_BYTES);
+  await withServer(
+    (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(json);
+    },
+    async () => {
+      const artifacts = await new JiraRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read();
+      assert.deepEqual(artifacts, []);
+    }
+  );
+});
+
+test("TSB-F06 Jira: a search-page body one byte over 32 MiB fails the whole read closed with a bounded message", async () => {
+  const json = searchPayloadOfExactBytes(JIRA_MAX_RESPONSE_BYTES + 1);
+  let requests = 0;
+  await withServer(
+    (req, res) => {
+      requests += 1;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(json);
+    },
+    async () => {
+      await assert.rejects(
+        () => new JiraRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(),
+        (err) => {
+          assert.equal(err.message, `Jira response body exceeded the maximum of ${JIRA_MAX_RESPONSE_BYTES} bytes.`);
+          return true;
+        }
+      );
+    }
+  );
+  assert.equal(requests, 1, "a body-size failure is not retried");
+});
+
+test("TSB-F06 Jira: a chunked (no Content-Length) never-ending body is cut off at the cap", async () => {
+  const chunk = Buffer.alloc(1024 * 1024, 0x20);
+  await withServer(
+    (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const pump = () => {
+        while (!res.destroyed && res.write(chunk));
+        if (!res.destroyed) res.once("drain", pump);
+      };
+      res.on("close", () => res.removeAllListeners("drain"));
+      pump();
+    },
+    async () => {
+      await assert.rejects(() => new JiraRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(), /Jira response body exceeded the maximum of 33554432 bytes\./);
+    }
+  );
+});
+
+test("TSB-F06 Jira: an oversized declared Content-Length is rejected before the body is consumed", async () => {
+  await withServer(
+    (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": String(JIRA_MAX_RESPONSE_BYTES + 1) });
+      res.write('{"issues":[');
+      setTimeout(() => res.destroy(), 1000);
+    },
+    async () => {
+      const started = Date.now();
+      await assert.rejects(() => new JiraRequirementsProvider(makeConfig({ timeoutMs: 5000 })).read(), /Jira response body exceeded the maximum/);
+      assert.ok(Date.now() - started < 900, "rejected from the header, not after the stream ended");
+    }
+  );
+});
+
+test("TSB-F06 / ADV-01 Jira: a body that stalls after a partial chunk ends at timeoutMs, not retried", async () => {
+  let requests = 0;
+  const open = [];
+  await withServer(
+    (req, res) => {
+      requests += 1;
+      open.push(res);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.write('{"issues":[');
+    },
+    async () => {
+      try {
+        const started = Date.now();
+        await assert.rejects(
+          () => new JiraRequirementsProvider(makeConfig({ timeoutMs: 150 })).read(),
+          /^Error: Jira response body was not fully received within the configured timeoutMs \(150ms\)\.$/
+        );
+        assert.ok(Date.now() - started < 3000);
+      } finally {
+        open.forEach((r) => r.destroy());
+      }
+    }
+  );
+  assert.equal(requests, 1);
+});
+
+test("TSB-F06 / ADV-01 Jira: a slow-drip body is bounded by the single per-request deadline", async () => {
+  const open = [];
+  await withServer(
+    (req, res) => {
+      open.push(res);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const iv = setInterval(() => (res.destroyed ? clearInterval(iv) : res.write(" ")), 10);
+      res.on("close", () => clearInterval(iv));
+    },
+    async () => {
+      try {
+        await assert.rejects(() => new JiraRequirementsProvider(makeConfig({ timeoutMs: 200 })).read(), /not fully received within the configured timeoutMs \(200ms\)/);
+      } finally {
+        open.forEach((r) => r.destroy());
+      }
+    }
+  );
+});
+
+test("TSB-F06 Jira: pagination still works with bounded reads, and an oversized SECOND page fails the whole read atomically", async () => {
+  const big = searchPayloadOfExactBytes(JIRA_MAX_RESPONSE_BYTES + 1);
+  let n = 0;
+  await withServer(
+    (req, res) => {
+      n += 1;
+      if (n === 1) return respondJson(res, 200, searchPayload([makeIssue("PROJ-1")], "tok-2"));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(big);
+    },
+    async () => {
+      await assert.rejects(() => new JiraRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(), /exceeded the maximum/);
+    }
+  );
+  assert.equal(n, 2);
+});
+
+test("TSB-F06 Jira: a huge hostile error body is never read; status semantics unchanged", async () => {
+  const open = [];
+  await withServer(
+    (req, res) => {
+      open.push(res);
+      res.writeHead(401, { "Content-Type": "text/html" });
+      res.write("<html>" + "x".repeat(64 * 1024));
+    },
+    async () => {
+      try {
+        await assert.rejects(() => new JiraRequirementsProvider(makeConfig({ timeoutMs: 2000 })).read(), /Jira request failed with HTTP status 401\./);
+      } finally {
+        open.forEach((r) => r.destroy());
+      }
+    }
+  );
+});
+
+test("TSB-F06 Jira: malformed JSON under the cap keeps the existing bounded message", async () => {
+  await withServer(
+    (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("<html>SECRET</html>");
+    },
+    async () => {
+      await assert.rejects(() => new JiraRequirementsProvider(makeConfig()).read(), /^Error: Jira response body was not valid JSON\.$/);
+    }
+  );
+});

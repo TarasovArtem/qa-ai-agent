@@ -142,14 +142,14 @@ async function main() {
         const wf = decodeURIComponent(runsMatch[1]);
         const entry = plan.historyMock[wf];
         if (!entry) return { ok: false, status: 404, statusText: "Not Found" };
-        return { ok: true, json: async () => ({ workflow_runs: [{ id: entry.runId, run_attempt: 1 }] }) };
+        return Response.json({ workflow_runs: [{ id: entry.runId, run_attempt: 1 }] });
       }
       const jobsMatch = url.match(/\\/actions\\/runs\\/(\\d+)\\/jobs/);
       if (jobsMatch) {
         const runId = Number(jobsMatch[1]);
         for (const wf of Object.keys(plan.historyMock)) {
           if (plan.historyMock[wf].runId === runId) {
-            return { ok: true, json: async () => ({ jobs: plan.historyMock[wf].jobs }) };
+            return Response.json({ jobs: plan.historyMock[wf].jobs });
           }
         }
         return { ok: false, status: 404, statusText: "Not Found" };

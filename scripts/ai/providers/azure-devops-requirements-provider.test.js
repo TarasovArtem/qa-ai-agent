@@ -1458,3 +1458,213 @@ test("RTI-7F: a vague Azure requirement ingests successfully - RTI-3 classifies 
     }
   );
 });
+
+// --- TSB-F06 + ADV-01: bounded response body / body-read time ----------------
+// Both independent parse sites are covered: the WIQL id query and the
+// work-items batch. Real local HTTP server + real fetch. The module's byte
+// cap is internal (the subpath export surface is unchanged), so the value
+// is stated here: 32 MiB per response.
+
+const AZURE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+function jsonOfExactBytes(obj, n) {
+  const base = Buffer.byteLength(JSON.stringify({ ...obj, pad: "" }));
+  const json = JSON.stringify({ ...obj, pad: "p".repeat(n - base) });
+  assert.equal(Buffer.byteLength(json), n);
+  return json;
+}
+
+// Routes /wiql and /workitemsbatch to raw handlers.
+function azureRoutes({ wiql, batch }) {
+  const counts = { wiql: 0, batch: 0 };
+  const open = [];
+  const handler = (req, res) => {
+    open.push(res);
+    if (req.url.includes("/wiql")) {
+      counts.wiql += 1;
+      return wiql(req, res);
+    }
+    counts.batch += 1;
+    return batch(req, res);
+  };
+  return { handler, counts, closeAll: () => open.forEach((r) => r.destroy()) };
+}
+
+function sendRaw(res, json) {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(json);
+}
+
+function stall(res, prefix) {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.write(prefix);
+}
+
+function hostileHtml() {
+  return "<html>" + "x".repeat(64 * 1024);
+}
+
+test("TSB-F06 Azure WIQL: a WIQL body of exactly 32 MiB is accepted", async () => {
+  const json = jsonOfExactBytes(wiqlResult([]), AZURE_MAX_RESPONSE_BYTES);
+  const r = azureRoutes({ wiql: (req, res) => sendRaw(res, json), batch: () => assert.fail("no batch expected") });
+  await withServer(r.handler, async () => {
+    assert.deepEqual(await new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(), []);
+  });
+});
+
+test("TSB-F06 Azure WIQL: a WIQL body one byte over 32 MiB fails closed, not retried, before any batch request", async () => {
+  const json = jsonOfExactBytes(wiqlResult([1]), AZURE_MAX_RESPONSE_BYTES + 1);
+  const r = azureRoutes({ wiql: (req, res) => sendRaw(res, json), batch: () => assert.fail("no batch expected") });
+  await withServer(r.handler, async () => {
+    await assert.rejects(
+      () => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(),
+      (err) => {
+        assert.equal(err.message, `Azure DevOps WIQL response body exceeded the maximum of ${AZURE_MAX_RESPONSE_BYTES} bytes.`);
+        return true;
+      }
+    );
+  });
+  assert.deepEqual(r.counts, { wiql: 1, batch: 0 });
+});
+
+test("TSB-F06 / ADV-01 Azure WIQL: a stalled WIQL body ends at timeoutMs", async () => {
+  const r = azureRoutes({ wiql: (req, res) => stall(res, '{"queryType":'), batch: () => assert.fail("no batch expected") });
+  await withServer(r.handler, async () => {
+    try {
+      await assert.rejects(
+        () => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 150 })).read(),
+        /^Error: Azure DevOps WIQL response body was not fully received within the configured timeoutMs \(150ms\)\.$/
+      );
+    } finally {
+      r.closeAll();
+    }
+  });
+  assert.equal(r.counts.wiql, 1);
+});
+
+test("TSB-F06 Azure batch: a batch body of exactly 32 MiB is accepted", async () => {
+  const json = jsonOfExactBytes(batchResult([workItem(7)]), AZURE_MAX_RESPONSE_BYTES);
+  const r = azureRoutes({ wiql: (req, res) => respondJson(res, 200, wiqlResult([7])), batch: (req, res) => sendRaw(res, json) });
+  await withServer(r.handler, async () => {
+    const artifacts = await new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read();
+    assert.equal(artifacts.length, 1);
+  });
+});
+
+test("TSB-F06 Azure batch: a batch body one byte over 32 MiB fails the whole read closed, not retried", async () => {
+  const json = jsonOfExactBytes(batchResult([workItem(7)]), AZURE_MAX_RESPONSE_BYTES + 1);
+  const r = azureRoutes({ wiql: (req, res) => respondJson(res, 200, wiqlResult([7])), batch: (req, res) => sendRaw(res, json) });
+  await withServer(r.handler, async () => {
+    await assert.rejects(
+      () => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(),
+      (err) => {
+        assert.equal(err.message, `Azure DevOps batch response body exceeded the maximum of ${AZURE_MAX_RESPONSE_BYTES} bytes.`);
+        return true;
+      }
+    );
+  });
+  assert.deepEqual(r.counts, { wiql: 1, batch: 1 });
+});
+
+test("TSB-F06 Azure batch: a chunked never-ending batch body is cut off at the cap", async () => {
+  const chunk = Buffer.alloc(1024 * 1024, 0x20);
+  const r = azureRoutes({
+    wiql: (req, res) => respondJson(res, 200, wiqlResult([7])),
+    batch: (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const pump = () => {
+        while (!res.destroyed && res.write(chunk));
+        if (!res.destroyed) res.once("drain", pump);
+      };
+      pump();
+    },
+  });
+  await withServer(r.handler, async () => {
+    try {
+      await assert.rejects(() => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 20000 })).read(), /Azure DevOps batch response body exceeded the maximum of 33554432 bytes\./);
+    } finally {
+      r.closeAll();
+    }
+  });
+});
+
+test("TSB-F06 Azure batch: an oversized declared Content-Length is rejected before the body is consumed", async () => {
+  const r = azureRoutes({
+    wiql: (req, res) => respondJson(res, 200, wiqlResult([7])),
+    batch: (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": String(AZURE_MAX_RESPONSE_BYTES + 1) });
+      res.write('{"value":[');
+    },
+  });
+  await withServer(r.handler, async () => {
+    try {
+      const started = Date.now();
+      await assert.rejects(() => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 5000 })).read(), /batch response body exceeded the maximum/);
+      assert.ok(Date.now() - started < 2000);
+    } finally {
+      r.closeAll();
+    }
+  });
+});
+
+test("TSB-F06 / ADV-01 Azure batch: a stalled batch body ends at timeoutMs, not retried", async () => {
+  const r = azureRoutes({ wiql: (req, res) => respondJson(res, 200, wiqlResult([7])), batch: (req, res) => stall(res, '{"count":1,"value":[') });
+  await withServer(r.handler, async () => {
+    try {
+      await assert.rejects(
+        () => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 150 })).read(),
+        /^Error: Azure DevOps batch response body was not fully received within the configured timeoutMs \(150ms\)\.$/
+      );
+    } finally {
+      r.closeAll();
+    }
+  });
+  assert.deepEqual(r.counts, { wiql: 1, batch: 1 });
+});
+
+test("TSB-F06 / ADV-01 Azure batch: a slow-drip batch body is bounded by the single per-request deadline", async () => {
+  const r = azureRoutes({
+    wiql: (req, res) => respondJson(res, 200, wiqlResult([7])),
+    batch: (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const iv = setInterval(() => (res.destroyed ? clearInterval(iv) : res.write(" ")), 10);
+      res.on("close", () => clearInterval(iv));
+    },
+  });
+  await withServer(r.handler, async () => {
+    try {
+      await assert.rejects(() => new AzureDevOpsRequirementsProvider(makeConfig({ timeoutMs: 200 })).read(), /batch response body was not fully received within the configured timeoutMs \(200ms\)/);
+    } finally {
+      r.closeAll();
+    }
+  });
+});
+
+test("TSB-F06 Azure: malformed JSON under the cap keeps the existing bounded messages at both sites", async () => {
+  const w = azureRoutes({ wiql: (req, res) => sendRaw(res, "<html>SECRET</html>"), batch: () => assert.fail("no batch") });
+  await withServer(w.handler, async () => {
+    await assert.rejects(() => new AzureDevOpsRequirementsProvider(makeConfig()).read(), /^Error: Azure DevOps WIQL response body was not valid JSON\.$/);
+  });
+  const b = azureRoutes({ wiql: (req, res) => respondJson(res, 200, wiqlResult([7])), batch: (req, res) => sendRaw(res, "<html>SECRET</html>") });
+  await withServer(b.handler, async () => {
+    await assert.rejects(() => new AzureDevOpsRequirementsProvider(makeConfig()).read(), /^Error: Azure DevOps batch response body was not valid JSON\.$/);
+  });
+});
+
+test("TSB-F06 Azure: a huge hostile 5xx body is never read; bounded retry semantics unchanged", async () => {
+  const r = azureRoutes({
+    wiql: (req, res) => {
+      res.writeHead(503, { "Content-Type": "text/html" });
+      res.write(hostileHtml());
+    },
+    batch: () => assert.fail("no batch"),
+  });
+  await withServer(r.handler, async () => {
+    try {
+      await assert.rejects(() => new AzureDevOpsRequirementsProvider(makeConfig()).read(), /Azure DevOps request failed after 3 attempt\(s\) with HTTP status 503\./);
+    } finally {
+      r.closeAll();
+    }
+  });
+  assert.equal(r.counts.wiql, 3);
+});

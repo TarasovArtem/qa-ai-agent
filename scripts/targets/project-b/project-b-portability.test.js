@@ -87,14 +87,14 @@ function mockGithubApi(workflows) {
       const wf = decodeURIComponent(runsMatch[1]);
       const entry = workflows[wf];
       if (!entry) return { ok: false, status: 404, statusText: "Not Found" };
-      return { ok: true, json: async () => ({ workflow_runs: [{ id: entry.runId, run_attempt: 1 }] }) };
+      return Response.json({ workflow_runs: [{ id: entry.runId, run_attempt: 1 }] });
     }
     const jobsMatch = url.match(/\/actions\/runs\/(\d+)\/jobs/);
     if (jobsMatch) {
       const runId = Number(jobsMatch[1]);
       for (const wf of Object.keys(workflows)) {
         if (workflows[wf].runId === runId) {
-          return { ok: true, json: async () => ({ jobs: workflows[wf].jobs }) };
+          return Response.json({ jobs: workflows[wf].jobs });
         }
       }
       return { ok: false, status: 404, statusText: "Not Found" };

@@ -21,9 +21,18 @@
 
 const { ProviderError, PROVIDER_ERROR_CODES } = require("./provider-error");
 const { API_KEY, MODEL } = require("../config");
+const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("../bounded-response");
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_TIMEOUT_MS = 30000;
+// TSB-F06: byte cap on the response envelope, enforced while the body
+// streams in and before any JSON parse. Sized so that no generator's
+// pre-parse MAX_*_RESPONSE_CHARS bound of practical size (the largest is
+// automation-candidate-generator.js's 3,369,016 characters) can be falsely
+// rejected here even if every UTF-16 code unit of the model text arrived
+// JSON-escaped as a 6-byte \uXXXX sequence (6 x 3,369,016 = 20,214,096
+// bytes), with the remainder left for the envelope itself.
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 // HTTP status -> generic ProviderError code/retryable. Deliberately no
 // Groq-specific codes (e.g. "GROQ_RATE_LIMIT") - only the shared,
@@ -58,6 +67,32 @@ function mapHttpError(status) {
   // retry (not authentication, not rate limiting, not a 408).
   return new ProviderError(`Groq API request failed (HTTP ${status})`, {
     code: PROVIDER_ERROR_CODES.UNKNOWN,
+    retryable: false,
+  });
+}
+
+// TSB-F06 + ADV-01: bounded body-read failure -> the existing generic
+// codes. The deadline firing mid-body is the same TIMEOUT (retryable) the
+// request itself already reports; an oversized body is INVALID_RESPONSE,
+// like any other unusable envelope. Every other failure keeps the
+// pre-existing "not valid JSON" mapping. No cause is attached: the
+// reader's own errors never carry body content and are fully described by
+// the code and message.
+function mapBodyReadError(err, timeoutMs) {
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.ABORTED) {
+    return new ProviderError(`Groq API request timed out after ${timeoutMs}ms`, {
+      code: PROVIDER_ERROR_CODES.TIMEOUT,
+      retryable: true,
+    });
+  }
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.TOO_LARGE) {
+    return new ProviderError(`Groq API response body exceeded the maximum of ${MAX_RESPONSE_BYTES} bytes`, {
+      code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
+      retryable: false,
+    });
+  }
+  return new ProviderError("Groq API returned a response that was not valid JSON", {
+    code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
     retryable: false,
   });
 }
@@ -115,6 +150,7 @@ class GroqProvider {
         signal: controller.signal,
       });
     } catch (err) {
+      clearTimeout(timer);
       // AbortController firing (our own timeout) vs. any other fetch
       // failure (DNS, connection reset, TLS, etc.) are different generic
       // codes even though both surface as a thrown error from fetch() -
@@ -132,23 +168,24 @@ class GroqProvider {
         retryable: true,
         cause: err,
       });
-    } finally {
-      clearTimeout(timer);
     }
 
     if (!res.ok) {
+      clearTimeout(timer);
       throw mapHttpError(res.status);
     }
 
+    // TSB-F06 + ADV-01: the same per-request deadline stays armed through
+    // the body read, so a stalled or slow-drip body ends as the same
+    // TIMEOUT a slow response would; the body is never read past
+    // MAX_RESPONSE_BYTES and is parsed only once fully acquired.
     let body;
     try {
-      body = await res.json();
+      body = await readBoundedResponseJson(res, { maxBytes: MAX_RESPONSE_BYTES, signal: controller.signal, label: "Groq API" });
     } catch (err) {
-      throw new ProviderError("Groq API returned a response that was not valid JSON", {
-        code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
-        retryable: false,
-        cause: err,
-      });
+      throw mapBodyReadError(err, this.timeoutMs);
+    } finally {
+      clearTimeout(timer);
     }
 
     // Only checking that the envelope actually contains textual model
@@ -166,4 +203,4 @@ class GroqProvider {
   }
 }
 
-module.exports = { GroqProvider };
+module.exports = { GroqProvider, MAX_RESPONSE_BYTES };

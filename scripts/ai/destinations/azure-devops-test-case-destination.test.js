@@ -837,3 +837,131 @@ test("RTI-8F: publish() never mutates the request or its testDesigns", async () 
   );
   assert.equal(JSON.stringify(request), before);
 });
+
+// --- TSB-F06 + ADV-01: bounded creation-response body / body-read time ------
+// Real local HTTP server + real fetch. The module's byte cap is internal
+// (the subpath export surface is unchanged), so the value is stated here:
+// 32 MiB per creation response. Every bounded-read failure keeps the
+// existing AZURE_TEST_CASE_RESPONSE_INVALID outcome (a 2xx was received, so
+// remote creation may have occurred; not batch-fatal) - only the message
+// distinguishes the cause.
+
+const DEST_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+function createdBodyOfExactBytes(id, n) {
+  const base = Buffer.byteLength(JSON.stringify({ ...successBody(id), pad: "" }));
+  const json = JSON.stringify({ ...successBody(id), pad: "p".repeat(n - base) });
+  assert.equal(Buffer.byteLength(json), n);
+  return json;
+}
+
+async function publishAgainst(handler, { timeoutMs = 15000, designs = [td()] } = {}) {
+  const open = [];
+  let requests = 0;
+  let result;
+  await withServer(
+    (req, res) => {
+      requests += 1;
+      open.push(res);
+      handler(req, res, requests);
+    },
+    async () => {
+      try {
+        result = await new AzureDevOpsTestCaseDestination(makeConfig({ timeoutMs })).publish({ testDesigns: designs });
+      } finally {
+        open.forEach((r) => r.destroy());
+      }
+    }
+  );
+  return { result, requests };
+}
+
+test("TSB-F06 destination: a creation response of exactly 32 MiB is accepted (CREATED)", async () => {
+  const json = createdBodyOfExactBytes(4242, DEST_MAX_RESPONSE_BYTES);
+  const { result } = await publishAgainst((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(json);
+  });
+  assert.equal(result.items[0].status, "CREATED");
+  assert.equal(result.items[0].remoteId, "4242");
+});
+
+test("TSB-F06 destination: a creation response one byte over 32 MiB -> RESPONSE_INVALID, not batch-fatal, no body content", async () => {
+  const json = createdBodyOfExactBytes(4242, DEST_MAX_RESPONSE_BYTES + 1);
+  const { result, requests } = await publishAgainst(
+    (req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(json);
+    },
+    { designs: [td({ id: "REQ-X::test::1" }), td({ id: "REQ-X::test::2" })] }
+  );
+  assert.equal(requests, 2, "not batch-fatal: the second item is still attempted (unchanged RESPONSE_INVALID semantics)");
+  for (const item of result.items) {
+    assert.equal(item.status, "FAILED");
+    assert.equal(item.error.code, "AZURE_TEST_CASE_RESPONSE_INVALID");
+    assert.equal(item.error.message, "Azure returned a Test Case creation response that exceeded the maximum size; remote creation may have occurred.");
+  }
+});
+
+test("TSB-F06 destination: a chunked never-ending creation response is cut off at the cap", async () => {
+  const chunk = Buffer.alloc(1024 * 1024, 0x20);
+  const { result } = await publishAgainst((req, res) => {
+    res.writeHead(201, { "Content-Type": "application/json" });
+    const pump = () => {
+      while (!res.destroyed && res.write(chunk));
+      if (!res.destroyed) res.once("drain", pump);
+    };
+    pump();
+  });
+  assert.equal(result.items[0].error.code, "AZURE_TEST_CASE_RESPONSE_INVALID");
+  assert.match(result.items[0].error.message, /exceeded the maximum size/);
+});
+
+test("TSB-F06 destination: an oversized declared Content-Length is rejected before the body is consumed", async () => {
+  const started = Date.now();
+  const { result } = await publishAgainst((req, res) => {
+    res.writeHead(201, { "Content-Type": "application/json", "Content-Length": String(DEST_MAX_RESPONSE_BYTES + 1) });
+    res.write('{"id":');
+  });
+  assert.ok(Date.now() - started < 5000);
+  assert.equal(result.items[0].error.code, "AZURE_TEST_CASE_RESPONSE_INVALID");
+  assert.match(result.items[0].error.message, /exceeded the maximum size/);
+});
+
+test("TSB-F06 / ADV-01 destination: a stalled creation response ends at timeoutMs -> RESPONSE_INVALID (unchanged code), no retry", async () => {
+  const started = Date.now();
+  const { result, requests } = await publishAgainst(
+    (req, res) => {
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.write('{"id":');
+    },
+    { timeoutMs: 1000 }
+  );
+  assert.ok(Date.now() - started < 5000);
+  assert.equal(requests, 1);
+  assert.equal(result.items[0].status, "FAILED");
+  assert.equal(result.items[0].error.code, "AZURE_TEST_CASE_RESPONSE_INVALID");
+  assert.equal(result.items[0].error.message, "Azure Test Case creation response was not fully received within timeoutMs; remote creation may have occurred.");
+});
+
+test("TSB-F06 / ADV-01 destination: a slow-drip creation response is bounded by the single per-request deadline", async () => {
+  const started = Date.now();
+  const { result } = await publishAgainst(
+    (req, res) => {
+      res.writeHead(201, { "Content-Type": "application/json" });
+      const iv = setInterval(() => (res.destroyed ? clearInterval(iv) : res.write(" ")), 20);
+      res.on("close", () => clearInterval(iv));
+    },
+    { timeoutMs: 1000 }
+  );
+  assert.ok(Date.now() - started < 5000);
+  assert.match(result.items[0].error.message, /not fully received within timeoutMs/);
+});
+
+test("TSB-F06 destination: a huge hostile error body is never read; status mapping unchanged", async () => {
+  const { result } = await publishAgainst((req, res) => {
+    res.writeHead(400, { "Content-Type": "text/html" });
+    res.write("<html>" + "x".repeat(64 * 1024));
+  });
+  assert.equal(result.items[0].error.code, "AZURE_TEST_CASE_CREATE_REJECTED");
+});

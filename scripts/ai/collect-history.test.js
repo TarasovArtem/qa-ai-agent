@@ -267,7 +267,7 @@ test("fetchJson: retries a transient 503 and succeeds on a later attempt", async
   global.fetch = async () => {
     calls += 1;
     if (calls < 3) return { ok: false, status: 503, statusText: "Service Unavailable" };
-    return { ok: true, json: async () => ({ ok: true }) };
+    return Response.json({ ok: true });
   };
   t.after(() => {
     global.fetch = originalFetch;
@@ -312,4 +312,155 @@ test("fetchJson: gives up after maxAttempts on a persistent transient error", as
     fetchJson("https://api.github.com", "tok", "/x", { maxAttempts: 3, sleep: async () => {} })
   );
   assert.equal(calls, 3);
+});
+
+// --- TSB-F06 + ADV-01: bounded GitHub API response body / request time ----
+
+const { MAX_HISTORY_RESPONSE_BYTES, HISTORY_REQUEST_TIMEOUT_MS } = require("./collect-history");
+
+const STALL_GUARD = { timeout: 5000 };
+
+function stallingBody(prefix = "") {
+  const bytes = new TextEncoder().encode(prefix);
+  let sent = false;
+  return new ReadableStream({
+    pull(c) {
+      if (!sent && bytes.length > 0) {
+        sent = true;
+        c.enqueue(bytes);
+        return undefined;
+      }
+      return new Promise(() => {});
+    },
+  });
+}
+
+// A valid `{ "jobs": [], "pad": "aaa..." }` body of exactly `n` UTF-8 bytes.
+function jsonOfExactBytes(n) {
+  const base = Buffer.byteLength(JSON.stringify({ jobs: [], pad: "" }));
+  const json = JSON.stringify({ jobs: [], pad: "a".repeat(n - base) });
+  assert.equal(Buffer.byteLength(json), n);
+  return json;
+}
+
+// fetchJson's per-attempt deadline is AbortSignal.timeout(), whose timer
+// is unref'd by design; a stubbed stalled body holds no I/O handle, so the
+// stall tests hold a ref'd handle for their own duration - otherwise the
+// test runner's event loop can drain before the deadline fires (Node
+// 20/22). In production the open socket keeps the loop alive.
+function holdEventLoop(t) {
+  const hold = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(hold));
+}
+
+function withGlobalFetch(t, fn) {
+  const originalFetch = global.fetch;
+  global.fetch = fn;
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+}
+
+test("collect-history: MAX_HISTORY_RESPONSE_BYTES is 8 MiB and HISTORY_REQUEST_TIMEOUT_MS is 10000", () => {
+  assert.equal(MAX_HISTORY_RESPONSE_BYTES, 8 * 1024 * 1024);
+  assert.equal(HISTORY_REQUEST_TIMEOUT_MS, 10000);
+});
+
+test("fetchJson: every attempt passes a per-request AbortSignal to fetch (ADV-01)", async (t) => {
+  let captured;
+  withGlobalFetch(t, async (url, init) => {
+    captured = init.signal;
+    return Response.json({ ok: true });
+  });
+  await fetchJson("https://api.github.com", "tok", "/x", { sleep: async () => {} });
+  assert.ok(captured instanceof AbortSignal);
+});
+
+test("fetchJson: a body of exactly MAX_HISTORY_RESPONSE_BYTES is accepted", async (t) => {
+  const json = jsonOfExactBytes(MAX_HISTORY_RESPONSE_BYTES);
+  withGlobalFetch(t, async () => new Response(json, { status: 200 }));
+  const result = await fetchJson("https://api.github.com", "tok", "/x", { sleep: async () => {} });
+  assert.deepEqual(result.jobs, []);
+});
+
+test("fetchJson: a body one byte over MAX_HISTORY_RESPONSE_BYTES is rejected, not retried, and never echoed", async (t) => {
+  let calls = 0;
+  const json = jsonOfExactBytes(MAX_HISTORY_RESPONSE_BYTES + 1);
+  withGlobalFetch(t, async () => {
+    calls += 1;
+    return new Response(json, { status: 200 });
+  });
+  await assert.rejects(
+    () => fetchJson("https://api.github.com", "tok", "/repos/o/r/actions/runs/1/jobs", { sleep: async () => {} }),
+    (err) => {
+      assert.equal(err.message, `GitHub API response body exceeded the maximum of ${MAX_HISTORY_RESPONSE_BYTES} bytes for /repos/o/r/actions/runs/1/jobs`);
+      assert.ok(!err.message.includes("aaaa"));
+      return true;
+    }
+  );
+  assert.equal(calls, 1);
+});
+
+test("fetchJson: a never-ending 200 body is cut off at the byte cap", async (t) => {
+  const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+  withGlobalFetch(t, async () => new Response(new ReadableStream({ pull: (c) => c.enqueue(chunk) }), { status: 200 }));
+  await assert.rejects(() => fetchJson("https://api.github.com", "tok", "/x", { sleep: async () => {} }), /exceeded the maximum of 8388608 bytes/);
+});
+
+test("fetchJson: a 200 body that stalls is ended by the per-request deadline and not retried (ADV-01)", STALL_GUARD, async (t) => {
+  holdEventLoop(t);
+  let calls = 0;
+  withGlobalFetch(t, async () => {
+    calls += 1;
+    return new Response(stallingBody('{"jobs":['), { status: 200 });
+  });
+  await assert.rejects(
+    () => fetchJson("https://api.github.com", "tok", "/x", { sleep: async () => {}, timeoutMs: 50 }),
+    /GitHub API response body was not fully received before the request deadline for \/x/
+  );
+  assert.equal(calls, 1);
+});
+
+test("fetchJson: a request that never produces headers ends at the deadline and stays within the bounded retry budget (ADV-01)", STALL_GUARD, async (t) => {
+  holdEventLoop(t);
+  let calls = 0;
+  withGlobalFetch(t, (url, init) => {
+    calls += 1;
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason));
+    });
+  });
+  const started = Date.now();
+  await assert.rejects(() => fetchJson("https://api.github.com", "tok", "/x", { maxAttempts: 3, sleep: async () => {}, timeoutMs: 30 }));
+  assert.equal(calls, 3);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test("fetchJson: invalid JSON within the cap no longer echoes body content into the error", async (t) => {
+  withGlobalFetch(t, async () => new Response("<html>UPSTREAM-SECRET-PAGE</html>", { status: 200 }));
+  await assert.rejects(
+    () => fetchJson("https://api.github.com", "tok", "/x", { sleep: async () => {} }),
+    (err) => {
+      assert.equal(err.message, "GitHub API returned a response that was not valid JSON for /x");
+      return true;
+    }
+  );
+});
+
+test("fetchJson: a huge hostile error body is never read - status/retry semantics unchanged", async (t) => {
+  let pulls = 0;
+  let calls = 0;
+  withGlobalFetch(t, async () => {
+    calls += 1;
+    const body = new ReadableStream({
+      pull(c) {
+        pulls += 1;
+        c.enqueue(new Uint8Array(1024 * 1024));
+      },
+    });
+    return new Response(body, { status: 503, statusText: "Service Unavailable" });
+  });
+  await assert.rejects(() => fetchJson("https://api.github.com", "tok", "/x", { maxAttempts: 3, sleep: async () => {} }), /GitHub API 503/);
+  assert.equal(calls, 3);
+  assert.ok(pulls <= 3, `pulls=${pulls}`);
 });
