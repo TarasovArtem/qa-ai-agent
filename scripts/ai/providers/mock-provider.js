@@ -53,8 +53,13 @@ function extractFailedTests(userPrompt) {
   }
 }
 
+// Triage Boundary Contract v1 (TSB-F04): echoes each failed test's opaque
+// local `failureRef` exactly as a real provider is instructed to. A failed
+// test without one yields `failureRef: null`, which the analyzer's closed
+// result contract rejects - MockProvider never invents a reference.
 function buildMockResult(failedTest) {
   return {
+    failureRef: failedTest && typeof failedTest.failureRef === "string" ? failedTest.failureRef : null,
     test: {
       title: (failedTest && failedTest.title) || "Mock failed test",
       specFile: (failedTest && failedTest.specFile) || null,

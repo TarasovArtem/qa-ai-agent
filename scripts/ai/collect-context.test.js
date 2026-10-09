@@ -1,6 +1,13 @@
 "use strict";
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+const invocationState = useHermeticLocalInvocation({ beforeEach, afterEach });
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -412,6 +419,7 @@ function withControlledEnv(fn) {
 // assertion and force a conscious decision about whether/how #19.7
 // should represent the new field, rather than being invisibly ignored.
 const KNOWN_CONTEXT_TOP_LEVEL_KEYS = [
+  "schemaVersion",
   "generatedAt",
   "metadata",
   "testResults",
@@ -491,6 +499,12 @@ test("S1 full-context: current collector wiring matches the historical oracle's 
       event: "push",
       browser: "chrome",
       ci: true,
+      // Triage Boundary Contract v1: local-v1 invocation evidence. The stray
+      // GITHUB_* values above stay ordinary best-effort evidence because
+      // GITHUB_ACTIONS is not "true" - they create no CI authority.
+      invocationMode: "local-v1",
+      runAttempt: null,
+      localInvocationId: invocationState.id,
     },
     testResults: {
       found: true,
@@ -1327,7 +1341,7 @@ function d1FailingAdapter(onCollect) {
       if (onCollect) onCollect(args);
       return {
         testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
-        failedTests: [{ title: "t", specFile: "cypress/e2e/tests/does-not-exist.cy.js", suite: "s", status: "failed", duration: 1, error: { message: "m", stack: "s" }, screenshot: null }],
+        failedTests: [{ title: "t", fullTitle: null, specFile: "cypress/e2e/tests/does-not-exist.cy.js", suite: "s", status: "failed", duration: 1, error: { message: "m", stack: "s" }, screenshot: null }],
         warnings: [],
       };
     },

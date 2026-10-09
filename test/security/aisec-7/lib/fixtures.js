@@ -23,6 +23,11 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
 const AI = path.join(REPO_ROOT, "scripts", "ai");
 const GOVERNANCE = path.join(REPO_ROOT, "scripts", "governance");
 
+// Triage Boundary Contract v1 invocation-environment helpers (shared test
+// helper; set/clear/restore only - it reads no secret).
+const invocationEnv = require(path.join(REPO_ROOT, "test", "helpers", "triage-invocation-env.js"));
+const { buildFailureReferences } = require(path.join(AI, "triage-boundary-contract.js"));
+
 /** Inert, run-unique canary. Never a real secret. */
 function canary(label) {
   return `AISEC7_CANARY_${label}_${crypto.randomBytes(6).toString("hex")}`;
@@ -153,7 +158,8 @@ function scriptedProvider(responses) {
 
 /**
  * Echo provider for the triage analyzer: one valid UNKNOWN result per failed
- * test. Accepts the analyze() args object or the bare user prompt.
+ * test, echoing each prompt-visible failureRef (TSB-F04). Accepts the
+ * analyze() args object or the bare user prompt.
  */
 function triageEchoResponse(input) {
   const userPrompt = typeof input === "string" ? input : input.userPrompt;
@@ -161,6 +167,7 @@ function triageEchoResponse(input) {
   const payload = JSON.parse(match[1]);
   return JSON.stringify({
     results: payload.failedTests.map((t) => ({
+      failureRef: t.failureRef,
       test: { title: t.title, specFile: t.specFile },
       classification: "UNKNOWN",
       confidence: 0.1,
@@ -186,17 +193,33 @@ function projectProfile(id) {
   return { id, displayName: `Synthetic ${id}`, knownProjectConstraints: [`Synthetic constraint for ${id}.`] };
 }
 
-function triageContext({ projectId, framework = "cypress", errorMessage = "synthetic failure", extras = {}, metadata = {}, embeddedHistory, generatedAt } = {}) {
-  const context = {
-    generatedAt: generatedAt || "2026-10-07T00:00:00.000Z",
-    metadata: { projectId, framework, browser: "chrome", ci: true, commit: "0".repeat(40), branch: "main", event: "push", repository: `synthetic/${projectId}`, runId: "1", ...metadata },
-    testResults: { total: 1, failed: 1 },
+// A PersistedTriageContextV1 for `projectId`, carrying the invocation
+// evidence of the CURRENT (test-set) trusted invocation - i.e. what the real
+// collector would persist right now. `metadata` overrides are applied last,
+// so a test can forge stale/foreign invocation evidence explicitly.
+function triageContext({ projectId, framework = "cypress", errorMessage = "synthetic failure", extras = {}, metadata = {}, embeddedHistory, generatedAt, knownProjectConstraints } = {}) {
+  const context = invocationEnv.contextForCurrentInvocation({
+    profile: projectProfile(projectId),
+    knownProjectConstraints,
+    framework,
     failedTests: [{ title: "synthetic test", fullTitle: "synthetic suite synthetic test", specFile: "cypress/e2e/tests/synthetic.cy.js", error: { message: errorMessage, stack: "at synthetic (synthetic.cy.js:1:1)" }, ...extras }],
-    relevantFiles: {},
-    warnings: [],
-  };
+    metadata: { browser: "chrome", ci: true, branch: "main", event: "push", ...metadata },
+  });
+  if (generatedAt) context.generatedAt = generatedAt;
   if (embeddedHistory !== undefined) context.history = embeddedHistory;
   return context;
+}
+
+// The context as the analyzer hands it to runProviderAnalysis(): each failed
+// test carries its opaque local failureRef.
+function withFailureRefs(context) {
+  const refs = buildFailureReferences(context.failedTests);
+  return { ...context, failedTests: context.failedTests.map((f, i) => ({ ...f, failureRef: refs[i].failureRef })) };
+}
+
+// A complete, closed history.json record (XI-02).
+function historyRecord(overrides = {}) {
+  return { available: true, projectId: "unset", framework: "cypress", browser: "chrome", branch: "main", runsConsidered: 10, passes: 8, failures: 2, retryPasses: 1, generatedAt: "2026-10-07T00:00:00.000Z", ...overrides };
 }
 
 // --- #23D-#23F chain fixtures -----------------------------------------------------------
@@ -293,6 +316,9 @@ module.exports = {
   promptPayload,
   projectProfile,
   triageContext,
+  withFailureRefs,
+  historyRecord,
+  invocationEnv,
   OLD_CONTENT,
   OLD_DIGEST,
   NEW_SPEC,

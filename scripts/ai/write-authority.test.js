@@ -25,7 +25,15 @@
  * tests at the end of this file.
  */
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+useHermeticLocalInvocation({ beforeEach, afterEach });
+const { contextForCurrentInvocation } = require("../../test/helpers/triage-invocation-env");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -51,7 +59,26 @@ function freshOutsideDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-outside-`));
 }
 
-const NOOP_ADAPTER = { id: "stub", collect: () => ({ testResults: [], failedTests: [], warnings: [] }) };
+// "No report found" in the real adapters' own shape ({ found: false }), so
+// the produced context satisfies PersistedTriageContextV1.
+const NOOP_ADAPTER = { id: "stub", collect: () => ({ testResults: { found: false }, failedTests: [], warnings: [] }) };
+
+// A zero-failure PersistedTriageContextV1 bound to the current (hermetic)
+// local-v1 invocation - the analyzer's empty-report branch input.
+function zeroFailureContextJson() {
+  return JSON.stringify(contextForCurrentInvocation({ profile: SYNTHETIC_PROFILE, failedTests: [] }));
+}
+
+// A one-failure PersistedTriageContextV1 bound to the current invocation,
+// as a real collector would have persisted it for a browser input.
+function boundFailureContextJson() {
+  return JSON.stringify(
+    contextForCurrentInvocation({
+      profile: SYNTHETIC_PROFILE,
+      failedTests: [{ title: "t", fullTitle: "t", specFile: "cypress/e2e/tests/x.cy.js", suite: "S", status: "failed", duration: 1, error: { message: "m", stack: null }, screenshot: null }],
+    })
+  );
+}
 
 // --- R9-T: final output leaf symlink -> outside, every writer -------------
 
@@ -100,7 +127,7 @@ test("R9-T analyze-failure.js: ai-report.json output leaf symlinked to an outsid
   const victim = path.join(outside, "victim.json");
   fs.writeFileSync(victim, "ORIGINAL");
   fs.mkdirSync(path.join(target, "reports", "ai"), { recursive: true });
-  fs.writeFileSync(path.join(target, "reports", "ai", "context.json"), JSON.stringify({ failedTests: [], metadata: {} }));
+  fs.writeFileSync(path.join(target, "reports", "ai", "context.json"), zeroFailureContextJson());
   fs.symlinkSync(victim, path.join(target, "reports", "ai", "ai-report.json"), "file");
 
   await assert.rejects(
@@ -114,18 +141,7 @@ function chromeFailureFixture(target) {
   const chromeDir = path.join(target, "reports", "ai", "browser-inputs", "chrome");
   fs.mkdirSync(chromeDir, { recursive: true });
   fs.writeFileSync(path.join(chromeDir, "browser-result.json"), JSON.stringify({ browser: "chrome", outcome: "failure", framework: "cypress" }));
-  fs.writeFileSync(
-    path.join(chromeDir, "context.json"),
-    JSON.stringify({
-      generatedAt: "2026-01-01T00:00:00.000Z",
-      metadata: { framework: "cypress" },
-      testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
-      failedTests: [{ title: "t", fullTitle: "t", specFile: "cypress/e2e/tests/x.cy.js", suite: "S", status: "failed", duration: 1, error: { message: "m", stack: null }, screenshot: null }],
-      relevantFiles: {},
-      knownProjectConstraints: [],
-      warnings: [],
-    })
-  );
+  fs.writeFileSync(path.join(chromeDir, "context.json"), boundFailureContextJson());
 }
 
 test("R9-T aggregate-browser-context.js: context.json output leaf symlinked to an outside target is refused, outside target untouched", () => {
@@ -219,7 +235,7 @@ test("R9-T collect-history.js: a fresh repository with no reports/ directory yet
 test("R9-T analyze-failure.js: a fresh repository (context.json present, no ai-report.json yet) can still write ai-report.json", async () => {
   const target = freshRepo("r9-af-fresh");
   fs.mkdirSync(path.join(target, "reports", "ai"), { recursive: true });
-  fs.writeFileSync(path.join(target, "reports", "ai", "context.json"), JSON.stringify({ failedTests: [], metadata: {} }));
+  fs.writeFileSync(path.join(target, "reports", "ai", "context.json"), zeroFailureContextJson());
   await analyzeFailure.main({ projectProfile: SYNTHETIC_PROFILE, repositoryRoot: target });
   assert.ok(fs.existsSync(path.join(target, "reports", "ai", "ai-report.json")));
 });
@@ -311,18 +327,7 @@ test("R8-T3b aggregate-browser-context.js main(): a repository-local (non-escapi
   const realBrowserInputs = path.join(target, "actual-browser-inputs");
   fs.mkdirSync(path.join(realBrowserInputs, "chrome"), { recursive: true });
   fs.writeFileSync(path.join(realBrowserInputs, "chrome", "browser-result.json"), JSON.stringify({ browser: "chrome", outcome: "failure", framework: "cypress" }));
-  fs.writeFileSync(
-    path.join(realBrowserInputs, "chrome", "context.json"),
-    JSON.stringify({
-      generatedAt: "2026-01-01T00:00:00.000Z",
-      metadata: { framework: "cypress" },
-      testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
-      failedTests: [{ title: "t", fullTitle: "t", specFile: "cypress/e2e/tests/x.cy.js", suite: "S", status: "failed", duration: 1, error: { message: "m", stack: null }, screenshot: null }],
-      relevantFiles: {},
-      knownProjectConstraints: [],
-      warnings: [],
-    })
-  );
+  fs.writeFileSync(path.join(realBrowserInputs, "chrome", "context.json"), boundFailureContextJson());
   fs.mkdirSync(path.join(target, "reports", "ai"), { recursive: true });
   fs.symlinkSync(realBrowserInputs, path.join(target, "reports", "ai", "browser-inputs"), "dir");
 

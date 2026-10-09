@@ -155,12 +155,12 @@ the case ledger (section 7).
 
 | H ID | Threat / invariant | Current executable test | Observed result | Security outcome | Evidence | Effect intercepted | Dependency classification | Controlled-v1 relevance | Follow-up owner |
 |---|---|---|---|---|---|---|---|---|---|
-| H-01 | Forged/missing identity join; SADR-01, SAI-01/02/03 | `triage-cross-project.test.js`, `review-apply-execute.test.js` | Foreign-root triage and same-byte foreign-checkout apply accepted; project-label mismatch refused | 1 PASS, 2 FAIL; target IMPLEMENTATION_BLOCKED | H01-C1..C3, H01-T | Provider call; temp-root writes | IMPLEMENTATION_BLOCKED (FI-01) | Required for every enabled effect that needs scope (SADR-11) | PO / trusted host (ODR-01) |
+| H-01 | Forged/missing identity join; SADR-01, SAI-01/02/03 | `triage-cross-project.test.js`, `review-apply-execute.test.js` | Foreign-root triage refused (Triage Boundary XI-01 binding); same-byte foreign-checkout apply accepted; project-label mismatch refused | 2 PASS, 1 FAIL; target IMPLEMENTATION_BLOCKED | H01-C1..C3, H01-T | Provider call; temp-root writes | IMPLEMENTATION_BLOCKED (FI-01) | Required for every enabled effect that needs scope (SADR-11) | PO / trusted host (ODR-01) |
 | H-02 | Forged/expired/replayed approval; SADR-02, SAI-05/06 | `review-apply-execute.test.js` | Fabricated record accepted and applied, then reached the launcher; stale content refused; no expiry; restored-base replay accepted | 1 PASS, 2 FAIL, 2 OWNER_DISPOSITION_REQUIRED; target OWNER_DISPOSITION_REQUIRED | H02-C1..C5, H02-T | Temp-root writes; spawn intercepted | OWNER_DECISION_BLOCKED (ODR-02) + FI-02 | AT-07 / TB-01 guard retained for any enabled write/execute | PO / review host (ODR-02) |
 | H-03 | Split/substituted presentation; SADR-03, SAI-05/06 | `review-apply-execute.test.js` | Presentation forgeries refused before any fs access; persuasive text grants nothing; no display binding exists | 2 PASS; target IMPLEMENTATION_BLOCKED | H03-C1, H03-C2, H03-T | fs spy; temp-root writes | IMPLEMENTATION_BLOCKED (FI-03) | SECURITY review-presentation restriction stays mandatory | Review host |
 | H-04 | Cause/raw-output/sink disclosure; SADR-04, SAI-11 | `triage-cross-project.test.js`, `source-destination.test.js` | Provider-error and outer-loader messages sanitized; projection drops extras; error text forwarded; remote content kept in `.cause` | 3 PASS, 2 OWNER_DISPOSITION_REQUIRED; target OWNER_DISPOSITION_REQUIRED | H04-C1..C5, H04-T | Scripted provider; fetch stub | OWNER_DECISION_BLOCKED (ODR-03/05) | Audience policy needed per enabled sink | Data / prompt / log owners |
-| H-05 | XI-01 copied context; SADR-05, SAI-04/09 | `triage-cross-project.test.js` (public `analyzeFailure.main`) | Project A context analyzed under B; stale relabelled context accepted | 2 FAIL; target IMPLEMENTATION_BLOCKED | H05-C1, H05-C2, H05-T | MockProvider wrapped; report write in temp root | IMPLEMENTATION_BLOCKED (FI-01/05) | XI-01: disabled or constrained before Controlled Release when the affected capability is enabled | Triage boundary owner after PO disposition |
-| H-06 | XI-02 embedded-history fallback; SADR-05, SAI-04 | `triage-cross-project.test.js` (public `analyzeFailure.main`) | Embedded canary reached the prompt in all six ineligible separate-history states; report/prompt diverge; eligible history replaces the field; unavailable stays null | 2 PASS, 2 FAIL; target IMPLEMENTATION_BLOCKED | H06-C1..C4, H06-T | MockProvider wrapped; report write in temp root | IMPLEMENTATION_BLOCKED (FI-05) | XI-02: same immutable restriction as XI-01 | Triage history / prompt owner after PO disposition |
+| H-05 | XI-01 copied context; SADR-05, SAI-04/09 | `triage-cross-project.test.js` (public `analyzeFailure.main`) | Project A context and stale/foreign relabelled context refused before provider transfer, in local-v1 and github-actions-v1 (Triage Boundary implementation) | 2 PASS; target IMPLEMENTATION_BLOCKED | H05-C1, H05-C2, H05-T | MockProvider wrapped; report write in temp root | IMPLEMENTATION_BLOCKED (FI-01/05) | XI-01: disabled or constrained before Controlled Release when the affected capability is enabled | Triage boundary owner after PO disposition |
+| H-06 | XI-02 embedded-history fallback; SADR-05, SAI-04 | `triage-cross-project.test.js` (public `analyzeFailure.main`) | Embedded history rejected at the persisted-context boundary in all six separate-history states; prompt and report History identical; eligible history gives exactly four counters; unavailable stays null (Triage Boundary implementation) | 4 PASS; target IMPLEMENTATION_BLOCKED | H06-C1..C4, H06-T | MockProvider wrapped; report write in temp root | IMPLEMENTATION_BLOCKED (FI-05) | XI-02: same immutable restriction as XI-01 | Triage history / prompt owner after PO disposition |
 | H-07 | Shared/import/replay state; SADR-06, SAI-04/09 | `triage-cross-project.test.js` | Interleaved A/B analyses isolated through module state; provider/key selection is process-global at import | 1 PASS, 1 OWNER_DISPOSITION_REQUIRED; target ARCHITECTURE_BLOCKED | H07-C1, H07-C2, H07-T | Scripted providers | ARCHITECTURE_BLOCKED (ODR-05 first, FI-06) | No import/replay/shared-worker capability may rely on this | Invocation / store host |
 | H-08 | Hostile-valid model output; SADR-07, SAI-07/10 | `hostile-model-output.test.js` | Out-of-plan, protected, authority-field, invented-reference and foreign-plan outputs refused; approval prose grants nothing; triage policy overrides model; hostile-valid code is accepted as a proposal | 7 PASS, 1 OWNER_DISPOSITION_REQUIRED; target IMPLEMENTATION_BLOCKED | H08-C1..C8, H08-T | Write spy, spawn interceptor, provider call counts | READY_AS_VERIFICATION_INPUT; FI-07 expanded target | Deterministic gates stay authoritative; semantic review stays human (ODR-08) | Tool / apply owner |
 | H-09 | Launch/host/descendant abuse; SADR-08, SAI-10/16 | `review-apply-execute.test.js` | Exact argv/shell:false/cwd/env; unsafe, no-target and stale-byte cases refused with zero spawn; home/profile env passed | 4 PASS, 1 OWNER_DISPOSITION_REQUIRED; target OWNER_DISPOSITION_REQUIRED (REQUIRES_ISOLATED_HOST) | H09-C1..C5, H09-T | spawn intercepted, never launched | Launcher READY; host OWNER_DECISION_BLOCKED (ODR-06), FI-08 | No sandbox credited; generated-code execution needs an owner-selected host envelope | Host / runtime / security |
@@ -177,7 +177,7 @@ characterization in the named file.
 
 | Case | H | Scope | Security outcome | Observation | Test file | Effect intercepted |
 |---|---|---|---|---|---|---|
-| H01-C1 | H-01 | CURRENT | FAIL | Project B profile with Project A's root: A evidence sent once to the provider under B's system prompt; report carries A's projectId | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
+| H01-C1 | H-01 | CURRENT | PASS | Project B profile with Project A's root: refused with `TRIAGE_CONTEXT_PROJECT_MISMATCH`; zero provider calls, no report (label/freshness binding, not authentication) | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
 | H01-C2 | H-01 | CURRENT | FAIL | The approval for the intended root also applies into a second checkout with the same base bytes | `review-apply-execute.test.js` | Temp-root writes |
 | H01-C3 | H-01 | CURRENT | PASS | `expectedProjectId` mismatch refused, zero writes (label consistency, not authentication) | `review-apply-execute.test.js` | Temp-root writes (none) |
 | H01-T | H-01 | TARGET | IMPLEMENTATION_BLOCKED | No authenticated principal→project→repository→root→provider→destination join exists (FI-01/FV-01) | `harness-invariants.test.js` | None |
@@ -191,16 +191,16 @@ characterization in the named file.
 | H03-C2 | H-03 | CURRENT | PASS | System-like purpose text stays inert data; derived status CHANGES_REQUESTED; apply refused | `review-apply-execute.test.js` | Temp-root writes (none) |
 | H03-T | H-03 | TARGET | IMPLEMENTATION_BLOCKED | Package and record keys contain no display/renderer binding (FI-03/FV-03) | `review-apply-execute.test.js` | None |
 | H04-C1 | H-04 | CURRENT | PASS | Canaries in provider error message and cause are absent from `firstAttemptError` and from the terminal AnalyzerError | `triage-cross-project.test.js` | Scripted provider |
-| H04-C2 | H-04 | CURRENT | PASS | Failure extras, error extras and metadata projectId/repository/runId canaries absent from the prompt | `triage-cross-project.test.js` | Scripted provider |
+| H04-C2 | H-04 | CURRENT | PASS | Metadata projectId/repository/runId canaries absent from the prompt; failure and error extras rejected by the closed persisted-context contract before any provider call | `triage-cross-project.test.js` | Scripted provider |
 | H04-C3 | H-04 | CURRENT | OWNER_DISPOSITION_REQUIRED | error.message/stack canaries forwarded verbatim (ODR-03 audience) | `triage-cross-project.test.js` | Scripted provider |
 | H04-C4 | H-04 | CURRENT | PASS | Outer `REQUIREMENTS_SOURCE_READ_FAILED` message omits the remote queryType canary | `source-destination.test.js` | fetch stub |
 | H04-C5 | H-04 | CURRENT | OWNER_DISPOSITION_REQUIRED | Remote queryType canary is preserved in `error.cause` (ODR-03/05) | `source-destination.test.js` | fetch stub |
 | H04-T | H-04 | TARGET | OWNER_DISPOSITION_REQUIRED | Sink-specific audience/diagnostic/retention contracts (ODR-03/05, FI-04/FV-04) | `harness-invariants.test.js` | None |
-| H05-C1 | H-05 | CURRENT | FAIL | XI-01 via public `analyzeFailure.main`: A canary in the exact provider payload; B's report carries A's projectId and repository | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
-| H05-C2 | H-05 | CURRENT | FAIL | XI-01: 2001-dated, foreign-run, foreign-repository context relabelled as B is accepted and analyzed | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
+| H05-C1 | H-05 | CURRENT | PASS | XI-01 via public `analyzeFailure.main`: Project A context (and the same context relabelled as B with A's constraints) refused; no A canary reaches the provider; no report | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
+| H05-C2 | H-05 | CURRENT | PASS | XI-01: relabelled context from another local-v1 invocation id, or another GitHub Actions repository/commit/run/run attempt, refused; the same-run, same-attempt context is analyzed | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
 | H05-T | H-05 | TARGET | IMPLEMENTATION_BLOCKED | Authenticated producer/project/root/run join before provider request (FI-01/05, FV-05) | `harness-invariants.test.js` | None |
-| H06-C1 | H-06 | CURRENT | FAIL | XI-02: embedded history canary reached the prompt with separate history absent, unavailable, malformed, wrong-project, wrong-framework and invalid-counter | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
-| H06-C2 | H-06 | CURRENT | FAIL | XI-02: `report.history === null` while the prompt carried the embedded canary | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
+| H06-C1 | H-06 | CURRENT | PASS | XI-02: embedded history refused with `TRIAGE_CONTEXT_EMBEDDED_HISTORY` with separate history absent, unavailable, malformed, wrong-project, wrong-framework and invalid-counter; ineligible separate history is null | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
+| H06-C2 | H-06 | CURRENT | PASS | XI-02: prompt and report History are identical (same validated projection) in every separate-history state | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
 | H06-C3 | H-06 | CURRENT | PASS | Eligible separate history: the prompt and report carry exactly the four counters, with no canary | `triage-cross-project.test.js` | MockProvider.analyze wrapped |
 | H06-C4 | H-06 | CURRENT | PASS | Unavailable history is reported as null, not as zero counters | `triage-cross-project.test.js` | Report write in temp root |
 | H06-T | H-06 | TARGET | IMPLEMENTATION_BLOCKED | Nested history eligibility and projection at the final consumer (FI-05/FV-05) | `harness-invariants.test.js` | None |
@@ -213,7 +213,7 @@ characterization in the named file.
 | H08-C4 | H-08 | CURRENT | PASS | MODIFY of a path absent from the bound context is rejected | `hostile-model-output.test.js` | Write spy, spawn interceptor |
 | H08-C5 | H-08 | CURRENT | PASS | "APPROVED BY SECURITY REVIEW" content yields a change set with no authority fields; apply with an undefined, null or forged record writes nothing | `hostile-model-output.test.js` | Temp-root writes (none) |
 | H08-C6 | H-08 | CURRENT | OWNER_DISPOSITION_REQUIRED | Hostile-looking schema-valid code in an allowed path is accepted as a proposal; zero writes, zero spawn (ODR-08) | `hostile-model-output.test.js` | Write spy, spawn interceptor |
-| H08-C7 | H-08 | CURRENT | PASS | TEST_BUG with `shouldCreateBug: true` is forced to false; the model-supplied `policy` is overwritten | `hostile-model-output.test.js` | Scripted provider |
+| H08-C7 | H-08 | CURRENT | PASS | TEST_BUG with `shouldCreateBug: true` is forced to false; a model-supplied `policy` field is rejected by the closed provider-result contract (no report) | `hostile-model-output.test.js` | Scripted provider |
 | H08-C8 | H-08 | CURRENT | PASS | Plan generator refuses workflow, package.json, foreign-candidate and foreign-project plans; the benign control is accepted | `hostile-model-output.test.js` | Write spy, spawn interceptor |
 | H08-T | H-08 | TARGET | IMPLEMENTATION_BLOCKED | Expanded per-effect deterministic capability enforcement (FI-07/FV-07) | `harness-invariants.test.js` | None |
 | H09-C1 | H-09 | CURRENT | PASS | Exactly one spawn: local binary, `run --headless --browser chrome --spec <2 targets>`, shell:false, cwd realpath, allowlisted env without the dummy token | `review-apply-execute.test.js` | spawn intercepted |
@@ -250,11 +250,12 @@ characterization in the named file.
 
 ## 8. Executable current-control results (security PASS)
 
-35 narrow current controls held:
+40 narrow current controls held:
 
-- H01-C3, H02-C2, H03-C1, H03-C2;
+- H01-C1, H01-C3, H02-C2, H03-C1, H03-C2;
 - H04-C1, H04-C2, H04-C4;
-- H06-C3, H06-C4, H07-C1;
+- H05-C1, H05-C2;
+- H06-C1, H06-C2, H06-C3, H06-C4, H07-C1;
 - H08-C1, H08-C2, H08-C3, H08-C4, H08-C5, H08-C7, H08-C8;
 - H09-C1, H09-C2, H09-C3, H09-C4;
 - H10-C1, H10-C3, H10-C5, H10-C6, H10-C8;
@@ -267,18 +268,24 @@ publication safety.
 
 ## 9. Current-gap characterization (security FAIL / GAP CONFIRMED)
 
-10 reproductions. Each test passes because it observed the gap; each security
+5 reproductions. Each test passes because it observed the gap; each security
 outcome is FAIL.
 
 | Case | Gap | Existing item (unchanged) |
 |---|---|---|
-| H01-C1 | Triage has no profile↔root↔context join | XI-01, TB-04/09 |
 | H01-C2 | Approval is not bound to a checkout or root | TB-02/09 |
 | H02-C1 | Integrity-only review digest; fabricated reviewer accepted | TB-01, AT-07 |
 | H02-C5 | Execute authority follows from an unauthenticated approval chain | TB-01/TB-18 |
-| H05-C1, H05-C2 | Persisted context not bound to the invocation | XI-01 |
-| H06-C1, H06-C2 | Embedded history fallback; prompt/report divergence | XI-02 |
 | H11-C8, H11-C9 | Comment target selection: no author gate, first page only | TB-08 |
+
+**Triage Boundary implementation update (TSB-F04 + TSB-F07 + XI-01 + XI-02,
+`docs/triage-boundary-contract-decision-v1.md`).** H01-C1, H05-C1, H05-C2,
+H06-C1 and H06-C2 previously reproduced the XI-01/XI-02 gaps (FAIL). With the
+implemented Triage Boundary Contract they observe the controls holding and are
+PASS (the evidence-model update this matrix requires for an authorized XI fix).
+This is freshness/label binding, not authentication: H01-T, H05-T and H06-T stay
+IMPLEMENTATION_BLOCKED, and XI-01/XI-02 remain OPEN until their separately
+authorized closure.
 
 Source reachability, as in AISEC-4/6, is reproduced at the real consumer with
 synthetic inputs. Remote exploitation and actual sensitive disclosure remain
@@ -353,7 +360,9 @@ Enforced by `harness-invariants.test.js` and `lib/outcomes.js`:
 - **Current refusals:** a current deterministic refusal may be PASS while its
   target stays blocked (H03-C1 PASS with H03-T IMPLEMENTATION_BLOCKED).
 - **Reproductions:** a reproduction keeps FAIL. A policy dependency does not
-  erase a FAIL. XI cases throw if confirmed as PASS.
+  erase a FAIL. Remaining FAIL cases throw if confirmed as PASS; the XI cases
+  (PASS since the Triage Boundary implementation) throw if a reproduced gap is
+  confirmed.
 - **Binding:** every current case must be confirmed in its declared file. Every
   case must appear in this document with its declared outcome. A behavior change
   fails the suite until the matrix is updated. This binding is a source-text

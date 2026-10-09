@@ -19,12 +19,21 @@ const { execFileSync } = require("child_process");
 const { assertValidProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
 const { normalizeSpecPath, resolveSafeRepositoryWritePath } = require("./context-utils");
+const {
+  CONTEXT_SCHEMA_VERSION,
+  MAX_RELEVANT_FILE_BYTES,
+  MAX_TOTAL_RELEVANT_BYTES,
+  resolveTrustedInvocation,
+  invocationEvidence,
+  validatePersistedContext,
+} = require("./triage-boundary-contract");
 const cypressAdapter = require("./adapters/cypress-adapter");
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 
 // Keeps the collected context small and safe to hand to an LLM later.
-const MAX_FILE_BYTES = 20 * 1024;
-const MAX_TOTAL_RELEVANT_BYTES = 150 * 1024;
+// Single source: the Triage Boundary Contract (20 KiB per file, 150 KiB
+// aggregate), which the analyzer enforces on the persisted context.
+const MAX_FILE_BYTES = MAX_RELEVANT_FILE_BYTES;
 
 // Roadmap TI-1: this generic collector owns NO concrete project identity.
 // A ProjectProfile (see scripts/ai/project-profile.js for the generic
@@ -380,6 +389,13 @@ function buildRelevantFiles(failedTests, warnings, frameworkId, root) {
     const result = readFileSafe(absPath, policy, root);
     if (!result) return;
 
+    // The aggregate cap is a hard bound on the persisted context (TSB-F07):
+    // a file that would cross it is skipped, never partially included.
+    if (totalBytes + result.content.length > MAX_TOTAL_RELEVANT_BYTES) {
+      warnings.push(`relevantFiles size cap reached; skipped ${rel}.`);
+      return;
+    }
+
     files[rel] = result;
     totalBytes += result.content.length;
   };
@@ -466,16 +482,29 @@ function buildRelevantFiles(failedTests, warnings, frameworkId, root) {
 // TSB-F05-D1-C1: `profile` is the central boundary's detached, frozen
 // snapshot from here on - the caller's object is never read again, so a
 // mutation during adapter.collect() cannot reach context.json.
+//
+// Triage Boundary Contract v1 (XI-01/TSB-F07): the trusted current
+// invocation is resolved from the process environment right after the
+// profile/root checks and before any adapter read or output write - a
+// missing, unknown or contradictory mode throws and writes nothing. Its
+// evidence (invocationMode, the GitHub Actions repository/SHA/run/run
+// attempt tuple, or the local-v1 QA_AI_INVOCATION_ID) is persisted into
+// context.metadata so analyze-failure.js can bind the context to ITS OWN
+// independently resolved current invocation. The complete context is then
+// validated against PersistedTriageContextV1 before it is written, so the
+// producer never persists an artifact the analyzer would reject as
+// malformed.
 function main({ adapter = cypressAdapter, adapterOptions, profile: inputProfile, repositoryRoot } = {}) {
   if (typeof adapter.id !== "string" || adapter.id.length === 0 || typeof adapter.collect !== "function") {
     throw new Error("main(): adapter must have a non-empty string id and a collect() function");
   }
   const profile = assertValidProjectProfile(inputProfile, "collect-context.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "collect-context.main()");
+  const invocation = resolveTrustedInvocation();
 
   const outputFile = path.join(root.realRoot, "reports", "ai", "context.json");
 
-  const metadata = getMetadata(adapter.id, profile.id, root.realRoot);
+  const metadata = { ...getMetadata(adapter.id, profile.id, root.realRoot), ...invocationEvidence(invocation) };
   const adapterResult = adapter.collect({ ...adapterOptions, root, currentProjectId: profile.id });
   const { testResults, failedTests } = adapterResult;
   // Copied, not mutated in place - Roadmap #19.6B: the adapter's returned
@@ -492,7 +521,8 @@ function main({ adapter = cypressAdapter, adapterOptions, profile: inputProfile,
     knownProjectConstraints = profile.knownProjectConstraints;
   }
 
-  const context = {
+  const context = validatePersistedContext({
+    schemaVersion: CONTEXT_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     metadata,
     testResults,
@@ -500,7 +530,7 @@ function main({ adapter = cypressAdapter, adapterOptions, profile: inputProfile,
     relevantFiles,
     knownProjectConstraints,
     warnings,
-  };
+  });
 
   // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
   // reasonably possible to the actual write - see

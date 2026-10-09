@@ -58,7 +58,7 @@ const HARNESS_TESTS = Object.freeze({
     "false-PASS: a current deterministic refusal may be PASS while its target architecture stays blocked",
     "false-PASS: a successful reproduction test keeps a FAIL security outcome, and policy dependencies do not erase it",
     "false-PASS: no current-behavior case reports PASS for a property that is a declared FAIL, and FAIL cases exist",
-    "finding preservation: XI cases record XI-01/XI-02 as OPEN / MEDIUM / UNCHANGED and only as FAIL reproductions",
+    "finding preservation: XI cases keep XI-01/XI-02 OPEN / MEDIUM and never claim closure",
     "documentation: every H row and every case appears in the AISEC-7 document with its declared outcome",
     "safety: harness temp roots live under the OS temp directory",
     "safety: the harness makes no direct network or process call and names no real endpoint",

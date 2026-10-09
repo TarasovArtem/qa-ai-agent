@@ -1,6 +1,13 @@
 "use strict";
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+useHermeticLocalInvocation({ beforeEach, afterEach });
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -15,7 +22,8 @@ const {
   buildBrowserCorrelation,
   DEFAULT_BROWSER_PRIORITY,
 } = require("./aggregate-browser-context");
-const { buildFailureReport, validateAnalysisItem } = require("./analyze-failure");
+const { buildFailureReport } = require("./analyze-failure");
+const { buildFailureReferences } = require("./triage-boundary-contract");
 const { assertValidRepositoryRoot } = require("./repository-root");
 
 // Roadmap TI-1: bfr() requires an explicit projectProfile
@@ -29,8 +37,35 @@ const SYNTHETIC_TEST_PROFILE = {
   knownProjectConstraints: ["Synthetic test constraint."],
 };
 
+// The pure aggregation tests in this file deliberately use minimal raw
+// browser-input contexts (e.g. without metadata.framework, to exercise
+// ABSENT classification). Integration tests hand the aggregated primary to
+// the real buildFailureReport(), which accepts only PersistedTriageContextV1,
+// so the fields a real collector always persists are filled in here - the
+// fields under test (failedTests, metadata.browser, correlations) are kept.
+function asPersistedV1(ctx) {
+  return {
+    schemaVersion: 1,
+    ...ctx,
+    metadata: {
+      projectId: SYNTHETIC_TEST_PROFILE.id,
+      framework: "cypress",
+      invocationMode: "local-v1",
+      runAttempt: null,
+      localInvocationId: "0123456789abcdef0123456789abcdef",
+      ...ctx.metadata,
+    },
+    knownProjectConstraints: SYNTHETIC_TEST_PROFILE.knownProjectConstraints,
+  };
+}
+
 function bfr(ctx, options = {}) {
-  return buildFailureReport(ctx, { projectProfile: SYNTHETIC_TEST_PROFILE, ...options });
+  return buildFailureReport(asPersistedV1(ctx), { projectProfile: SYNTHETIC_TEST_PROFILE, ...options });
+}
+
+// The opaque reference the analyzer generates for the context's first failed test.
+function refOf(ctx) {
+  return buildFailureReferences(ctx.failedTests)[0].failureRef;
 }
 
 function browserInput(browser, outcome, overrides = {}) {
@@ -485,6 +520,7 @@ test("integration: two failed browser inputs still result in exactly one provide
       return JSON.stringify({
         results: [
           {
+            failureRef: refOf(primary.context),
             test: { title: primary.context.failedTests[0].title, specFile: primary.context.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.9,
@@ -503,7 +539,8 @@ test("integration: two failed browser inputs still result in exactly one provide
   const report = await bfr(primary.context, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once for a two-browser-failure run");
-  assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
+  assert.equal(report.results[0].classification, "TEST_BUG");
+  assert.equal(report.results[0].test.title, primary.context.failedTests[0].title, "authoritative identity from the local snapshot");
   // Only the primary (chrome) failure was actually analyzed - edge's
   // failure never reached the provider at all, by construction.
   assert.equal(report.sourceContext.browser, "chrome");
@@ -528,6 +565,7 @@ test("integration: three failed browser inputs (chrome, edge, firefox) still res
       return JSON.stringify({
         results: [
           {
+            failureRef: refOf(primary.context),
             test: { title: primary.context.failedTests[0].title, specFile: primary.context.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.9,
@@ -546,7 +584,8 @@ test("integration: three failed browser inputs (chrome, edge, firefox) still res
   const report = await bfr(primary.context, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once even with three browsers failing");
-  assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
+  assert.equal(report.results[0].classification, "TEST_BUG");
+  assert.equal(report.results[0].test.title, primary.context.failedTests[0].title, "authoritative identity from the local snapshot");
   // Only the primary (chrome) failure was actually analyzed - edge's and
   // firefox's failures never reached the provider at all, by construction.
   assert.equal(report.sourceContext.browser, "chrome");
@@ -573,6 +612,7 @@ test("integration: multi-browser correlation reaches provider.analyze()'s userPr
       return JSON.stringify({
         results: [
           {
+            failureRef: refOf(contextWithCorrelation),
             test: { title: contextWithCorrelation.failedTests[0].title, specFile: contextWithCorrelation.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.9,
@@ -691,6 +731,7 @@ test("integration: Playwright-only failure (all Cypress passes) still routes thr
       return JSON.stringify({
         results: [
           {
+            failureRef: refOf(primary.context),
             test: { title: primary.context.failedTests[0].title, specFile: primary.context.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.9,
@@ -709,7 +750,8 @@ test("integration: Playwright-only failure (all Cypress passes) still routes thr
   const report = await bfr(contextWithCorrelation, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once for a Playwright-only failure");
-  assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
+  assert.equal(report.results[0].classification, "TEST_BUG");
+  assert.equal(report.results[0].test.title, primary.context.failedTests[0].title, "authoritative identity from the local snapshot");
   assert.equal(report.sourceContext.browser, "playwright-chromium");
   assert.equal(report.sourceContext.frameworkCorrelation.primaryFramework, "playwright");
 });
@@ -754,6 +796,7 @@ test("T3 CYPRESS_AND_PLAYWRIGHT_FAIL: both fail -> Cypress canonical, Playwright
       return JSON.stringify({
         results: [
           {
+            failureRef: refOf(primary.context),
             test: { title: primary.context.failedTests[0].title, specFile: primary.context.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.9,
@@ -772,7 +815,8 @@ test("T3 CYPRESS_AND_PLAYWRIGHT_FAIL: both fail -> Cypress canonical, Playwright
   const report = await bfr(contextWithCorrelation, { provider: countingProvider, history: null });
 
   assert.equal(analyzeCalls, 1, "provider.analyze() must be called exactly once even when Cypress AND Playwright both fail");
-  assert.deepEqual(validateAnalysisItem(report.results[0], 0), []);
+  assert.equal(report.results[0].classification, "TEST_BUG");
+  assert.equal(report.results[0].test.title, primary.context.failedTests[0].title, "authoritative identity from the local snapshot");
   assert.equal(report.sourceContext.browser, "chrome");
   // failedTests supplied to the provider are Cypress's own only - never a
   // merged/cross-framework array.
@@ -954,6 +998,7 @@ test("integration: single-browser correlation (one pass, one fail) also reaches 
       return JSON.stringify({
         results: [
           {
+            failureRef: refOf(contextWithCorrelation),
             test: { title: contextWithCorrelation.failedTests[0].title, specFile: contextWithCorrelation.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.9,

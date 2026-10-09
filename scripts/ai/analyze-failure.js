@@ -32,7 +32,7 @@
 const fs = require("fs");
 const path = require("path");
 const { MODEL, PROVIDER } = require("./config");
-const { CLASSIFICATIONS, buildSystemPrompt, buildUserPrompt } = require("./qa-agent-prompt");
+const { buildSystemPrompt, buildUserPrompt } = require("./qa-agent-prompt");
 const { createProvider } = require("./providers");
 const { PROVIDER_ERROR_CODES, normalizeProviderError } = require("./providers/provider-error");
 const { validateProvider, validateProviderResponse } = require("./providers/provider-contract");
@@ -40,62 +40,61 @@ const { applyAgentPolicy } = require("./agent-policy");
 const { assertValidProjectProfile, inspectProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
 const { assertValidProjectKnowledgeConfig } = require("./project-knowledge-config");
-const { resolveSafeRepositoryWritePath, resolveRepositoryLocalPath } = require("./context-utils");
+const {
+  resolveSafeRepositoryWritePath,
+  resolveRepositoryLocalPath,
+  resolveSafeLocalAttachmentPath,
+} = require("./context-utils");
 const { loadKnowledgeUnits, loadProjectKnowledgeUnits, composeKnowledgeUnits } = require("./knowledge/loader");
 const { selectKnowledge } = require("./knowledge/selector");
 const { projectBrowserCorrelation, projectFrameworkCorrelation } = require("./correlation-projection");
+const {
+  MAX_HISTORY_BYTES,
+  TriageBoundaryError,
+  snapshotPlainData,
+  resolveTrustedInvocation,
+  readBoundedJsonFile,
+  validatePersistedContext,
+  readPersistedContext,
+  bindContextToInvocation,
+  validateHistoryRecord,
+  isValidHistoryMetrics,
+  projectHistory,
+  validateHistoryProjection,
+  buildFailureReferences,
+  validateProviderEnvelope,
+  bindProviderResults,
+} = require("./triage-boundary-contract");
 
 class AnalyzerError extends Error {}
+
+const CONTEXT_REL_PATH = "reports/ai/context.json";
+const HISTORY_REL_PATH = "reports/ai/history.json";
 
 // Roadmap FPI-2: `root` (the caller's already-validated
 // `{ lexicalRoot, realRoot }` boundary, see scripts/ai/repository-root.js)
 // replaces this file's former module-level ROOT/CONTEXT_FILE constants -
 // context.json is always read from underneath the TARGET repository,
 // never this generic core's own `__dirname`.
+//
+// Triage Boundary Contract v1 (TSB-F07): the file must canonically resolve
+// inside the repository root (symlink escapes are refused), is read with a
+// hard byte cap BEFORE complete buffering/parsing, and is returned only as
+// the detached, frozen PersistedTriageContextV1 snapshot - never the raw
+// parsed object. Diagnostics never quote file content or parser text.
 function readContext(root) {
-  const contextFile = path.join(root.realRoot, "reports", "ai", "context.json");
-  if (!fs.existsSync(contextFile)) {
-    throw new AnalyzerError(
-      `${path.relative(root.realRoot, contextFile)} not found. Run "npm run ai:collect" (after a test run) first.`
-    );
+  const { value, rejected } = resolveSafeLocalAttachmentPath(CONTEXT_REL_PATH, root);
+  if (rejected) {
+    throw new AnalyzerError(`${CONTEXT_REL_PATH} does not resolve to a regular file inside the repository root.`);
   }
-
-  let raw;
-  try {
-    raw = fs.readFileSync(contextFile, "utf8");
-  } catch (err) {
-    throw new AnalyzerError(`Could not read ${path.relative(root.realRoot, contextFile)}: ${err.message}`);
+  if (!value) {
+    throw new AnalyzerError(`${CONTEXT_REL_PATH} not found. Run "npm run ai:collect" (after a test run) first.`);
   }
-
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new AnalyzerError(`${path.relative(root.realRoot, contextFile)} is not valid JSON: ${err.message}`);
-  }
-}
-
-// Roadmap #19.3C: classifies one property's presence/well-formedness
-// rather than collapsing every "bad" value into one ambiguous bucket. A
-// property that was never set at all (ABSENT - e.g. a legacy context or
-// History object that predates project identity) is a fundamentally
-// different, more permissive signal than a property that IS set but
-// broken (INVALID - null, "", whitespace-only, or non-string): the
-// former may fall back to narrow legacy compatibility (see
-// isHistoryProjectEligible below), the latter never does. VALID's value
-// is the trimmed string, so comparisons use normalized identity, never
-// raw incidental whitespace.
-function classifyProjectId(object, key) {
-  const hasProperty = Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
-  if (!hasProperty) return { state: "ABSENT", value: null };
-
-  const raw = object[key];
-  if (typeof raw !== "string" || raw.trim().length === 0) return { state: "INVALID", value: null };
-
-  return { state: "VALID", value: raw.trim() };
+  return readPersistedContext(path.join(root.realRoot, value), CONTEXT_REL_PATH);
 }
 
 // Roadmap #19.5B: classifies context.metadata.framework's presence/
-// well-formedness the same way classifyProjectId() above already does for
+// well-formedness the same way the former classifyProjectId() did for
 // project identity - ABSENT (never set) vs. INVALID (present but
 // malformed: null/""/whitespace/non-string) vs. VALID (normalized: trim +
 // lowercase, matching the declared FrameworkId contract). Deliberately a
@@ -117,133 +116,31 @@ function classifyFrameworkId(metadata) {
   return { state: "VALID", value: raw.trim().toLowerCase() };
 }
 
-// Roadmap #19.3C: whether History collected for one project may be used
-// while analyzing another. Two VALID identities must match exactly (by
-// trimmed value); ABSENT+ABSENT is the one narrow legacy-compatibility
-// case (both sides genuinely predate project identity - never true for
-// real collector/collect-history.js output, which have unconditionally
-// emitted projectId since Roadmap #19.2/#19.3C respectively, so this
-// case cannot occur in real production traffic). Every other
-// combination - a mismatch, either side ABSENT while the other is
-// VALID, or an INVALID value on either side - is ineligible. This is an
-// eligibility/trust gate only: it never influences classification,
-// policy, or evidence status (see qa-agent-prompt.js rule 8 and
-// scripts/ai/agent-policy.js, both untouched by this gate).
-function isHistoryProjectEligible(currentIdentity, historyIdentity) {
-  if (currentIdentity.state === "INVALID" || historyIdentity.state === "INVALID") return false;
-  if (currentIdentity.state === "VALID" && historyIdentity.state === "VALID") {
-    return currentIdentity.value === historyIdentity.value;
-  }
-  return currentIdentity.state === "ABSENT" && historyIdentity.state === "ABSENT";
-}
-
-// Roadmap #19.9B: the framework analogue of isHistoryProjectEligible()
-// above, using the exact same classifyFrameworkId() VALID/ABSENT/INVALID
-// vocabulary - but deliberately NOT symmetric the way the project gate is.
-// Project identity has been unconditionally emitted since Roadmap
-// #19.2/#19.3C, so a real ABSENT+ABSENT project pairing "cannot occur in
-// real production traffic" (see isHistoryProjectEligible's own comment).
-// Framework is the opposite: collect-history.js never wrote a framework
-// field before Roadmap #19.9B, so every REAL pre-#19.9B history.json on
-// disk right now has framework genuinely ABSENT - that is the actual,
-// current, expected legacy state, not a theoretical edge case. Every one
-// of those legacy records was produced by this repository's Cypress-only
-// history producer, so ABSENT history is eligible ONLY when the CURRENT
-// framework is VALID "cypress" - this is LEGACY CYPRESS COMPATIBILITY,
-// never a generic "unscoped history matches anything" rule, and a
-// Playwright analysis (VALID "playwright") can never inherit it. New
-// Cypress history (Roadmap #19.9B) now writes framework: "cypress"
-// explicitly, so this ABSENT-history branch only ever matters for records
-// collected before this change - no old file is ever rewritten to add it.
-function isHistoryFrameworkEligible(currentIdentity, historyIdentity) {
-  if (currentIdentity.state === "INVALID" || historyIdentity.state === "INVALID") return false;
-  if (currentIdentity.state === "VALID" && historyIdentity.state === "VALID") {
-    return currentIdentity.value === historyIdentity.value;
-  }
-  if (currentIdentity.state === "VALID" && historyIdentity.state === "ABSENT") {
-    return currentIdentity.value === "cypress";
-  }
-  return currentIdentity.state === "ABSENT" && historyIdentity.state === "ABSENT";
-}
-
-// Optional by design (see collect-history.js): missing file, unparseable
-// JSON, an { available: false } marker, or History collected for a
-// different/unknown project (Roadmap #19.3C) all just mean "no history"
-// - never an error. Only the compact aggregate counts are kept; internal
-// bookkeeping fields (available/reason/branch/generatedAt/projectId)
-// aren't sent to the provider. `currentMetadata` is normally the
-// context.metadata this analysis is running against, passed in (not
-// read directly) so the project-eligibility check below can distinguish
-// a genuinely absent field from an explicit malformed one using the
-// exact same classifyProjectId() rules the History side uses.
-// Roadmap #21J-A (D21H-2): the production collect-history.js producer
-// already structurally guarantees runsConsidered/passes/failures/
-// retryPasses are non-negative integers with passes + failures ==
-// runsConsidered and retryPasses <= passes (every counter starts at 0 and
-// is only ever incremented by exactly 1, with retryPasses incremented
-// only inside the same conditional branch that increments passes - see
-// collect-history.js's aggregateHistory()). readHistory() itself never
-// enforced that guarantee at its own boundary, so a hand-tampered or
-// future-regressed history.json could still reach provider-visible
-// evidence with the wrong type or an internally inconsistent count.
-// history.json is trusted-internal (produced only by collect-history.js,
-// copied verbatim through the workflow, never reachable from PR-controlled
-// content under normal CI operation), so this is defense-in-depth for
-// evidence QUALITY, not a response to a live external threat model - a
-// malformed record is treated exactly like the other pre-existing "no
-// usable history" cases below (missing file/parse failure/available:false/
-// project or framework ineligible): returned as unavailable, never as a
-// fabricated zero-history object, so "no history" and "history says 0
-// failures" remain distinguishable exactly as before.
-function isValidHistoryMetrics(parsed) {
-  const fields = [parsed.runsConsidered, parsed.passes, parsed.failures, parsed.retryPasses];
-  if (!fields.every((n) => Number.isInteger(n) && n >= 0)) return false;
-  if (parsed.passes + parsed.failures !== parsed.runsConsidered) return false;
-  if (parsed.retryPasses > parsed.passes) return false;
-  return true;
-}
-
-// Roadmap FPI-2: `root` replaces this file's former module-level ROOT/
-// HISTORY_FILE constants - history.json is always read from underneath
-// the TARGET repository, never this generic core's own `__dirname`.
+// XI-02: optional by design (see collect-history.js) - a missing file, an
+// over-bound/unreadable/malformed file, an { available: false } marker, a
+// record outside the closed bounded History variants (including the legacy
+// shapes without projectId/framework), or History collected for a
+// different project or framework all mean "no usable history" (null) -
+// never an error and never fabricated zero counters, so "no history" and
+// "history says 0 failures" stay distinguishable. History is deliberately
+// cross-run: it is NOT bound to the current run/invocation id, only to the
+// validated context's project and framework. The returned four-counter
+// projection is the ONE History value both the prompt and the report use.
+//
+// `currentMetadata` must be the VALIDATED context snapshot's metadata
+// (production calls this only after context validation and XI-01 binding).
 function readHistory(currentMetadata, root) {
-  const historyFile = path.join(root.realRoot, "reports", "ai", "history.json");
-  if (!fs.existsSync(historyFile)) return null;
+  const { value } = resolveSafeLocalAttachmentPath(HISTORY_REL_PATH, root);
+  if (!value) return null;
 
-  let parsed;
+  let record;
   try {
-    parsed = JSON.parse(fs.readFileSync(historyFile, "utf8"));
+    record = validateHistoryRecord(readBoundedJsonFile(path.join(root.realRoot, value), MAX_HISTORY_BYTES, HISTORY_REL_PATH));
   } catch {
     return null;
   }
 
-  if (!parsed || parsed.available !== true) return null;
-
-  // Existing structural gates (file/JSON/available) are checked first, above -
-  // a matching projectId must never rescue a missing file, a parse
-  // failure, or an available:false marker.
-  const currentProjectIdentity = classifyProjectId(currentMetadata, "projectId");
-  const historyProjectIdentity = classifyProjectId(parsed, "projectId");
-  if (!isHistoryProjectEligible(currentProjectIdentity, historyProjectIdentity)) return null;
-
-  // Roadmap #19.9B: project AND framework must both be eligible - neither
-  // namespace can rescue the other. classifyFrameworkId() is reused
-  // unchanged (already used for prompt/report provenance above); `parsed`
-  // is the raw history.json object, whose top-level `framework` property
-  // (new records only - see collect-history.js) is classified exactly the
-  // same way context.metadata's `framework` property already is.
-  const currentFrameworkIdentity = classifyFrameworkId(currentMetadata);
-  const historyFrameworkIdentity = classifyFrameworkId(parsed);
-  if (!isHistoryFrameworkEligible(currentFrameworkIdentity, historyFrameworkIdentity)) return null;
-
-  if (!isValidHistoryMetrics(parsed)) return null;
-
-  return {
-    runsConsidered: parsed.runsConsidered,
-    passes: parsed.passes,
-    failures: parsed.failures,
-    retryPasses: parsed.retryPasses,
-  };
+  return projectHistory(record, currentMetadata || {});
 }
 
 // Deterministic, offline QA Knowledge selection (Roadmap #16A) - reuses
@@ -397,53 +294,10 @@ function pickSourceContext(context) {
 // --- response validation --------------------------------------------------
 // No structured-output schema is enforced on the provider call - not
 // every provider is guaranteed to honor one identically. So the
-// provider's JSON shape is NOT trusted: every value is validated by hand
-// (enum membership, confidence range, non-empty strings) before ever
-// writing ai-report.json.
-
-function isFiniteNumberInRange(n, min, max) {
-  return typeof n === "number" && Number.isFinite(n) && n >= min && n <= max;
-}
-
-function validateAnalysisItem(item, index) {
-  const errors = [];
-  const prefix = `results[${index}]`;
-
-  if (!item || typeof item !== "object") {
-    return [`${prefix} is not an object`];
-  }
-  if (!item.test || typeof item.test.title !== "string") {
-    errors.push(`${prefix}.test.title must be a string`);
-  }
-  if (!CLASSIFICATIONS.includes(item.classification)) {
-    errors.push(`${prefix}.classification must be one of ${CLASSIFICATIONS.join(", ")}`);
-  }
-  if (!isFiniteNumberInRange(item.confidence, 0, 1)) {
-    errors.push(`${prefix}.confidence must be a number between 0 and 1`);
-  }
-  if (typeof item.summary !== "string" || !item.summary.trim()) {
-    errors.push(`${prefix}.summary must be a non-empty string`);
-  }
-  if (typeof item.rootCause !== "string" || !item.rootCause.trim()) {
-    errors.push(`${prefix}.rootCause must be a non-empty string`);
-  }
-  if (!Array.isArray(item.evidence) || item.evidence.some((e) => typeof e !== "string")) {
-    errors.push(`${prefix}.evidence must be an array of strings`);
-  }
-  if (item.recommendedFix !== null) {
-    if (!item.recommendedFix || typeof item.recommendedFix.description !== "string") {
-      errors.push(`${prefix}.recommendedFix must be null or an object with a "description" string`);
-    }
-  }
-  if (typeof item.shouldCreateBug !== "boolean") {
-    errors.push(`${prefix}.shouldCreateBug must be a boolean`);
-  }
-  if (typeof item.shouldRetry !== "boolean") {
-    errors.push(`${prefix}.shouldRetry must be a boolean`);
-  }
-
-  return errors;
-}
+// provider's JSON shape is NOT trusted: TSB-F04's closed, bounded result
+// contract (triage-boundary-contract.js validateProviderEnvelope() /
+// bindProviderResults()) validates every value and binds every result to
+// exactly one local failure reference before ai-report.json is written.
 
 // Defense-in-depth against the one recommendation style the agent is
 // explicitly told not to make. The prompt is the primary control; this is
@@ -635,12 +489,18 @@ async function runProviderAnalysis(
     throw new AnalyzerError(`AI provider response was not valid JSON: ${err.message}`);
   }
 
-  if (!parsed || !Array.isArray(parsed.results)) {
-    throw new AnalyzerError('AI provider response did not match the expected shape (missing "results" array).');
+  // TSB-F04: closed envelope (exactly `results`) and closed, bounded result
+  // objects, returned as a detached frozen snapshot. The diagnostic names
+  // only the failing field - never a provider-controlled value or key.
+  let results;
+  try {
+    results = validateProviderEnvelope(parsed);
+  } catch (err) {
+    throw new AnalyzerError(`AI provider response failed validation: ${err.message}`);
   }
 
   return {
-    results: parsed.results,
+    results,
     providerAttempts,
     firstAttemptError: summarizeProviderError(firstErr),
   };
@@ -667,39 +527,49 @@ async function runProviderAnalysis(
 // a test) is preserved exactly as before - "supplied" is decided via
 // `!== undefined`, so no additional knowledge loading/composition ever runs
 // in that case.
+//
+// Triage Boundary Contract v1: `context` crosses validatePersistedContext()
+// here (closed PersistedTriageContextV1, embedded History rejected) and only
+// the detached snapshot is read from then on - the caller's object is never
+// mutated or re-read. An injected `history` must be null or exactly the
+// four-counter projection; otherwise History comes only from the separately
+// validated history.json. XI-01 invocation binding is main()'s gate (this
+// function is an internal, non-exported building block).
 async function buildFailureReport(
   context,
-  {
-    provider = createProvider(),
-    root,
-    history = readHistory(context.metadata, root),
-    relevantKnowledge,
-    projectProfile: inputProfile,
-    projectKnowledgeConfig,
-  } = {}
+  { provider = createProvider(), root, history, relevantKnowledge, projectProfile: inputProfile, projectKnowledgeConfig } = {}
 ) {
   // TSB-F05-D1-C1: crosses the central boundary FIRST - before any
   // ProjectProfile-derived context mutation, Knowledge selection, or
   // provider call - and only the resulting snapshot is threaded below.
   const projectProfile = assertValidProjectProfile(inputProfile, "analyze-failure.buildFailureReport()");
-  const failedTests = context.failedTests || [];
+  const validContext = validatePersistedContext(context);
   const generatedAt = new Date().toISOString();
 
-  // Optional flaky-test signal (see collect-history.js). Attached onto the
-  // same context object buildUserPrompt already reads from, so a missing
-  // reports/ai/history.json changes nothing else about this run.
-  if (history) context.history = history;
+  // XI-02: the ONE History projection - the same frozen value reaches the
+  // prompt and the report (H06-C2).
+  const historyProjection = history !== undefined ? validateHistoryProjection(history) : readHistory(validContext.metadata, root);
 
-  // Deterministic QA Knowledge selection (Roadmap #16A), attached onto the
-  // same context object exactly like history above - buildUserPrompt (via
-  // runProviderAnalysis below) reads context.relevantKnowledge the same
-  // way it already reads context.browserCorrelation/knownProjectConstraints.
-  // Always an array (selectKnowledge() never returns null), so this is an
-  // unconditional assignment, unlike history's `if (history)` guard.
-  context.relevantKnowledge =
+  // TSB-F04: one opaque local reference per authoritative failed test,
+  // created before any provider call.
+  const references = buildFailureReferences(validContext.failedTests);
+
+  // Deterministic QA Knowledge selection (Roadmap #16A), computed from the
+  // validated snapshot only. Always an array (selectKnowledge() never
+  // returns null).
+  const knowledge =
     relevantKnowledge !== undefined
-      ? relevantKnowledge
-      : computeRelevantKnowledge(context, { root, projectProfile, projectKnowledgeConfig });
+      ? snapshotPlainData(relevantKnowledge, "relevantKnowledge", "RELEVANT_KNOWLEDGE_INVALID")
+      : computeRelevantKnowledge(validContext, { root, projectProfile, projectKnowledgeConfig });
+
+  // A new enriched object for prompt building - never a mutation of the
+  // validated snapshot. Each prompt-visible failure carries its reference.
+  const promptContext = {
+    ...validContext,
+    failedTests: validContext.failedTests.map((failure, i) => ({ ...failure, failureRef: references[i].failureRef })),
+    history: historyProjection,
+    relevantKnowledge: knowledge,
+  };
 
   // Roadmap #19.4S: threaded through to runProviderAnalysis's own
   // system-prompt profile selection only - see the comment there. Never
@@ -707,19 +577,18 @@ async function buildFailureReport(
   // history, relevantKnowledge, or report provenance, all of which stay
   // exactly the explicit, caller-supplied data channels Roadmap
   // #19.2/#19.3 already established.
-  const { results, providerAttempts, firstAttemptError } = await runProviderAnalysis(provider, context, {
+  const { results: providerResults, providerAttempts, firstAttemptError } = await runProviderAnalysis(provider, promptContext, {
     projectProfile,
   });
 
-  if (results.length !== failedTests.length) {
-    throw new AnalyzerError(
-      `AI provider returned ${results.length} result(s) but context.json has ${failedTests.length} failed test(s).`
-    );
-  }
-
-  const structureErrors = results.flatMap((item, i) => validateAnalysisItem(item, i));
-  if (structureErrors.length > 0) {
-    throw new AnalyzerError(`AI provider response failed validation:\n  - ${structureErrors.join("\n  - ")}`);
+  // TSB-F04: exact result-set binding, then authoritative identity
+  // reconstructed from the local snapshot (never the model's title/spec).
+  let results;
+  try {
+    results = bindProviderResults(providerResults, references);
+  } catch (err) {
+    if (!(err instanceof TriageBoundaryError)) throw err;
+    throw new AnalyzerError(`AI provider response failed validation: ${err.message}`);
   }
 
   // LLM proposes, application policy decides (see scripts/ai/agent-policy.js):
@@ -761,11 +630,12 @@ async function buildFailureReport(
     // before buildFailureReport ever returns, so there is no report to
     // attach this provenance to in that case - see runProviderAnalysis).
     analysis: { provider: provider.name || "unknown", generatedAt, providerAttempts, firstAttemptError },
-    sourceContext: pickSourceContext(context),
-    // Same compact counts the provider saw, kept on the report for
-    // traceability - not the raw per-run data (there isn't any to keep;
-    // collect-history.js never persists more than these aggregates).
-    history,
+    sourceContext: pickSourceContext({ ...validContext, relevantKnowledge: knowledge }),
+    // Same compact counts the provider saw (the identical projection
+    // object), kept on the report for traceability - not the raw per-run
+    // data (there isn't any to keep; collect-history.js never persists
+    // more than these aggregates).
+    history: historyProjection,
     results: policySafeResults,
     warnings,
   };
@@ -806,6 +676,17 @@ function fail(message) {
 // TSB-F05-D1-C1: the caller's profile crosses the central boundary once,
 // here; only the resulting snapshot (`profile`) is passed on to
 // buildFailureReport() - `projectProfile` is never read again.
+//
+// Triage Boundary Contract v1 - this function is the authoritative XI-01
+// gate. Before ANY provider call or report write, in this order:
+// ProjectProfile and repository root (above), exactly one trusted current
+// invocation mode from the process environment (github-actions-v1 /
+// local-v1 - never a parameter of this function), the byte-capped closed
+// PersistedTriageContextV1 snapshot, and its exact binding to the profile
+// and the trusted invocation. A missing/contradictory mode, a malformed or
+// stale/copied context (another project, repository, commit, run, run
+// attempt or local invocation) fails closed and writes no report - the
+// zero-failure path included.
 async function main({ projectProfile, repositoryRoot, projectKnowledgeConfig } = {}) {
   const profile = assertValidProjectProfile(projectProfile, "analyze-failure.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "analyze-failure.main()");
@@ -813,14 +694,14 @@ async function main({ projectProfile, repositoryRoot, projectKnowledgeConfig } =
 
   let context;
   try {
-    context = readContext(root);
+    const invocation = resolveTrustedInvocation();
+    context = bindContextToInvocation(readContext(root), profile, invocation);
   } catch (err) {
     fail(err.message);
     return;
   }
 
-  const failedTests = context.failedTests || [];
-  if (failedTests.length === 0) {
+  if (context.failedTests.length === 0) {
     const emptyReport = {
       generatedAt: new Date().toISOString(),
       model: MODEL,
@@ -875,16 +756,12 @@ module.exports = {
   main,
   runProviderAnalysis,
   buildFailureReport,
-  validateAnalysisItem,
   recommendsArbitraryWait,
   stripCodeFences,
   summarizeProviderError,
   pickSourceContext,
   readHistory,
-  classifyProjectId,
   classifyFrameworkId,
-  isHistoryProjectEligible,
-  isHistoryFrameworkEligible,
   isValidHistoryMetrics,
   computeRelevantKnowledge,
   MAX_TRIAGE_RESPONSE_CHARS,

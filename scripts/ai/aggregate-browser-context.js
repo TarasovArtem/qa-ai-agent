@@ -81,6 +81,12 @@ const {
   resolveSafeLocalAttachmentPath,
   resolveSafeRepositoryWritePath,
 } = require("./context-utils");
+const {
+  resolveTrustedInvocation,
+  validatePersistedContext,
+  bindContextToCurrentInvocation,
+  validateHistoryRecord,
+} = require("./triage-boundary-contract");
 
 // Roadmap FPI-2: this module owns no repository root of its own -
 // readBrowserInputs()'s own `baseDir` override already existed before
@@ -530,23 +536,45 @@ function main({ repositoryRoot } = {}) {
     return;
   }
 
-  // Still "pick one context" (primary.context's failedTests/relevantFiles/
-  // etc. are untouched) - only two new fields are added, so
-  // analyze-failure.js/qa-agent-prompt.js only need to opt into reading
-  // them, never to change how they read everything else already on
-  // context.json. browserCorrelation (same-framework only, see above) and
-  // frameworkCorrelation (cross-framework rollup, see above) are
-  // deliberately separate fields - never merged into one structure.
-  const contextWithCorrelation = { ...primary.context, browserCorrelation: correlation, frameworkCorrelation };
+  // Triage Boundary Contract v1 - defense-in-depth only (analyze-failure.js
+  // remains the authoritative gate and revalidates the raw persisted
+  // context it reads): the primary context must be a valid
+  // PersistedTriageContextV1 produced for THIS trusted current invocation,
+  // and only its detached snapshot is forwarded. Any failure writes
+  // nothing and logs a fixed reason code - never persisted values.
+  let contextWithCorrelation;
+  let historyRecord = null;
+  try {
+    const invocation = resolveTrustedInvocation();
+    const primaryContext = bindContextToCurrentInvocation(validatePersistedContext(primary.context), invocation);
+    // Still "pick one context" (primary.context's failedTests/relevantFiles/
+    // etc. are untouched) - only two new fields are added, so
+    // analyze-failure.js/qa-agent-prompt.js only need to opt into reading
+    // them, never to change how they read everything else already on
+    // context.json. browserCorrelation (same-framework only, see above) and
+    // frameworkCorrelation (cross-framework rollup, see above) are
+    // deliberately separate fields - never merged into one structure.
+    contextWithCorrelation = validatePersistedContext({ ...primaryContext, browserCorrelation: correlation, frameworkCorrelation });
+  } catch (err) {
+    log(`Refusing to forward '${primary.browser}' context for AI triage: ${err.code || "TRIAGE_CONTEXT_INVALID"}.`);
+    return;
+  }
+  if (primary.history) {
+    try {
+      historyRecord = validateHistoryRecord(primary.history);
+    } catch (err) {
+      log(`Skipped '${primary.browser}' history.json: ${err.code || "TRIAGE_HISTORY_INVALID"}.`);
+    }
+  }
 
   // Roadmap FPI-2 Corrective C4 (FPI2-R-9): each write validated as close
   // as reasonably possible to the actual write - see
   // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js).
   const safeContextFile = resolveSafeRepositoryWritePath(contextFile, root, "aggregate-browser-context.main(): context.json");
   fs.writeFileSync(safeContextFile, JSON.stringify(contextWithCorrelation, null, 2));
-  if (primary.history) {
+  if (historyRecord) {
     const safeHistoryFile = resolveSafeRepositoryWritePath(historyFile, root, "aggregate-browser-context.main(): history.json");
-    fs.writeFileSync(safeHistoryFile, JSON.stringify(primary.history, null, 2));
+    fs.writeFileSync(safeHistoryFile, JSON.stringify(historyRecord, null, 2));
   }
 
   const otherNote = otherFailedBrowsers.length
