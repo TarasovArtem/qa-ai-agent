@@ -66,9 +66,12 @@ const EXAMPLE_RESULT_ITEM = {
 // execution/context-level only - this parameter is never per-failure, and
 // this function performs no framework-specific branching: it only
 // interpolates the string it's given, exactly like projectProfile.
+//
+// TSB-F05-D1-C1: only the central boundary's authoritative snapshot is read
+// below - never the caller's `projectProfile` object.
 function buildSystemPrompt(projectProfile, frameworkId = "cypress") {
-  assertValidProjectProfile(projectProfile, "qa-agent-prompt.buildSystemPrompt()");
-  return `You are a Senior QA Automation Engineer performing failure triage for an end-to-end test suite (current test framework: ${frameworkId}) that tests ${projectProfile.displayName}. The test suite does not control that application's code, infrastructure, or uptime.
+  const profile = assertValidProjectProfile(projectProfile, "qa-agent-prompt.buildSystemPrompt()");
+  return `You are a Senior QA Automation Engineer performing failure triage for an end-to-end test suite (current test framework: ${frameworkId}) that tests ${profile.displayName}. The test suite does not control that application's code, infrastructure, or uptime.
 
 For each failed test you are given, classify it using ONLY the evidence provided. Do not assume or invent anything not present in the supplied context.
 

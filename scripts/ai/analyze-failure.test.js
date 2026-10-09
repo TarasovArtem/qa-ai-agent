@@ -1820,3 +1820,93 @@ test("Roadmap #19.5B correction: INVALID present framework ('unknown') is determ
   assert.match(absentRun.captured[0].systemPrompt, /current test framework: cypress\)/);
   assert.notEqual(invalidRun.captured[0].systemPrompt, absentRun.captured[0].systemPrompt);
 });
+
+// --- TSB-F05-D1-C1: analyze-failure consumes only the central snapshot -------
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../test/helpers/project-profile-boundary-spy");
+
+const D1_CALLER_PROFILE = Object.freeze({
+  id: "caller-profile-id",
+  displayName: "CALLER_PROFILE_DISPLAY",
+  knownProjectConstraints: Object.freeze(["CALLER_PROFILE_CONSTRAINT"]),
+});
+
+function d1FreshTarget(prefix) {
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
+  fs.mkdirSync(path.join(dir, "reports", "ai"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "reports", "ai", "context.json"), JSON.stringify(context));
+  return dir;
+}
+
+test("D1-C1 analyze-failure.main(): the raw caller profile crosses the boundary exactly once, and only the snapshot reaches knowledge-config binding", async (t) => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./analyze-failure"), { replaceSnapshot: boundarySnapshotReplacement });
+  const target = d1FreshTarget("d1c1-af-main");
+  const savedExitCode = process.exitCode;
+  t.after(() => {
+    process.exitCode = savedExitCode;
+  });
+  t.mock.method(console, "log", () => {});
+  const error = t.mock.method(console, "error", () => {});
+
+  await consumer.main({ projectProfile: D1_CALLER_PROFILE, repositoryRoot: target, projectKnowledgeConfig: { projectId: "boundary-snapshot-id" } });
+
+  assert.equal(error.mock.callCount(), 0, `main() must not fail: ${error.mock.calls.map((c) => c.arguments.join(" ")).join("\n")}`);
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(fs.existsSync(path.join(target, "reports", "ai", "ai-report.json")));
+  assert.equal(calls.filter((c) => c.input === D1_CALLER_PROFILE).length, 1, "the raw caller profile must cross the central boundary exactly once");
+});
+
+test("D1-C1 analyze-failure.buildFailureReport(): the system prompt and knowledge binding derive only from the central snapshot", async () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./analyze-failure"), { replaceSnapshot: boundarySnapshotReplacement });
+  const captured = [];
+  const provider = {
+    name: "capturing-test-provider",
+    async analyze(request) {
+      captured.push(request);
+      return JSON.stringify({ results: [goodItem()] });
+    },
+  };
+  await consumer.buildFailureReport(structuredClone(context), {
+    provider,
+    history: null,
+    projectProfile: D1_CALLER_PROFILE,
+    projectKnowledgeConfig: { projectId: "boundary-snapshot-id" },
+  });
+  assert.match(captured[0].systemPrompt, /BOUNDARY_SNAPSHOT_DISPLAY/);
+  assert.equal(captured[0].systemPrompt.includes("CALLER_PROFILE_DISPLAY"), false);
+  assert.equal(calls.filter((c) => c.input === D1_CALLER_PROFILE).length, 1, "the raw caller profile must cross the central boundary exactly once");
+});
+
+test("D1-C1 analyze-failure.buildFailureReport(): an invalid profile fails closed before any ProjectProfile-derived context mutation or provider call", async () => {
+  const localContext = structuredClone(context);
+  const before = JSON.stringify(localContext);
+  let providerCalls = 0;
+  const provider = { analyze: async () => { providerCalls += 1; return JSON.stringify({ results: [goodItem()] }); } };
+  await assert.rejects(
+    () => buildFailureReport(localContext, { provider, history: null, projectProfile: { ...D1_CALLER_PROFILE, extra: "x" } }),
+    /PROJECT_PROFILE_INVALID: analyze-failure\.buildFailureReport\(\)/
+  );
+  assert.equal(JSON.stringify(localContext), before, "context must not be mutated before the profile boundary");
+  assert.equal(providerCalls, 0);
+});
+
+test("D1-C1 analyze-failure.computeRelevantKnowledge(): an accessor-backed profile is rejected through the central boundary without invoking the getter", () => {
+  let getterCalls = 0;
+  const profile = { displayName: "x", knownProjectConstraints: ["c"] };
+  Object.defineProperty(profile, "id", { enumerable: true, get() { getterCalls += 1; return "fpi-accessor-project"; } });
+  assert.throws(
+    () => computeRelevantKnowledge({ ...context }, { projectProfile: profile, projectKnowledgeConfig: { projectId: "fpi-accessor-project" } }),
+    /PROJECT_KNOWLEDGE_CONFIG_PROJECT_PROFILE_REQUIRED/
+  );
+  assert.equal(getterCalls, 0);
+});
+
+test("D1-C1 analyze-failure.computeRelevantKnowledge(): knowledge-config binding compares against the central snapshot id", () => {
+  const { consumer } = loadWithProjectProfileBoundarySpy(require.resolve("./analyze-failure"), { replaceSnapshot: boundarySnapshotReplacement });
+  assert.doesNotThrow(() => consumer.computeRelevantKnowledge({ ...context }, { projectProfile: D1_CALLER_PROFILE, projectKnowledgeConfig: { projectId: "boundary-snapshot-id" } }));
+  assert.throws(
+    () => consumer.computeRelevantKnowledge({ ...context }, { projectProfile: D1_CALLER_PROFILE, projectKnowledgeConfig: { projectId: "caller-profile-id" } }),
+    /PROJECT_KNOWLEDGE_CONFIG_PROJECT_MISMATCH/
+  );
+});
