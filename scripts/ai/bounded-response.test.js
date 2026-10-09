@@ -64,6 +64,19 @@ function response(body, headers = {}) {
   return new Response(body, { status: 200, headers });
 }
 
+// AbortSignal.timeout() - the same primitive production passes - plus a
+// ref'd companion timer. Its own timer is unref'd by design, and an
+// in-memory stalled stream holds no I/O handle, so without the companion
+// the test runner's event loop can drain before the deadline fires (Node
+// 20/22: "Promise resolution is still pending but the event loop has
+// already resolved"). In production the open socket keeps the loop alive.
+function deadline(ms) {
+  const signal = AbortSignal.timeout(ms);
+  const hold = setTimeout(() => {}, ms + 50);
+  signal.addEventListener("abort", () => clearTimeout(hold), { once: true });
+  return signal;
+}
+
 function liveSignal() {
   return new AbortController().signal;
 }
@@ -241,14 +254,14 @@ test("bounded-response: a stream error mid-body is READ_FAILED", async () => {
 test("bounded-response: a body that never produces a first chunk ends at the deadline (ABORTED) and is cancelled", async () => {
   let cancelled = false;
   const started = Date.now();
-  await rejectsWith(readBoundedResponseText(response(stallingStream([], { onCancel: () => (cancelled = true) })), { maxBytes: 64, signal: AbortSignal.timeout(50), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
+  await rejectsWith(readBoundedResponseText(response(stallingStream([], { onCancel: () => (cancelled = true) })), { maxBytes: 64, signal: deadline(50), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
   assert.ok(Date.now() - started < 2000);
   assert.equal(cancelled, true);
 });
 
 test("bounded-response: a body that stalls after some chunks ends at the deadline", async () => {
   let cancelled = false;
-  await rejectsWith(readBoundedResponseText(response(stallingStream(['{"a":', "1"], { onCancel: () => (cancelled = true) })), { maxBytes: 64, signal: AbortSignal.timeout(50), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
+  await rejectsWith(readBoundedResponseText(response(stallingStream(['{"a":', "1"], { onCancel: () => (cancelled = true) })), { maxBytes: 64, signal: deadline(50), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
   assert.equal(cancelled, true);
 });
 
@@ -264,17 +277,17 @@ test("bounded-response: a slow-drip body under the byte cap is still ended by th
     },
   });
   const started = Date.now();
-  await rejectsWith(readBoundedResponseText(response(body), { maxBytes: 1024 * 1024, signal: AbortSignal.timeout(120), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
+  await rejectsWith(readBoundedResponseText(response(body), { maxBytes: 1024 * 1024, signal: deadline(120), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
   assert.ok(Date.now() - started < 2000);
   assert.equal(cancelled, true);
 });
 
 test("bounded-response: the byte cap wins when exceeded before the deadline", async () => {
-  await rejectsWith(readBoundedResponseText(response(infiniteStream("x".repeat(256))), { maxBytes: 1024, signal: AbortSignal.timeout(5000), label: "T" }), BOUNDED_RESPONSE_FAILURES.TOO_LARGE);
+  await rejectsWith(readBoundedResponseText(response(infiniteStream("x".repeat(256))), { maxBytes: 1024, signal: deadline(1000), label: "T" }), BOUNDED_RESPONSE_FAILURES.TOO_LARGE);
 });
 
 test("bounded-response: the deadline wins when it fires before the byte cap", async () => {
-  await rejectsWith(readBoundedResponseText(response(stallingStream(["x"])), { maxBytes: 1024, signal: AbortSignal.timeout(30), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
+  await rejectsWith(readBoundedResponseText(response(stallingStream(["x"])), { maxBytes: 1024, signal: deadline(30), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
 });
 
 test("bounded-response: an already-aborted signal rejects without reading and cancels the body", async () => {
@@ -305,7 +318,7 @@ test("bounded-response: a stream whose cancel() never settles still cannot hang 
       return new Promise(() => {});
     },
   });
-  await rejectsWith(readBoundedResponseText(response(body), { maxBytes: 64, signal: AbortSignal.timeout(30), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
+  await rejectsWith(readBoundedResponseText(response(body), { maxBytes: 64, signal: deadline(30), label: "T" }), BOUNDED_RESPONSE_FAILURES.ABORTED);
 });
 
 test("bounded-response: the abort listener is removed after a successful read", async () => {

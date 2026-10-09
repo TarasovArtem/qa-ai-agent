@@ -343,6 +343,16 @@ function jsonOfExactBytes(n) {
   return json;
 }
 
+// fetchJson's per-attempt deadline is AbortSignal.timeout(), whose timer
+// is unref'd by design; a stubbed stalled body holds no I/O handle, so the
+// stall tests hold a ref'd handle for their own duration - otherwise the
+// test runner's event loop can drain before the deadline fires (Node
+// 20/22). In production the open socket keeps the loop alive.
+function holdEventLoop(t) {
+  const hold = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(hold));
+}
+
 function withGlobalFetch(t, fn) {
   const originalFetch = global.fetch;
   global.fetch = fn;
@@ -398,6 +408,7 @@ test("fetchJson: a never-ending 200 body is cut off at the byte cap", async (t) 
 });
 
 test("fetchJson: a 200 body that stalls is ended by the per-request deadline and not retried (ADV-01)", STALL_GUARD, async (t) => {
+  holdEventLoop(t);
   let calls = 0;
   withGlobalFetch(t, async () => {
     calls += 1;
@@ -411,6 +422,7 @@ test("fetchJson: a 200 body that stalls is ended by the per-request deadline and
 });
 
 test("fetchJson: a request that never produces headers ends at the deadline and stays within the bounded retry budget (ADV-01)", STALL_GUARD, async (t) => {
+  holdEventLoop(t);
   let calls = 0;
   withGlobalFetch(t, (url, init) => {
     calls += 1;
