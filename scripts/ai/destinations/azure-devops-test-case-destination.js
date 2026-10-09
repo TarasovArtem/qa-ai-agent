@@ -78,6 +78,14 @@
  * of them is retried and none implies rollback (this module has no way to
  * undo a side effect that may have already occurred).
  *
+ * BOUNDED RESPONSE INGESTION (TSB-F06 + ADV-01): a 2xx creation response
+ * body is read through the bounded reader (../bounded-response.js) - at
+ * most MAX_RESPONSE_BYTES bytes are buffered, before any JSON parse - and
+ * under the same per-request `timeoutMs` deadline as the request itself.
+ * An oversized or timed-out body is the existing malformed-but-2xx
+ * outcome (AZURE_TEST_CASE_RESPONSE_INVALID, not batch-fatal, never
+ * retried); only the fixed message distinguishes the cause.
+ *
  * SECRET / CONTENT SAFETY: no error, log, or returned result field ever
  * contains the caller's PAT/Bearer token, the constructed `Authorization`
  * header, a raw Azure request/response body, or the canonical artifact's
@@ -92,6 +100,8 @@
  * them - mutation would fail even if attempted).
  */
 
+const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("../bounded-response");
+
 const MAX_STRING_LENGTH = 200; // id, organization, project, auth.token error-message context
 const MAX_TOKEN_LENGTH = 4096; // mirrors the existing Azure source provider's own bound
 const MAX_AZURE_TITLE_LENGTH = 255; // independently verified Azure System.Title hard limit (TF401324 beyond this)
@@ -99,6 +109,13 @@ const MAX_LOCATION_LENGTH = 2000;
 const DEFAULT_TIMEOUT_MS = 15000;
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 120000;
+// TSB-F06: byte cap on one creation response. The response echoes the
+// created work item, whose Description is the HTML this module sent - at
+// most TestDesignArtifact's objective (20,100 chars) plus 200 expected
+// results x 20,100 chars (~4.04 M source chars, test-design.js), so 32 MiB
+// covers a maximal description at ~8 bytes per source character after
+// HTML and JSON escaping. Internal, not configuration.
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const API_VERSION = "7.1";
 const AZURE_HOST = "dev.azure.com";
 
@@ -270,6 +287,19 @@ function failedItem(code, message, globalStop) {
   return { result: { status: "FAILED", error: { code, message } }, globalStop };
 }
 
+// TSB-F06 + ADV-01: the fixed RESPONSE_INVALID message for a 2xx body that
+// could not be acquired within the bounds. Every other failure keeps the
+// pre-existing message.
+function responseInvalidMessage(err) {
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.TOO_LARGE) {
+    return "Azure returned a Test Case creation response that exceeded the maximum size; remote creation may have occurred.";
+  }
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.ABORTED) {
+    return "Azure Test Case creation response was not fully received within timeoutMs; remote creation may have occurred.";
+  }
+  return "Azure returned an invalid Test Case creation response; remote creation may have occurred.";
+}
+
 /**
  * Attempts one Test Case create for a single canonical TestDesignArtifact.
  * Never throws for an ordinary HTTP/transport failure - returns a
@@ -294,6 +324,8 @@ async function attemptCreate(artifact, config) {
     Accept: "application/json",
   };
 
+  // TSB-F06 + ADV-01: one deadline for the request and its body read.
+  const signal = AbortSignal.timeout(config.timeoutMs);
   let response;
   try {
     response = await fetch(url, {
@@ -301,7 +333,7 @@ async function attemptCreate(artifact, config) {
       headers,
       body,
       redirect: "manual",
-      signal: AbortSignal.timeout(config.timeoutMs),
+      signal,
     });
   } catch {
     // Timeout, connection reset, DNS failure, or any other transport-level
@@ -319,13 +351,9 @@ async function attemptCreate(artifact, config) {
   if (status === 200 || status === 201) {
     let parsed;
     try {
-      parsed = await response.json();
-    } catch {
-      return failedItem(
-        "AZURE_TEST_CASE_RESPONSE_INVALID",
-        "Azure returned an invalid Test Case creation response; remote creation may have occurred.",
-        false
-      );
+      parsed = await readBoundedResponseJson(response, { maxBytes: MAX_RESPONSE_BYTES, signal, label: "Azure Test Case creation" });
+    } catch (err) {
+      return failedItem("AZURE_TEST_CASE_RESPONSE_INVALID", responseInvalidMessage(err), false);
     }
     if (!isPlainDataObject(parsed) || !isPositiveSafeInteger(parsed.id)) {
       return failedItem(

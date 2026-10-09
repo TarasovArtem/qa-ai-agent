@@ -460,6 +460,18 @@ function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// TSB-F06: pre-parse bound on the raw provider model text, checked BEFORE
+// any fence stripping or JSON.parse - the same discipline as the
+// generators' MAX_*_RESPONSE_CHARS (e.g. generate-change-set.js), counted
+// the same way: String length, i.e. UTF-16 code units. The value is the
+// automation-plan generator's own bound (MAX_AUTOMATION_PLAN_RESPONSE_CHARS).
+// Triage output has no closed size schema to derive a tighter worst case
+// from (that is TSB-F04's corrective, not this one); one result per failed
+// test is a handful of short prose fields, so 1,000,000 characters is far
+// above any legitimate triage response. Oversized text fails closed with
+// no retry - exactly like invalid JSON here - and no report is written.
+const MAX_TRIAGE_RESPONSE_CHARS = 1000000;
+
 // Providers occasionally wrap JSON in a markdown code fence despite being
 // told not to (see the OUTPUT FORMAT instruction in qa-agent-prompt.js).
 // Strip that defensively rather than failing outright - the prompt is the
@@ -610,6 +622,10 @@ async function runProviderAnalysis(
     const code = lastErr.code ? ` (${lastErr.code})` : "";
     const safeMessage = summarizeProviderError(lastErr).message;
     throw new AnalyzerError(`AI provider request failed${code}: ${safeMessage}`);
+  }
+
+  if (raw.length > MAX_TRIAGE_RESPONSE_CHARS) {
+    throw new AnalyzerError(`AI provider response exceeds the maximum of ${MAX_TRIAGE_RESPONSE_CHARS} characters.`);
   }
 
   let parsed;
@@ -871,5 +887,6 @@ module.exports = {
   isHistoryFrameworkEligible,
   isValidHistoryMetrics,
   computeRelevantKnowledge,
+  MAX_TRIAGE_RESPONSE_CHARS,
   MODEL,
 };

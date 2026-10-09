@@ -42,6 +42,7 @@ const cypressAdapter = require("./adapters/cypress-adapter");
 // framework-identity mechanism - it is the one this repository already trusts
 // everywhere else.
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
+const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("./bounded-response");
 
 // Roadmap TI-1: this generic collector owns no concrete project identity
 // of its own - main() requires an explicitly injected ProjectProfile (see
@@ -74,6 +75,24 @@ const MAX_RUNS = 30;
 // quick retries, but a 401/403/404 will just fail identically again.
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
+// TSB-F06 + ADV-01: per-response byte cap and per-request deadline for the
+// GitHub REST API calls below. Internal constants, not configuration.
+//
+// The largest response this collector requests is the workflow-runs list
+// at per_page = MAX_RUNS + 1 (31); measured against this repository's own
+// workflow it is ~400 KB (one run's jobs list ~25 KB), so 8 MiB leaves
+// ~20x headroom while still bounding what a misbehaving or compromised
+// GITHUB_API_URL endpoint can make the CI process buffer.
+//
+// The deadline covers connect + headers + body of one attempt. 10000 ms is
+// the existing per-request default of this repository's other read-only
+// REST adapters (jira-requirements-provider.js / azure-devops-requirements-
+// provider.js DEFAULT_TIMEOUT_MS). With the unchanged retry policy, one
+// fetchJson() call is bounded by maxAttempts x HISTORY_REQUEST_TIMEOUT_MS
+// plus the fixed retry delays (3 x 10 s + 0.5 s + 1.5 s).
+const MAX_HISTORY_RESPONSE_BYTES = 8 * 1024 * 1024;
+const HISTORY_REQUEST_TIMEOUT_MS = 10000;
+
 function isRetryableStatus(status) {
   return RETRYABLE_STATUS_CODES.has(status);
 }
@@ -104,10 +123,31 @@ function writeUnavailable(reason, outputFile, root) {
   log(`history unavailable: ${reason}`);
 }
 
-async function fetchJson(apiBase, token, urlPath, { maxAttempts = 3, retryDelaysMs = [500, 1500], sleep = defaultSleep } = {}) {
+// TSB-F06 + ADV-01: a body-read failure is reported with a fixed message
+// (never the underlying parser text, which would quote body content) and,
+// exactly as an unreadable `res.json()` body was before, is not retried.
+function bodyReadError(err, urlPath, timeoutMs) {
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.TOO_LARGE) {
+    return new Error(`GitHub API response body exceeded the maximum of ${MAX_HISTORY_RESPONSE_BYTES} bytes for ${urlPath}`);
+  }
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.ABORTED) {
+    return new Error(`GitHub API response body was not fully received before the request deadline for ${urlPath} (${timeoutMs}ms)`);
+  }
+  return new Error(`GitHub API returned a response that was not valid JSON for ${urlPath}`);
+}
+
+// `timeoutMs` is a test seam (like `sleep`) - production callers never
+// pass it and always get HISTORY_REQUEST_TIMEOUT_MS.
+async function fetchJson(
+  apiBase,
+  token,
+  urlPath,
+  { maxAttempts = 3, retryDelaysMs = [500, 1500], sleep = defaultSleep, timeoutMs = HISTORY_REQUEST_TIMEOUT_MS } = {}
+) {
   let lastErr;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const signal = AbortSignal.timeout(timeoutMs);
     let res;
     try {
       res = await fetch(`${apiBase}${urlPath}`, {
@@ -116,6 +156,7 @@ async function fetchJson(apiBase, token, urlPath, { maxAttempts = 3, retryDelays
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
         },
+        signal,
       });
     } catch (err) {
       // Never got a response at all (network blip, timeout) - worth retrying.
@@ -125,7 +166,13 @@ async function fetchJson(apiBase, token, urlPath, { maxAttempts = 3, retryDelays
       continue;
     }
 
-    if (res.ok) return res.json();
+    if (res.ok) {
+      try {
+        return await readBoundedResponseJson(res, { maxBytes: MAX_HISTORY_RESPONSE_BYTES, signal, label: "GitHub API" });
+      } catch (err) {
+        throw bodyReadError(err, urlPath, timeoutMs);
+      }
+    }
 
     lastErr = new Error(`GitHub API ${res.status} ${res.statusText} for ${urlPath}`);
     if (attempt === maxAttempts || !isRetryableStatus(res.status)) break;
@@ -458,6 +505,8 @@ module.exports = {
   DEFAULT_RUNS,
   DEFAULT_BRANCH,
   MAX_RUNS,
+  MAX_HISTORY_RESPONSE_BYTES,
+  HISTORY_REQUEST_TIMEOUT_MS,
   cypressAdapter,
   // Roadmap #21H: exported by reference (same pattern as cypressAdapter
   // above) so a test can prove main()'s `framework: adapter.id` line

@@ -104,7 +104,14 @@
  *   - every request sets `redirect: "manual"`; ANY 3xx/opaqueredirect
  *     response is a hard read failure - redirects are never followed.
  *   - no TLS bypass of any kind.
- *   - every request is bounded via AbortSignal.timeout(timeoutMs).
+ *   - every request is bounded via AbortSignal.timeout(timeoutMs). That
+ *     one per-request deadline spans connect, headers AND the response
+ *     body read (TSB-F06 + ADV-01).
+ *   - every response body (WIQL and work-items batch alike) is read
+ *     through the bounded reader (../bounded-response.js) - at most
+ *     MAX_RESPONSE_BYTES bytes are ever buffered, before any JSON parse
+ *     (TSB-F06). An oversized or timed-out body fails the whole read
+ *     closed and is not retried.
  *   - retries are bounded (3 total attempts: 1 initial + 2 retries), and
  *     apply ONLY to 429 and transient 5xx/network-level failures - never to
  *     401/403/400/404/422 or any malformed-payload failure.
@@ -293,6 +300,8 @@
  * "no premature shared test-helper extraction" instruction.
  */
 
+const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("../bounded-response");
+
 const MAX_STRING_LENGTH = 200;
 // CORRECTIVE C1 (cheap-now): auth tokens (PAT/Bearer) are bounded and
 // control-character-free at construction, same discipline as every other
@@ -303,6 +312,14 @@ const MAX_STRING_LENGTH = 200;
 // Entra access token.
 const MAX_TOKEN_LENGTH = 4096;
 const DEFAULT_TIMEOUT_MS = 10000;
+// TSB-F06: byte cap on one response, applied identically to the WIQL id
+// query and to each work-items batch. A WIQL response carries at most
+// WIQL_RESULT_HARD_CAP (20,000) id/url references (a few MB); a batch
+// carries at most AZURE_BATCH_SIZE (200) work items, i.e. an average of
+// ~167 KB per item. Internal, not configuration. A response above it
+// fails the whole read closed (never truncated), like every other
+// inconsistent-snapshot condition in this module.
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_ITEMS = 1000;
 // The vendor's own documented hard WIQL result cap (see module docstring
 // MAXITEMS section) - accepting a configured maxItems above this value
@@ -591,6 +608,9 @@ async function azureFetch(url, body, config, rateLimitState) {
       await delay(rateLimitState.nextRequestNotBefore - now);
     }
 
+    // TSB-F06 + ADV-01: created after any rate-limit wait (as before) and
+    // kept so the caller's body read runs under this attempt's deadline.
+    const signal = AbortSignal.timeout(config.timeoutMs);
     let response;
     try {
       response = await fetch(url, {
@@ -598,7 +618,7 @@ async function azureFetch(url, body, config, rateLimitState) {
         headers,
         body,
         redirect: "manual",
-        signal: AbortSignal.timeout(config.timeoutMs),
+        signal,
       });
     } catch (err) {
       if (attempt === MAX_RETRY_ATTEMPTS) {
@@ -641,10 +661,23 @@ async function azureFetch(url, body, config, rateLimitState) {
       rateLimitState.nextRequestNotBefore = Date.now() + proactiveDelayMs;
     }
 
-    return response;
+    return { response, signal };
   }
   /* istanbul ignore next - loop always returns or throws above */
   throw new Error("Azure DevOps request failed: retry loop exited unexpectedly.");
+}
+
+// TSB-F06 + ADV-01: fixed, content-free messages for a bounded body-read
+// failure at either parse site (`kind` is "WIQL" or "batch"). Every other
+// failure keeps that site's pre-existing "not valid JSON" message.
+function boundedBodyError(err, kind, timeoutMs) {
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.TOO_LARGE) {
+    return new Error(`Azure DevOps ${kind} response body exceeded the maximum of ${MAX_RESPONSE_BYTES} bytes.`);
+  }
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.ABORTED) {
+    return new Error(`Azure DevOps ${kind} response body was not fully received within the configured timeoutMs (${timeoutMs}ms).`);
+  }
+  return new Error(`Azure DevOps ${kind} response body was not valid JSON.`);
 }
 
 // --- WIQL (query for work item ID references only) ----------------------
@@ -686,13 +719,13 @@ function validateWiqlResponseShape(payload) {
 async function fetchWiqlIds(config, rateLimitState) {
   const url = buildWiqlUrl(config);
   const body = buildWiqlBody(config.wiql);
-  const response = await azureFetch(url, body, config, rateLimitState);
+  const { response, signal } = await azureFetch(url, body, config, rateLimitState);
 
   let payload;
   try {
-    payload = await response.json();
-  } catch {
-    throw new Error("Azure DevOps WIQL response body was not valid JSON.");
+    payload = await readBoundedResponseJson(response, { maxBytes: MAX_RESPONSE_BYTES, signal, label: "Azure DevOps WIQL" });
+  } catch (err) {
+    throw boundedBodyError(err, "WIQL", config.timeoutMs);
   }
   validateWiqlResponseShape(payload);
 
@@ -778,13 +811,13 @@ async function fetchAllWorkItems(config, ids, rateLimitState) {
 
   for (const batchIds of batches) {
     const body = buildBatchBody(batchIds, fields);
-    const response = await azureFetch(url, body, config, rateLimitState);
+    const { response, signal } = await azureFetch(url, body, config, rateLimitState);
 
     let payload;
     try {
-      payload = await response.json();
-    } catch {
-      throw new Error("Azure DevOps batch response body was not valid JSON.");
+      payload = await readBoundedResponseJson(response, { maxBytes: MAX_RESPONSE_BYTES, signal, label: "Azure DevOps batch" });
+    } catch (err) {
+      throw boundedBodyError(err, "batch", config.timeoutMs);
     }
     validateBatchResponseShape(payload);
 

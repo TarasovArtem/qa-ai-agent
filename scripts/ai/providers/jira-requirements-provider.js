@@ -113,7 +113,13 @@
  *     always enforced; an enterprise custom CA is the caller/environment's
  *     own concern (NODE_EXTRA_CA_CERTS), never a per-adapter flag.
  *   - every request is bounded via AbortSignal.timeout(timeoutMs) - no
- *     infinite wait, ever.
+ *     infinite wait, ever. That one per-request deadline spans connect,
+ *     headers AND the response body read (TSB-F06 + ADV-01): a stalled or
+ *     slow-drip body ends at the same deadline.
+ *   - every response body is read through the bounded reader
+ *     (../bounded-response.js) - at most MAX_RESPONSE_BYTES bytes are ever
+ *     buffered, before any JSON parse (TSB-F06). An oversized or
+ *     timed-out body fails the whole read closed and is not retried.
  *   - retries are bounded (3 total attempts: 1 initial + 2 retries), and
  *     apply ONLY to 429 (honoring a numeric-seconds Retry-After header,
  *     capped) and transient 5xx/network-level failures - never to
@@ -327,8 +333,17 @@
  * coverage this approach doesn't already provide.
  */
 
+const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("../bounded-response");
+
 const MAX_STRING_LENGTH = 200;
 const DEFAULT_TIMEOUT_MS = 10000;
+// TSB-F06: byte cap on one search-page response (PAGE_SIZE issues), i.e.
+// an average of ~670 KB per issue - far above a fully populated issue's
+// requested fields (summary, ADF description / acceptance criteria,
+// links, labels). Internal, not configuration. A page above it fails the
+// whole read closed, consistent with the atomic-read rule below; it is
+// never truncated.
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_ITEMS = 1000;
 const MAX_MAX_ITEMS = 10000;
 const PAGE_SIZE = 50;
@@ -508,6 +523,9 @@ async function jiraFetch(url, body, config) {
   };
 
   for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    // TSB-F06 + ADV-01: kept so the caller's body read runs under this
+    // same attempt's deadline.
+    const signal = AbortSignal.timeout(config.timeoutMs);
     let response;
     try {
       response = await fetch(url, {
@@ -515,7 +533,7 @@ async function jiraFetch(url, body, config) {
         headers,
         body,
         redirect: "manual",
-        signal: AbortSignal.timeout(config.timeoutMs),
+        signal,
       });
     } catch (err) {
       if (attempt === MAX_RETRY_ATTEMPTS) {
@@ -543,10 +561,23 @@ async function jiraFetch(url, body, config) {
       throw new Error(`Jira request failed with HTTP status ${response.status}.`);
     }
 
-    return response;
+    return { response, signal };
   }
   /* istanbul ignore next - loop always returns or throws above */
   throw new Error("Jira request failed: retry loop exited unexpectedly.");
+}
+
+// TSB-F06 + ADV-01: fixed, content-free messages for a bounded body-read
+// failure. Every other failure keeps the pre-existing "not valid JSON"
+// message.
+function boundedBodyError(err, timeoutMs) {
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.TOO_LARGE) {
+    return new Error(`Jira response body exceeded the maximum of ${MAX_RESPONSE_BYTES} bytes.`);
+  }
+  if (err && err.reason === BOUNDED_RESPONSE_FAILURES.ABORTED) {
+    return new Error(`Jira response body was not fully received within the configured timeoutMs (${timeoutMs}ms).`);
+  }
+  return new Error("Jira response body was not valid JSON.");
 }
 
 // --- Native payload validation (Jira's JSON response is untrusted DATA) -
@@ -620,13 +651,13 @@ async function fetchAllIssues(config) {
 
   for (;;) {
     const body = buildSearchRequestBody(config.jql, nextPageToken, fields);
-    const response = await jiraFetch(url, body, config);
+    const { response, signal } = await jiraFetch(url, body, config);
 
     let payload;
     try {
-      payload = await response.json();
-    } catch {
-      throw new Error("Jira response body was not valid JSON.");
+      payload = await readBoundedResponseJson(response, { maxBytes: MAX_RESPONSE_BYTES, signal, label: "Jira" });
+    } catch (err) {
+      throw boundedBodyError(err, config.timeoutMs);
     }
     validateSearchResponseShape(payload);
 

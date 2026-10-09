@@ -93,14 +93,14 @@ function mockGithubApi(workflows) {
       const wf = decodeURIComponent(runsMatch[1]);
       const entry = workflows[wf];
       if (!entry) return { ok: false, status: 404, statusText: "Not Found" };
-      return { ok: true, json: async () => ({ workflow_runs: [{ id: entry.runId, run_attempt: 1 }] }) };
+      return Response.json({ workflow_runs: [{ id: entry.runId, run_attempt: 1 }] });
     }
     const jobsMatch = url.match(/\/actions\/runs\/(\d+)\/jobs/);
     if (jobsMatch) {
       const runId = Number(jobsMatch[1]);
       for (const wf of Object.keys(workflows)) {
         if (workflows[wf].runId === runId) {
-          return { ok: true, json: async () => ({ jobs: workflows[wf].jobs }) };
+          return Response.json({ jobs: workflows[wf].jobs });
         }
       }
       return { ok: false, status: 404, statusText: "Not Found" };
@@ -410,4 +410,23 @@ test("D1-C1 collect-history.main(): an invalid profile fails closed before any f
     assert.equal(fetched, 0);
     assert.equal(fs.existsSync(path.join(dir, "reports")), false);
   }
+});
+
+// --- TSB-F06 + ADV-01: main() degrades an oversized GitHub response safely --
+
+test("TSB-F06 collect-history.main(): an oversized workflow-runs response yields the bounded 'unavailable' marker with no body content", async () => {
+  const { dir } = fresh("tsb-f06-ch-oversize");
+  const { MAX_HISTORY_RESPONSE_BYTES } = require("./collect-history");
+  const hostile = JSON.stringify({ workflow_runs: [], pad: "SECRET".repeat(Math.ceil(MAX_HISTORY_RESPONSE_BYTES / 6) + 1) });
+  await withFetch(
+    async () => new Response(hostile, { status: 200 }),
+    () =>
+      withEnv({ GITHUB_TOKEN: "tok", GITHUB_REPOSITORY: "o/r", TEST_BROWSER: "chrome", QA_FRAMEWORK: undefined, GITHUB_RUN_ID: undefined }, () =>
+        main({ profile: PROFILE, repositoryRoot: dir })
+      )
+  );
+  const history = readHistory(dir);
+  assert.equal(history.available, false);
+  assert.match(history.reason, /^could not list workflow runs: GitHub API response body exceeded the maximum of 8388608 bytes for \/repos\/o\/r\/actions\/workflows\/cypress\.yml\/runs/);
+  assert.ok(!history.reason.includes("SECRET"));
 });
