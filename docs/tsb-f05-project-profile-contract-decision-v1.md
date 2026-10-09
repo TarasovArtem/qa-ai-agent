@@ -3,154 +3,176 @@
 | Field | Value |
 |---|---|
 | Decision | `TSB-F05-D1 — Strict Snapshotting ProjectProfile Contract / Pre-Controlled-v1 Public Contract Correction` |
-| Authority | `OD-TSB-F05-D1 — APPROVED` |
+| Corrective | `TSB-F05-D1-C1 — consolidated design corrective after HEAVY Architecture review` |
+| Authorities | `OD-TSB-F05-D1 — APPROVED`; `OD-TSB-F05-D1-C1 — APPROVED` |
 | Stage | Architecture/design record only |
 | Review class | `HEAVY` — independent Architecture + Security exact-head reviews required |
 | Governed base | `main` @ `158477fb30fc3ab85f82831fef1eaae068e2997c` |
 | Governed base TREE | `fb8b9642b63dafc503320dcc4c69a3b6cfc53e03` |
+| Previous reviewed HEAD | `8dd5f7eaec0768f6d996f0c57e8265e3714e59e0` — Architecture `CHANGES_REQUIRED` |
 | Finding | `TSB-F05` / boundary `TSB-018` |
 | Compatibility class | `BREAKING PUBLIC API BEHAVIOR CORRECTION` before Controlled v1 |
 | Implementation | **NOT AUTHORIZED / NOT IMPLEMENTED** |
 | Merge | **NOT AUTHORIZED** |
 
-## 1. Status and decision boundary
+## 1. Status, review history, and decision boundary
 
 This document records the Product Owner-approved architecture direction for
-`TSB-F05`. It does not implement the decision, does not change the public API,
-does not alter `package.json`, does not revise `ROADMAP.md`, and does not grant
-merge, release, remediation, or downstream activation authority.
+`TSB-F05` and the authorized C1 correction of the first independent HEAVY
+Architecture review findings. It does not implement the decision, change the
+runtime public API, alter `package.json`, revise `ROADMAP.md`, or grant merge,
+release, remediation, or downstream activation authority.
 
-The governing finding is `TSB-F05`: the current public ProjectProfile validator
-is open, unbounded, accessor-permitting, and returns the caller-owned live
-object. The Type & Schema Boundary Audit requires a separately governed
-compatibility decision before any corrective implementation because
-`assertValidProjectProfile` is a supported package export.
+The first Architecture review of HEAD `8dd5f7eaec0768f6d996f0c57e8265e3714e59e0`
+returned `CHANGES_REQUIRED` with:
 
-The approved design direction is:
+- `MAJOR-1` — Proxy handling undefined;
+- `MAJOR-2` — ProjectProfile-shaped #22 consumers omitted from the closure scope;
+- `MINOR-1` — `validateProjectProfile` described as public/supported when it is not a root package export;
+- `MINOR-2` — no defined non-throwing central snapshot result for private consumers;
+- `MINOR-3` — Array mechanics and the unit of string bounds under-specified;
+- `MINOR-4` — adversarial/regression matrix incomplete;
+- three INFO observations preserved below.
+
+C1 resolves those design gaps without changing the approved D1 field model,
+numeric bounds, breaking-compatibility classification, no-weak-bridge decision,
+Package Surface v3 direction, ID-3 separation, or Controlled-v1 applicability.
+
+The governing finding remains `TSB-F05`: the current ProjectProfile validator is
+open, unbounded, accessor-permitting, and returns the caller-owned live object.
+`assertValidProjectProfile` is a supported package root export, so tightening
+its accepted input domain and return identity requires the separately governed
+compatibility decision recorded here.
+
+The approved direction remains:
 
 ```text
 TSB-F05-D1: STRICT SNAPSHOTTING PROJECTPROFILE CONTRACT
 ```
 
-The future ProjectProfile trust boundary shall accept only a strict, closed,
-bounded, accessor-safe plain-data contract and shall return a detached,
-deep-frozen authoritative snapshot. Every consumer that crosses this boundary
-shall use only that snapshot after validation.
+The future trust boundary accepts only the strict v1 data contract defined
+below and returns/propagates a detached, immutable authoritative snapshot. No
+consumer, whether public-facing or repository-private, may establish a second
+weaker ProjectProfile contract.
 
 ## 2. Why TSB-F05 is applicable to Controlled v1
 
-`docs/package-surface-v2.md` defines the current supported root package API and
-includes all of the following names:
+`docs/package-surface-v2.md` defines the supported root package API and includes:
 
 - `assertValidProjectProfile`;
 - `collectContext`;
 - `collectHistory`;
 - `analyzeFailure`.
 
-The same package-surface record defines those exports as a compatibility
-commitment and separately classifies `scripts/ai/test-automation/**` as
-repository-only private code.
-
-Therefore ProjectProfile is already part of the supported external surface
-independently of future #23 productization. The existing external-install proof
-also supplies a consumer-owned profile to the installed package through these
-public entry points.
-
-The Controlled-v1 disposition is therefore:
+Those names are compatibility commitments. The external-install proof supplies
+a consumer-owned profile through installed package entry points. Therefore the
+finding is already relevant to the supported external surface independently of
+private #22/#23 implementation.
 
 ```text
 CONTROLLED_V1_APPLICABILITY: REQUIRED under the current approved public surface
 ```
 
-If a later Product Owner decision deliberately removes every ProjectProfile-
-consuming capability from the supported Controlled-v1 surface, applicability
-may be reconsidered. This design record does not make such a change.
+Private #22/#23 consumers are included in F05 implementation scope because they
+also consume values semantically treated as ProjectProfile guidance. Their
+inclusion does **not** make those modules public package APIs.
 
 ## 3. Current contract and confirmed weakness
 
-At the governed baseline, `scripts/ai/project-profile.js` performs only basic
-presence/type checks:
+At the governed baseline, `scripts/ai/project-profile.js` performs basic
+presence/type checks only:
 
 - `id` is a non-empty string;
 - `displayName` is a non-empty string;
 - `knownProjectConstraints` is a non-empty array of non-empty strings.
 
-The current validator does not establish:
+The current boundary does not establish:
 
-- a plain-data object boundary;
-- closed top-level keys;
-- own-property semantics;
-- enumerable data-descriptor semantics;
-- accessor rejection;
+- a closed plain-data object;
+- own/enumerable data-descriptor semantics;
+- accessor or Proxy rejection;
 - symbol-key rejection;
-- string-length bounds;
-- constraint-count bounds;
-- aggregate-size bounds;
+- finite string/count/aggregate bounds;
 - control-character rejection;
 - a detached authoritative snapshot.
 
-`assertValidProjectProfile()` currently returns the original caller object, and
+`assertValidProjectProfile()` currently returns the original caller object and
 existing tests explicitly assert same-object return identity.
 
-The audit probe `P-05` demonstrated that the current contract accepts:
-
-- unknown keys;
-- control characters;
-- a 100,000-character `displayName`;
-- accessor-backed values that can change after validation;
-- the caller's live object as the post-validation object.
-
-This is a trust-boundary TOCTOU problem even when the caller is normally an
-operator: the object validated is not guaranteed to be the object later used.
-ProjectProfile content also enters high-authority prompt guidance.
+Audit probe `P-05` established that unknown keys, control characters, a
+100,000-character `displayName`, changing accessors, and the live caller object
+are accepted. This creates validate/use divergence and lets unbounded guidance
+enter prompt/context authority.
 
 ## 4. Threat and trust model
 
 ### 4.1 Input authority
 
-ProjectProfile is operator-/consumer-supplied configuration. It is not treated
-as hostile remote model output, but it crosses a public package trust boundary
-and can influence:
+ProjectProfile is operator-/consumer-supplied configuration. It is not remote
+model output, but it crosses a public/package trust boundary and may influence:
 
 - project identity;
-- prompt/system-guidance text;
+- system/generation prompt guidance;
 - history/config identity checks;
 - repository-context projections;
-- target-specific runtime behavior.
+- target-specific behavior.
 
-The correct model is therefore:
+The trust transition is:
 
 ```text
-caller-owned value -> untrusted structural input -> strict validation/snapshot
-                  -> trusted immutable ProjectProfile snapshot
+caller-owned value
+  -> untrusted structural input
+  -> strict Proxy rejection + descriptor-safe inspection
+  -> validated detached ProjectProfile snapshot
+  -> trusted immutable guidance value
 ```
 
-Validation must not execute caller-provided code. A getter, proxy-like accessor
-pattern, inherited property, or mutable object must not be able to change what
-a consumer observes after the trust boundary has accepted the input.
+### 4.2 Explicit Proxy policy — C1-MAJOR-1
 
-### 4.2 Security objective
+D1-C1 chooses a single fail-closed policy:
 
-The boundary must guarantee that, after successful assertion:
+**Proxy objects are not valid ProjectProfile v1 data.**
 
-1. the ProjectProfile has exactly the approved v1 shape;
-2. every consumed value came from an own enumerable data property inspected
-   without invoking an accessor;
-3. all strings/counts/aggregate content are finite and bounded;
-4. the value used by downstream consumers is detached from caller mutation;
-5. downstream consumers cannot accidentally re-open TOCTOU by re-reading the
-   original object.
+Required behavior:
 
-### 4.3 Non-goals
+- a top-level ProjectProfile Proxy is rejected;
+- a Proxy wrapping `knownProjectConstraints` is rejected;
+- a revoked Proxy is rejected;
+- Proxy detection occurs before `Object.getPrototypeOf`, `Reflect.ownKeys`,
+  `Object.getOwnPropertyDescriptor`, array-length inspection, or any other
+  operation that could invoke Proxy traps;
+- an implementation may use Node 22 `util.types.isProxy()` or an equivalent
+  deterministic runtime primitive that does not invoke user traps;
+- failure/exception in the inspection boundary becomes a bounded,
+  deterministic invalid result; no raw caller exception/stack becomes a
+  validation diagnostic;
+- successful validation never depends on executing Proxy traps.
 
-This decision does not authenticate the caller, repository, or project.
-It does not prove that a profile belongs to a particular repository root or
-persisted context. Those authenticity/binding concerns remain separate
-findings/design work (including `SADR-01` / `XI-01` where applicable).
+The design does **not** claim that arbitrary JavaScript Proxy structure can be
+inspected safely without executing caller code. Instead, accepted inputs are
+non-Proxy plain data, which lets the subsequent descriptor inspection guarantee
+that no getter/setter or Proxy trap is executed for an accepted profile.
+
+### 4.3 Security objective
+
+After successful trust escalation:
+
+1. the profile has exactly the approved v1 semantic shape;
+2. every field came from an own enumerable data descriptor;
+3. no getter/setter or Proxy trap was executed to obtain accepted values;
+4. strings/counts/aggregate content are bounded;
+5. the consumed value is detached from caller mutation;
+6. downstream consumers use only that authoritative snapshot/projection.
+
+### 4.4 Non-goals
+
+D1 does not authenticate the caller, repository, repository root, or persisted
+context, and does not prove that a profile belongs to a specific repository.
+`SADR-01`, `XI-01`, and related identity/provenance work remain separate.
 
 ## 5. Exact ProjectProfile v1 data contract
 
-A valid future ProjectProfile v1 is exactly:
+A valid profile has exactly these semantic fields:
 
 ```js
 {
@@ -160,30 +182,34 @@ A valid future ProjectProfile v1 is exactly:
 }
 ```
 
-No fourth field is accepted by v1.
+No fourth semantic field is accepted by v1.
 
 ### 5.1 Top-level object rules
 
-The input must:
+Before prototype/key/descriptor inspection, the implementation must establish
+that the value is not a Proxy.
+
+A valid top-level input then must:
 
 - be non-null and of type object;
 - not be an Array;
 - have prototype exactly `Object.prototype` or `null`;
-- contain exactly the three string-named keys:
-  - `id`;
-  - `displayName`;
-  - `knownProjectConstraints`;
-- contain no unknown string key;
-- contain no symbol key;
-- expose each required field as an own property;
-- expose each required field as enumerable;
-- expose each required field as a data descriptor with a `value`;
-- reject accessors (`get` / `set`) without invoking them;
-- reject inherited substitutes for any required field.
+- contain exactly the three own string keys `id`, `displayName`, and
+  `knownProjectConstraints`;
+- contain no unknown own string key, enumerable or non-enumerable;
+- contain no own symbol key;
+- expose every required field as an own enumerable data descriptor;
+- reject getter/setter descriptors without invoking them;
+- reject inherited substitutes for required fields;
+- reject class/custom-prototype instances.
 
-The validator shall inspect property descriptors directly. It must not first
-read `profile.id`, `profile.displayName`, or `profile.knownProjectConstraints`
-from the caller object and then attempt to classify the property afterward.
+The inspection captures `descriptor.value` and never later re-reads
+`input.id`, `input.displayName`, or `input.knownProjectConstraints` from the
+caller object.
+
+Frozen and sealed ordinary objects remain valid when their data shape satisfies
+the contract. A valid `Object.create(null)` record is accepted and canonicalized
+into the same trusted snapshot representation as an ordinary object literal.
 
 ### 5.2 String rules
 
@@ -191,162 +217,192 @@ All ProjectProfile strings must:
 
 - be JavaScript strings;
 - contain at least one non-whitespace character;
-- not exceed the field-specific maximum below;
-- contain no C0 control character (`U+0000`..`U+001F`);
-- contain no DEL (`U+007F`).
+- satisfy the field-specific bound below;
+- contain no C0 control character `U+0000..U+001F`;
+- contain no DEL `U+007F`.
 
-Validation must not mutate accepted string content. In particular, the
-snapshot preserves the original accepted string; validation may use
-`trim().length > 0` only to reject blank strings. This decision does not add
-Unicode normalization, case folding, or implicit trimming.
+The unit of every D1 string bound is **JavaScript UTF-16 code units**, matching
+`String.length` and the repository's existing JavaScript validator conventions.
 
-### 5.3 Approved bounds
+Validation does not mutate accepted content. `trim()` may be used only to test
+blankness. Accepted strings are not trimmed, normalized, case-folded, or
+rewritten in the snapshot.
+
+C1 does not broaden the approved C0+DEL policy. Bidi controls, other Unicode
+format characters, and lone surrogates remain explicit Security-review input
+(Architecture INFO-1).
+
+### 5.3 Approved bounds — unchanged by C1
 
 | Field | Approved maximum / range |
 |---|---:|
-| `id` | 128 characters |
-| `displayName` | 256 characters |
+| `id` | 128 UTF-16 code units |
+| `displayName` | 256 UTF-16 code units |
 | `knownProjectConstraints` count | 1..32 entries |
-| one constraint | 2048 characters |
-| aggregate constraint characters | 8192 characters |
+| one constraint | 2048 UTF-16 code units |
+| aggregate constraint content | 8192 UTF-16 code units |
 
-These limits are architecture values and are part of the reviewed D1 contract.
-Changing them after review changes the reviewed design and requires explicit
-disposition under the normal exact-head lifecycle.
+Changing these architecture values after exact-head review changes the reviewed
+design and requires explicit disposition.
 
 ### 5.4 Repository measurements supporting the bounds
 
-The two concrete target-owned profiles present at the governed baseline are
-well below the proposed ceilings:
-
-| Profile | `id` chars | `displayName` chars | constraints | longest constraint | aggregate constraint chars |
+| Profile | `id` | `displayName` | constraints | longest constraint | aggregate constraints |
 |---|---:|---:|---:|---:|---:|
-| Targomo (`scripts/targets/targomo/project-profile.js`) | 16 | 67 | 2 | 519 | 764 |
-| Project B (`scripts/targets/project-b/project-profile.js`) | 26 | 91 | 1 | 235 | 235 |
+| Targomo | 16 | 67 | 2 | 519 | 764 |
+| Project B | 26 | 91 | 1 | 235 | 235 |
 
-The largest observed values therefore have substantial headroom under D1:
+The approved ceilings retain substantial headroom while preventing the
+unbounded P-05 behavior.
 
-- `id`: 26 observed vs 128 allowed;
-- `displayName`: 91 observed vs 256 allowed;
-- constraint count: 2 observed vs 32 allowed;
-- individual constraint: 519 observed vs 2048 allowed;
-- aggregate constraints: 764 observed vs 8192 allowed.
+## 6. Exact `knownProjectConstraints` Array contract — C1-MINOR-3
 
-These measurements justify the proposed bounds for current known consumers
-without claiming that future schema expansion is automatically authorized.
-A future need to exceed the D1 contract must be handled as an explicit public
-contract revision.
+After capturing the top-level data descriptor value, the boundary must first
+reject it if it is a Proxy. A valid constraints value then must:
 
-## 6. `knownProjectConstraints` array contract
-
-`knownProjectConstraints` is itself part of the trust boundary.
-
-It must:
-
-- be a real Array;
-- contain between 1 and 32 entries inclusive;
-- be dense for indexes `0..length-1`;
-- have every indexed element as an own enumerable data property;
+- be an actual Array;
+- have prototype exactly `Array.prototype` — Array subclasses/custom Array
+  prototypes are rejected;
+- have `length` in `1..32`, checked **before** iterating indexes;
+- contain every canonical index `0..length-1` as an own enumerable data
+  descriptor;
+- contain no hole;
 - contain no accessor-backed indexed element;
-- contain no holes;
-- contain only valid constraint strings under §5.2 and the 2048-character
-  per-entry bound;
-- remain within the 8192-character aggregate bound;
-- contain no additional enumerable non-index string property;
-- contain no symbol property supplied as contract data.
+- rely on no inherited indexed element;
+- contain no extra own string property other than canonical indexes and the
+  intrinsic `length` property;
+- contain no own symbol key;
+- contain only strings satisfying §5.2 and the 2048-unit per-entry maximum;
+- remain within the 8192-unit aggregate maximum.
 
-Array order is preserved because constraint ordering is meaningful prompt
-presentation state. Duplicate constraint strings are not forbidden by D1;
-there is no evidence that deduplication is part of the current public contract,
-and adding that semantic restriction is unnecessary to close TSB-F05.
+The implementation must use descriptor values for indexed elements and must not
+call caller-provided array methods. Array order is preserved. Duplicate strings
+remain allowed because uniqueness is not required to close TSB-F05.
 
-## 7. Single-read inspection semantics
+A huge/sparse `length` cannot trigger a long scan: the count bound is checked
+before index iteration.
 
-A valid design must not implement this pattern:
+## 7. Central inspection and single-read semantics — C1-MAJOR-1/C1-MINOR-2
 
-```text
-validate caller object
-  -> success
-re-read caller object to build snapshot
+There shall be one central repository-internal inspection primitive in
+`scripts/ai/project-profile.js`, conceptually:
+
+```js
+inspectProjectProfile(input)
 ```
 
-That would preserve the accessor/mutation TOCTOU window.
+Exact private naming is not a public contract, but its semantics are.
 
-Instead, the implementation shall have one internal inspection operation that:
+Success is equivalent to:
 
-1. establishes plain-object shape;
-2. enumerates/certifies the exact allowed key set;
-3. obtains own property descriptors without invoking getters;
-4. captures the descriptor `value` once for each accepted field;
-5. validates captured primitive/string values;
-6. performs an equivalent descriptor-safe inspection of the constraints
-   array and each indexed element;
-7. constructs a new canonical plain object and a new constraints array from
-   only the captured values;
-8. freezes the constraints array;
-9. freezes the top-level snapshot;
-10. returns validation errors or the authoritative snapshot.
+```js
+{
+  valid: true,
+  errors: [],
+  snapshot: <authoritative deep-frozen ProjectProfile>
+}
+```
 
-Both public validation helpers must derive their decision from this same
-inspection primitive so that validation and assertion cannot drift into two
-contracts.
+Failure is equivalent to:
+
+```js
+{
+  valid: false,
+  errors: [<bounded deterministic diagnostic>, ...]
+}
+```
+
+The primitive must:
+
+1. perform Proxy rejection before trap-capable structural operations;
+2. establish non-Proxy plain-record shape;
+3. enumerate the exact key set and reject unknown/non-enumerable extras;
+4. obtain own property descriptors without invoking getters;
+5. capture each required descriptor value once;
+6. validate captured `id` and `displayName`;
+7. reject a Proxy constraints value before Array structural inspection;
+8. validate Array prototype/count/key/descriptor rules from §6;
+9. capture each constraint descriptor value once;
+10. validate per-entry and aggregate bounds;
+11. construct a new canonical object and new canonical Array from captured
+    primitive values only;
+12. freeze the Array and top-level object;
+13. return either the bounded failure or authoritative snapshot.
+
+Forbidden implementation pattern:
+
+```text
+validate original
+  -> success
+re-read original
+  -> build snapshot
+```
+
+No post-inspection semantic read from the original caller object or Array is
+permitted.
+
+### 7.1 Internal visibility
+
+`inspectProjectProfile` is repository-internal. It may be a module-local helper
+or a source-relative/internal export from `project-profile.js` when private
+consumers need result-style semantics.
+
+It must **not**:
+
+- be root-exported from `scripts/ai/index.js`;
+- be added to `package.json` exports;
+- become a Package Surface public symbol.
 
 ## 8. Snapshot and freeze semantics
 
-On successful assertion, the authoritative ProjectProfile must be:
+The authoritative snapshot is:
 
 - newly allocated;
-- detached from the caller's top-level object;
-- detached from the caller's constraints array;
-- composed only of the three approved fields;
-- composed only of primitive strings plus the newly allocated constraints
-  array;
-- deeply frozen for the full v1 object graph;
-- stable for the remainder of the consumer operation regardless of later
-  mutation of caller-owned values.
+- detached from caller top-level identity;
+- detached from caller Array identity;
+- exactly three semantic keys;
+- composed only of accepted primitive strings and the new Array;
+- frozen at top level;
+- frozen at Array level;
+- stable against later source mutation.
 
-For ProjectProfile v1, deep freeze means at minimum:
+For v1:
 
 ```text
 Object.isFrozen(snapshot) === true
 Object.isFrozen(snapshot.knownProjectConstraints) === true
 ```
 
-Strings require no additional freeze operation.
+Strings are primitives and require no recursive freeze. The snapshot does not
+preserve caller prototype, descriptors, accessors, unknown fields, symbols, or
+object identity.
 
-The canonical snapshot does not preserve caller prototype, property
-descriptors, getters/setters, non-enumerability, unknown fields, symbol fields,
-or object identity.
+## 9. Validator/assert contracts — C1-MINOR-1/C1-MINOR-2
 
-## 9. Public validator/assert behavior
+### 9.1 `validateProjectProfile(profile)` — repository/module validator, not package public API
 
-### 9.1 `validateProjectProfile(profile)`
+`validateProjectProfile` is **not** one of the supported root package exports in
+Package Surface v2. It is a repository/module validator used through
+source-relative code.
 
-The supported validation behavior remains non-throwing for ordinary invalid
-inputs and returns the existing high-level result shape:
+It remains non-throwing for ordinary invalid input and returns the existing
+high-level shape:
 
 ```js
 { valid: boolean, errors: string[] }
 ```
 
-Its implementation shall derive that result from the same descriptor-safe
-inspection primitive used by assertion.
+It derives from the same central inspection primitive but does **not** make the
+original caller object authoritative and does not expose a second schema.
 
-Diagnostics must themselves remain bounded and deterministic. Unknown-key
-reporting must not echo arbitrarily large caller-controlled keys without a
-bound. The implementation should follow the already-established
-FrameworkRuntimeConfig / ProjectKnowledgeConfig validation discipline rather
-than introduce unbounded diagnostics.
+Package Surface v3 must not add `validateProjectProfile` to the root export set.
 
-`validateProjectProfile()` does not make the caller object authoritative and
-must not be used as a substitute for obtaining the snapshot at a trust
-boundary.
+### 9.2 `assertValidProjectProfile(profile, callerLabel)` — supported root public API
 
-### 9.2 `assertValidProjectProfile(profile, callerLabel)`
+`assertValidProjectProfile` remains the existing supported root symbol and call
+signature.
 
-The existing supported symbol and call signature are retained.
-
-Future success semantics change intentionally from:
+Future success changes intentionally from:
 
 ```text
 return caller-owned profile
@@ -358,240 +414,269 @@ to:
 return authoritative detached deep-frozen ProjectProfile snapshot
 ```
 
-Required/malformed failures retain stable error-prefix semantics:
+Failures retain stable high-level prefixes where applicable:
 
 ```text
 PROJECT_PROFILE_REQUIRED
 PROJECT_PROFILE_INVALID
 ```
 
-Error detail must remain bounded and must not invoke caller accessors.
+The assertion derives from the same central inspection result; it must not run
+a second validation pass over caller-owned input.
 
-### 9.3 Intentional identity break
+### 9.3 Private non-throwing consumers
 
-The current test contract:
+A repository-private consumer that needs result-style behavior must consume the
+central inspection result and use `result.snapshot` on success. It must not call
+`validateProjectProfile(input)` and then continue reading `input`.
+
+This specifically covers result-style paths such as
+`test-automation/automation-repository-context.js` and private #22 generation/
+review paths where throwing semantics would be inappropriate.
+
+No new root/public symbol is created.
+
+### 9.4 Intentional identity break
+
+The current observable behavior:
 
 ```js
 assertValidProjectProfile(profile, label) === profile
 ```
 
-shall become false for a valid caller-owned profile.
+becomes false for a valid caller-owned profile. This is an intentional,
+documented breaking behavior correction.
 
-This is deliberate and is the central compatibility-breaking behavior of D1.
-It is not to be hidden as an incidental implementation detail.
+## 10. Bounded diagnostics — C1 corrective requirement
 
-## 10. Mandatory consumer rule
+Validation errors are themselves a trust boundary. Rejection must not amplify
+attacker/caller-controlled keys or values into unbounded diagnostics.
 
-Any consumer that receives a ProjectProfile across this boundary must use this
-pattern:
+D1-C1 fixes these design bounds:
+
+- maximum unknown keys represented in validation detail: `8`;
+- maximum displayed text for one unknown key: `80` UTF-16 code units;
+- maximum total validation-detail text emitted by the ProjectProfile boundary:
+  `1024` UTF-16 code units.
+
+Diagnostics must not:
+
+- stringify/serialize the hostile input;
+- include unbounded property values;
+- include unbounded property names;
+- include raw Proxy/accessor exceptions or stack traces.
+
+When additional errors exist beyond the reporting bound, the diagnostic may use
+a fixed truncation/omission indicator rather than enumerate them.
+
+## 11. Mandatory consumer rule
+
+Any consumer that treats a value as ProjectProfile must cross the central D1
+boundary once and then use only the authoritative snapshot or a projection
+constructed from that snapshot.
+
+Throwing public-style example:
 
 ```js
-const validatedProfile = assertValidProjectProfile(inputProfile, callerLabel);
-
-// From here onward use only validatedProfile.
+const profile = assertValidProjectProfile(inputProfile, callerLabel);
+use(profile.id);
 ```
 
-After the assertion returns, the original input object is no longer an
-authoritative source and must not be read again by that consumer.
+Result-style private example:
 
-This applies transitively to values passed to downstream helper functions:
-pass the snapshot, not the caller object.
+```js
+const result = inspectProjectProfile(inputProfile);
+if (!result.valid) return boundedFailure(result.errors);
+use(result.snapshot.displayName);
+```
 
-A future implementation review must reject code of the form:
+Forbidden:
 
 ```js
 assertValidProjectProfile(inputProfile, callerLabel);
-use(inputProfile.id); // forbidden: reopens the trust boundary
+use(inputProfile.id);
 ```
 
-## 11. Known producer and consumer inventory
+Forbidden equally for private paths:
 
-### 11.1 Concrete producers
+```js
+validateProjectProfile(inputProfile);
+use(inputProfile.knownProjectConstraints);
+```
 
-Current target-owned concrete profiles include:
+A projection may intentionally omit fields, but it must be derived from the
+central snapshot, never from independently snapshotted raw ProjectProfile input.
+
+## 12. Complete current producer/consumer scope — C1-MAJOR-2
+
+### 12.1 Producers
+
+Current concrete producers include:
 
 - `scripts/targets/targomo/project-profile.js`;
 - `scripts/targets/project-b/project-profile.js`;
-- synthetic profiles used by unit/external-install tests.
+- synthetic/unit/external-install fixtures.
 
-The Targomo and Project B production/synthetic target constants already use
-frozen data objects/arrays and satisfy the proposed D1 numeric bounds.
-Their existing freeze practice is helpful producer hygiene but is not accepted
-as a substitute for consumer-side validation/snapshotting.
+Producer freezing is hygiene, not a substitute for consumer validation.
 
-### 11.2 Current/public consumers to migrate
+### 12.2 Supported/public-path consumers
 
-Future implementation investigation must include at least:
+Future implementation must trace and migrate all ProjectProfile uses in the
+supported pipeline, including at minimum:
 
 - `scripts/ai/qa-agent-prompt.js`;
 - `scripts/ai/collect-context.js`;
 - `scripts/ai/collect-history.js`;
 - `scripts/ai/analyze-failure.js`;
-- public root wiring in `scripts/ai/index.js` as a compatibility verification
-  surface, without adding a new export.
+- `scripts/ai/index.js` as a compatibility/export verification surface without
+  adding a new public export.
 
-The implementation must trace every use of the original object after
-assertion, including helper calls that later read `id`, `displayName`, or
-`knownProjectConstraints`.
+### 12.3 Repository-private #23 consumer
 
-### 11.3 Repository-private consumer
+At minimum:
 
-The audit additionally identifies
-`scripts/ai/test-automation/automation-repository-context.js` as a #23
-consumer/projection path. It is repository-private under Package Surface v2,
-but if ProjectProfile reaches that path in the future Controlled-v1 chain, it
-must consume the same authoritative D1 snapshot and may not create a divergent
-second contract.
+- `scripts/ai/test-automation/automation-repository-context.js`.
 
-The final implementation scope must be established by repository-wide search
-at implementation baseline; this design document is a minimum inventory, not
-permission to silently omit a discovered consumer.
+If ProjectProfile reaches this result-style path, the path must consume the
+central inspection snapshot. Its current validate-then-read-original pattern is
+not acceptable under D1.
 
-## 12. Compatibility decision
+### 12.4 Repository-private #22 generation/review consumers
 
-D1 classifies the change as:
+F05 closure also includes current ProjectProfile-shaped guidance paths in #22.
+At minimum:
+
+- `scripts/ai/generative-test-design/automation-candidate-generator.js`;
+- `scripts/ai/generative-test-design/test-design-review-package.js`.
+
+Current local ProjectProfile snapshot/projection logic in those modules may not
+remain a divergent schema after D1. Required architecture:
+
+- absence may remain valid where the parameter is currently optional;
+- when supplied, ProjectProfile must pass the central D1 inspection contract;
+- any prompt/review projection is built from the central authoritative
+  snapshot;
+- bounds, controls, Proxy policy, closed keys, and snapshot semantics are not
+  reimplemented differently in #22.
+
+Evaluation/test code such as `scripts/ai/evaluation/scoring-v6.js` must be
+accounted for when it invokes or models these paths, but test/evaluation wiring
+does not itself become a public product contract.
+
+### 12.5 Repository-wide completion rule
+
+The implementation baseline must be searched repository-wide for all semantic
+ProjectProfile consumers. The list above is the known minimum, not permission to
+omit another discovered consumer.
+
+A newly discovered consumer may be added to implementation scope only when it
+is genuinely necessary to apply the same approved D1 contract. Discovery of a
+consumer whose semantics conflict with D1 triggers the STOP condition in §24.
+
+## 13. Compatibility decision — unchanged
+
+D1 remains:
 
 ```text
 BREAKING PUBLIC API BEHAVIOR CORRECTION
 ```
 
-There are two breaking aspects:
+Breaking aspects include:
 
-1. the accepted input domain becomes narrower because formerly accepted
-   unknown fields, accessors, inherited/non-enumerable fields, control
-   characters, and oversized values will fail;
-2. successful `assertValidProjectProfile()` no longer preserves caller object
-   identity.
+1. formerly accepted unknown/accessor/inherited/non-enumerable/Proxy/control/
+   oversized inputs become invalid;
+2. `assertValidProjectProfile()` no longer returns caller identity.
 
-This change is approved as a governed pre-Controlled-v1 contract correction,
-not as a silent backwards-compatible bug fix.
+This is a governed pre-Controlled-v1 correction, not a silent backwards-
+compatible bug fix and not a claim that a formal semver-major release already
+occurred.
 
-## 13. Rejected compatibility strategies
+## 14. Rejected compatibility strategies
 
-### 13.1 Silent in-place hardening without versioned contract record — rejected
+### 14.1 Silent unrecorded hardening — rejected
 
-It would technically close the security weakness but would conceal a breaking
-change to a declared supported public API.
+Would conceal a breaking change to a declared supported symbol.
 
-### 13.2 New strict public validator while retaining the weak public validator — rejected
+### 14.2 Parallel strict symbol while weak symbol remains supported — rejected
 
-It would create two competing ProjectProfile contracts and leave the weak
-contract supported. TSB-F05 would remain architecturally ambiguous.
+Would preserve a supported bypass and leave F05 open.
 
-### 13.3 Deprecation bridge retaining weak behavior — rejected
+### 14.3 Weak deprecation bridge — rejected
 
-Controlled v1 has not yet been formally released under ID-3. Carrying a known
-weak trust-boundary behavior into the first release solely to preserve a
-pre-release behavior is not justified by repository evidence and would leave
-F05 open.
+Controlled v1 has not been formally released under ID-3. Preserving the weak
+boundary into first release solely for pre-release compatibility is not
+justified.
 
-### 13.4 Premature semver-major release workflow — rejected for this stage
+### 14.4 Premature semver-major release workflow — rejected for this stage
 
-The repository deliberately separates proven installability from formal
-release maturity. ID-3 still owns formal version policy, production release
-tags, npm-registry publication decisions, install guidance,
-rollback/version lifecycle, CLI/convenience surface, and reusable CI
-integration. D1 must not invent that unimplemented lifecycle.
+Formal package version/release mechanics remain ID-3 work.
 
-## 14. Versioning, deprecation, and migration strategy
+## 15. Package Surface v3 and migration
 
-### 14.1 Public symbol strategy
-
-Keep the existing public symbol:
-
-```text
-assertValidProjectProfile
-```
-
-Do not add `assertValidProjectProfileV2`, `assertStrictProjectProfile`, or any
-parallel public validator merely to retain the weak contract.
-
-### 14.2 Package Surface v3
-
-A future D1 implementation is expected to require a new versioned contract
-record:
+Future implementation is expected to introduce:
 
 ```text
 docs/package-surface-v3.md
 ```
 
-Package Surface v3 shall:
+Package Surface v3 must:
 
-- supersede Package Surface v2 for the behavior being revised;
-- preserve the existing root export-name set unless separately authorized;
-- preserve existing explicit `package.json` export keys unless separately
-  authorized;
-- explicitly record the stricter ProjectProfile accepted-input domain;
-- explicitly record authoritative-snapshot return semantics;
-- state that this is a breaking pre-Controlled-v1 behavior correction;
-- preserve the private classification of #22/#23 implementation unless a
-  separate productization decision changes it.
+- supersede v2 for the revised ProjectProfile behavior;
+- preserve the existing 19 root export names unless separately authorized;
+- preserve existing `package.json` export keys unless separately authorized;
+- keep `assertValidProjectProfile` as the public symbol;
+- not root-export `validateProjectProfile`;
+- not root-export the central inspection helper;
+- record the narrower accepted domain;
+- record authoritative-snapshot success semantics;
+- classify the behavior change as a breaking pre-Controlled-v1 correction;
+- preserve private #22/#23 classification.
 
-This architecture decision does not itself authorize creating v3 or changing
-Package Surface v2.
+External consumers migrate by supplying only valid v1 data and by not relying
+on caller-object identity or post-assert mutation visibility.
 
-### 14.3 Consumer migration
+This design stage does not authorize creating v3.
 
-Known external consumers must migrate by:
+## 16. Compatibility matrix
 
-- providing only the three supported keys;
-- using ordinary data properties;
-- staying within D1 bounds;
-- not relying on post-validation mutation being visible;
-- not relying on `assertValidProjectProfile(profile) === profile`.
-
-Typical plain JSON/object-literal profiles remain source-compatible if they do
-not use extra fields or exceed bounds; their return-identity behavior still
-changes.
-
-## 15. Compatibility matrix
-
-| Existing/future caller behavior | D1 disposition |
+| Caller/input behavior | D1-C1 disposition |
 |---|---|
-| Plain object literal with exactly three valid fields | ACCEPT |
-| `Object.create(null)` record with valid own enumerable data fields | ACCEPT |
-| Frozen Targomo profile | ACCEPT |
-| Frozen Project B profile | ACCEPT |
-| JSON serialize/deserialize round-trip of valid profile | ACCEPT |
-| Unknown top-level string key | REJECT / migration required |
-| Symbol key on top-level profile | REJECT |
-| Class instance | REJECT |
-| Required field inherited from prototype | REJECT |
-| Required field non-enumerable | REJECT |
-| Required field implemented as getter/setter | REJECT without invoking accessor |
-| Accessor-backed constraint element | REJECT without invoking accessor |
-| Sparse constraints array | REJECT |
-| Extra enumerable array property / symbol contract data | REJECT |
-| C0/DEL in any profile string | REJECT |
-| Over-limit string/count/aggregate | REJECT |
-| Mutate caller object after successful assertion | no effect on snapshot |
-| Mutate caller constraints array after successful assertion | no effect on snapshot |
-| Rely on returned object identity | BREAKING / migration required |
-| Add a future fourth ProjectProfile field | REJECT until a governed contract revision |
+| Plain valid object literal | ACCEPT; new snapshot returned |
+| Valid `Object.create(null)` record | ACCEPT; canonical snapshot returned |
+| Frozen/sealed valid ordinary profile | ACCEPT |
+| Targomo profile | ACCEPT |
+| Project B profile | ACCEPT |
+| JSON round-trip valid profile | ACCEPT |
+| Top-level Proxy | REJECT before trap-capable inspection |
+| Revoked top-level Proxy | REJECT |
+| Proxy constraints Array | REJECT before Array inspection |
+| Unknown own string key, enumerable or not | REJECT |
+| Any own symbol key | REJECT |
+| Class/custom-prototype instance | REJECT |
+| Inherited required field | REJECT |
+| Non-enumerable required field | REJECT |
+| Getter/setter required field | REJECT without invoking accessor |
+| Sparse constraints Array | REJECT |
+| Array subclass/custom Array prototype | REJECT |
+| Accessor/inherited Array element | REJECT without invoking accessor |
+| Extra Array own string/symbol key | REJECT |
+| C0/DEL | REJECT |
+| Over-limit field/count/aggregate | REJECT |
+| Caller mutation after assertion | no effect on snapshot |
+| Caller Array mutation after assertion | no effect on snapshot |
+| Reliance on returned object identity | BREAKING / migration required |
+| Future fourth semantic field | REJECT until governed contract revision |
 
-## 16. Interaction with Package Surface v2
+## 17. Interaction with Package Surface v2 and ID-3
 
-Package Surface v2 remains the current canonical package-surface record until
-a separately authorized and reviewed replacement lands.
+Package Surface v2 remains current until a separately authorized replacement
+lands. Its existing facts remain:
 
-D1 does not change its current facts:
-
-- root package entry point has 19 supported names;
-- `assertValidProjectProfile` is one of them;
-- supported subpath export keys remain unchanged;
-- `scripts/ai/test-automation/**` remains repository-only private;
-- deep imports remain unsupported;
-- physical distribution remains governed by `package.json` `files` and the
-  package-surface closure/minimality tests.
-
-The future D1 implementation should preserve those name/path boundaries and
-change ProjectProfile behavior deliberately through Package Surface v3 rather
-than accidentally through package-export expansion.
-
-## 17. Exact boundary with unfinished ID-3 productization
-
-D1 decides the ProjectProfile data/security/public-behavior contract.
-It does **not** decide formal product release mechanics.
+- 19 supported root names;
+- `assertValidProjectProfile` is public;
+- `validateProjectProfile` is not a root export;
+- #22/#23 implementation remains private;
+- deep imports remain unsupported.
 
 ID-3 remains responsible for:
 
@@ -603,17 +688,16 @@ ID-3 remains responsible for:
 - CLI/convenience surface;
 - reusable CI integration.
 
-Consequently, future D1 implementation must not change `package.json` version,
-create release tags, publish to npm, or invent a semver-major release without a
-separate ID-3/productization authority.
+F05 can be corrected before ID-3 because D1 defines the security/behavior
+contract that Controlled v1 should eventually release. D1 must not change
+`package.json` version, create release tags, publish npm artifacts, or invent a
+formal semver lifecycle.
 
-D1 may be implemented before ID-3 because the purpose is to ensure the public
-contract entering Controlled v1 is already the intended strict contract.
+## 18. Future implementation scope — revised by C1
 
-## 18. Future implementation scope
+No implementation is authorized by this document.
 
-No implementation is authorized by this document. Subject to a future Product
-Owner implementation grant, the expected minimum production scope is:
+Subject to a later Product Owner grant, expected production categories include:
 
 ```text
 scripts/ai/project-profile.js
@@ -622,251 +706,366 @@ scripts/ai/collect-context.js
 scripts/ai/collect-history.js
 scripts/ai/analyze-failure.js
 scripts/ai/test-automation/automation-repository-context.js
+scripts/ai/generative-test-design/automation-candidate-generator.js
+scripts/ai/generative-test-design/test-design-review-package.js
 ```
 
-Implementation may touch another ProjectProfile consumer only when repository
-evidence shows it is necessary to apply the same approved D1 contract. Any
-broader public API, unrelated refactor, new feature, unrelated finding, or
-package-export change requires separate authority.
+`scripts/ai/index.js` is an export-compatibility verification surface; it should
+not need a new root export.
 
-Expected test/documentation scope for a future corrective includes:
+Evaluation callers such as `scripts/ai/evaluation/scoring-v6.js` are included
+when required to preserve/prove behavior of the migrated private paths.
+
+Expected future tests/documentation include:
 
 ```text
 scripts/ai/project-profile.test.js
 consumer-specific ProjectProfile tests
+#22 generation/review ProjectProfile tests
+#23 repository-context ProjectProfile tests
 scripts/targets/targomo/project-profile.test.js
 scripts/targets/project-b/project-profile.test.js
 test/installation/external-repository-proof.test.js
-package/public-boundary compatibility tests where required
+package/public-boundary compatibility tests
 docs/package-surface-v3.md
 ```
 
-Exact filenames remain subject to implementation-baseline verification.
+The future implementation PR must not include ROADMAP lifecycle closure; that
+remains a later, separately governed sync after merge/post-merge certification.
 
-## 19. Future regression and adversarial test requirements
+Any unrelated refactor, new feature, package-export change, or remediation of a
+separate finding requires separate authority.
 
-A future TSB-F05 implementation must prove at least the following.
+## 19. Future regression and adversarial test matrix — C1-MINOR-4
 
-### 19.1 Happy-path contract
+A future implementation must prove all categories below.
 
-- normal valid profile accepted;
-- null-prototype valid data object accepted;
+### 19.1 Happy path / canonical snapshot
+
+- ordinary exact valid profile accepted;
+- valid null-prototype record accepted;
+- frozen and sealed valid ordinary records accepted;
 - Targomo profile accepted;
 - Project B profile accepted;
-- external-installed package path accepts a valid external consumer profile;
-- returned snapshot has exact three-key shape;
-- returned snapshot preserves accepted string bytes/content and constraint
-  order;
-- snapshot and constraints array are frozen;
-- snapshot is not the caller object;
-- snapshot constraints array is not the caller array.
+- external-installed valid profile accepted;
+- snapshot has exact three semantic keys;
+- snapshot is not caller object;
+- snapshot Array is not caller Array;
+- both snapshot containers are frozen;
+- accepted content and Array order preserved.
 
-### 19.2 Closed-schema negatives
+### 19.2 Top-level closed-schema negatives
 
 Reject:
 
-- unknown top-level key;
-- symbol top-level key;
+- unknown enumerable own key;
+- unknown non-enumerable own key;
+- symbol key;
 - missing key;
-- class instance/custom prototype;
-- inherited required property;
-- non-enumerable required property;
-- accessor-backed required field;
-- setter-only property;
-- malformed constraints type;
-- empty constraints array;
-- sparse constraints array;
-- accessor-backed indexed element;
-- extra array property/symbol data where contract rules forbid it.
+- class/custom-prototype instance;
+- inherited required field;
+- non-enumerable required field;
+- getter;
+- setter-only descriptor;
+- throwing getter without getter invocation.
 
-### 19.3 Bound negatives
+### 19.3 Proxy negatives
+
+Prove:
+
+- top-level Proxy rejected;
+- proxied constraints Array rejected;
+- revoked Proxy rejected;
+- Proxy with traps that would throw is rejected before those traps run;
+- Proxy with mutating/inconsistent traps is rejected before those traps run.
+
+Tests must instrument traps and prove the trap counters remain zero through the
+rejection path used by the approved runtime mechanism.
+
+### 19.4 Array contract negatives
+
+Reject/prove bounded handling for:
+
+- empty Array;
+- 33 entries;
+- huge sparse `length` before iteration;
+- ordinary sparse Array;
+- accessor numeric element;
+- non-enumerable numeric element;
+- inherited numeric element;
+- extra own string property;
+- own symbol property;
+- Array subclass/custom Array prototype;
+- constraint over 2048 units;
+- aggregate over 8192 units.
+
+### 19.5 String/bound negatives
 
 Reject:
 
-- blank `id` / `displayName` / constraint;
+- blank `id`, `displayName`, or constraint;
 - `id` length 129;
 - `displayName` length 257;
-- 33 constraints;
-- one constraint length 2049;
-- aggregate constraint characters 8193;
-- C0 controls and DEL in each field class.
+- C0 and DEL in every field category.
 
-Boundary tests must also accept the exact maximum valid values.
+Accept exact maximum valid values. Bounds are tested in UTF-16 code units.
 
-### 19.4 Accessor/TOCTOU adversarial tests
+### 19.6 validate/assert parity and diagnostics
 
-- getter on any required field is never invoked;
-- throwing getter is rejected without getter execution;
-- getter that would return `safe` then `evil` cannot influence validation or
-  downstream use;
-- mutating the top-level caller object after assertion does not alter snapshot;
-- mutating/replacing caller constraints after assertion does not alter snapshot;
-- a consumer cannot pass validation and then use the original caller object;
-- downstream prompt/context output is derived from the snapshot.
+- every accepted fixture is accepted by both high-level paths;
+- every rejected fixture is rejected by both;
+- `validateProjectProfile()` never invokes getters;
+- assert uses the same central inspection outcome, not a second caller read;
+- no more than 8 unknown keys are represented;
+- displayed unknown key text is at most 80 units;
+- total validation detail is at most 1024 units;
+- diagnostics contain no raw hostile values, stack traces, or serialized input.
 
-### 19.5 Consumer migration tests
+### 19.7 TOCTOU/detachment
 
-For each ProjectProfile-consuming entry point:
+- mutate/replace caller top-level fields after success → snapshot unchanged;
+- mutate/replace caller constraints Array → snapshot unchanged;
+- attempted snapshot mutation → trusted state unchanged;
+- no consumer validates one object and later reads the original;
+- prompt/context/review projections derive only from the authoritative snapshot.
 
-- assert the returned snapshot is assigned and used;
-- prove post-validation caller mutation cannot change later output;
-- prove unknown/oversized/accessor input fails before downstream side effects;
-- preserve established behavior for valid existing Targomo/Project B inputs.
+### 19.8 Complete consumer migration
 
-### 19.6 Public/external compatibility proof
+For every repository-wide ProjectProfile consumer discovered at the
+implementation baseline:
 
-The real external-install proof must cover the revised behavior through bare
-`require("qa-ai-agent")`, not a source-checkout deep import. It must prove:
+- prove use of central D1 contract;
+- prove downstream output is insensitive to post-boundary source mutation;
+- prove invalid input fails before relevant downstream side effects.
 
-- public export names remain expected;
-- valid external profile succeeds;
-- invalid extra/accessor/oversized profile fails through the supported API;
+At minimum explicitly cover:
+
+- `qa-agent-prompt`;
+- `collect-context`;
+- `collect-history`;
+- `analyze-failure`;
+- #23 `automation-repository-context` result-style path;
+- #22 `automation-candidate-generator` ProjectProfile guidance path;
+- #22 `test-design-review-package` ProjectProfile projection;
+- relevant evaluation callers such as scoring-v6.
+
+### 19.9 External/package compatibility
+
+From a real installed package, prove:
+
+- supported root export names remain unchanged;
+- valid external profile works;
+- invalid extra/accessor/Proxy/oversized profile fails through the supported
+  public API;
+- assert returns detached snapshot semantics;
 - private deep-import rules remain unchanged.
 
 ## 20. Error and fail-closed requirements
 
-The future boundary must fail before any ProjectProfile-derived prompt,
-context, history request, report, filesystem action, or other downstream side
-effect when the profile is invalid.
+Invalid ProjectProfile must fail before any ProjectProfile-derived prompt,
+context, history request, review projection, filesystem action, or other
+relevant downstream side effect.
 
-Validation/assertion must not:
+The boundary must not:
 
-- invoke accessors;
-- serialize the hostile/caller object for diagnostics;
-- emit unbounded unknown-key/error text;
+- invoke accessors on accepted/rejected ordinary descriptor inputs;
+- invoke Proxy traps before Proxy rejection;
+- serialize caller objects for diagnostics;
+- emit unbounded diagnostic text;
 - silently drop unknown fields and continue;
-- silently trim/normalize caller strings into a different identity;
-- fabricate defaults for a missing required profile;
+- silently normalize strings into another identity;
+- fabricate defaults for missing required profile data;
 - fall back to the old weak contract.
 
-Existing public error prefixes should remain stable unless a separately
-reviewed compatibility need requires otherwise.
+Where ProjectProfile is optional, **absence may retain existing optional
+semantics**; a present value must satisfy D1.
 
-## 21. Preserved unrelated findings and boundaries
+## 21. Architecture review findings disposition
 
-D1 is intentionally narrow. It does not close, waive, absorb, re-rate, or
-risk-accept other findings, including but not limited to:
+### MAJOR-1 — Proxy handling undefined
 
-- `TSB-F02` — approval gate contract;
-- `TSB-F04` — triage result/output binding and schema;
-- `TSB-F06` / `ADV-01` — remote response/body-size/time bounds;
-- `TSB-F07` — persisted context consumption schema;
-- `XI-01` / `XI-02` — existing context provenance/shape debt;
-- `SADR-01` — authentic profile/repository/context binding where applicable;
-- `TB-01` / `AT-07` — approval/reviewer authenticity;
-- `TB-09` — caller-trusted repository root;
-- any generated-code isolation, process-survival, Windows alias/path, or
-  unrelated package/productization debt.
+`RESOLVED_BY_D1_C1_DESIGN`
 
-A strict ProjectProfile snapshot may become a prerequisite for later authentic
-profile↔root↔context joining, but it does not itself provide that binding.
+Explicit rejection-before-inspection policy is defined in §§4, 5, 6, 7, 16,
+19, and 20.
 
-## 22. Review requirements
+### MAJOR-2 — omitted #22 ProjectProfile consumers
 
-This design record requires two independent exact-head reviews:
+`RESOLVED_BY_D1_C1_DESIGN`
 
-1. `HEAVY Architecture`;
-2. `HEAVY Security`.
+The central contract now explicitly covers #22 automation candidate generation
+and test-design review package paths as well as #23/public consumers (§§11-12,
+18-19).
 
-Each review must bind to the exact:
+### MINOR-1 — public/private terminology
 
-- PR number;
-- HEAD commit SHA;
-- TREE SHA;
-- CI evidence for that exact HEAD.
+`RESOLVED_BY_D1_C1_DESIGN`
 
-A new HEAD invalidates both reviews.
+Only `assertValidProjectProfile` is described as supported root public API;
+`validateProjectProfile` and the central inspector remain non-root internal
+interfaces (§9, §15, §17).
 
-Architecture review must verify at minimum:
+### MINOR-2 — no non-throwing authoritative-snapshot path
 
-- coherent public-contract semantics;
-- exact schema and bounds;
-- single-read inspection design;
-- authoritative snapshot rule;
-- compatibility classification;
-- Package Surface v2/v3 transition;
-- ID-3 separation;
-- complete consumer inventory methodology;
-- no accidental public surface expansion.
+`RESOLVED_BY_D1_C1_DESIGN`
 
-Security review must verify at minimum:
+The central internal inspection result includes the authoritative snapshot and
+is available to result-style private consumers (§§7, 9.3, 11).
 
-- accessor non-execution;
-- own-data semantics;
-- TOCTOU closure;
-- bounded strings/counts/diagnostics;
-- fail-closed behavior;
-- prompt/context authority implications;
-- adversarial test adequacy;
-- preservation of unrelated finding boundaries.
+### MINOR-3 — Array/string mechanics under-specified
 
-## 23. STOP conditions for future implementation
+`RESOLVED_BY_D1_C1_DESIGN`
 
-A future implementation mission must STOP and return to Product Owner if any
-of the following is discovered:
+Exact Array prototype/key/descriptor/count rules and UTF-16 bound units are
+fixed in §§5-6.
 
-- current `main` differs from the separately authorized implementation
-  baseline;
+### MINOR-4 — test matrix gaps
+
+`RESOLVED_BY_D1_C1_DESIGN`
+
+The expanded matrix is in §19.
+
+### INFO-1 — wider Unicode control policy
+
+`PRESERVED FOR SECURITY REVIEW`
+
+C1 does not silently broaden the C0+DEL policy. Security review must assess
+whether bidi/format controls or surrogate handling require another design
+corrective.
+
+### INFO-2 — frozen/sealed/null-prototype/JSON ordinary inputs
+
+`INFORMATIONAL / NO ACTION`
+
+Their intended compatibility is explicit in §§5 and 16.
+
+### INFO-3 — stale #23 comment saying upstream constraints are unbounded
+
+`INFORMATIONAL / FUTURE IMPLEMENTATION COMMENT DEBT`
+
+No production file is changed in this design corrective solely to clean a
+comment.
+
+## 22. Preserved unrelated findings and boundaries
+
+D1-C1 does not close, waive, absorb, re-rate, or risk-accept unrelated debt,
+including:
+
+- `TSB-F02`;
+- `TSB-F04`;
+- `TSB-F06` / `ADV-01`;
+- `TSB-F07`;
+- `XI-01` / `XI-02`;
+- `SADR-01`;
+- `TB-01` / `AT-07`;
+- `TB-09`;
+- `TB-10`;
+- `TB-15`;
+- `TB-18`;
+- generated-code isolation/process-survival/path-alias/productization debt.
+
+A strict snapshot may be prerequisite evidence for later
+profile↔root↔context binding, but D1-C1 does not implement or claim that
+binding.
+
+## 23. Review requirements after C1
+
+The previous Architecture review and CI #609 were bound to obsolete HEAD
+`8dd5f7eaec0768f6d996f0c57e8265e3714e59e0` once this corrective creates a new
+HEAD.
+
+Required lifecycle for the new exact HEAD:
+
+1. fresh automatic `pull_request` CI on the new HEAD;
+2. independent exact-head `HEAVY Architecture` corrective re-review;
+3. only if Architecture = `APPROVED`, independent exact-head `HEAVY Security`
+   design review;
+4. return to Product Owner for design disposition / separate merge authority.
+
+Security review must not run against the obsolete pre-C1 HEAD.
+
+A new corrective HEAD again invalidates prior exact-head approvals.
+
+## 24. STOP conditions for future implementation
+
+A future implementation mission must STOP if:
+
+- `main` differs from its separately authorized implementation baseline;
 - D1 cannot be implemented without adding/removing/renaming a supported root
-  export or subpath;
-- a required public migration would need a second public validator or weak
-  compatibility bridge;
-- Package Surface v3 would require changing `package.json` version/export keys
-  beyond separately authorized scope;
-- current real target profiles do not fit the approved bounds;
-- repository search finds a consumer whose required semantics conflict with
-  the authoritative-snapshot rule;
-- implementing D1 would require changing ProjectProfile field meaning or
-  adding a fourth field;
+  export or package subpath;
+- implementation would need a weak compatibility bridge or second public
+  ProjectProfile validator;
+- Package Surface v3 would require an unauthorized `package.json` version or
+  export-key change;
+- current target profiles do not fit approved bounds;
+- repository-wide consumer discovery finds semantics incompatible with the
+  single central ProjectProfile contract;
+- a #22/#23 path cannot migrate to the central snapshot without changing
+  unrelated product semantics;
+- implementation would require a fourth ProjectProfile field or change field
+  meaning;
 - ID-3 release/version policy must be decided to proceed safely;
-- an unrelated finding must be fixed to make the tests pass;
-- the implementation would broaden into `TSB-F02`, `F04`, `F06`, `F07`,
-  `XI-*`, `SADR-*`, or another non-D1 corrective without separate authority.
+- an unrelated finding must be fixed to make implementation/tests pass;
+- scope would broaden into F02/F04/F06/F07/XI/SADR or another corrective
+  without separate authority.
 
-No implementation agent may resolve such a conflict by silently weakening D1
-or broadening scope.
+No implementation agent may silently weaken D1 or broaden scope.
 
-## 24. Lifecycle boundary
+## 25. Lifecycle boundary
 
-At the time this record is authored:
+Current design lifecycle state after this C1 document is committed:
 
 ```text
 TSB-F01 + TSB-F03: CANONICALLY CLOSED
 TSB-F05 preflight: COMPLETE
 TSB-F05-D1 architecture direction: PRODUCT OWNER APPROVED
-TSB-F05-D1 design record: this document / review pending
+TSB-F05-D1 original Architecture review: CHANGES_REQUIRED
+TSB-F05-D1-C1 design corrective: AUTHORIZED / new exact-head review required
 TSB-F05 implementation: NOT AUTHORIZED / NOT STARTED
 Controlled Release: NOT APPROVED
 MEM/RAG/LEARN: NOT ACTIVATED
 ```
 
-Successful review/merge of this design record would still not remediate
-TSB-F05. The finding can close only after a separately authorized corrective
-implementation is independently reviewed, merged, post-merge certified, and
-canonically closed under the repository lifecycle.
+Even successful design review and merge do not remediate TSB-F05. Finding
+closure requires a separately authorized implementation lifecycle with
+independent review, merge, post-merge certification, and canonical closure.
 
-## 25. Decision summary
+## 26. Decision summary
 
 ```text
 DECISION:
-  Keep the existing ProjectProfile v1 field model:
+  Keep exactly:
     id
     displayName
     knownProjectConstraints
 
-  Replace the weak live-object trust boundary with a strict closed,
-  bounded, descriptor-safe, single-read snapshotting contract.
+  Enforce one central ProjectProfile v1 trust contract across public and
+  private semantic consumers.
 
-  Keep assertValidProjectProfile as the public symbol.
-  Change its success return semantics to a detached deep-frozen snapshot.
-  Require all consumers to use only that snapshot after the boundary.
+  Reject top-level/Array Proxy inputs before trap-capable structural
+  inspection.
 
-  Treat this as an explicit BREAKING PUBLIC API BEHAVIOR CORRECTION
+  Require exact own enumerable data shape, finite UTF-16 bounds,
+  C0+DEL rejection, exact Array mechanics, and bounded diagnostics.
+
+  Build one detached deep-frozen authoritative snapshot from captured
+  descriptor values and never re-read caller input afterward.
+
+  Keep assertValidProjectProfile as the supported public symbol and change
+  its success result to the authoritative snapshot.
+
+  Keep validateProjectProfile and the central inspector out of the package
+  root public surface.
+
+  Require #22 generation/review, #23 repository context, and supported
+  public consumers to derive ProjectProfile guidance from the same central
+  snapshot contract; no divergent local ProjectProfile schema remains.
+
+  Treat the behavior change as a BREAKING PUBLIC API BEHAVIOR CORRECTION
   before Controlled v1.
 
-  Do not create a parallel weak/strict public validator pair.
-  Do not create a deprecation bridge preserving the weak behavior.
-  Record the eventual behavior change in Package Surface v3.
+  Do not preserve a weak public compatibility path.
+  Record eventual public behavior in Package Surface v3.
   Leave formal semver/publication/release mechanics to ID-3.
 
   No implementation, merge, release, or downstream activation is granted
