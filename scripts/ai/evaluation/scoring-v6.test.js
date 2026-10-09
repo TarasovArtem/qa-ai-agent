@@ -359,3 +359,36 @@ test("GOVERNANCE BOUNDARY: evaluateDatasetV6's own metrics/sample output never i
   assert.ok(!/"humanApproved"/.test(serialized));
   assert.ok(!/"authorized"/.test(serialized));
 });
+
+// --- TSB-F05-D1-C1: the scoring-v6 -> #22F review-package ProjectProfile path ---
+
+function d1SampleWithProfile(projectProfile) {
+  const dataset = structuredClone(require("./dataset-v6.json"));
+  const sample = dataset.samples.find((s) => evaluateDatasetV6({ version: 6, samples: [s] }).samples[0].invalidInput !== true);
+  sample.artifacts.projectProfile = projectProfile;
+  return { version: 6, samples: [sample] };
+}
+
+test("D1-C1 evaluateDatasetV6: a sample carrying a valid ProjectProfile is scored through the central boundary", () => {
+  const result = evaluateDatasetV6(d1SampleWithProfile({ id: "eval-project", displayName: "Evaluation Project", knownProjectConstraints: ["Evaluation constraint."] }));
+  assert.equal(result.metrics.invalidInputCount, 0);
+  assert.equal(result.samples[0].invalidInput, false);
+});
+
+test("D1-C1 evaluateDatasetV6: a sample carrying a D1-invalid ProjectProfile (id-less, extra key) is invalidInput, never scored", () => {
+  for (const projectProfile of [
+    { displayName: "Evaluation Project", knownProjectConstraints: ["c"] },
+    { id: "eval-project", displayName: "Evaluation Project", knownProjectConstraints: ["c"], extra: "x" },
+    { id: "eval-project", displayName: "d".repeat(257), knownProjectConstraints: ["c"] },
+  ]) {
+    const result = evaluateDatasetV6(d1SampleWithProfile(projectProfile));
+    assert.equal(result.metrics.invalidInputCount, 1);
+    assert.equal(result.samples[0].invalidInput, true);
+    assert.deepEqual(result.samples[0].errors.map((e) => e.path), ["$.projectProfile"]);
+  }
+});
+
+test("D1-C1 evaluateDatasetV6: a dataset projectProfile of null keeps meaning 'absent'", () => {
+  const result = evaluateDatasetV6(d1SampleWithProfile(null));
+  assert.equal(result.samples[0].invalidInput, false);
+});

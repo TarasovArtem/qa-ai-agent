@@ -103,6 +103,7 @@ const { validateGenerationChain } = require("../generation/cross-model-validatio
 const { validateProvider, validateProviderResponse } = require("../providers/provider-contract");
 const { normalizeProviderError, PROVIDER_ERROR_CODES } = require("../providers/provider-error");
 const { buildAutomationCandidateSystemPrompt, buildAutomationCandidateUserPrompt } = require("./automation-candidate-prompt");
+const { inspectProjectProfile } = require("../project-profile");
 
 // Roadmap #22E: initial attempt + at most one bounded correction retry -
 // never unbounded, never recursive. Mirrors #22C's/#22D's own retry policy
@@ -287,21 +288,6 @@ function snapshotTestCaseModel(testCaseModel) {
     });
   }
   return modelSnapshot;
-}
-
-// Reads a caller-supplied ProjectProfile-shaped guidance object exactly
-// once - the same "own data only, never a caller method/prototype" safety
-// as every other snapshot in this module, even though ProjectProfile
-// content is prompt-only guidance, never validated schema content (see
-// buildPositiveProjection() below and scripts/ai/project-profile.js's own
-// "GUIDANCE, NEVER EVIDENCE" ledger).
-function snapshotProjectProfile(projectProfile) {
-  const snapshot = snapshotOwnProperties(projectProfile);
-  if (!isPlainObject(snapshot)) return snapshot;
-  if (Array.isArray(snapshot.knownProjectConstraints)) {
-    snapshot.knownProjectConstraints = snapshotArrayOfPrimitives(snapshot.knownProjectConstraints);
-  }
-  return snapshot;
 }
 
 // Roadmap #22E-R1: reads a caller-supplied project-specific framework
@@ -552,9 +538,10 @@ function validateEvidenceProvenance(candidate, trustedEvidenceRegistry) {
  * provider call, so an unknown id makes zero provider calls.
  *
  * `projectProfile`, when supplied, is optional prompt-only GUIDANCE (never
- * validated schema content, never evidence) - the same
- * scripts/ai/project-profile.js shape (`displayName`,
- * `knownProjectConstraints`).
+ * evidence). It must satisfy the central ProjectProfile v1 contract
+ * (scripts/ai/project-profile.js, TSB-F05-D1-C1) or the call fails closed
+ * with zero provider calls; only `displayName`/`knownProjectConstraints`
+ * of the resulting snapshot are projected to the provider.
  *
  * `frameworkCapability` (Roadmap #22E-R1) is REQUIRED: `{projectId,
  * supportedFrameworks}`, the project-specific set of frameworks this
@@ -583,10 +570,9 @@ async function generateAutomationCandidate({ requirementModel, testCaseModel, te
     return { ok: false, errors: [summarizeProviderError(normalizeProviderError(rawErr))], providerAttempts: 0 };
   }
 
-  // Roadmap #22E: both caller-controlled upstream artifacts (and the
-  // optional ProjectProfile guidance) are read exactly once, right here,
-  // into fresh #22E-owned plain-data snapshots, then frozen. None of
-  // `requirementModel`/`testCaseModel`/`projectProfile` is ever read again
+  // Roadmap #22E: both caller-controlled upstream artifacts are read exactly
+  // once, right here, into fresh #22E-owned plain-data snapshots, then
+  // frozen. None of `requirementModel`/`testCaseModel` is ever read again
   // below this line - every subsequent step (upstream validation, prompt
   // projection, cross-model/binding check) consumes only the snapshots. A
   // getter/accessor that throws during this single read is caught and
@@ -595,15 +581,28 @@ async function generateAutomationCandidate({ requirementModel, testCaseModel, te
   // calls.
   let requirementModelSnapshot;
   let testCaseModelSnapshot;
-  let projectProfileSnapshot;
   let frameworkCapabilitySnapshot;
   try {
     requirementModelSnapshot = deepFreeze(snapshotRequirementModel(requirementModel));
     testCaseModelSnapshot = deepFreeze(snapshotTestCaseModel(testCaseModel));
-    projectProfileSnapshot = projectProfile === undefined ? undefined : deepFreeze(snapshotProjectProfile(projectProfile));
     frameworkCapabilitySnapshot = deepFreeze(snapshotFrameworkCapability(frameworkCapability));
   } catch {
     return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "upstream artifacts could not be read")], providerAttempts: 0 };
+  }
+
+  // TSB-F05-D1-C1: optional ProjectProfile guidance crosses the ONE central
+  // boundary (scripts/ai/project-profile.js) exactly once - no #22-local
+  // ProjectProfile snapshot or schema. Absence (`undefined`) keeps its
+  // existing optional meaning; any supplied value must satisfy D1 or fails
+  // closed here with a static diagnostic and zero provider calls. Only the
+  // central snapshot is projected below; `projectProfile` is never re-read.
+  let projectProfileSnapshot;
+  if (projectProfile !== undefined) {
+    const profileResult = inspectProjectProfile(projectProfile);
+    if (!profileResult.valid) {
+      return { ok: false, errors: [err("$.projectProfile", ERROR_CODES.INVALID_TYPE, "$.projectProfile must be a valid ProjectProfile")], providerAttempts: 0 };
+    }
+    projectProfileSnapshot = profileResult.snapshot;
   }
 
   if (!isValidId(testCaseId)) {

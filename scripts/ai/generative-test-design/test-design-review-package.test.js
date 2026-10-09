@@ -344,8 +344,20 @@ test("projectProfile is omitted entirely (null) when the caller does not supply 
   assert.equal(result.reviewPackage.projectProfile, null);
 });
 
-test("a supplied projectProfile is projected down to displayName/knownProjectConstraints only", () => {
+// TSB-F05-D1-C1: this test previously ACCEPTED an id-less profile carrying
+// an extra `secretInternalField` key (silently dropping it) - the old,
+// divergent #22-local weak contract. D1-C1 §12.4/§20 forbids silently
+// dropping unknown fields or accepting a profile missing a required field,
+// so the same input must now be rejected through the central boundary.
+test("D1-C1: an id-less profile with an extra key (formerly accepted and silently trimmed) is now rejected", () => {
   const result = buildValid({ projectProfile: { displayName: "Example", knownProjectConstraints: ["c1"], secretInternalField: "leak-me" } });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [{ path: "$.projectProfile", code: ERROR_CODES.INVALID_TYPE, message: "$.projectProfile must be a valid ProjectProfile" }]);
+  assert.ok(!JSON.stringify(result.errors).includes("leak-me"));
+});
+
+test("a supplied valid projectProfile is projected down to displayName/knownProjectConstraints only", () => {
+  const result = buildValid({ projectProfile: { id: "example-project", displayName: "Example", knownProjectConstraints: ["c1"] } });
   assert.equal(result.ok, true);
   assert.deepEqual(result.reviewPackage.projectProfile, { displayName: "Example", knownProjectConstraints: ["c1"] });
 });
@@ -360,4 +372,72 @@ test("buildTestDesignReviewPackage performs no filesystem/network/child_process 
   assert.ok(!/require\(["']node:child_process["']\)/.test(src));
   assert.ok(!/require\(["']child_process["']\)/.test(src));
   assert.ok(!/require\(["']node:https?["']\)/.test(src));
+});
+
+// --- TSB-F05-D1-C1: projectProfile crosses the central boundary once ---------
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../../test/helpers/project-profile-boundary-spy");
+
+const D1_VALID_PROFILE = Object.freeze({ id: "example-project", displayName: "Example", knownProjectConstraints: Object.freeze(["c1", "c2"]) });
+
+test("D1-C1: the package projection derives only from the central inspection snapshot", () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./test-design-review-package"), { replaceSnapshot: boundarySnapshotReplacement });
+  const caller = { id: "caller-id", displayName: "CALLER_DISPLAY", knownProjectConstraints: ["CALLER_CONSTRAINT"] };
+  const result = consumer.buildTestDesignReviewPackage({
+    requirementModel: requirementModel(),
+    testCaseModel: testCaseModel(),
+    automationCandidates: [candidate()],
+    frameworkCapability: frameworkCapability(),
+    expectedProjectId: PROJECT_ID,
+    projectProfile: caller,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.reviewPackage.projectProfile, { displayName: "BOUNDARY_SNAPSHOT_DISPLAY", knownProjectConstraints: ["BOUNDARY_SNAPSHOT_CONSTRAINT"] });
+  assert.deepEqual(calls.map((c) => [c.fn, c.input === caller]), [["inspectProjectProfile", true]]);
+});
+
+test("D1-C1: every D1 rejection class (unknown key, missing id, accessor, Proxy, oversized, control, null) fails result-style without invoking accessors or traps", () => {
+  let getterCalls = 0;
+  const accessor = { ...D1_VALID_PROFILE };
+  Object.defineProperty(accessor, "displayName", { enumerable: true, get() { getterCalls += 1; return "x"; } });
+  let trapCalls = 0;
+  const trapHandler = {};
+  for (const trap of ["get", "has", "ownKeys", "getOwnPropertyDescriptor", "getPrototypeOf"]) trapHandler[trap] = () => { trapCalls += 1; throw new Error("TRAP_SECRET"); };
+  const bad = [
+    { ...D1_VALID_PROFILE, extra: 1 },
+    { displayName: "Example", knownProjectConstraints: ["c1"] },
+    accessor,
+    new Proxy({ ...D1_VALID_PROFILE }, trapHandler),
+    { ...D1_VALID_PROFILE, knownProjectConstraints: new Proxy(["c1"], trapHandler) },
+    { ...D1_VALID_PROFILE, displayName: "d".repeat(257) },
+    { ...D1_VALID_PROFILE, knownProjectConstraints: ["c\u0000"] },
+    null,
+  ];
+  for (const projectProfile of bad) {
+    const result = buildValid({ projectProfile });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.errors, [{ path: "$.projectProfile", code: ERROR_CODES.INVALID_TYPE, message: "$.projectProfile must be a valid ProjectProfile" }]);
+  }
+  assert.equal(getterCalls, 0);
+  assert.equal(trapCalls, 0);
+});
+
+test("D1-C1: caller mutation after a successful build cannot change the package, its projection, or its digest", () => {
+  const caller = { id: "example-project", displayName: "Example", knownProjectConstraints: ["c1"] };
+  const result = buildValid({ projectProfile: caller });
+  assert.equal(result.ok, true);
+  const digestBefore = result.reviewPackage.reviewPackageDigest;
+  caller.displayName = "MUTATED";
+  caller.knownProjectConstraints.push("INJECTED");
+  assert.deepEqual(result.reviewPackage.projectProfile, { displayName: "Example", knownProjectConstraints: ["c1"] });
+  assert.equal(recomputePackageDigest(result.reviewPackage), digestBefore);
+  assert.equal(Object.isFrozen(caller), false, "the caller's object must never be frozen by this module");
+});
+
+test("D1-C1: a valid null-prototype, frozen profile is accepted with the same projection and digest as an ordinary literal", () => {
+  const ordinary = buildValid({ projectProfile: { ...D1_VALID_PROFILE, knownProjectConstraints: [...D1_VALID_PROFILE.knownProjectConstraints] } });
+  const nullProto = buildValid({ projectProfile: Object.freeze(Object.assign(Object.create(null), D1_VALID_PROFILE)) });
+  assert.equal(ordinary.ok, true);
+  assert.equal(nullProto.ok, true);
+  assert.equal(nullProto.reviewPackage.reviewPackageDigest, ordinary.reviewPackage.reviewPackageDigest);
 });
