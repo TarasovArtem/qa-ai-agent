@@ -266,6 +266,63 @@ async function main() {
     }
   }
 
+  // TSB-F05-D1-C1: hostile ProjectProfile inputs cannot travel through a
+  // JSON plan, so this consumer process builds them itself and exercises
+  // ONLY the supported root export (bare require above).
+  if (plan.projectProfileProof) {
+    const proof = {};
+    const base = plan.projectProfileProof.valid;
+    const valid = { id: base.id, displayName: base.displayName, knownProjectConstraints: base.knownProjectConstraints.slice() };
+    const snapshot = api.assertValidProjectProfile(valid, "external-consumer");
+    proof.detached = snapshot !== valid && snapshot.knownProjectConstraints !== valid.knownProjectConstraints;
+    proof.frozen = Object.isFrozen(snapshot) && Object.isFrozen(snapshot.knownProjectConstraints);
+    proof.equalContent = JSON.stringify(snapshot) === JSON.stringify(base);
+    valid.displayName = "MUTATED_AFTER_ASSERT";
+    valid.knownProjectConstraints.push("MUTATED_AFTER_ASSERT");
+    proof.mutationIsolated = JSON.stringify(snapshot) === JSON.stringify(base);
+
+    const counters = { getter: 0, trap: 0 };
+    const accessor = { id: base.id, knownProjectConstraints: base.knownProjectConstraints.slice() };
+    Object.defineProperty(accessor, "displayName", { enumerable: true, get() { counters.getter += 1; return base.displayName; } });
+    const trapHandler = {};
+    for (const trap of ["get", "has", "ownKeys", "getOwnPropertyDescriptor", "getPrototypeOf"]) {
+      trapHandler[trap] = function () { counters.trap += 1; throw new Error("TRAP_SECRET"); };
+    }
+    const cases = {
+      extraKey: Object.assign({}, base, { extra: "x" }),
+      accessor: accessor,
+      proxy: new Proxy(Object.assign({}, base), trapHandler),
+      proxiedConstraints: Object.assign({}, base, { knownProjectConstraints: new Proxy(base.knownProjectConstraints.slice(), trapHandler) }),
+      oversized: Object.assign({}, base, { displayName: "d".repeat(257) }),
+    };
+    proof.rejections = {};
+    for (const name of Object.keys(cases)) {
+      try {
+        api.assertValidProjectProfile(cases[name], "external-consumer");
+        proof.rejections[name] = "ACCEPTED";
+      } catch (err) {
+        proof.rejections[name] = String(err.message).split(":")[0];
+        if (String(err.message).includes("TRAP_SECRET")) proof.rejections[name] += "+LEAKED";
+      }
+    }
+    proof.getterCalls = counters.getter;
+    proof.trapCalls = counters.trap;
+    try {
+      api.collectContext.main({ profile: cases.extraKey, repositoryRoot: plan.repositoryRoot });
+      proof.pipelineRejection = "ACCEPTED";
+    } catch (err) {
+      proof.pipelineRejection = String(err.message).split(":")[0];
+    }
+    proof.internalsNotRootExported = !("inspectProjectProfile" in api) && !("validateProjectProfile" in api);
+    try {
+      require("qa-ai-agent/scripts/ai/project-profile");
+      proof.deepImportBlocked = false;
+    } catch (err) {
+      proof.deepImportBlocked = err.code === "ERR_PACKAGE_PATH_NOT_EXPORTED";
+    }
+    result.projectProfileProof = proof;
+  }
+
   fs.writeFileSync(plan.resultPath, JSON.stringify(result, null, 2));
 }
 
@@ -1024,4 +1081,39 @@ test("RTI-6: a fake provider returning an empty result is valid through the inst
   assert.equal(result.fatalError, undefined, JSON.stringify(result));
   assert.equal(result.steps.loadRequirementsFromProvider.ok, true, JSON.stringify(result.errors));
   assert.deepEqual(result.requirementArtifacts, []);
+});
+
+// --- TSB-F05-D1-C1: strict snapshotting ProjectProfile through the installed package ---
+
+test("TSB-F05-D1-C1: the installed package's assertValidProjectProfile returns a detached frozen snapshot and rejects extra-key/accessor/Proxy/oversized profiles (zero getter/trap calls)", () => {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "id2-target-f05-"));
+  try {
+    const valid = { id: "external-f05-project", displayName: "External F05 Project", knownProjectConstraints: ["External constraint one.", "External constraint two."] };
+    const result = runPlan(externalRepoDir, { projectProfileProof: { valid }, repositoryRoot: targetRoot }, minimalEnv());
+    assert.equal(result.fatalError, undefined, JSON.stringify(result));
+    assert.equal(result.__exitCode, 0, result.__stderr);
+    const proof = result.projectProfileProof;
+    assert.ok(proof, JSON.stringify(result));
+    assert.equal(proof.detached, true);
+    assert.equal(proof.frozen, true);
+    assert.equal(proof.equalContent, true);
+    assert.equal(proof.mutationIsolated, true);
+    assert.deepEqual(proof.rejections, {
+      extraKey: "PROJECT_PROFILE_INVALID",
+      accessor: "PROJECT_PROFILE_INVALID",
+      proxy: "PROJECT_PROFILE_INVALID",
+      proxiedConstraints: "PROJECT_PROFILE_INVALID",
+      oversized: "PROJECT_PROFILE_INVALID",
+    });
+    assert.equal(proof.getterCalls, 0);
+    assert.equal(proof.trapCalls, 0);
+    assert.equal(proof.pipelineRejection, "PROJECT_PROFILE_INVALID");
+    assert.equal(fs.existsSync(path.join(targetRoot, "reports")), false, "an invalid profile must fail closed before any pipeline output is written");
+    assert.equal(proof.internalsNotRootExported, true);
+    assert.equal(proof.deepImportBlocked, true);
+    assert.equal(result.apiKeys.length, 19);
+    assert.ok(result.apiKeys.includes("assertValidProjectProfile"));
+  } finally {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+  }
 });

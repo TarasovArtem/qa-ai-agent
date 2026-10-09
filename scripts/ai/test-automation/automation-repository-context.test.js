@@ -1806,3 +1806,105 @@ test("real-repository smoke: builds a valid Playwright context using actual repo
   assert.ok(locations.includes("playwright.config.js"));
   assert.ok(locations.includes("playwright/tests/smoke.spec.js"));
 });
+
+// --- TSB-F05-D1-C1: projectProfile crosses the central boundary once ---------
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../../test/helpers/project-profile-boundary-spy");
+
+function d1CountingProxy(target) {
+  const counts = { total: 0 };
+  const handler = {};
+  for (const trap of ["get", "has", "ownKeys", "getOwnPropertyDescriptor", "getPrototypeOf", "isExtensible"]) {
+    handler[trap] = (t, ...args) => {
+      counts.total += 1;
+      throw new Error(`TRAP_SECRET_${trap}`);
+    };
+  }
+  return { proxy: new Proxy(target, handler), counts };
+}
+
+test("D1-C1: projectId and guidance derive only from the central inspection snapshot (no validate-then-read-original)", () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./automation-repository-context"), { replaceSnapshot: boundarySnapshotReplacement });
+  const root = makeFixtureRepo();
+  try {
+    const caller = validProjectProfile({ id: "caller-id", displayName: "CALLER_DISPLAY", knownProjectConstraints: ["CALLER_CONSTRAINT"] });
+    const result = consumer.buildAutomationRepositoryContext({ repoRoot: root, projectProfile: caller, framework: "cypress", relevantFiles: [] });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.context.projectId, "boundary-snapshot-id");
+    assert.deepEqual(result.context.guidance, { displayName: "BOUNDARY_SNAPSHOT_DISPLAY", knownProjectConstraints: ["BOUNDARY_SNAPSHOT_CONSTRAINT"] });
+    assert.deepEqual(calls.map((c) => [c.fn, c.input === caller]), [["inspectProjectProfile", true]]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("D1-C1: caller mutation after success cannot change the context, and the caller's containers are never frozen", () => {
+  const root = makeFixtureRepo();
+  try {
+    const caller = validProjectProfile({ knownProjectConstraints: ["Original."] });
+    const result = buildAutomationRepositoryContext({ repoRoot: root, projectProfile: caller, framework: "cypress", relevantFiles: [] });
+    assert.equal(result.ok, true);
+    caller.id = "mutated";
+    caller.displayName = "mutated";
+    caller.knownProjectConstraints.push("Injected.");
+    assert.equal(result.context.projectId, "test-project");
+    assert.deepEqual(result.context.guidance, { displayName: "Test Project", knownProjectConstraints: ["Original."] });
+    assert.equal(Object.isFrozen(caller), false);
+    assert.equal(Object.isFrozen(caller.knownProjectConstraints), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("D1-C1: a Proxy projectProfile (top-level or constraints) is rejected result-style with zero trap invocations", () => {
+  const root = makeFixtureRepo();
+  try {
+    const top = d1CountingProxy(validProjectProfile());
+    const inner = d1CountingProxy(["c1"]);
+    for (const [projectProfile, counts] of [[top.proxy, top.counts], [validProjectProfile({ knownProjectConstraints: inner.proxy }), inner.counts]]) {
+      const result = buildAutomationRepositoryContext({ repoRoot: root, projectProfile, framework: "cypress", relevantFiles: [] });
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.some((e) => e.path === "$.projectProfile"));
+      assert.ok(!JSON.stringify(result.errors).includes("TRAP_SECRET"));
+      assert.equal(counts.total, 0);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("D1-C1: extra-key, accessor, null-prototype-invalid and oversized profiles are rejected with a static, value-free diagnostic", () => {
+  const root = makeFixtureRepo();
+  try {
+    let getterCalls = 0;
+    const accessor = validProjectProfile();
+    Object.defineProperty(accessor, "displayName", { enumerable: true, get() { getterCalls += 1; return "SECRET_GETTER"; } });
+    const badProfiles = [
+      validProjectProfile({ SECRET_EXTRA_KEY: "SECRET_EXTRA_VALUE" }),
+      accessor,
+      Object.assign(Object.create(null), { id: "x" }),
+      validProjectProfile({ displayName: "SECRET_".repeat(100) }),
+      validProjectProfile({ knownProjectConstraints: ["SECRET\u0000"] }),
+    ];
+    for (const projectProfile of badProfiles) {
+      const result = buildAutomationRepositoryContext({ repoRoot: root, projectProfile, framework: "cypress", relevantFiles: [] });
+      assert.equal(result.ok, false);
+      assert.deepEqual(result.errors.filter((e) => e.path === "$.projectProfile").map((e) => e.message), ["$.projectProfile must be a valid ProjectProfile"]);
+      assert.ok(!JSON.stringify(result.errors).includes("SECRET"));
+    }
+    assert.equal(getterCalls, 0);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("D1-C1: a valid null-prototype projectProfile is accepted and canonicalized", () => {
+  const root = makeFixtureRepo();
+  try {
+    const result = buildAutomationRepositoryContext({ repoRoot: root, projectProfile: Object.assign(Object.create(null), validProjectProfile()), framework: "cypress", relevantFiles: [] });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.context.projectId, "test-project");
+  } finally {
+    cleanup(root);
+  }
+});

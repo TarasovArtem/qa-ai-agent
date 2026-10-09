@@ -1281,3 +1281,112 @@ test("validateEvidenceProvenance rejects an unknown id and accepts a matching tr
   assert.equal(validateEvidenceProvenance({ evidenceRefs: [{ id: "unknown", kind: "user_input", sourceId: "x" }] }, registry).length, 1);
   assert.equal(validateEvidenceProvenance({ evidenceRefs: [{ id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }] }, registry).length, 0);
 });
+
+// =============================================================================
+// TSB-F05-D1-C1: optional projectProfile crosses the central boundary once
+// =============================================================================
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../../test/helpers/project-profile-boundary-spy");
+
+const D1_VALID_PROFILE = Object.freeze({ id: "example-project", displayName: "Example Project", knownProjectConstraints: Object.freeze(["Constraint one."]) });
+
+function d1CapturingProvider() {
+  const prompts = [];
+  return {
+    prompts,
+    provider: {
+      async analyze(args) {
+        prompts.push(args);
+        return JSON.stringify(validCandidateResponse());
+      },
+    },
+  };
+}
+
+function d1PromptPayload(userPrompt) {
+  return JSON.parse(userPrompt.slice(userPrompt.indexOf("{"), userPrompt.lastIndexOf("}") + 1));
+}
+
+test("D1-C1: the provider-visible projectProfile projection derives only from the central inspection snapshot", async () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./automation-candidate-generator"), { replaceSnapshot: boundarySnapshotReplacement });
+  const { provider, prompts } = d1CapturingProvider();
+  const caller = { id: "caller-id", displayName: "CALLER_DISPLAY", knownProjectConstraints: ["CALLER_CONSTRAINT"] };
+  const result = await consumer.generateAutomationCandidate({ requirementModel: validRequirementModel(), testCaseModel: validTestCaseModel(), testCaseId: "tc-1", frameworkCapability: validFrameworkCapability(), provider, projectProfile: caller });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  const combined = prompts[0].systemPrompt + prompts[0].userPrompt;
+  assert.ok(combined.includes("BOUNDARY_SNAPSHOT_DISPLAY"));
+  assert.ok(combined.includes("BOUNDARY_SNAPSHOT_CONSTRAINT"));
+  assert.ok(!combined.includes("CALLER_DISPLAY"));
+  assert.ok(!combined.includes("CALLER_CONSTRAINT"));
+  assert.deepEqual(calls.map((c) => [c.fn, c.input === caller]), [["inspectProjectProfile", true]]);
+});
+
+test("D1-C1: a valid profile reaches the prompt as exactly {displayName, knownProjectConstraints}", async () => {
+  const { provider, prompts } = d1CapturingProvider();
+  const result = await generateAutomationCandidate({ requirementModel: validRequirementModel(), testCaseModel: validTestCaseModel(), testCaseId: "tc-1", frameworkCapability: validFrameworkCapability(), provider, projectProfile: D1_VALID_PROFILE });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.deepEqual(d1PromptPayload(prompts[0].userPrompt).projectProfile, { displayName: "Example Project", knownProjectConstraints: ["Constraint one."] });
+});
+
+test("D1-C1: an absent (undefined) projectProfile keeps the existing optional semantics", async () => {
+  const { provider, prompts } = d1CapturingProvider();
+  const result = await generateAutomationCandidate({ requirementModel: validRequirementModel(), testCaseModel: validTestCaseModel(), testCaseId: "tc-1", frameworkCapability: validFrameworkCapability(), provider });
+  assert.equal(result.ok, true);
+  assert.equal(d1PromptPayload(prompts[0].userPrompt).projectProfile, null);
+});
+
+test("D1-C1: every D1 rejection class fails with zero provider calls, without invoking accessors or traps, and with a static diagnostic", async () => {
+  let getterCalls = 0;
+  const accessor = { ...D1_VALID_PROFILE };
+  Object.defineProperty(accessor, "displayName", { enumerable: true, get() { getterCalls += 1; return "x"; } });
+  let trapCalls = 0;
+  const trapHandler = {};
+  for (const trap of ["get", "has", "ownKeys", "getOwnPropertyDescriptor", "getPrototypeOf"]) trapHandler[trap] = () => { trapCalls += 1; throw new Error("TRAP_SECRET"); };
+  const bad = [
+    { ...D1_VALID_PROFILE, SECRET_EXTRA: "SECRET_VALUE" },
+    { displayName: "Example", knownProjectConstraints: ["c1"] },
+    accessor,
+    new Proxy({ ...D1_VALID_PROFILE }, trapHandler),
+    { ...D1_VALID_PROFILE, knownProjectConstraints: new Proxy(["c1"], trapHandler) },
+    { ...D1_VALID_PROFILE, knownProjectConstraints: Array.from({ length: 33 }, () => "c") },
+    { ...D1_VALID_PROFILE, id: "SECRET\u007f" },
+    null,
+  ];
+  for (const projectProfile of bad) {
+    let providerCalls = 0;
+    const provider = { async analyze() { providerCalls += 1; return JSON.stringify(validCandidateResponse()); } };
+    const result = await generateAutomationCandidate({ requirementModel: validRequirementModel(), testCaseModel: validTestCaseModel(), testCaseId: "tc-1", frameworkCapability: validFrameworkCapability(), provider, projectProfile });
+    assert.equal(result.ok, false);
+    assert.equal(result.providerAttempts, 0);
+    assert.equal(providerCalls, 0);
+    assert.deepEqual(result.errors, [{ path: "$.projectProfile", code: "INVALID_TYPE", message: "$.projectProfile must be a valid ProjectProfile" }]);
+    assert.ok(!JSON.stringify(result.errors).includes("SECRET"));
+  }
+  assert.equal(getterCalls, 0);
+  assert.equal(trapCalls, 0);
+});
+
+test("D1-C1: caller mutation during the provider call cannot change the projection used for later attempts", async () => {
+  const caller = { id: "example-project", displayName: "Original Display", knownProjectConstraints: ["Original constraint."] };
+  const prompts = [];
+  let attempt = 0;
+  const provider = {
+    async analyze(args) {
+      prompts.push(args);
+      attempt += 1;
+      caller.displayName = "MUTATED_DISPLAY";
+      caller.knownProjectConstraints.push("MUTATED_CONSTRAINT");
+      return attempt === 1 ? "not json" : JSON.stringify(validCandidateResponse());
+    },
+  };
+  const result = await generateAutomationCandidate({ requirementModel: validRequirementModel(), testCaseModel: validTestCaseModel(), testCaseId: "tc-1", frameworkCapability: validFrameworkCapability(), provider, projectProfile: caller });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(prompts.length, 2);
+  for (const p of prompts) assert.ok(!p.userPrompt.includes("MUTATED"));
+});
+
+test("D1-C1: the module no longer carries a local ProjectProfile snapshot implementation", () => {
+  const src = require("fs").readFileSync(require.resolve("./automation-candidate-generator.js"), "utf8");
+  assert.ok(!src.includes("function snapshotProjectProfile"));
+  assert.ok(src.includes('require("../project-profile")'));
+});

@@ -37,7 +37,7 @@ const { createProvider } = require("./providers");
 const { PROVIDER_ERROR_CODES, normalizeProviderError } = require("./providers/provider-error");
 const { validateProvider, validateProviderResponse } = require("./providers/provider-contract");
 const { applyAgentPolicy } = require("./agent-policy");
-const { assertValidProjectProfile } = require("./project-profile");
+const { assertValidProjectProfile, inspectProjectProfile } = require("./project-profile");
 const { assertValidRepositoryRoot } = require("./repository-root");
 const { assertValidProjectKnowledgeConfig } = require("./project-knowledge-config");
 const { resolveSafeRepositoryWritePath, resolveRepositoryLocalPath } = require("./context-utils");
@@ -288,12 +288,15 @@ function computeRelevantKnowledge(context, { root, projectProfile, projectKnowle
   // Identity mismatch - fails closed. A config for the wrong project is a
   // configuration error, never silently downgraded to "no config" or
   // silently substituted for the mismatched project's own knowledge.
-  if (!projectProfile || typeof projectProfile.id !== "string" || projectProfile.id.length === 0) {
+  // TSB-F05-D1-C1: the profile crosses the central boundary here and only
+  // its snapshot id is compared - no local, weaker ProjectProfile check.
+  const profileResult = inspectProjectProfile(projectProfile);
+  if (!profileResult.valid) {
     throw new Error(
       "PROJECT_KNOWLEDGE_CONFIG_PROJECT_PROFILE_REQUIRED: analyze-failure.computeRelevantKnowledge() received a projectKnowledgeConfig but no valid projectProfile to validate it against."
     );
   }
-  if (config.projectId !== projectProfile.id) {
+  if (config.projectId !== profileResult.snapshot.id) {
     throw new Error(
       "PROJECT_KNOWLEDGE_CONFIG_PROJECT_MISMATCH: analyze-failure.computeRelevantKnowledge() received a ProjectKnowledgeConfig for a different project than the current invocation."
     );
@@ -655,10 +658,14 @@ async function buildFailureReport(
     root,
     history = readHistory(context.metadata, root),
     relevantKnowledge,
-    projectProfile,
+    projectProfile: inputProfile,
     projectKnowledgeConfig,
   } = {}
 ) {
+  // TSB-F05-D1-C1: crosses the central boundary FIRST - before any
+  // ProjectProfile-derived context mutation, Knowledge selection, or
+  // provider call - and only the resulting snapshot is threaded below.
+  const projectProfile = assertValidProjectProfile(inputProfile, "analyze-failure.buildFailureReport()");
   const failedTests = context.failedTests || [];
   const generatedAt = new Date().toISOString();
 
@@ -779,8 +786,12 @@ function fail(message) {
 // point that already computes relevantKnowledge - matching the
 // zero-failed-tests early return below, which already never invoked
 // Knowledge selection at all before this change either.
+//
+// TSB-F05-D1-C1: the caller's profile crosses the central boundary once,
+// here; only the resulting snapshot (`profile`) is passed on to
+// buildFailureReport() - `projectProfile` is never read again.
 async function main({ projectProfile, repositoryRoot, projectKnowledgeConfig } = {}) {
-  assertValidProjectProfile(projectProfile, "analyze-failure.main()");
+  const profile = assertValidProjectProfile(projectProfile, "analyze-failure.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "analyze-failure.main()");
   const outputFile = path.join(root.realRoot, "reports", "ai", "ai-report.json");
 
@@ -820,7 +831,7 @@ async function main({ projectProfile, repositoryRoot, projectKnowledgeConfig } =
 
   let report;
   try {
-    report = await buildFailureReport(context, { projectProfile, root, projectKnowledgeConfig });
+    report = await buildFailureReport(context, { projectProfile: profile, root, projectKnowledgeConfig });
   } catch (err) {
     fail(err.message);
     return;

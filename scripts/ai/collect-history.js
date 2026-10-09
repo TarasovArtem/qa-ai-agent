@@ -293,8 +293,12 @@ function resolveFrameworkRuntimeConfigWorkflowFile(frameworkRuntimeConfig, curre
 // (no GitHub API call is ever made using the wrong workflow file,
 // default or otherwise) without introducing a second, inconsistent
 // failure philosophy into one file.
-async function main({ profile, repositoryRoot, frameworkRuntimeConfig } = {}) {
-  assertValidProjectProfile(profile, "collect-history.main()");
+//
+// TSB-F05-D1-C1: `profile` is the central boundary's detached, frozen
+// snapshot from here on - the caller's object is never read again, so a
+// mutation during the awaited GitHub API calls cannot reach history.json.
+async function main({ profile: inputProfile, repositoryRoot, frameworkRuntimeConfig } = {}) {
+  const profile = assertValidProjectProfile(inputProfile, "collect-history.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "collect-history.main()");
   const outputFile = path.join(root.realRoot, "reports", "ai", "history.json");
 

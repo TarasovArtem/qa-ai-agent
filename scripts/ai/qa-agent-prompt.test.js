@@ -1290,3 +1290,26 @@ test("PROMPT_1/WARN_1: a marker embedded in an out-of-root Playwright spec path 
   assert.equal(userPrompt.includes(MARKER), false);
   assert.equal(userPrompt.includes(outsideDir), false);
 });
+
+// --- TSB-F05-D1-C1: buildSystemPrompt() consumes only the central snapshot ----
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../test/helpers/project-profile-boundary-spy");
+
+test("D1-C1 buildSystemPrompt(): renders only the central snapshot, never re-reads the caller profile", () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./qa-agent-prompt"), { replaceSnapshot: boundarySnapshotReplacement });
+  const caller = { id: "caller-id", displayName: "CALLER_PROFILE_DISPLAY", knownProjectConstraints: ["CALLER_CONSTRAINT"] };
+  const prompt = consumer.buildSystemPrompt(caller, "cypress");
+  assert.match(prompt, /BOUNDARY_SNAPSHOT_DISPLAY/);
+  assert.equal(prompt.includes("CALLER_PROFILE_DISPLAY"), false);
+  assert.equal(calls.filter((c) => c.input === caller).length, 1);
+});
+
+test("D1-C1 buildSystemPrompt(): accessor, Proxy, extra-key and oversized profiles fail closed before any prompt is built", () => {
+  let getterCalls = 0;
+  const accessor = { id: "x", knownProjectConstraints: ["c"] };
+  Object.defineProperty(accessor, "displayName", { enumerable: true, get() { getterCalls += 1; return "GETTER_DISPLAY"; } });
+  for (const bad of [accessor, new Proxy({ ...SYNTHETIC_PROJECT_PROFILE }, {}), { ...SYNTHETIC_PROJECT_PROFILE, extra: 1 }, { ...SYNTHETIC_PROJECT_PROFILE, displayName: "d".repeat(257) }]) {
+    assert.throws(() => buildSystemPrompt(bad), /PROJECT_PROFILE_INVALID: qa-agent-prompt\.buildSystemPrompt\(\)/);
+  }
+  assert.equal(getterCalls, 0);
+});

@@ -352,3 +352,62 @@ test("FPI-3C SOURCE AUDIT: collect-history.js has no require() dependency on scr
 test("FPI-3C: the historical WORKFLOW_FILE constant is unchanged (\"cypress.yml\")", () => {
   assert.equal(WORKFLOW_FILE, "cypress.yml");
 });
+
+// --- TSB-F05-D1-C1: collect-history consumes only the central snapshot -------
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../test/helpers/project-profile-boundary-spy");
+
+test("D1-C1 collect-history.main(): caller mutation during the async GitHub fetch cannot change the persisted projectId (TOCTOU)", async () => {
+  const { dir } = fresh("d1c1-ch-toctou");
+  const caller = { id: "fpi3c-test-project", displayName: "Caller", knownProjectConstraints: ["x"] };
+  const { fn } = mockGithubApi({ "cypress.yml": { runId: 1, jobs: [{ name: "Cypress - chrome", conclusion: "failure" }] } });
+  const mutatingFetch = async (url) => {
+    caller.id = "MUTATED_PROJECT_ID";
+    return fn(url);
+  };
+  await withFetch(mutatingFetch, () =>
+    withEnv({ GITHUB_TOKEN: "tok", GITHUB_REPOSITORY: "o/r", TEST_BROWSER: "chrome", QA_FRAMEWORK: undefined, GITHUB_RUN_ID: undefined }, () =>
+      main({ profile: caller, repositoryRoot: dir, frameworkRuntimeConfig: validCypressConfig() })
+    )
+  );
+  const history = readHistory(dir);
+  assert.equal(history.available, true, `history unavailable: ${history.reason}`);
+  assert.equal(history.projectId, "fpi3c-test-project");
+});
+
+test("D1-C1 collect-history.main(): projectId and runtime-config binding derive only from the central snapshot", async () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./collect-history"), { replaceSnapshot: boundarySnapshotReplacement });
+  const { dir } = fresh("d1c1-ch-spy");
+  const caller = { id: "fpi3c-test-project", displayName: "Caller", knownProjectConstraints: ["x"] };
+  const { fn } = mockGithubApi({ "cypress.yml": { runId: 1, jobs: [{ name: "Cypress - chrome", conclusion: "failure" }] } });
+  await withFetch(fn, () =>
+    withEnv({ GITHUB_TOKEN: "tok", GITHUB_REPOSITORY: "o/r", TEST_BROWSER: "chrome", QA_FRAMEWORK: undefined, GITHUB_RUN_ID: undefined }, () =>
+      consumer.main({ profile: caller, repositoryRoot: dir, frameworkRuntimeConfig: validCypressConfig({ projectId: "boundary-snapshot-id" }) })
+    )
+  );
+  const history = readHistory(dir);
+  assert.equal(history.available, true, `history unavailable: ${history.reason}`);
+  assert.equal(history.projectId, "boundary-snapshot-id");
+  assert.equal(calls.filter((c) => c.input === caller).length, 1);
+});
+
+test("D1-C1 collect-history.main(): an invalid profile fails closed before any fetch or output write", async () => {
+  const accessor = { displayName: "x", knownProjectConstraints: ["c"] };
+  Object.defineProperty(accessor, "id", { enumerable: true, get: () => "x" });
+  for (const bad of [{ ...PROFILE, extra: 1 }, accessor, new Proxy({ ...PROFILE }, {}), { ...PROFILE, id: "i".repeat(129) }]) {
+    const { dir } = fresh("d1c1-ch-invalid");
+    let fetched = 0;
+    await withFetch(
+      async () => {
+        fetched += 1;
+        return { ok: false, status: 500 };
+      },
+      () =>
+        withEnv({ GITHUB_TOKEN: "tok", GITHUB_REPOSITORY: "o/r", TEST_BROWSER: "chrome", QA_FRAMEWORK: undefined, GITHUB_RUN_ID: undefined }, () =>
+          assert.rejects(() => main({ profile: bad, repositoryRoot: dir }), /PROJECT_PROFILE_INVALID: collect-history\.main\(\)/)
+        )
+    );
+    assert.equal(fetched, 0);
+    assert.equal(fs.existsSync(path.join(dir, "reports")), false);
+  }
+});

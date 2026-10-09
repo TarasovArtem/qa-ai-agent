@@ -1315,3 +1315,71 @@ test("Future testDir contract (Roadmap #21C-C1): a testDir-relative 'tests/foo.s
   assert.ok("playwright/tests/contract_check.spec.js" in files);
   assert.deepEqual(warnings, []);
 });
+
+// --- TSB-F05-D1-C1: collect-context consumes only the central snapshot -------
+
+const { loadWithProjectProfileBoundarySpy, boundarySnapshotReplacement } = require("../../test/helpers/project-profile-boundary-spy");
+
+function d1FailingAdapter(onCollect) {
+  return {
+    id: "cypress",
+    collect(args) {
+      if (onCollect) onCollect(args);
+      return {
+        testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
+        failedTests: [{ title: "t", specFile: "cypress/e2e/tests/does-not-exist.cy.js", suite: "s", status: "failed", duration: 1, error: { message: "m", stack: "s" }, screenshot: null }],
+        warnings: [],
+      };
+    },
+  };
+}
+
+function d1FreshRepo(prefix) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
+}
+
+function d1ReadContext(dir) {
+  return JSON.parse(fs.readFileSync(path.join(dir, "reports", "ai", "context.json"), "utf8"));
+}
+
+test("D1-C1 collect-context.main(): caller mutation during adapter.collect() cannot change the persisted projectId/constraints (TOCTOU)", () => {
+  const dir = d1FreshRepo("d1c1-cc-toctou");
+  const caller = { id: "caller-id", displayName: "Caller", knownProjectConstraints: ["ORIGINAL_CONSTRAINT"] };
+  main({
+    adapter: d1FailingAdapter(() => {
+      caller.id = "MUTATED_ID";
+      caller.knownProjectConstraints.push("INJECTED_CONSTRAINT");
+      caller.knownProjectConstraints = ["REPLACED_CONSTRAINT"];
+    }),
+    profile: caller,
+    repositoryRoot: dir,
+  });
+  const ctx = d1ReadContext(dir);
+  assert.equal(ctx.metadata.projectId, "caller-id");
+  assert.deepEqual(ctx.knownProjectConstraints, ["ORIGINAL_CONSTRAINT"]);
+});
+
+test("D1-C1 collect-context.main(): projectId, currentProjectId and constraints derive only from the central snapshot", () => {
+  const { consumer, calls } = loadWithProjectProfileBoundarySpy(require.resolve("./collect-context"), { replaceSnapshot: boundarySnapshotReplacement });
+  const dir = d1FreshRepo("d1c1-cc-spy");
+  const caller = { id: "caller-id", displayName: "Caller", knownProjectConstraints: ["CALLER_CONSTRAINT"] };
+  let seenProjectId;
+  consumer.main({ adapter: d1FailingAdapter((args) => { seenProjectId = args.currentProjectId; }), profile: caller, repositoryRoot: dir });
+  const ctx = d1ReadContext(dir);
+  assert.equal(seenProjectId, "boundary-snapshot-id");
+  assert.equal(ctx.metadata.projectId, "boundary-snapshot-id");
+  assert.deepEqual(ctx.knownProjectConstraints, ["BOUNDARY_SNAPSHOT_CONSTRAINT"]);
+  assert.equal(calls.filter((c) => c.input === caller).length, 1);
+});
+
+test("D1-C1 collect-context.main(): an invalid profile (extra key / accessor / Proxy / oversized) fails closed before any output is written", () => {
+  const accessor = { displayName: "x", knownProjectConstraints: ["c"] };
+  Object.defineProperty(accessor, "id", { enumerable: true, get: () => "x" });
+  for (const bad of [{ ...SYNTHETIC_TEST_PROFILE, extra: 1 }, accessor, new Proxy({ ...SYNTHETIC_TEST_PROFILE }, {}), { ...SYNTHETIC_TEST_PROFILE, knownProjectConstraints: ["x".repeat(2049)] }]) {
+    const dir = d1FreshRepo("d1c1-cc-invalid");
+    let collected = false;
+    assert.throws(() => main({ adapter: d1FailingAdapter(() => { collected = true; }), profile: bad, repositoryRoot: dir }), /PROJECT_PROFILE_INVALID: collect-context\.main\(\)/);
+    assert.equal(collected, false);
+    assert.equal(fs.existsSync(path.join(dir, "reports")), false);
+  }
+});

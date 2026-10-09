@@ -462,11 +462,15 @@ function buildRelevantFiles(failedTests, warnings, frameworkId, root) {
 // fail closed on a `FrameworkRuntimeConfig` whose `projectId` does not
 // match the current invocation, rather than trusting a caller-supplied
 // duplicate string that could silently drift out of sync with `profile`.
-function main({ adapter = cypressAdapter, adapterOptions, profile, repositoryRoot } = {}) {
+//
+// TSB-F05-D1-C1: `profile` is the central boundary's detached, frozen
+// snapshot from here on - the caller's object is never read again, so a
+// mutation during adapter.collect() cannot reach context.json.
+function main({ adapter = cypressAdapter, adapterOptions, profile: inputProfile, repositoryRoot } = {}) {
   if (typeof adapter.id !== "string" || adapter.id.length === 0 || typeof adapter.collect !== "function") {
     throw new Error("main(): adapter must have a non-empty string id and a collect() function");
   }
-  assertValidProjectProfile(profile, "collect-context.main()");
+  const profile = assertValidProjectProfile(inputProfile, "collect-context.main()");
   const root = assertValidRepositoryRoot(repositoryRoot, "collect-context.main()");
 
   const outputFile = path.join(root.realRoot, "reports", "ai", "context.json");

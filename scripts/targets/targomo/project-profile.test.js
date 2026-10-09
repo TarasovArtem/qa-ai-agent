@@ -69,3 +69,27 @@ test("TARGOMO_PROJECT_PROFILE: satisfies the generic core ProjectProfile contrac
   assert.equal(valid, true);
   assert.deepEqual(errors, []);
 });
+
+// --- TSB-F05-D1-C1: the real Targomo profile fits the strict v1 contract ------
+
+const { inspectProjectProfile, assertValidProjectProfile } = require("../../ai/project-profile");
+
+test("D1-C1: TARGOMO_PROJECT_PROFILE is accepted by the central strict boundary with headroom under every bound", () => {
+  const result = inspectProjectProfile(TARGOMO_PROJECT_PROFILE);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  const { id, displayName, knownProjectConstraints } = TARGOMO_PROJECT_PROFILE;
+  assert.ok(id.length <= 128);
+  assert.ok(displayName.length <= 256);
+  assert.ok(knownProjectConstraints.length >= 1 && knownProjectConstraints.length <= 32);
+  assert.ok(knownProjectConstraints.every((c) => c.length <= 2048));
+  assert.ok(knownProjectConstraints.reduce((n, c) => n + c.length, 0) <= 8192);
+});
+
+test("D1-C1: assertValidProjectProfile(TARGOMO_PROJECT_PROFILE) returns a detached, frozen, equal-content snapshot", () => {
+  const snapshot = assertValidProjectProfile(TARGOMO_PROJECT_PROFILE, "targomo test");
+  assert.notEqual(snapshot, TARGOMO_PROJECT_PROFILE);
+  assert.notEqual(snapshot.knownProjectConstraints, TARGOMO_PROJECT_PROFILE.knownProjectConstraints);
+  assert.deepEqual(snapshot, TARGOMO_PROJECT_PROFILE);
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot.knownProjectConstraints), true);
+});

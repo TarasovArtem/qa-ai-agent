@@ -27,15 +27,18 @@
  * ever sees it.
  *
  * TRUST BOUNDARY: every caller-supplied input (requirementModel,
- * testCaseModel, automationCandidates, frameworkCapability, optional
- * projectProfile) is read exactly once via
+ * testCaseModel, automationCandidates, frameworkCapability) is read exactly
+ * once via
  * test-design-review-canonical.js's snapshotOwnData() - Object.create(null)
  * + Object.defineProperty record copying, manual-indexed dense-array
  * copying, and an EXPLICIT ancestors-based cycle guard (never reliance on
  * stack-depth exhaustion - see that module's own docstring for why this is
  * a deliberate improvement over the #22E "F3" pattern for this NEW trust
- * boundary). Nothing below this module's own snapshot calls ever reads a
- * caller object again.
+ * boundary). The optional projectProfile instead crosses the ONE central
+ * ProjectProfile v1 boundary (scripts/ai/project-profile.js, TSB-F05-D1-C1)
+ * exactly once - no #22-local ProjectProfile snapshot or schema. Nothing
+ * below this module's own snapshot/inspection calls ever reads a caller
+ * object again.
  *
  * FRAMEWORK CAPABILITY: `frameworkCapability` is included in the package
  * (and therefore bound into its content digest) for the same reason the
@@ -64,6 +67,7 @@ const { isPlainObject, isValidId, SUPPORTED_FRAMEWORKS } = require("../generatio
 const { LIMITS } = require("../generation/limits");
 const { validateGenerationChain } = require("../generation/cross-model-validation");
 const { snapshotOwnData, deepFreeze, computeDigest, isValidDigest } = require("./test-design-review-canonical");
+const { inspectProjectProfile } = require("../project-profile");
 
 const KIND = "TestDesignReviewPackage";
 const SCHEMA_VERSION = 1;
@@ -124,9 +128,9 @@ function validateFrameworkCapabilityShape(capability, path, errors, { expectedPr
 // knownProjectConstraints) - never gratuitously added, never unrelated
 // internal configuration. See this module's own docstring ("PROJECTPROFILE
 // CONTEXT").
+// `snapshot` is always the central boundary's validated, frozen snapshot.
 function projectProfileProjection(snapshot) {
-  if (!isPlainObject(snapshot)) return null;
-  return { displayName: snapshot.displayName, knownProjectConstraints: Array.isArray(snapshot.knownProjectConstraints) ? snapshot.knownProjectConstraints : null };
+  return { displayName: snapshot.displayName, knownProjectConstraints: snapshot.knownProjectConstraints };
 }
 
 /**
@@ -145,15 +149,25 @@ function buildTestDesignReviewPackage({ requirementModel, testCaseModel, automat
   let testCaseModelSnapshot;
   let automationCandidatesSnapshot;
   let frameworkCapabilitySnapshot;
-  let projectProfileSnapshot;
   try {
     requirementModelSnapshot = deepFreeze(snapshotOwnData(requirementModel));
     testCaseModelSnapshot = deepFreeze(snapshotOwnData(testCaseModel));
     automationCandidatesSnapshot = deepFreeze(snapshotOwnData(automationCandidates));
     frameworkCapabilitySnapshot = deepFreeze(snapshotOwnData(frameworkCapability));
-    projectProfileSnapshot = projectProfile === undefined ? undefined : deepFreeze(snapshotOwnData(projectProfile));
   } catch {
     return { ok: false, errors: [err("$", ERROR_CODES.INVALID_TYPE, "inputs could not be read")] };
+  }
+
+  // TSB-F05-D1-C1: absence (`undefined`) keeps its existing optional
+  // meaning; any supplied value must satisfy the central ProjectProfile v1
+  // contract or fails closed with a static, value-free diagnostic.
+  let projectProfileSnapshot;
+  if (projectProfile !== undefined) {
+    const profileResult = inspectProjectProfile(projectProfile);
+    if (!profileResult.valid) {
+      return { ok: false, errors: [err("$.projectProfile", ERROR_CODES.INVALID_TYPE, "$.projectProfile must be a valid ProjectProfile")] };
+    }
+    projectProfileSnapshot = profileResult.snapshot;
   }
 
   const errors = [];

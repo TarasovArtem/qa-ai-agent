@@ -70,7 +70,7 @@ const path = require("path");
 
 const { ERROR_CODES, err } = require("../generation/errors");
 const { isPlainObject, isBoundedText, collectUnknownKeyErrors } = require("../generation/primitives");
-const { validateProjectProfile } = require("../project-profile");
+const { inspectProjectProfile } = require("../project-profile");
 const { classifyPathString, PATH_KIND, isCanonicalPathInsideRoot } = require("../context-utils");
 
 // context-utils.js's own equivalent (resolveRealPathSafe) is a private,
@@ -303,10 +303,11 @@ function deepFreeze(value) {
 // it also accepts a Date, Map, Set, an arbitrary class instance, or an
 // Object.create(null) record. That permissiveness is appropriate for F0's
 // own contracts (which validate every field explicitly regardless of
-// prototype). This module's own top-level input, and its projectProfile
-// field, are meant to be plain JSON-like records, not arbitrary class
-// instances - so this local, #23-owned, stricter check is used at those
-// two boundaries instead. It rejects anything whose prototype isn't
+// prototype). This module's own top-level input is meant to be a plain
+// JSON-like record, not an arbitrary class instance - so this local,
+// #23-owned, stricter check is used at that boundary instead (the
+// projectProfile field is no longer checked here: TSB-F05-D1-C1 routes it
+// through the central ProjectProfile boundary only). It rejects anything whose prototype isn't
 // exactly Object.prototype or null, while still accepting an ordinary {}
 // literal or an Object.create(null) record. Frozen F0's own isPlainObject()
 // is left untouched and is still reused as-is for the (always
@@ -482,11 +483,12 @@ function readPackageScripts(repoRoot, framework, errors) {
  *    (never inferred from process.cwd()). A trusted orchestration
  *    parameter - supplied by the calling pipeline, never derivable from
  *    provider/model output anywhere in this module.
- *  - projectProfile: validated via scripts/ai/project-profile.js's own
- *    validateProjectProfile() (read-only reuse); only `id` (-> the
- *    context's top-level projectId) and `displayName`/
- *    `knownProjectConstraints` (-> guidance, defensively copied - see
- *    Phase 18) are ever projected - never the whole object.
+ *  - projectProfile: crosses scripts/ai/project-profile.js's central
+ *    inspectProjectProfile() boundary exactly once (TSB-F05-D1-C1); only
+ *    the resulting detached, frozen snapshot's `id` (-> the context's
+ *    top-level projectId) and `displayName`/`knownProjectConstraints`
+ *    (-> guidance) are ever projected - the caller's object is never read
+ *    again, and never frozen by this module.
  *  - framework: exactly "cypress" or "playwright".
  *  - relevantFiles: a bounded array of canonical, repo-relative path
  *    strings, selected upstream by deterministic logic - never resolved by
@@ -509,8 +511,8 @@ function buildAutomationRepositoryContext(input) {
     errors.push(err("$.repoRoot", ERROR_CODES.INVALID_TYPE, "$.repoRoot must be a non-empty string"));
   }
 
-  const profileCheck = isPlainRecord(input.projectProfile) ? validateProjectProfile(input.projectProfile) : { valid: false, errors: ["not an object"] };
-  if (!profileCheck.valid) {
+  const profileResult = inspectProjectProfile(input.projectProfile);
+  if (!profileResult.valid) {
     errors.push(err("$.projectProfile", ERROR_CODES.INVALID_TYPE, "$.projectProfile must be a valid ProjectProfile"));
   }
 
@@ -673,16 +675,17 @@ function buildAutomationRepositoryContext(input) {
     };
   }
 
+  // TSB-F05-D1-C1: projected from the central snapshot only. Its
+  // constraints array is a boundary-owned, already-frozen copy - never the
+  // caller's own array (#23B-C1 Phase 18's "never freeze caller data"
+  // guarantee is preserved by construction).
+  const profile = profileResult.snapshot;
   const context = deepFreeze({
-    projectId: input.projectProfile.id,
+    projectId: profile.id,
     framework,
     guidance: {
-      displayName: input.projectProfile.displayName,
-      // #23B-C1 (Phase 18): a shallow copy, never the caller's own array
-      // reference - deepFreeze() below must never reach back and freeze
-      // data the caller still owns and may need to mutate after this call
-      // returns.
-      knownProjectConstraints: [...input.projectProfile.knownProjectConstraints],
+      displayName: profile.displayName,
+      knownProjectConstraints: profile.knownProjectConstraints,
     },
     packageScripts,
     repositoryEvidence,
