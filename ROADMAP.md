@@ -38,7 +38,12 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified implementation baseline (TSB-F06 + ADV-01 remediation merge):
+Latest certified implementation baseline
+(TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation merge):
+  main: 8aa7c5191e662942f1d73539c740904d385c646d
+  TREE: 7b6ca33d4afb85899dfcf2d545a007799f247729
+
+Historical certification anchor (TSB-F06 + ADV-01 remediation merge):
   main: 30bca0183f1ffe75f87db9694f5e91a914ed4d73
   TREE: 57f9dd0c4d2b6e051271a92ff44642a1cfb2a2cd
 
@@ -62,13 +67,18 @@ Historical RTI certification anchor (not the current repository HEAD):
   main: ca9bfa051206ea4e2f96741f276c660dcc6444ac
 ```
 
-`30bca0183f1ffe75f87db9694f5e91a914ed4d73` is the `TSB-F06` + `ADV-01`
-remediation merge (PR #235), post-merge certified on its exact SHA (see
-[TSB-F06 + ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence) in §8); it is the
-latest certified implementation baseline and the baseline this `TSB-F06`
-canonical closure sync was authored against, not a claim about any later `main`
-HEAD. `78356eee700df81517f36ba454a9794cf7170a83` is the `TSB-F05` remediation
+`8aa7c5191e662942f1d73539c740904d385c646d` is the `TSB-F04` + `TSB-F07` +
+`XI-01` + `XI-02` remediation merge (PR #238), post-merge certified on its exact
+SHA (see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence) in §8);
+it is the latest certified implementation baseline and the baseline this
+triage-boundary canonical closure sync was authored against, not a claim about
+any later `main` HEAD. `30bca0183f1ffe75f87db9694f5e91a914ed4d73` is the
+`TSB-F06` + `ADV-01` remediation merge (PR #235), post-merge certified on its
+exact SHA (see [TSB-F06 + ADV-01 remediation closure
+evidence](#tsb-f06--adv-01-remediation-closure-evidence) in §8); it remains a
+historically valid certification anchor and is no longer the latest certified
+baseline. `78356eee700df81517f36ba454a9794cf7170a83` is the `TSB-F05` remediation
 merge (PR #233), post-merge certified on its exact SHA (see [TSB-F05
 remediation closure evidence](#tsb-f05-remediation-closure-evidence) in §8); it
 remains a historically valid certification anchor and is no longer the latest
@@ -570,6 +580,8 @@ release blockers / required remediations, `TSB-F01` + `TSB-F03` are
 (design PR #232, implementation PR #233), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235), `TSB-F02` remains conditional and its
 trigger is not currently met, and `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
+`COMPLETE_ON_MAIN / CLOSED` (design PR #237, implementation PR #238); the
+Controlled-v1 supported package/API/CLI/productization boundary is
 `NOT_STARTED / NEXT / NOT ACTIVATED` (see
 [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
 record grants no activation, start or implementation authority.
@@ -1081,7 +1093,9 @@ Controlled-v1 release blockers / required remediations, `TSB-F01` + `TSB-F03`
 are `COMPLETE_ON_MAIN / CLOSED` (PR #230), `TSB-F05` is `COMPLETE_ON_MAIN /
 CLOSED` (PR #232 design, PR #233 implementation), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235), `TSB-F02` remains conditional (trigger
-not currently met) and `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
+not currently met), `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
+`COMPLETE_ON_MAIN / CLOSED` (PR #237 design, PR #238 implementation) and the
+Controlled-v1 supported package/API/CLI/productization boundary is
 `NOT_STARTED / NEXT / NOT ACTIVATED` (see the
 [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 The decision itself and the internal `MEM`/`RAG`/`LEARN` order are unchanged;
@@ -1163,20 +1177,29 @@ This is a sequencing/product-boundary decision, **not risk acceptance**:
   *(Present-day: it has since completed as its own lifecycle —
   `COMPLETE_ON_MAIN`, PR #227. Of its findings, `TSB-F01` and `TSB-F03` are
   `CLOSED_ON_MAIN / REMEDIATED` (PR #230), `TSB-F05` is `CLOSED_ON_MAIN /
-  REMEDIATED` (PR #233) and `TSB-F06` is `CLOSED_ON_MAIN / REMEDIATED`
-  (PR #235); `TSB-F02`, `TSB-F04` and `TSB-F07` remain `OPEN`. See [closure
+  REMEDIATED` (PR #233), `TSB-F06` is `CLOSED_ON_MAIN / REMEDIATED`
+  (PR #235) and `TSB-F04` and `TSB-F07` are `CLOSED_ON_MAIN / REMEDIATED`
+  (PR #238); `TSB-F02` remains `OPEN`. See [closure
   evidence](#type--schema-boundary-audit-closure-evidence), [TSB-F01 + TSB-F03
   remediation closure evidence](#tsb-f01--tsb-f03-remediation-closure-evidence),
   [TSB-F05 remediation closure
-  evidence](#tsb-f05-remediation-closure-evidence) and [TSB-F06 + ADV-01
+  evidence](#tsb-f05-remediation-closure-evidence), [TSB-F06 + ADV-01
   remediation closure
-  evidence](#tsb-f06--adv-01-remediation-closure-evidence).)*
+  evidence](#tsb-f06--adv-01-remediation-closure-evidence) and [TSB-F04 +
+  TSB-F07 + XI-01 + XI-02 remediation closure
+  evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence).)*
 - No `AT-*`, `PI-*`, `TB-*`, `XI-*`, RP, SVR or other security finding is
   closed, re-rated, waived or remediated. Open findings applicable to
   capabilities enabled in Controlled v1.0 remain release blockers until their
   canonical disposition is satisfied; `XI-01`/`XI-02` remain
   `OPEN / MEDIUM / UNCHANGED` with disposition
   `IMPLEMENTATION_REQUIRED_BEFORE_CONTROLLED_RELEASE_WHEN_AFFECTED_CAPABILITY_ENABLED`.
+  *(Point-in-time at this decision. Present-day: `XI-01` and `XI-02` have since
+  been remediated under their own separate authorization and are
+  `CLOSED_ON_MAIN / REMEDIATED` (PR #238; see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+  remediation closure
+  evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)); no
+  other `XI-*` or security finding changed.)*
 - No `ODR` disposition, `FI` implementation or `FV` verification work is
   activated.
 - **Controlled Release is NOT APPROVED.** It requires a separate Product Owner
@@ -1196,8 +1219,8 @@ PR #220 certified completion                     COMPLETE
     step 3: TSB-F06 + ADV-01                     COMPLETE_ON_MAIN / CLOSED (PR #235)
     TSB-F02 (conditional)                        OPEN / LOW / CONDITIONAL —
                                                  condition not currently triggered
-    next:   TSB-F04 + TSB-F07 + XI-01 + XI-02    NOT_STARTED / NEXT / NOT ACTIVATED
-→ Controlled-v1 productization                   NOT_STARTED
+    step 5: TSB-F04 + TSB-F07 + XI-01 + XI-02    COMPLETE_ON_MAIN / CLOSED (PR #238)
+→ Controlled-v1 productization                   NOT_STARTED / NEXT / NOT ACTIVATED
 → qa-agent-demo external E2E validation          NOT_STARTED
 → Controlled Release (separate Product Owner release grant)
                                                  NOT APPROVED
@@ -1210,7 +1233,9 @@ step was `AISEC-7` activation; at the `AISEC-7` closure sync the fourth step was
 sync the fifth step was `NOT_STARTED / NEXT / NOT ACTIVATED`; at the `TSB-F01` +
 `TSB-F03` closure sync the `TSB-F05` architecture decision was
 `NOT_STARTED / NEXT / NOT ACTIVATED`; at the `TSB-F05` closure sync `TSB-F06` +
-`ADV-01` was `NOT_STARTED / NEXT / NOT ACTIVATED`.)*
+`ADV-01` was `NOT_STARTED / NEXT / NOT ACTIVATED`; at the `TSB-F06` + `ADV-01`
+closure sync `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` was
+`NOT_STARTED / NEXT / NOT ACTIVATED`.)*
 
 **`AISEC-7` — present-day completion note.** At the time of this decision,
 `AISEC-7` was `NOT_STARTED / NEXT / NOT ACTIVATED / CONDITIONALLY
@@ -1237,9 +1262,12 @@ closure evidence](#tsb-f05-remediation-closure-evidence)) and step 3
 (`TSB-F06` + `ADV-01`) is `COMPLETE_ON_MAIN / CLOSED` (PR #235; see [TSB-F06 +
 ADV-01 remediation closure
 evidence](#tsb-f06--adv-01-remediation-closure-evidence)); step 4 (`TSB-F02`)
-is conditional and its trigger is not currently met, so the next eligible step
-is `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02`: `NOT_STARTED / NEXT / NOT
-ACTIVATED`.
+is conditional and its trigger is not currently met; step 5 (`TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02`) is `COMPLETE_ON_MAIN / CLOSED` (PR #238; see
+[TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)). The
+next eligible step is the Controlled-v1 supported package/API/CLI/productization
+boundary: `NOT_STARTED / NEXT / NOT ACTIVATED`.
 
 **Provenance — what must never be claimed about this decision:**
 
@@ -1286,10 +1314,11 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
          MERGED + POST-MERGE CERTIFIED; ADV-01 SATISFIED WITH TSB-F06)
        TSB-F02 (OPEN / LOW / CONDITIONAL — only if a dependent supported
          consumer is introduced; condition not currently triggered)
-       next:   TSB-F04 + TSB-F07 + XI-01 + XI-02 (before triage enablement)
-         (NOT_STARTED / NEXT / NOT ACTIVATED)
+       step 5: TSB-F04 + TSB-F07 + XI-01 + XI-02 (COMPLETE_ON_MAIN / CLOSED /
+         REMEDIATED; design PR #237, implementation PR #238;
+         MERGED + POST-MERGE CERTIFIED)
   →  Controlled-v1 supported package/API/CLI/productization boundary
-       (NOT_STARTED)
+       (NOT_STARTED / NEXT / NOT ACTIVATED)
   →  qa-agent-demo external E2E validation
   →  QA AI Agent v1.0 Controlled Agent Release (NOT APPROVED;
        separate PO release grant required)
@@ -1301,7 +1330,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (`TSB-F06` + `ADV-01` canonical closure sync).** Per
+**Current sequence (`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` canonical closure
+sync).** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
@@ -1325,24 +1355,34 @@ PR #234. The third step, `TSB-F06` + `ADV-01`, is merged and post-merge
 certified (PR #235; see [TSB-F06 + ADV-01 remediation closure
 evidence](#tsb-f06--adv-01-remediation-closure-evidence)); `TSB-F06` is
 `CLOSED_ON_MAIN / REMEDIATED` and `ADV-01` is satisfied with it (not a separate
-audit finding). Its canonical closure sync (this ROADMAP sync) is the only
-active governance lifecycle and the sole WIP (`WIP = 1`) until its own certified
-lifecycle completes. The fourth step, `TSB-F02`, applies only if a dependent
-supported consumer is introduced; that condition is not currently triggered
-(see [TSB-F02 conditional-trigger
-check](#tsb-f02-conditional-trigger-check-at-the-tsb-f06-closure-sync)), so
-`TSB-F02` remains `OPEN / LOW / CONDITIONAL` and `TSB-F04` + `TSB-F07` +
-`XI-01` + `XI-02` is the canonical next eligible step (`NOT_STARTED / NEXT / NOT
-ACTIVATED`), eligible only after this canonical closure completes; "NEXT"
-designates sequencing eligibility only, not activation or implementation
-authority. If a dependent supported consumer of the `TSB-F02` approval gates is
-later introduced, `TSB-F02` becomes a release blocker / implementation required
-under its owner disposition. This sync does not start any remediation or
-architecture decision, does not close, waive or accept risk for any finding
-other than recording the already-certified `TSB-F06` + `ADV-01` remediation,
-does not activate any `MEM`/`RAG`/`LEARN` stage and does not approve Controlled
-Release (`NOT APPROVED`). The steps after `AISEC-6` are strictly serial under
-`WIP = 1`.
+audit finding), and its canonical closure sync merged via PR #236. The fourth
+step, `TSB-F02`, applies only if a dependent supported consumer is introduced;
+that condition is not currently triggered (see [TSB-F02 conditional-trigger
+check](#tsb-f02-conditional-trigger-check-at-the-tsb-f06-closure-sync) and its
+[re-check at this closure
+sync](#tsb-f02-conditional-trigger-re-check-at-the-triage-boundary-closure-sync)),
+so `TSB-F02` remains `OPEN / LOW / CONDITIONAL`. The fifth step, `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02`, completed its architecture decision (design
+PR #237, merged) and its implementation, which is merged and post-merge certified
+(PR #238; see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)); each
+of `TSB-F04`, `TSB-F07`, `XI-01` and `XI-02` is separately `CLOSED_ON_MAIN /
+REMEDIATED`. Its canonical closure sync (this ROADMAP sync) is the only active
+governance lifecycle and the sole WIP (`WIP = 1`) until its own certified
+lifecycle completes. The Controlled-v1 supported package/API/CLI/productization
+boundary is the canonical next eligible step (`NOT_STARTED / NEXT / NOT
+ACTIVATED`), eligible only after this canonical closure completes and only under
+its own separate authorization; "NEXT" designates sequencing eligibility only,
+not activation or implementation authority, and no productization branch,
+design or implementation exists. If a dependent supported consumer of the
+`TSB-F02` approval gates is later introduced (including by Controlled-v1
+productization), `TSB-F02` becomes a release blocker / implementation required
+under its owner disposition. This sync does not start any remediation,
+architecture decision or productization, does not close, waive or accept risk
+for any finding other than recording the already-certified `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` remediation, does not activate any
+`MEM`/`RAG`/`LEARN` stage and does not approve Controlled Release (`NOT
+APPROVED`). The steps after `AISEC-6` are strictly serial under `WIP = 1`.
 
 This is the canonical future sequence following the [subsequent owner
 decisions](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
@@ -1396,8 +1436,10 @@ applicable Controlled-v1 release blockers / required remediations, `TSB-F01` +
 `TSB-F03` are `COMPLETE_ON_MAIN / CLOSED` (PR #230), `TSB-F05` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #233), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235), `TSB-F02` remains conditional (trigger
-not currently met) and `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
-`NOT_STARTED / NEXT / NOT ACTIVATED`; this sync activates nothing.
+not currently met), `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
+`COMPLETE_ON_MAIN / CLOSED` (PR #238) and the Controlled-v1 supported
+package/API/CLI/productization boundary is `NOT_STARTED / NEXT / NOT
+ACTIVATED`; this sync activates nothing.
 
 **Slice lifecycle status semantics.** This project's governance already
 defines a slice's lifecycle as: implementation → independent exact-head
@@ -1566,17 +1608,23 @@ evidence](#type--schema-boundary-audit-closure-evidence)). Of its findings,
 [TSB-F01 + TSB-F03 remediation closure
 evidence](#tsb-f01--tsb-f03-remediation-closure-evidence)), `TSB-F05` is
 `CLOSED_ON_MAIN / REMEDIATED` (PR #233; see [TSB-F05 remediation closure
-evidence](#tsb-f05-remediation-closure-evidence)) and `TSB-F06` is
+evidence](#tsb-f05-remediation-closure-evidence)), `TSB-F06` is
 `CLOSED_ON_MAIN / REMEDIATED` (PR #235, with `ADV-01` satisfied; see [TSB-F06 +
 ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence)); `TSB-F02`, `TSB-F04`
-and `TSB-F07` remain `OPEN / LOW / CONDITIONAL`. Within applicable
-Controlled-v1 release blockers / required remediations, `TSB-F02`'s condition is
-not currently triggered and the next eligible step is `TSB-F04` + `TSB-F07` +
-`XI-01` + `XI-02`: `NOT_STARTED / NEXT / NOT ACTIVATED` (see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
+evidence](#tsb-f06--adv-01-remediation-closure-evidence)) and `TSB-F04` and
+`TSB-F07` are `CLOSED_ON_MAIN / REMEDIATED` (PR #238; see [TSB-F04 + TSB-F07 +
+XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence));
+`TSB-F02` remains `OPEN / LOW / CONDITIONAL` (closed/remediated 6 /
+open/conditional 1). The separate `XI-01` and `XI-02` security findings are
+also `CLOSED_ON_MAIN / REMEDIATED` (PR #238). Within applicable Controlled-v1
+release blockers / required remediations, `TSB-F02`'s condition is not currently
+triggered and the next eligible step is the Controlled-v1 supported
+package/API/CLI/productization boundary: `NOT_STARTED / NEXT / NOT ACTIVATED`
+(see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 Controlled Release is `NOT APPROVED`. `D-1` and `D-3` remain `DEFERRED`. No
-remediation, architecture decision, `MEM`/`RAG`/`LEARN` or other downstream
-execution is started or activated by this state.
+remediation, architecture decision, productization, `MEM`/`RAG`/`LEARN` or other
+downstream execution is started or activated by this state.
 
 Historical lower-level critical paths (`CS6`, `CS7`, "RTI implementation",
 "RTI Integrated Audit READY") describe *past* states of this project and
@@ -2413,6 +2461,12 @@ separately demonstrated trusted/provenance-bound input contract. This recorded
 owner disposition is not finding closure, remediation, waiver, risk acceptance
 or severity re-rating. No predecessor AT-*, PI-* or TB-* finding receives a
 new disposition from this sync; none is closed, reopened or re-rated.
+*(Point-in-time at AISEC-4 closure. Present-day: `XI-01` and `XI-02` have since
+been remediated under their own separate authorization and are each
+`CLOSED_ON_MAIN / REMEDIATED` (PR #238; see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)); no
+`AT-*`, `PI-*` or `TB-*` finding changed.)*
 
 At that AISEC-4 closure sync, AISEC-5 was NEXT in the mainline sequence and
 remained `NOT_STARTED`; that sync did not activate AISEC-5 or grant
@@ -2495,6 +2549,10 @@ Until implementation plus independent verification, the affected capability/path
 must remain disabled or be constrained by a separately demonstrated
 trusted/provenance-bound input contract. No AT/PI/TB finding is closed, reopened,
 re-rated or otherwise given a new disposition by AISEC-5 or this sync.
+*(Point-in-time at AISEC-5 closure. Present-day: XI-01 and XI-02 are each
+CLOSED_ON_MAIN / REMEDIATED (PR #238; see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)).)*
 
 The Type & Schema Boundary Audit remains a DISTINCT FUTURE GATE: AISEC-5 does
 not satisfy, absorb, replace, close, certify or authorize it. AISEC-6 requires
@@ -2605,7 +2663,11 @@ remain OPEN / MEDIUM with their immutable disposition. Until implementation plus
 independent verification, the affected capability/path must remain disabled or
 be constrained by a separately demonstrated trusted/provenance-bound input
 contract. No AT/PI/TB finding is closed, reopened, re-rated or otherwise given a
-new disposition by AISEC-6 or this sync.
+new disposition by AISEC-6 or this sync. *(Point-in-time at AISEC-6 closure.
+Present-day: XI-01 and XI-02 are each CLOSED_ON_MAIN / REMEDIATED (PR #238; see
+[TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)); that
+remediation does not implement or verify the `SAI`/`FI`/`FV` set as a whole.)*
 
 The Type & Schema Boundary Audit remains a DISTINCT FUTURE GATE: AISEC-6 does
 not execute, satisfy, absorb, replace, close, certify or authorize it, and its
@@ -2735,7 +2797,12 @@ This implementation is not independent review approval or merge authorization.
 Present-day: that sync merged via PR #225 and Issue #222 is `CLOSED /
 COMPLETED`; the Type & Schema Boundary Audit has since run under its own
 authorization and is `COMPLETE_ON_MAIN` — see [Type & Schema Boundary Audit
-closure evidence](#type--schema-boundary-audit-closure-evidence).)*
+closure evidence](#type--schema-boundary-audit-closure-evidence); `XI-01` and
+`XI-02` have since been remediated under their own separate authorization and
+are each `CLOSED_ON_MAIN / REMEDIATED` (PR #238), with the `AISEC-7` XI cases
+now passing — see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence);
+`C2-SR-01` and `C2-SR-02` are unchanged.)*
 
 ### Type & Schema Boundary Audit closure evidence
 
@@ -2787,9 +2854,10 @@ Material boundaries:   46 total
 
 New product findings:  7 (1 MEDIUM / 6 LOW; all OPEN; all CONDITIONAL)
   (point-in-time at audit certification; present-day
-  TSB-F01/TSB-F03/TSB-F05/TSB-F06: CLOSED_ON_MAIN / REMEDIATED — see
-  TSB-F01 + TSB-F03, TSB-F05 and TSB-F06 + ADV-01 remediation closure
-  evidence below)
+  TSB-F01/TSB-F03/TSB-F04/TSB-F05/TSB-F06/TSB-F07: CLOSED_ON_MAIN /
+  REMEDIATED — see TSB-F01 + TSB-F03, TSB-F05, TSB-F06 + ADV-01 and
+  TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure evidence below;
+  TSB-F02 remains OPEN / LOW / CONDITIONAL)
   TSB-F01:             MEDIUM / OPEN / CONDITIONAL
   TSB-F02:             LOW / OPEN / CONDITIONAL
   TSB-F03:             LOW / OPEN / CONDITIONAL
@@ -2800,6 +2868,9 @@ New product findings:  7 (1 MEDIUM / 6 LOW; all OPEN; all CONDITIONAL)
   closed / waived / risk-accepted / remediated: NONE
 
 Existing findings (unchanged by the audit or this sync):
+  (point-in-time at audit certification; present-day XI-01/XI-02:
+  CLOSED_ON_MAIN / REMEDIATED — see TSB-F04 + TSB-F07 + XI-01 + XI-02
+  remediation closure evidence below)
   XI-01:               OPEN / MEDIUM / UNCHANGED
   XI-02:               OPEN / MEDIUM / UNCHANGED
   owner disposition (both XI findings):
@@ -2837,15 +2908,20 @@ finding classification, **not remediation**. It does **not** mean:
 
 - any `TSB-F01`..`TSB-F07` finding is fixed, closed, waived or risk-accepted —
   at audit certification all seven were `OPEN` and `CONDITIONAL` (point-in-time;
-  present-day: `TSB-F01` and `TSB-F03`, later `TSB-F05`, and later `TSB-F06`
-  (with `ADV-01`), have since been remediated by their own separate lifecycles
-  and are `CLOSED_ON_MAIN / REMEDIATED` — see [TSB-F01 + TSB-F03 remediation
-  closure evidence](#tsb-f01--tsb-f03-remediation-closure-evidence), [TSB-F05
-  remediation closure evidence](#tsb-f05-remediation-closure-evidence) and
+  present-day: `TSB-F01` and `TSB-F03`, later `TSB-F05`, later `TSB-F06`
+  (with `ADV-01`), and later `TSB-F04` and `TSB-F07`, have since been
+  remediated by their own separate lifecycles and are `CLOSED_ON_MAIN /
+  REMEDIATED` — see [TSB-F01 + TSB-F03 remediation closure
+  evidence](#tsb-f01--tsb-f03-remediation-closure-evidence), [TSB-F05
+  remediation closure evidence](#tsb-f05-remediation-closure-evidence),
   [TSB-F06 + ADV-01 remediation closure
-  evidence](#tsb-f06--adv-01-remediation-closure-evidence); `TSB-F02`,
-  `TSB-F04` and `TSB-F07` remain `OPEN / LOW / CONDITIONAL`);
-- `XI-01`/`XI-02` are remediated or closed;
+  evidence](#tsb-f06--adv-01-remediation-closure-evidence) and [TSB-F04 +
+  TSB-F07 + XI-01 + XI-02 remediation closure
+  evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence);
+  `TSB-F02` remains `OPEN / LOW / CONDITIONAL`);
+- `XI-01`/`XI-02` are remediated or closed (point-in-time; present-day: both
+  have since been remediated by their own separate lifecycle and are
+  `CLOSED_ON_MAIN / REMEDIATED`, PR #238);
 - any capability is authorized for enablement;
 - Controlled Release or Full Autonomy is approved.
 
@@ -2908,8 +2984,9 @@ design beyond that approved disposition. *(Present-day: step 1 is
 CLOSED` (architecture decision PR #232, implementation PR #233); step 3,
 `TSB-F06` + `ADV-01`, is `COMPLETE_ON_MAIN / CLOSED` (PR #235); step 4,
 `TSB-F02`, remains conditional and its trigger is not currently met; step 5,
-`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02`, is `NOT_STARTED / NEXT / NOT
-ACTIVATED`. The order itself is unchanged.)*
+`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02`, is `COMPLETE_ON_MAIN / CLOSED`
+(architecture decision PR #237, implementation PR #238). The order itself is
+unchanged.)*
 
 **Next stage.** Applicable Controlled-v1 release blockers / required
 remediations (including the `TSB-F05` architecture decision where applicable)
@@ -2947,7 +3024,12 @@ REMEDIATED` — see [TSB-F05 remediation closure
 evidence](#tsb-f05-remediation-closure-evidence); `TSB-F06` (with `ADV-01`
 satisfied) has since also been remediated under its own authorization and is
 `CLOSED_ON_MAIN / REMEDIATED` — see [TSB-F06 + ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence).)*
+evidence](#tsb-f06--adv-01-remediation-closure-evidence); `TSB-F04` and
+`TSB-F07`, together with the separate `XI-01` and `XI-02` findings, have since
+also been remediated under their own authorization and are each
+`CLOSED_ON_MAIN / REMEDIATED` — see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence).)*
 
 ### TSB-F01 + TSB-F03 remediation closure evidence
 
@@ -3072,7 +3154,11 @@ sync merged via PR #231; `TSB-F05` has since completed its architecture decision
 evidence](#tsb-f05-remediation-closure-evidence); `TSB-F06` + `ADV-01` has
 since also been remediated (PR #235) and `TSB-F06` is `CLOSED_ON_MAIN /
 REMEDIATED` — see [TSB-F06 + ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence).)*
+evidence](#tsb-f06--adv-01-remediation-closure-evidence); `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` has since also been remediated (PR #238) and each
+is `CLOSED_ON_MAIN / REMEDIATED` — see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence).)*
 
 ### TSB-F05 remediation closure evidence
 
@@ -3212,7 +3298,11 @@ Present-day: that sync merged via PR #234 (merge
 number 615 SUCCESS); `TSB-F06` + `ADV-01` has since been implemented under its
 own authorization and `TSB-F06` is `CLOSED_ON_MAIN / REMEDIATED` with `ADV-01`
 satisfied — see [TSB-F06 + ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence).)*
+evidence](#tsb-f06--adv-01-remediation-closure-evidence); `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` has since also been remediated (PR #238) and each
+is `CLOSED_ON_MAIN / REMEDIATED` — see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence).)*
 
 ### TSB-F06 + ADV-01 remediation closure evidence
 
@@ -3378,6 +3468,237 @@ review → separate Product Owner merge authorization → `STANDARD_TWO_PARENT`
 merge → fresh automatic push-event CI on the exact merge SHA → post-merge
 certification before final canonical lifecycle closure. This implementation is
 not independent review approval or merge authorization.
+
+*(Historical point-in-time record as of the `TSB-F06` + `ADV-01` canonical
+closure sync, including its finding table, `closed/remediated 4 /
+open/conditional 3` totals, `XI-01`/`XI-02` "unchanged" listing and `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` "NEXT" designation. Present-day: that sync merged
+via PR #236 (merge `acf127024ea1fe76eb9945e8bbf26d32b54cb772`; push-event CI
+run 37947681273 / run number 620 SUCCESS); `TSB-F04` + `TSB-F07` + `XI-01` +
+`XI-02` has since completed its architecture decision (PR #237) and
+implementation (PR #238) under its own authorization, and each of the four is
+`CLOSED_ON_MAIN / REMEDIATED` — see [TSB-F04 + TSB-F07 + XI-01 + XI-02
+remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence).
+`ARCH-F06-I1`..`ARCH-F06-I4` and `SEC-F06-I1` remain `OPEN / PRESERVED`.)*
+
+### TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure evidence
+
+```text
+Stage:                 TSB-F04 + TSB-F07 + XI-01 + XI-02 — canonical triage
+                       trust-boundary remediation (closed provider-result
+                       contract; closed persisted context contract; current-
+                       invocation binding; closed separate History contract)
+Status:                COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+                       (canonical lifecycle closure pending this ROADMAP
+                       sync's own certification)
+
+Design PR:             #237 — MERGED
+governing design:      docs/triage-boundary-contract-decision-v1.md
+design authority:      OD-TRIAGE-BOUNDARY-DESIGN, -C1, -C2 — APPROVED
+final reviewed design HEAD: f93468870dc0302c419aeebe1e6819455d638f32 (C2)
+final reviewed design TREE: cdd29c6a1d365fa6feffcf1c154630e9d6812c3a
+design Architecture HEAVY: APPROVED_WITH_NON_BLOCKING_FINDINGS (C2)
+design Security HEAVY: APPROVED_WITH_NON_BLOCKING_FINDINGS (C2)
+design merge SHA:      00074717072e3471ff3e35b63ef3ee68ded2057f
+design post-merge CI:  Cypress E2E Tests / run 37958667400 / run number 624
+                       event push / exact SHA
+                       00074717072e3471ff3e35b63ef3ee68ded2057f
+                       completed / success / 7/7 SUCCESS
+
+Implementation PR:     #238 — MERGED
+reviewed HEAD:         878e9648c9e5fbdb3e16ac167ba29cd71cd13ba5
+reviewed TREE:         7b6ca33d4afb85899dfcf2d545a007799f247729
+implementation base:   00074717072e3471ff3e35b63ef3ee68ded2057f
+exact-head PR CI:      Cypress E2E Tests / run 37965902929 / run number 625
+                       event pull_request / exact HEAD
+                       878e9648c9e5fbdb3e16ac167ba29cd71cd13ba5
+                       completed / success / 7/7 SUCCESS
+Architecture / Software Engineering HEAVY:
+                       APPROVED_WITH_NON_BLOCKING_FINDINGS
+Security HEAVY:        APPROVED_WITH_NON_BLOCKING_FINDINGS
+blocking findings:     0
+merge SHA:             8aa7c5191e662942f1d73539c740904d385c646d
+merge method:          STANDARD_TWO_PARENT
+parent1:               00074717072e3471ff3e35b63ef3ee68ded2057f
+parent2:               878e9648c9e5fbdb3e16ac167ba29cd71cd13ba5
+merge TREE:            7b6ca33d4afb85899dfcf2d545a007799f247729
+TREE preserved:        YES (merge TREE = reviewed TREE)
+post-merge CI:         Cypress E2E Tests / run 38043445498 / run number 626
+                       event push / branch main
+                       exact merge SHA 8aa7c5191e662942f1d73539c740904d385c646d
+                       completed / success / 7/7 required jobs SUCCESS
+post-merge certification: PASS
+
+Finding transitions (four separate identities; not collapsed):
+  TSB-F04:             OPEN / LOW / CONDITIONAL
+                       → CLOSED_ON_MAIN / REMEDIATED / POST-MERGE CERTIFIED
+  TSB-F07:             OPEN / LOW / CONDITIONAL
+                       → CLOSED_ON_MAIN / REMEDIATED / POST-MERGE CERTIFIED
+  XI-01:               OPEN / MEDIUM / UNCHANGED
+                       → CLOSED_ON_MAIN / REMEDIATED / POST-MERGE CERTIFIED
+  XI-02:               OPEN / MEDIUM / UNCHANGED
+                       → CLOSED_ON_MAIN / REMEDIATED / POST-MERGE CERTIFIED
+severity re-rating:    NONE
+
+Type & Schema Boundary Audit findings (present-day):
+  TSB-F01:             CLOSED_ON_MAIN / REMEDIATED (PR #230; unchanged)
+  TSB-F03:             CLOSED_ON_MAIN / REMEDIATED (PR #230; unchanged)
+  TSB-F05:             CLOSED_ON_MAIN / REMEDIATED (PR #233; unchanged)
+  TSB-F06:             CLOSED_ON_MAIN / REMEDIATED (PR #235; unchanged)
+  TSB-F04:             CLOSED_ON_MAIN / REMEDIATED (PR #238)
+  TSB-F07:             CLOSED_ON_MAIN / REMEDIATED (PR #238)
+  TSB-F02:             OPEN / LOW / CONDITIONAL (unchanged; trigger FALSE)
+present-day totals:    closed/remediated 6 / open/conditional 1
+ADV-01:                SATISFIED WITH TSB-F06; NOT A SEPARATE TSB FINDING;
+                       not counted in TSB totals
+XI findings:           separate from the seven TSB findings; not counted in
+                       TSB totals
+  XI-01:               CLOSED_ON_MAIN / REMEDIATED
+  XI-02:               CLOSED_ON_MAIN / REMEDIATED
+
+SEC-F06-I1:            OPEN / PRESERVED / OUTSIDE SCOPE (unchanged; not
+                       remediated, absorbed or merged into TSB-F04)
+
+Preserved non-blocking review debt (OPEN / PRESERVED; not closed, waived,
+re-rated, risk-accepted or represented as resolved):
+  Implementation Architecture MINOR:
+                       ARCH-IMPL-m01 (producer-side total-context byte cap
+                       asymmetry; Security HEAVY: ACCEPTABLE_NON_BLOCKING)
+  Implementation Architecture INFO (6; preserved as recorded by the
+                       Architecture HEAVY review, without separate IDs)
+  Implementation Security INFO:
+                       SEC-IMPL-I01, SEC-IMPL-I02, SEC-IMPL-I03, SEC-IMPL-I04
+  Design Security INFO (C2):
+                       SEC-C2-I01, SEC-C2-I02, SEC-C2-I03, SEC-C2-I04,
+                       SEC-C2-I05, SEC-C2-I06, SEC-C2-I07
+  Earlier lifecycles:  ARCH-F06-I1..ARCH-F06-I4 (TSB-F06; unchanged),
+                       ARCH-I1..ARCH-I4, SEC-I1..SEC-I4 (TSB-F05; unchanged)
+
+Unchanged (not closed, re-rated, waived or risk-accepted):
+  C2-SR-01, C2-SR-02, H02-C5,
+  TB-01, TB-05, TB-10, TB-15, TB-16, TB-18, TB-19, AT-04, U-03, TSB-U02,
+  Architecture MINOR-1 (TSB-F01/F03; DEFERRED / NON-BLOCKING
+  REGRESSION-TEST DEBT), AISEC-6 SADR / ODR / FI / FV future dependencies,
+  AISEC-7 target cases H01-T, H05-T, H06-T (IMPLEMENTATION_BLOCKED)
+
+Controlled-v1 release blockers / remediation:
+  step 1: TSB-F01 + TSB-F03   COMPLETE_ON_MAIN / CLOSED
+  step 2: TSB-F05             COMPLETE_ON_MAIN / CLOSED
+  step 3: TSB-F06 + ADV-01    COMPLETE_ON_MAIN / CLOSED
+  step 4: TSB-F02             OPEN / LOW / CONDITIONAL — trigger FALSE
+  step 5: TSB-F04 + TSB-F07 + XI-01 + XI-02
+                              COMPLETE_ON_MAIN / CLOSED / REMEDIATED /
+                              POST-MERGE CERTIFIED
+next eligible:         Controlled-v1 supported package/API/CLI/
+                       productization boundary
+                       NOT_STARTED / NEXT / NOT ACTIVATED
+qa-agent-demo external E2E validation: NOT_STARTED
+Controlled Release:    NOT APPROVED
+full autonomy:         NOT APPROVED
+MEM/RAG/LEARN:         NOT_STARTED / NOT ACTIVATED
+Closure-sync authority: OD-TRIAGE-BOUNDARY-CANONICAL-CLOSURE — APPROVED
+Closure-sync review class: LIGHT
+```
+
+**Closure semantics (per finding).** Following the design's finding-to-control
+traceability, no finding closes merely as a side effect of another control:
+
+- `TSB-F04` — the triage provider result is validated against a closed, bounded
+  schema with exact result cardinality and exact result-to-failed-test binding;
+  stale, duplicate, missing and unknown results are rejected, and the reported
+  test identity is reconstructed from the locally validated failure snapshot
+  before any report is persisted.
+- `TSB-F07` — the persisted non-History `context.json` follows a versioned,
+  closed, bounded contract with real Cypress / Playwright variants, field /
+  count / total-artifact bounds, snapshots and fail-closed producer and consumer
+  validation.
+- `XI-01` — persisted context is bound to independently trusted current
+  invocation state under two explicit modes with no implicit fallback:
+  `github-actions-v1` (repository / commit SHA / run id / run attempt
+  freshness) and `local-v1` (a fresh orchestrator-supplied invocation id);
+  contradictory mode state fails closed, and FULL PROJECT INDEPENDENCE / local
+  execution remains supported.
+- `XI-02` — History is a closed separate `history.json` contract with
+  project / framework eligibility and bounded metrics; embedded
+  `context.history` is rejected, and one validated History projection feeds both
+  prompt and report.
+
+The `AISEC-7` current cases `H01-C1`, `H05-C1`, `H05-C2`, `H06-C1` and `H06-C2`
+now record `PASS` on `main`. Package / root exports are unchanged; the new
+`scripts/ai/triage-boundary-contract.js` authority is internal.
+
+Closing these four findings does **not** mean: that triage is globally
+risk-free; that the invocation binding is authentication (it establishes
+label consistency and freshness, not producer authenticity); that the
+`AISEC-7` target cases `H01-T` / `H05-T` / `H06-T` or the `AISEC-6` `FI` /
+`FV` dependencies (an authenticated principal → project → repository → root →
+run join) are satisfied; that `TSB-F02` or `SEC-F06-I1` is resolved; that the
+Architecture / Security INFO observations above are resolved; that any
+capability is authorized for enablement; that Controlled-v1 productization,
+`qa-agent-demo` validation or any `MEM`/`RAG`/`LEARN` stage has started; or that
+Controlled Release or Full Autonomy is approved.
+
+**Preserved review debt.** The exact-head `HEAVY` reviews of PR #238 recorded
+zero blocking findings. Architecture: `ARCH-IMPL-m01` — the context collector
+and browser-context aggregator do not check the analyzer's total context byte
+cap on their own output, so producer-valid context can be rejected by the
+analyzer as too large (the Security review classified this
+`ACCEPTABLE_NON_BLOCKING`: availability of advisory triage only, controlled by
+the same principal that controls the job); six INFO observations — CI exercised
+only the zero-failure triage branch; a refused aggregation leaves the previous
+Playwright `context.json` in place; an ad hoc diagnostic code and a duplicated
+truncation-marker literal; the report test-identity title may now be `null`;
+custom adapter extras are now rejected; operator consequences of "Re-run failed
+jobs" are not documented. Security: `SEC-IMPL-I01` — the aggregator still reads
+browser-input JSON without a byte bound (pre-existing; the analyzer re-reads
+through the bounded reader); `SEC-IMPL-I02` — relevant-file caps count UTF-16
+code units rather than bytes; `SEC-IMPL-I03` — `SECURITY.md` still states that
+adapters may attach arbitrary extra fields, which now fail closed;
+`SEC-IMPL-I04` — diagnostics may echo bounded alphanumeric key names (never
+values) from provider or persisted input. The design-stage Security INFO
+observations `SEC-C2-I01`..`SEC-C2-I07` (binding gives freshness, not
+authenticity; local invocation-id reuse is an accepted residual; partial re-run
+fails closed; History is not freshness-bound and remains advisory; new
+diagnostics must not echo persisted values; a stale local `ai-report.json` can
+remain; numeric caps recorded) are carried forward unchanged. All of the above
+remain `OPEN / PRESERVED` downstream observations / debt under their existing
+classifications; none is closed, waived, re-rated or risk-accepted by this
+record.
+
+#### TSB-F02 conditional-trigger re-check at the triage-boundary closure sync
+
+PR #238 changed no caller of `validateApprovedGeneratedChangeSetReview` or
+`validateApprovedTestDesignReview`: no file under
+`scripts/ai/test-automation/` or `scripts/ai/generative-test-design/` is in its
+diff, root / package exports are unchanged, and the Controlled-v1 supported
+high-level surface still does not exist. The finding of the [TSB-F02
+conditional-trigger
+check](#tsb-f02-conditional-trigger-check-at-the-tsb-f06-closure-sync) therefore
+holds on `main` `8aa7c5191e662942f1d73539c740904d385c646d`: the trigger is
+**FALSE**, and `TSB-F02` stays `OPEN / LOW / CONDITIONAL` (not closed, waived,
+re-rated or risk-accepted). If a dependent supported consumer is later
+introduced (including by Controlled-v1 productization), `TSB-F02` becomes a
+release blocker / implementation required before that consumer is enabled.
+
+**Next stage.** The Controlled-v1 supported package/API/CLI/productization
+boundary is the canonical next eligible step: `NOT_STARTED / NEXT / NOT
+ACTIVATED`, eligible only after this closure sync's own certified lifecycle
+completes and only under its own separate authorization. "NEXT" designates
+sequencing eligibility only; this record creates no branch, Issue, design or
+implementation for it and does not authorize it.
+
+Authority for this ROADMAP-only implementation is
+`OD-TRIAGE-BOUNDARY-CANONICAL-CLOSURE — APPROVED`; its review class is `LIGHT`
+(documentation/governance-only canonical lifecycle synchronization after an
+already `HEAVY`-reviewed, merged and post-merge-certified implementation; no
+executable, runtime, security-enforcement, workflow, package or API surface
+change). The proposed canonical ROADMAP closure becomes final lifecycle truth
+only after this documentation-only closure PR itself completes fresh automatic
+exact-head CI → independent `LIGHT` documentation/governance review → separate
+Product Owner merge authorization → `STANDARD_TWO_PARENT` merge → fresh
+automatic push-event CI on the exact merge SHA → post-merge certification. This
+implementation is not independent review approval or merge authorization.
 
 ### GOV-AUTO-1 design/reconciliation evidence
 
@@ -4093,9 +4414,10 @@ evidence](#type--schema-boundary-audit-closure-evidence)). Within applicable
 Controlled-v1 release blockers / required remediations, `TSB-F01` + `TSB-F03`
 are `COMPLETE_ON_MAIN / CLOSED` (PR #230), `TSB-F05` is `COMPLETE_ON_MAIN /
 CLOSED` (PR #233), `TSB-F06` + `ADV-01` is `COMPLETE_ON_MAIN / CLOSED`
-(PR #235), `TSB-F02` remains conditional (trigger not currently met) and
-`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
-`NOT_STARTED / NEXT / NOT ACTIVATED` (see
+(PR #235), `TSB-F02` remains conditional (trigger not currently met),
+`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is `COMPLETE_ON_MAIN / CLOSED`
+(PR #238) and the Controlled-v1 supported package/API/CLI/productization
+boundary is `NOT_STARTED / NEXT / NOT ACTIVATED` (see
 [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
 sync grants no activation.
 
@@ -4254,9 +4576,11 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   COMPLETE_ON_MAIN / CLOSED (PR #230; see §8 closure evidence), TSB-F05 is
   COMPLETE_ON_MAIN / CLOSED (PR #233; see §8 closure evidence),
   TSB-F06 + ADV-01 is COMPLETE_ON_MAIN / CLOSED (PR #235; see §8 closure
-  evidence), TSB-F02 remains conditional (trigger not currently met) and
-  TSB-F04 + TSB-F07 + XI-01 + XI-02 is NOT_STARTED / NEXT / NOT ACTIVATED;
-  this sync activates nothing)
+  evidence), TSB-F02 remains conditional (trigger not currently met),
+  TSB-F04 + TSB-F07 + XI-01 + XI-02 is COMPLETE_ON_MAIN / CLOSED (PR #238;
+  see §8 closure evidence) and the Controlled-v1 supported
+  package/API/CLI/productization boundary is NOT_STARTED / NEXT /
+  NOT ACTIVATED; this sync activates nothing)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -4294,15 +4618,19 @@ runtime-verified controls. `AISEC-7` — Adversarial Security Test Harness —
 completed its lifecycle via
 [`docs/aisec-7-adversarial-security-test-harness-v1.md`](docs/aisec-7-adversarial-security-test-harness-v1.md)
 and `test/security/aisec-7/**` (PR #224); see [AISEC-7 closure
-evidence](#aisec-7-closure-evidence) in §8. `XI-01`/`XI-02` remain
-`OPEN / MEDIUM / UNCHANGED`, and `C2-SR-01`/`C2-SR-02` remain `LOW /
-NON-BLOCKING / UNRESOLVED`.
+evidence](#aisec-7-closure-evidence) in §8. `XI-01`/`XI-02` have since been
+remediated outside `AISEC-7`, under their own separate authorization, and are
+each `CLOSED_ON_MAIN / REMEDIATED` (PR #238; see [TSB-F04 + TSB-F07 + XI-01 +
+XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)), and
+`C2-SR-01`/`C2-SR-02` remain `LOW / NON-BLOCKING / UNRESOLVED`.
 
 **`AISEC-7` completion and next gate (current).** `AISEC-7` is
 `COMPLETE_ON_MAIN`: the Adversarial Security Test Harness lifecycle is complete.
 This does not mean the product is secure in every enabled capability, that
-Controlled Release or Full Autonomy is approved, that `XI-01`/`XI-02` are
-remediated, or that the `AISEC-6` `FI`/`FV` dependencies are implemented. Its
+Controlled Release or Full Autonomy is approved, that `AISEC-7` itself
+remediated `XI-01`/`XI-02` (they were remediated later by their own lifecycle,
+PR #238), or that the `AISEC-6` `FI`/`FV` dependencies are implemented. Its
 earlier activation contract (`OD-AISEC-7-START — PRE-AUTHORIZED`, Issue
 [#222](https://github.com/TarasovArtem/qa-ai-agent/issues/222), conditional on
 Issue #221's certified closure) is historical and remains recorded in Issue #222
@@ -4315,12 +4643,16 @@ applicable Controlled-v1 release-blocker remediation, `TSB-F01` + `TSB-F03` are
 `COMPLETE_ON_MAIN / CLOSED` (PR #230; see [TSB-F01 + TSB-F03 remediation closure
 evidence](#tsb-f01--tsb-f03-remediation-closure-evidence)), `TSB-F05` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #233; see [TSB-F05 remediation closure
-evidence](#tsb-f05-remediation-closure-evidence)) and `TSB-F06` + `ADV-01` is
+evidence](#tsb-f05-remediation-closure-evidence)), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235; see [TSB-F06 + ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence)); `TSB-F02` remains
-conditional (trigger not currently met) and the next eligible step is
-`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02`: `NOT_STARTED / NEXT / NOT
-ACTIVATED`, each later step requiring its own separate authorization.
+evidence](#tsb-f06--adv-01-remediation-closure-evidence)) and `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` is `COMPLETE_ON_MAIN / CLOSED` (PR #238; see
+[TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence));
+`TSB-F02` remains conditional (trigger not currently met) and the next eligible
+step is the Controlled-v1 supported package/API/CLI/productization boundary:
+`NOT_STARTED / NEXT / NOT ACTIVATED`, each later step requiring its own
+separate authorization.
 
 `GOV-AUTO-1` ([§6](#gov-auto-1--governance-pre-review-framework)) is not an AISEC stage: by owner decision (§7) it is
 sequenced after `AISEC-3` and before `AISEC-4`, and `AISEC-4`'s own scope is
@@ -4697,11 +5029,10 @@ autonomy-wide audit within the Full Autonomy Program and remains after
 AI Agent v1.0 Controlled Agent Release: Controlled v1.0 has its own earlier
 release-specific path (`AISEC-7` and the distinct Type & Schema Boundary Audit,
 both now `COMPLETE_ON_MAIN`; applicable release blockers / remediation, with
-`TSB-F01` + `TSB-F03`, `TSB-F05` and `TSB-F06` + `ADV-01` `COMPLETE_ON_MAIN /
-CLOSED`, `TSB-F02` conditional (trigger not currently met) and `TSB-F04` +
-`TSB-F07` + `XI-01` + `XI-02` `NOT_STARTED / NEXT / NOT ACTIVATED`;
-Controlled-v1 productization
-and `qa-agent-demo` validation — see the [Controlled v1
+`TSB-F01` + `TSB-F03`, `TSB-F05`, `TSB-F06` + `ADV-01` and `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` `COMPLETE_ON_MAIN / CLOSED` and `TSB-F02`
+conditional (trigger not currently met); Controlled-v1 productization
+(`NOT_STARTED / NEXT / NOT ACTIVATED`) and `qa-agent-demo` validation — see the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model) and
 [§8](#8-current-critical-path)).
 
@@ -4738,12 +5069,15 @@ lifecycle scopes:
 
 - **Controlled-v1 productization** — required before the QA AI Agent v1.0
   Controlled Agent Release and after the applicable Controlled-v1 release
-  blockers/remediations ([§8](#8-current-critical-path)), which are still
-  pending (`TSB-F01` + `TSB-F03`, `TSB-F05` and `TSB-F06` + `ADV-01` are
-  `COMPLETE_ON_MAIN / CLOSED`; `TSB-F02` is conditional and its trigger is not
-  currently met; `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is `NOT_STARTED /
-  NEXT / NOT ACTIVATED`; the preceding
-  Type & Schema Boundary Audit is `COMPLETE_ON_MAIN`). At minimum it
+  blockers/remediations ([§8](#8-current-critical-path)) (`TSB-F01` +
+  `TSB-F03`, `TSB-F05`, `TSB-F06` + `ADV-01` and `TSB-F04` + `TSB-F07` +
+  `XI-01` + `XI-02` are `COMPLETE_ON_MAIN / CLOSED`; `TSB-F02` is conditional
+  and its trigger is not currently met, and becomes a release blocker if
+  productization introduces a dependent supported consumer of its approval
+  gates; the preceding Type & Schema Boundary Audit is `COMPLETE_ON_MAIN`). It
+  is currently `NOT_STARTED / NEXT / NOT ACTIVATED`: eligible only after the
+  triage-boundary canonical closure sync completes and only under its own
+  separate authorization. At minimum it
   includes: version/install/upgrade policy; a supported high-level package/API
   or CLI surface (separately designed, versioned, reviewed and
   compatibility-tested); external consumer guidance; rollback/version lifecycle;
@@ -4885,10 +5219,14 @@ closure evidence](#tsb-f01--tsb-f03-remediation-closure-evidence)), `TSB-F05`
 is `COMPLETE_ON_MAIN / CLOSED` (PR #233; see [TSB-F05 remediation closure
 evidence](#tsb-f05-remediation-closure-evidence)), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235; see [TSB-F06 + ADV-01 remediation closure
-evidence](#tsb-f06--adv-01-remediation-closure-evidence)), `TSB-F02` remains
-conditional (trigger not currently met) and `TSB-F04` + `TSB-F07` + `XI-01` +
-`XI-02` is `NOT_STARTED / NEXT / NOT ACTIVATED`; no sync grants any remaining step
-activation or implementation authority. See
+evidence](#tsb-f06--adv-01-remediation-closure-evidence)), `TSB-F04` +
+`TSB-F07` + `XI-01` + `XI-02` is `COMPLETE_ON_MAIN / CLOSED` (PR #238; see
+[TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
+evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)),
+`TSB-F02` remains conditional (trigger not currently met) and the Controlled-v1
+supported package/API/CLI/productization boundary is `NOT_STARTED / NEXT / NOT
+ACTIVATED`; no sync grants any remaining step activation or implementation
+authority. See
 [§6](#gov-auto-1--governance-pre-review-framework) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
 This file will be updated at each transition;
@@ -4919,23 +5257,34 @@ TSB-F05 remediation:             COMPLETE_ON_MAIN / CLOSED (design PR #232;
                                  canonical closure sync PR #234)
 TSB-F06 + ADV-01 remediation:    COMPLETE_ON_MAIN / CLOSED (PR #235; merge
                                  30bca0183f1ffe75f87db9694f5e91a914ed4d73;
-                                 ADV-01 SATISFIED WITH TSB-F06)
-active governance lifecycle:     TSB-F06 + ADV-01 canonical closure sync
-                                 (this ROADMAP sync / SOLE WIP)
-Audit findings:                  TSB-F01, TSB-F03, TSB-F05, TSB-F06
-                                 CLOSED_ON_MAIN / REMEDIATED; TSB-F02,
-                                 TSB-F04, TSB-F07 OPEN / LOW / CONDITIONAL
-                                 (closed 4 / open 3; ADV-01 not counted)
+                                 ADV-01 SATISFIED WITH TSB-F06;
+                                 canonical closure sync PR #236)
+TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation:
+                                 COMPLETE_ON_MAIN / CLOSED / REMEDIATED /
+                                 POST-MERGE CERTIFIED (design PR #237;
+                                 implementation PR #238; merge
+                                 8aa7c5191e662942f1d73539c740904d385c646d)
+active governance lifecycle:     TSB-F04 + TSB-F07 + XI-01 + XI-02 canonical
+                                 closure sync (this ROADMAP sync / SOLE WIP)
+Audit findings:                  TSB-F01, TSB-F03, TSB-F04, TSB-F05, TSB-F06,
+                                 TSB-F07 CLOSED_ON_MAIN / REMEDIATED;
+                                 TSB-F02 OPEN / LOW / CONDITIONAL
+                                 (closed 6 / open 1; ADV-01 not counted)
+XI-01 / XI-02:                   CLOSED_ON_MAIN / REMEDIATED (separate from
+                                 the seven TSB findings)
 TSB-F05 review INFO findings:    ARCH-I1..ARCH-I4, SEC-I1..SEC-I4
                                  OPEN / PRESERVED
-TSB-F06 review INFO findings:    ARCH-F06-I1..ARCH-F06-I4, SEC-F06-I1
-                                 OPEN / PRESERVED
-XI-01 / XI-02:                   OPEN / MEDIUM / UNCHANGED
-TSB-F02 trigger:                 NOT CURRENTLY MET (no dependent supported
-                                 consumer; remains OPEN / LOW / CONDITIONAL)
-next eligible:                   TSB-F04 + TSB-F07 + XI-01 + XI-02
+TSB-F06 review INFO findings:    ARCH-F06-I1..ARCH-F06-I4 OPEN / PRESERVED
+SEC-F06-I1:                      OPEN / PRESERVED / OUTSIDE SCOPE
+Triage-boundary review debt:     ARCH-IMPL-m01; 6 Architecture implementation
+                                 INFO; SEC-IMPL-I01..SEC-IMPL-I04;
+                                 SEC-C2-I01..SEC-C2-I07 OPEN / PRESERVED
+TSB-F02 trigger:                 FALSE (no dependent supported consumer;
+                                 remains OPEN / LOW / CONDITIONAL)
+next eligible:                   Controlled-v1 supported package/API/CLI/
+                                 productization boundary
                                  NOT_STARTED / NEXT / NOT ACTIVATED
-Controlled-v1 productization:    NOT_STARTED
+Controlled-v1 productization:    NOT_STARTED / NEXT / NOT ACTIVATED
 qa-agent-demo E2E validation:    NOT_STARTED
 MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
 Controlled Release:              NOT APPROVED
@@ -4947,8 +5296,9 @@ Canonical release sequence:
   → applicable Controlled-v1 release blockers / required remediations
       (TSB-F01 + TSB-F03 COMPLETE_ON_MAIN; TSB-F05 COMPLETE_ON_MAIN;
        TSB-F06 + ADV-01 COMPLETE_ON_MAIN; TSB-F02 conditional, not
-       triggered; next: TSB-F04 + TSB-F07 + XI-01 + XI-02, NOT ACTIVATED)
+       triggered; TSB-F04 + TSB-F07 + XI-01 + XI-02 COMPLETE_ON_MAIN)
   → Controlled-v1 supported package/API/CLI/productization boundary
+      (next: NOT_STARTED / NEXT / NOT ACTIVATED)
   → qa-agent-demo external E2E validation
   → QA AI Agent v1.0 Controlled Agent Release   (Stage 1)
   → MEM-1 .. MEM-6
