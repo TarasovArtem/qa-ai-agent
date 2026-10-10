@@ -6,6 +6,9 @@
     "node": "22.x"
   },
   "main": "scripts/ai/index.js",
+  "bin": {
+    "qa-agent": "scripts/ai/cli/qa-agent.js"
+  },
   "exports": {
     ".": "./scripts/ai/index.js",
     "./providers/jira": "./scripts/ai/providers/jira-requirements-provider.js",
