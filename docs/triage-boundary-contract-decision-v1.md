@@ -1,6 +1,9 @@
 # Triage Boundary Contract Decision v1
 
-Status: DESIGN CORRECTIVE C2 / NOT IMPLEMENTED / NOT MERGED  
+Status: APPROVED DESIGN CONTRACT (C2) / MERGED (design PR #237, merge `00074717072e3471ff3e35b63ef3ee68ded2057f`)  
+Implementation: COMPLETED ON MAIN / POST-MERGE CERTIFIED (implementation PR #238, merge `8aa7c5191e662942f1d73539c740904d385c646d`)  
+Canonical finding closure: PENDING PR #239 lifecycle completion  
+Lifecycle note: the sections below are the approved C2 design contract and are preserved as written; they state design requirements, not implementation claims. Historical baseline and rejected-head evidence below is retained unchanged.  
 Authority: `OD-TRIAGE-BOUNDARY-DESIGN — APPROVED`; `OD-TRIAGE-BOUNDARY-DESIGN-C1 — APPROVED`; `OD-TRIAGE-BOUNDARY-DESIGN-C2 — APPROVED`  
 Review class: `HEAVY`  
 Baseline main: `acf127024ea1fe76eb9945e8bbf26d32b54cb772`  
