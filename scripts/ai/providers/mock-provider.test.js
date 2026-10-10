@@ -4,7 +4,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { MockProvider } = require("./mock-provider");
 const { CLASSIFICATIONS } = require("../qa-agent-prompt");
-const { validateAnalysisItem } = require("../analyze-failure");
+const { validateProviderEnvelope, buildFailureReferences, ERROR_CODES } = require("../triage-boundary-contract");
 const { ProviderError, PROVIDER_ERROR_CODES } = require("./provider-error");
 
 function userPromptFor(failedTests) {
@@ -40,11 +40,14 @@ test("MockProvider.analyze: the string is valid JSON", async () => {
   assert.doesNotThrow(() => JSON.parse(response));
 });
 
-test("MockProvider.analyze: result is compatible with the QA Agent schema and passes the real validator", async () => {
+test("MockProvider.analyze: result is compatible with the QA Agent schema and passes the real closed TSB-F04 validator, echoing the failureRef", async () => {
   const provider = new MockProvider();
+  const [{ failureRef }] = buildFailureReferences([
+    { title: "example test", fullTitle: null, specFile: "cypress/e2e/tests/example.cy.js", suite: null, error: { message: null, stack: null } },
+  ]);
   const raw = await provider.analyze({
     systemPrompt: "sys",
-    userPrompt: userPromptFor([{ title: "example test", specFile: "cypress/e2e/tests/example.cy.js" }]),
+    userPrompt: userPromptFor([{ failureRef, title: "example test", specFile: "cypress/e2e/tests/example.cy.js" }]),
   });
   const parsed = JSON.parse(raw);
 
@@ -56,8 +59,16 @@ test("MockProvider.analyze: result is compatible with the QA Agent schema and pa
   assert.ok(CLASSIFICATIONS.includes(result.classification), "classification must be an allowed enum value");
   assert.equal(typeof result.confidence, "number");
   assert.ok(result.confidence >= 0 && result.confidence <= 1);
+  assert.equal(result.failureRef, failureRef);
 
-  assert.deepEqual(validateAnalysisItem(result, 0), []);
+  assert.doesNotThrow(() => validateProviderEnvelope(parsed));
+});
+
+test("MockProvider.analyze: never invents a failureRef - a failed test without one yields null, which the closed contract rejects", async () => {
+  const provider = new MockProvider();
+  const parsed = JSON.parse(await provider.analyze({ systemPrompt: "sys", userPrompt: userPromptFor([{ title: "t" }]) }));
+  assert.equal(parsed.results[0].failureRef, null);
+  assert.throws(() => validateProviderEnvelope(parsed), (err) => err.code === ERROR_CODES.PROVIDER_RESULT_INVALID);
 });
 
 test("MockProvider.analyze: produces one result per failed test, matching titles in order", async () => {
@@ -83,7 +94,9 @@ test("MockProvider.analyze: falls back to a single generic result when the promp
 
   assert.equal(parsed.results.length, 1);
   assert.equal(typeof parsed.results[0].test.title, "string");
-  assert.deepEqual(validateAnalysisItem(parsed.results[0], 0), []);
+  // No failed test means no local reference to echo: the analyzer never
+  // calls a provider without failures, and such a result cannot bind.
+  assert.equal(parsed.results[0].failureRef, null);
 });
 
 test("MockProvider.analyze: is honest that no real analysis happened (visible in rootCause/summary), and never fabricates evidence", async () => {

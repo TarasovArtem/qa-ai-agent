@@ -20,7 +20,15 @@
  * writeUnavailable() graceful-degrade convention).
  */
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+useHermeticLocalInvocation({ beforeEach, afterEach });
+const { promptFailedTests } = require("../../test/helpers/triage-invocation-env");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -37,13 +45,32 @@ function fresh(prefix) {
   return { dir, root: { lexicalRoot: dir, realRoot: fs.realpathSync(dir) } };
 }
 
+// A PersistedTriageContextV1 for PROFILE_A (buildFailureReport() validates
+// its shape; invocation binding is main()'s gate, not exercised here).
 function baseContext(signal = "generic failure") {
   return {
-    metadata: { projectId: PROFILE_A.id, repository: "o/r", commit: "c", branch: "main", runId: null, event: null, browser: "chrome", ci: false },
+    schemaVersion: 1,
+    generatedAt: "2026-10-09T00:00:00.000Z",
+    metadata: {
+      projectId: PROFILE_A.id,
+      framework: "cypress",
+      invocationMode: "local-v1",
+      repository: "o/r",
+      commit: "c",
+      branch: "main",
+      runId: null,
+      runAttempt: null,
+      localInvocationId: "0123456789abcdef0123456789abcdef",
+      event: null,
+      browser: "chrome",
+      ci: false,
+    },
     testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 10 }, specs: [] },
+    knownProjectConstraints: [...PROFILE_A.knownProjectConstraints],
     failedTests: [
       {
         title: "t",
+        fullTitle: "s t",
         specFile: "f.cy.js",
         suite: "s",
         status: "failed",
@@ -301,10 +328,11 @@ test("computeRelevantKnowledge: a project unit id colliding with a real core uni
 
 test("buildFailureReport: an explicit relevantKnowledge override bypasses project-knowledge loading entirely, even with an otherwise mismatched config", async () => {
   const provider = {
-    analyze: async () =>
+    analyze: async (request) =>
       JSON.stringify({
         results: [
           {
+            failureRef: promptFailedTests(request)[0].failureRef,
             test: { title: "t", specFile: "f.cy.js" },
             classification: "TEST_BUG",
             confidence: 0.5,

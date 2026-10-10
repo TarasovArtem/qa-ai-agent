@@ -154,6 +154,18 @@ npm run firefox
 npm run test:e2e:playwright
 ```
 
+### Run failure triage locally (`local-v1`)
+
+The triage stages (`collectContext`, `aggregateBrowserContext`, `analyzeFailure`) bind persisted artifacts to one trusted invocation and fail closed without one. In GitHub Actions (`GITHUB_ACTIONS=true`) the run's `GITHUB_REPOSITORY`/`GITHUB_SHA`/`GITHUB_RUN_ID`/`GITHUB_RUN_ATTEMPT` are used automatically. Locally, the orchestrating process sets `QA_AI_INVOCATION_MODE=local-v1` and **one fresh** `QA_AI_INVOCATION_ID` (exactly 32 lowercase hexadecimal characters) for every stage of that invocation:
+
+```bash
+export QA_AI_INVOCATION_MODE=local-v1
+export QA_AI_INVOCATION_ID="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
+npm run ai:collect && npm run ai:analyze
+```
+
+Generating a fresh, random id per invocation is the caller's obligation (the analyzer validates only its format); never store it in `.env` or repository files - those are not trust sources, and there is no fallback between modes. See [`SECURITY.md` §11b](SECURITY.md#11b-triage-boundary-contract-invocation-binding-persisted-artifacts-and-provider-results).
+
 ### Run offline AI evaluation
 
 Reactive/failure-triage evaluation remains the v5 subject:

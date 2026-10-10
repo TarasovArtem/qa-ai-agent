@@ -1,6 +1,14 @@
 "use strict";
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+useHermeticLocalInvocation({ beforeEach, afterEach });
+const { promptFailedTests } = require("../../../test/helpers/triage-invocation-env");
 const assert = require("node:assert/strict");
 const { TARGOMO_PROJECT_PROFILE } = require("./project-profile");
 const { TARGOMO_REPOSITORY_ROOT } = require("./repository-root");
@@ -14,11 +22,28 @@ test("Targomo bootstrap: core is the exact same analyze-failure module the gener
 
 test("Targomo bootstrap: the real Targomo profile reaches the actual provider-visible system prompt through the generic core", async () => {
   const context = {
-    metadata: { repository: "o/r", commit: "abc123", branch: "main", runId: null, event: null, browser: "chrome", ci: false },
+    schemaVersion: 1,
+    generatedAt: "2026-10-09T00:00:00.000Z",
+    metadata: {
+      projectId: TARGOMO_PROJECT_PROFILE.id,
+      framework: "cypress",
+      invocationMode: "local-v1",
+      repository: "o/r",
+      commit: "abc123",
+      branch: "main",
+      runId: null,
+      runAttempt: null,
+      localInvocationId: "0123456789abcdef0123456789abcdef",
+      event: null,
+      browser: "chrome",
+      ci: false,
+    },
     testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 100 }, specs: [] },
+    knownProjectConstraints: [...TARGOMO_PROJECT_PROFILE.knownProjectConstraints],
     failedTests: [
       {
         title: "bootstrap fixture failure",
+        fullTitle: null,
         specFile: "cypress/e2e/tests/category_tree_behavior.cy.js",
         status: "failed",
         duration: 5,
@@ -38,6 +63,7 @@ test("Targomo bootstrap: the real Targomo profile reaches the actual provider-vi
       return JSON.stringify({
         results: [
           {
+            failureRef: promptFailedTests(request)[0].failureRef,
             test: { title: context.failedTests[0].title, specFile: context.failedTests[0].specFile },
             classification: "TEST_BUG",
             confidence: 0.8,

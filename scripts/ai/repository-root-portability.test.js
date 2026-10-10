@@ -21,7 +21,14 @@
  *     injected root, never underneath this generic core's own __dirname.
  */
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+useHermeticLocalInvocation({ beforeEach, afterEach });
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");

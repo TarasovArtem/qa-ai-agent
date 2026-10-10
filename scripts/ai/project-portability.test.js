@@ -32,19 +32,24 @@
  * tests) - that would add another concurrent writer to a resource with an
  * already-identified pre-existing filesystem race. Roadmap #19.3C already
  * separately covers file parsing/legacy behavior end to end. Instead, this
- * file constructs valid in-memory History aggregates and calls the real,
- * exported, pure eligibility gate (classifyProjectId +
- * isHistoryProjectEligible) directly - proving actual gate behavior
- * without reimplementing it and without touching the filesystem.
+ * file constructs valid in-memory History records and calls the real,
+ * pure XI-02 History contract (triage-boundary-contract.js
+ * validateHistoryRecord + projectHistory) directly - proving actual gate
+ * behavior without reimplementing it and without touching the filesystem.
  */
 
-const { test } = require("node:test");
+const { test, beforeEach, afterEach } = require("node:test");
+const { useHermeticLocalInvocation } = require("../../test/helpers/triage-invocation-env");
+
+// Triage Boundary Contract v1 hermeticity (ARCH-C2-m02 / SEC-C2-m03): every
+// test here runs under an explicitly set, fresh local-v1 invocation with all
+// GitHub Actions variables cleared, restored afterwards - the same trust mode
+// locally and in CI, never inherited from the ambient job environment.
+useHermeticLocalInvocation({ beforeEach, afterEach });
 const assert = require("node:assert/strict");
-const {
-  buildFailureReport,
-  classifyProjectId,
-  isHistoryProjectEligible,
-} = require("./analyze-failure");
+const { buildFailureReport } = require("./analyze-failure");
+const { validateHistoryRecord, projectHistory } = require("./triage-boundary-contract");
+const { promptFailedTests } = require("../../test/helpers/triage-invocation-env");
 const { validateProjectProfile } = require("./project-profile");
 // Roadmap TI-1: the real Targomo profile is now target-owned - imported
 // here only as reference/comparison DATA for this file's own "Project A
@@ -98,18 +103,29 @@ const SYNTHETIC_B_KNOWLEDGE_UNIT = {
 // test, not an uncontrolled larger set.
 const SHARED_FAILED_TEST = {
   title: "should load POI tiles",
+  fullTitle: null,
   specFile: "cypress/e2e/tests/shared_spec.cy.js",
-  error: { message: "job isolation fresh runner PROJECT_B_KNOWLEDGE_TAG_SENTINEL failure" },
+  error: { message: "job isolation fresh runner PROJECT_B_KNOWLEDGE_TAG_SENTINEL failure", stack: null },
 };
 
+// A PersistedTriageContextV1 (buildFailureReport() validates the shape;
+// invocation binding is main()'s gate and is not exercised here).
 function buildContext(profile) {
   return {
+    schemaVersion: 1,
+    generatedAt: "2026-10-09T00:00:00.000Z",
     metadata: {
       projectId: profile.id,
-      browser: "firefox",
+      framework: "cypress",
+      invocationMode: "local-v1",
+      repository: null,
       commit: "c1",
       branch: "main",
+      runId: null,
+      runAttempt: null,
+      localInvocationId: "0123456789abcdef0123456789abcdef",
       event: "push",
+      browser: "firefox",
       ci: true,
     },
     testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 100 }, specs: [] },
@@ -130,6 +146,7 @@ function capturingProvider(resultOverrides = {}) {
       return JSON.stringify({
         results: [
           {
+            failureRef: promptFailedTests(request)[0].failureRef,
             test: { title: SHARED_FAILED_TEST.title, specFile: SHARED_FAILED_TEST.specFile },
             classification: "UNKNOWN",
             confidence: 0.5,
@@ -201,50 +218,27 @@ test("Roadmap #19.4: symmetric Knowledge isolation - A-specific and B-specific u
 // value, rather than a second, separately hand-typed literal that would
 // only coincidentally match - see the derivation immediately after the
 // isolation test for why this matters.
-const historyAggregateA = { available: true, projectId: PROFILE_A.id, runsConsidered: 10, passes: 7, failures: 3, retryPasses: 1 };
-const historyAggregateB = { available: true, projectId: PROFILE_B.id, runsConsidered: 8, passes: 5, failures: 3, retryPasses: 0 };
+const HISTORY_COMMON = { framework: "cypress", browser: "firefox", branch: "main", generatedAt: "2026-10-09T00:00:00.000Z" };
+const historyAggregateA = validateHistoryRecord({ available: true, projectId: PROFILE_A.id, ...HISTORY_COMMON, runsConsidered: 10, passes: 7, failures: 3, retryPasses: 1 });
+const historyAggregateB = validateHistoryRecord({ available: true, projectId: PROFILE_B.id, ...HISTORY_COMMON, runsConsidered: 8, passes: 5, failures: 3, retryPasses: 0 });
+const CURRENT_A = { projectId: PROFILE_A.id, framework: "cypress" };
+const CURRENT_B = { projectId: PROFILE_B.id, framework: "cypress" };
 
-test("Roadmap #19.4: symmetric History isolation via the real pure project-eligibility gate (classifyProjectId + isHistoryProjectEligible), no filesystem writer added", () => {
-  const currentA = classifyProjectId({ projectId: PROFILE_A.id }, "projectId");
-  const currentB = classifyProjectId({ projectId: PROFILE_B.id }, "projectId");
-  const historyAIdentity = classifyProjectId(historyAggregateA, "projectId");
-  const historyBIdentity = classifyProjectId(historyAggregateB, "projectId");
-
-  assert.equal(isHistoryProjectEligible(currentA, historyAIdentity), true, "A current + A history -> ALLOW");
-  assert.equal(isHistoryProjectEligible(currentA, historyBIdentity), false, "A current + B history -> SKIP");
-  assert.equal(isHistoryProjectEligible(currentB, historyBIdentity), true, "B current + B history -> ALLOW");
-  assert.equal(isHistoryProjectEligible(currentB, historyAIdentity), false, "B current + A history -> SKIP");
+test("Roadmap #19.4 / XI-02: symmetric History isolation via the real pure History projection (cross-project replay is 'no usable history'), no filesystem writer added", () => {
+  assert.notEqual(projectHistory(historyAggregateA, CURRENT_A), null, "A current + A history -> ALLOW");
+  assert.equal(projectHistory(historyAggregateB, CURRENT_A), null, "A current + B history -> SKIP");
+  assert.notEqual(projectHistory(historyAggregateB, CURRENT_B), null, "B current + B history -> ALLOW");
+  assert.equal(projectHistory(historyAggregateA, CURRENT_B), null, "B current + A history -> SKIP");
 });
 
-// Downstream, gate-approved History objects for the Level-3 calls below -
-// genuinely derived from the real gate's own boolean return value, not a
-// second, independently hand-typed literal that would only coincidentally
-// match test 3's fixtures. If isHistoryProjectEligible() were ever wrong
-// (e.g. regressed to always return false), this would become null and the
-// Level-3 tests below would fail on their own assertions, rather than
-// silently continuing to pass against a stale, disconnected constant. This
-// only reproduces the already-established #19.3C stripped downstream shape
-// ({runsConsidered, passes, failures, retryPasses}, no projectId/available)
-// - it does NOT re-test file parsing or legacy behavior, which #19.3C's own
-// suite already covers.
-function projectDownstreamHistory(aggregate) {
-  const { available, projectId, ...rest } = aggregate;
-  return rest;
-}
-
-const approvedHistoryA = isHistoryProjectEligible(
-  classifyProjectId({ projectId: PROFILE_A.id }, "projectId"),
-  classifyProjectId(historyAggregateA, "projectId")
-)
-  ? projectDownstreamHistory(historyAggregateA)
-  : null;
-
-const approvedHistoryB = isHistoryProjectEligible(
-  classifyProjectId({ projectId: PROFILE_B.id }, "projectId"),
-  classifyProjectId(historyAggregateB, "projectId")
-)
-  ? projectDownstreamHistory(historyAggregateB)
-  : null;
+// Downstream, gate-approved History projections for the Level-3 calls
+// below - genuinely the real projection's own return value, not a second,
+// independently hand-typed literal. If projectHistory() were ever wrong
+// (e.g. regressed to always return null), the Level-3 tests below would
+// fail on their own assertions rather than silently passing against a
+// stale constant.
+const approvedHistoryA = projectHistory(historyAggregateA, CURRENT_A);
+const approvedHistoryB = projectHistory(historyAggregateB, CURRENT_B);
 
 // --- 4. Project A Level-3 control path --------------------------------------
 

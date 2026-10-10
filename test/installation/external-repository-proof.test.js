@@ -76,6 +76,47 @@ function minimalEnv(overrides) {
   return { ...base, ...overrides };
 }
 
+// Triage Boundary Contract v1 local-v1 invocation (FULL PROJECT
+// INDEPENDENCE): the orchestrating process - this test - generates ONE fresh
+// QA_AI_INVOCATION_ID (16 CSPRNG bytes, 32 lowercase hex chars) before
+// context production and hands the same value to every pipeline stage of
+// that child process. GITHUB_ACTIONS is never set: local execution is proved
+// as local-v1, never as a fake GitHub Actions run.
+function freshLocalInvocationId() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function localInvocationEnv(id) {
+  return { QA_AI_INVOCATION_MODE: "local-v1", QA_AI_INVOCATION_ID: id };
+}
+
+// A PersistedTriageContextV1 bound to `profile` and the local-v1 `id`.
+function boundTriageContext(profile, id) {
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    metadata: {
+      projectId: profile.id,
+      framework: "playwright",
+      invocationMode: "local-v1",
+      repository: "o/r",
+      commit: "c",
+      branch: "m",
+      runId: null,
+      runAttempt: null,
+      localInvocationId: id,
+      event: null,
+      browser: "chromium",
+      ci: false,
+    },
+    testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
+    failedTests: [{ title: "t", fullTitle: "t", specFile: "f", suite: "s", status: "failed", duration: 1, error: { message: "x", stack: "x" }, screenshot: null }],
+    relevantFiles: {},
+    knownProjectConstraints: [...profile.knownProjectConstraints],
+    warnings: [],
+  };
+}
+
 function sha256(buf) {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
@@ -552,13 +593,18 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
     },
   };
 
+  const invocationId = freshLocalInvocationId();
   const env = minimalEnv({
     QA_FRAMEWORK: "playwright",
     GITHUB_TOKEN: "id2-token",
+    // History/API evidence only - without GITHUB_ACTIONS=true it grants no
+    // XI-01 CI authority.
     GITHUB_REPOSITORY: "o/external-install-proof",
     TEST_BROWSER: "chromium",
     HISTORY_JOB_NAME: "External Proof - chromium",
+    ...localInvocationEnv(invocationId),
   });
+  assert.equal("GITHUB_ACTIONS" in env, false, "the local proof must never fake GitHub Actions mode");
 
   const result = runPlan(externalRepoDir, plan, env);
 
@@ -603,6 +649,11 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
   // --- Outputs, read directly (safe: no module resolution involved) ----
   const context = readJson(path.join(externalRepoDir, "reports", "ai", "context.json"));
   assert.equal(context.metadata.projectId, PROFILE.id);
+  // XI-01 local-v1: the same id spans context production and analysis.
+  assert.equal(context.schemaVersion, 1);
+  assert.equal(context.metadata.invocationMode, "local-v1");
+  assert.equal(context.metadata.localInvocationId, invocationId);
+  assert.equal(context.metadata.runAttempt, null);
   assert.equal(context.metadata.framework, "playwright");
   assert.equal(context.failedTests[0].title, "EXTERNAL_INSTALL_PROOF_TEST");
   assert.ok(context.failedTests[0].error.message.includes("EXTERNAL_CONFIG_SELECTED"));
@@ -615,6 +666,10 @@ test("ID-2 COMBINED PROOF: all four pipeline stages execute end to end from the 
   const report = readJson(path.join(externalRepoDir, "reports", "ai", "ai-report.json"));
   assert.equal(report.sourceContext.projectId, PROFILE.id);
   assert.notEqual(report.history, null);
+  // TSB-F04: authoritative identity from the local snapshot; the internal
+  // failure reference is never a persisted report field.
+  assert.equal(report.results[0].test.title, "EXTERNAL_INSTALL_PROOF_TEST");
+  assert.equal("failureRef" in report.results[0], false);
 
   const relevantKnowledgeIds = report.sourceContext.relevantKnowledge.map((u) => u.id);
   assert.ok(relevantKnowledgeIds.includes("external-install-proof-unit"), "target-owned project knowledge (loaded from the EXTERNAL repositoryRoot) must be present");
@@ -641,15 +696,8 @@ test("ID-2 SECURITY: a mismatched ProjectKnowledgeConfig.projectId fails closed 
   const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "id2-target-wrongproj-"));
   try {
     const profile = { id: "id2-wrongproj-target", displayName: "d", knownProjectConstraints: ["c"] };
-    writeJson(targetRoot, "reports/ai/context.json", {
-      generatedAt: new Date().toISOString(),
-      metadata: { projectId: profile.id, framework: "playwright", repository: "o/r", commit: "c", branch: "m", runId: null, event: null, browser: "chromium", ci: false },
-      testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
-      failedTests: [{ title: "t", specFile: "f", suite: "s", status: "failed", duration: 1, error: { message: "x", stack: "x" }, screenshot: null }],
-      relevantFiles: {},
-      knownProjectConstraints: [],
-      warnings: [],
-    });
+    const invocationId = freshLocalInvocationId();
+    writeJson(targetRoot, "reports/ai/context.json", boundTriageContext(profile, invocationId));
 
     const plan = {
       mode: "wrongProjectKnowledge",
@@ -657,7 +705,7 @@ test("ID-2 SECURITY: a mismatched ProjectKnowledgeConfig.projectId fails closed 
       repositoryRoot: targetRoot,
       projectKnowledgeConfig: { projectId: "a-completely-different-project", projectKnowledgeUnitsDir: "nope" },
     };
-    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+    const result = runPlan(externalRepoDir, plan, minimalEnv(localInvocationEnv(invocationId)));
 
     // analyzeFailure.main() never rejects for this class of error (see
     // runPlan()'s own comment) - the fail-closed signal is the non-zero
@@ -686,7 +734,7 @@ test("ID-2 SECURITY: a Cypress-shaped FrameworkRuntimeConfig under a Playwright 
       historyWorkflowFile: "cypress.yml",
     };
     const plan = { mode: "wrongFramework", profile, repositoryRoot: targetRoot, frameworkRuntimeConfig: cypressShapedConfig };
-    const result = runPlan(externalRepoDir, plan, minimalEnv({ QA_FRAMEWORK: "playwright" }));
+    const result = runPlan(externalRepoDir, plan, minimalEnv({ QA_FRAMEWORK: "playwright", ...localInvocationEnv(freshLocalInvocationId()) }));
 
     assert.equal(result.steps.collectContext.ok, false);
     assert.match(result.errors.collectContext, /PLAYWRIGHT_RUNTIME_CONFIG_FRAMEWORK_MISMATCH/);
@@ -705,15 +753,8 @@ test("ID-2 SECURITY: a project-knowledge directory symlinked outside the externa
     writeJson(outsideDir, "secret.json", knowledgeUnit("ID2_OUTSIDE_UNIT", { statement: "EXTERNAL_INSTALL_OUTSIDE_SECRET" }));
 
     const profile = { id: "id2-outside-target", displayName: "d", knownProjectConstraints: ["c"] };
-    writeJson(targetRoot, "reports/ai/context.json", {
-      generatedAt: new Date().toISOString(),
-      metadata: { projectId: profile.id, framework: "playwright", repository: "o/r", commit: "c", branch: "m", runId: null, event: null, browser: "chromium", ci: false },
-      testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 1 }, specs: [] },
-      failedTests: [{ title: "t", specFile: "f", suite: "s", status: "failed", duration: 1, error: { message: "x", stack: "x" }, screenshot: null }],
-      relevantFiles: {},
-      knownProjectConstraints: [],
-      warnings: [],
-    });
+    const invocationId = freshLocalInvocationId();
+    writeJson(targetRoot, "reports/ai/context.json", boundTriageContext(profile, invocationId));
 
     let symlinkSupported = true;
     try {
@@ -729,7 +770,7 @@ test("ID-2 SECURITY: a project-knowledge directory symlinked outside the externa
       repositoryRoot: targetRoot,
       projectKnowledgeConfig: { projectId: profile.id, projectKnowledgeUnitsDir: "escaped-knowledge" },
     };
-    const result = runPlan(externalRepoDir, plan, minimalEnv({}));
+    const result = runPlan(externalRepoDir, plan, minimalEnv(localInvocationEnv(invocationId)));
 
     // See the previous test's own comment: analyzeFailure.main() never
     // rejects for this class of error - check the child's own exit

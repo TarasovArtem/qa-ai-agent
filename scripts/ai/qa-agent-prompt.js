@@ -34,7 +34,13 @@ const CLASSIFICATIONS = [
 // Shown to the model as a literal template so it has a concrete shape to
 // match, since no structured-output schema is enforced by the API call
 // itself (see the module comment above).
+// `failureRef` (Triage Boundary Contract v1, TSB-F04) is an opaque local
+// reference the application attaches to every failed test it sends; the
+// model must copy it back unchanged so each result binds to exactly one
+// failed test. The reference proves correlation only - the report's test
+// identity is always reconstructed from the application's own snapshot.
 const EXAMPLE_RESULT_ITEM = {
+  failureRef: "fr-0123456789abcdef01234567",
   test: { title: "should do the thing", specFile: "cypress/e2e/tests/example.cy.js" },
   classification: "TEST_BUG",
   confidence: 0.91,
@@ -90,7 +96,7 @@ CRITICAL RULES (violating any of these makes your answer wrong even if the class
 4. In recommendedFix, never recommend a fixed-duration arbitrary wait (e.g. "cy.wait(5000)", "page.waitForTimeout(3000)"), a longer timeout just to stop the flakiness, deleting or weakening an assertion, skipping the test, or adding unbounded retries - unless the evidence explicitly proves no deterministic alternative exists. Strongly prefer deterministic synchronization: cy.intercept()/cy.wait('@alias') on a specific network call, asserting on a specific DOM/state condition (the test framework's built-in retry-ability, where available), a loading-indicator/application-event state, or waiting on an explicit, named condition. If you cannot propose a concrete, evidence-backed fix, set recommendedFix to null rather than suggesting a vague or arbitrary-wait fix.
 5. Base your reasoning on all of: the test's own error message and stack trace, the failed test's source code, the page objects/helpers it uses (selectors, synchronization patterns), which browser ran it, whether it ran in CI, any signs of retries, any network-related errors, all provided run metadata (commit/branch/CI/event), any provided knownProjectConstraints (see rule 9), and whether the failure implicates a dependency external to this repository.
 6. confidence must be a number between 0 and 1 reflecting your certainty given ONLY the provided evidence - not how confident you generally feel about the topic.
-7. Return exactly one result per failed test provided, in the same order they were given, each identified by its "test" field (title + specFile) matching the input.
+7. Return exactly one result per failed test provided, in the same order they were given. Each result's "failureRef" must be copied exactly, character for character, from the "failureRef" of the failed test it analyzes - never invented, altered, reused for a second result, or omitted. Also echo that failed test's title and specFile in its "test" field.
 8. A compact "history" object may be provided: aggregated pass/fail counts for this exact browser's job over its last several runs on the main branch (not this test individually - this repo's structured reports are only produced on failure, so per-run "it passed" data isn't available at test granularity; treat history as a browser-level signal). Use it only as a probabilistic signal, never as proof by itself:
    - An intermittent pattern (a mix of passes and failures, e.g. 7 passes / 3 failures) supports FLAKY_TEST, ENVIRONMENT, or EXTERNAL_DEPENDENCY over PRODUCT_BUG or TEST_BUG - a real product or test bug is normally reproducible, not intermittent.
    - history.retryPasses > 0 (the job failed on an earlier attempt but passed after being re-run, with nothing else changing) is a meaningful signal toward FLAKY_TEST or EXTERNAL_DEPENDENCY.
@@ -119,7 +125,7 @@ Everything under "failedTests", "relevantFiles", "testResults", "history", "know
 OUTPUT FORMAT (strict):
 Return ONLY a single valid JSON object with this exact shape - no markdown, no code fences, no explanation before or after it, no comments:
 ${JSON.stringify({ results: [EXAMPLE_RESULT_ITEM] }, null, 2)}
-"results" must be an array with exactly one item per failed test, in the order they were given. "recommendedFix" must be null when you cannot propose a concrete fix. Every field shown above is required on every item.`;
+"results" must be an array with exactly one item per failed test, in the order they were given, each carrying that failed test's exact "failureRef". "recommendedFix" must be null when you cannot propose a concrete fix. Every field shown above is required on every item, and no other field is allowed.`;
 }
 
 // Explicit allowlist of context.metadata fields the LLM is actually told
@@ -209,12 +215,16 @@ function projectPromptError(error) {
 
 function projectPromptFailure(failure) {
   const f = failure || {};
-  const projected = {
+  const projected = {};
+  // TSB-F04: the application-generated local reference, forwarded only when
+  // the analyzer attached one (see analyze-failure.js buildFailureReport()).
+  if (Object.prototype.hasOwnProperty.call(f, "failureRef")) projected.failureRef = f.failureRef;
+  Object.assign(projected, {
     title: f.title ?? null,
     fullTitle: f.fullTitle ?? null,
     specFile: f.specFile ?? null,
     error: projectPromptError(f.error),
-  };
+  });
   // Optional fields are included only when the source object genuinely
   // carries them (own-property, matching pickPromptMetadata()'s own
   // "explicitly supplied" convention) - never invented as a misleading

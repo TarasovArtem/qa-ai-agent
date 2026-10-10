@@ -43,6 +43,7 @@ const cypressAdapter = require("./adapters/cypress-adapter");
 // everywhere else.
 const { selectRuntimeAdapter } = require("./runtime-framework-selector");
 const { readBoundedResponseJson, BOUNDED_RESPONSE_FAILURES } = require("./bounded-response");
+const { MAX_HISTORY_RUNS, MAX_HISTORY_REASON_LENGTH, validateHistoryRecord } = require("./triage-boundary-contract");
 
 // Roadmap TI-1: this generic collector owns no concrete project identity
 // of its own - main() requires an explicitly injected ProjectProfile (see
@@ -67,8 +68,9 @@ const DEFAULT_BRANCH = "main";
 // Hard ceiling on HISTORY_RUNS regardless of what the env var requests -
 // each run considered costs one extra API call (see aggregateHistory), so
 // an accidental misconfiguration (e.g. HISTORY_RUNS=500) shouldn't be able
-// to turn one CI step into hundreds of requests.
-const MAX_RUNS = 30;
+// to turn one CI step into hundreds of requests. It is also the closed
+// History contract's metric ceiling (XI-02), so it has one source.
+const MAX_RUNS = MAX_HISTORY_RUNS;
 
 // Same retry policy as analyze-failure.js's AI provider call, for the same
 // reason: rate limiting and gateway/server errors are worth one or two
@@ -117,10 +119,16 @@ function log(message) {
 // deliberately NOT downgraded to another writeUnavailable() marker - it
 // propagates to main()'s own try/catch, which is exactly what already
 // happens for any other unexpected error at this point.
+//
+// XI-02: the unavailable variant's reason is bounded text in the closed
+// History contract; a longer diagnostic is shortened here (it is a
+// best-effort diagnostic, never evidence) so the marker always conforms.
 function writeUnavailable(reason, outputFile, root) {
+  const text = String(reason);
+  const boundedReason = text.length > MAX_HISTORY_REASON_LENGTH ? `${text.slice(0, MAX_HISTORY_REASON_LENGTH - 3)}...` : text;
   const safeOutputFile = resolveSafeRepositoryWritePath(outputFile, root, "collect-history.writeUnavailable(): history.json");
-  fs.writeFileSync(safeOutputFile, JSON.stringify({ available: false, reason }, null, 2));
-  log(`history unavailable: ${reason}`);
+  fs.writeFileSync(safeOutputFile, JSON.stringify({ available: false, reason: boundedReason }, null, 2));
+  log(`history unavailable: ${boundedReason}`);
 }
 
 // TSB-F06 + ADV-01: a body-read failure is reported with a fixed message
@@ -428,7 +436,7 @@ async function main({ profile: inputProfile, repositoryRoot, frameworkRuntimeCon
       return writeUnavailable(`no prior '${jobName}' job history found in the last ${runs.length} run(s) on '${branch}'`, outputFile, root);
     }
 
-    const history = {
+    const history = validateHistoryRecord({
       available: true,
       // Stable project identity (Roadmap #19.3C) - the project this
       // aggregate was actually collected for, so a consumer analyzing a
@@ -443,10 +451,10 @@ async function main({ profile: inputProfile, repositoryRoot, frameworkRuntimeCon
       // from (Roadmap #21E's runtime-framework-selector.js), never an
       // independently duplicated literal. A record written from this point
       // on is no longer legacy-ambiguous: analyze-failure.js's
-      // isHistoryFrameworkEligible() reads this exact field to ensure a
+      // History projection (XI-02) requires this exact field to ensure a
       // Playwright analysis can never mistake a Cypress record for its own
       // history, and a Cypress analysis matches it exactly rather than
-      // falling back to legacy ABSENT-framework compatibility. Roadmap
+      // relying on any legacy ABSENT-framework fallback (none exists). Roadmap
       // #21H: previously always cypressAdapter.id (this producer was
       // Cypress-only) - now the selected adapter's own id, so a
       // QA_FRAMEWORK=playwright invocation correctly writes "playwright".
@@ -458,8 +466,12 @@ async function main({ profile: inputProfile, repositoryRoot, frameworkRuntimeCon
       failures,
       retryPasses,
       generatedAt: new Date().toISOString(),
-    };
+    });
 
+    // XI-02: the record above was validated against the closed History
+    // contract before this write (an out-of-contract record - e.g. an
+    // over-long TEST_BROWSER/HISTORY_BRANCH value - throws into the
+    // best-effort catch below and becomes an unavailable marker instead).
     // Roadmap FPI-2 Corrective C4 (FPI2-R-9): validated as close as
     // reasonably possible to the actual write - see
     // resolveSafeRepositoryWritePath()'s own documentation (context-utils.js).

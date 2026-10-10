@@ -13,7 +13,7 @@
  * that turns every PRODUCT_BUG into an automatic bug filing (a future,
  * separate confidence-threshold policy, not this one).
  *
- * Called with an already-validateAnalysisItem()-passed result - this is
+ * Called with an already-validated (TSB-F04 closed result contract) result - this is
  * not a second validator, so it never re-checks confidence/evidence/
  * rootCause/recommendedFix/etc. It only reasons about the two fields its
  * own decision depends on.

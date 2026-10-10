@@ -159,9 +159,16 @@ test("false-PASS: a current deterministic refusal may be PASS while its target a
 test("false-PASS: a successful reproduction test keeps a FAIL security outcome, and policy dependencies do not erase it", () => {
   assert.equal(observed(false), OUTCOMES.FAIL);
   assert.equal(observed(false, { ownerDispositionRequired: true }), OUTCOMES.FAIL);
-  for (const id of ["H05-C1", "H05-C2", "H06-C1", "H06-C2"]) {
+  for (const id of ["H01-C2", "H02-C1", "H02-C5", "H11-C8", "H11-C9"]) {
     assert.equal(confirmCase(id, false), OUTCOMES.FAIL);
-    assert.throws(() => confirmCase(id, true), /differs from the declared/, `${id} (XI) is declared FAIL at this reviewed baseline and cannot be confirmed as PASS without an explicit, reviewed evidence-model update`);
+    assert.throws(() => confirmCase(id, true), /differs from the declared/, `${id} is declared FAIL and cannot be confirmed as PASS without an explicit, reviewed evidence-model update`);
+  }
+  // Triage Boundary implementation evidence-model update: the XI cases
+  // observe the implemented controls holding. A regression that reproduces
+  // the gap again cannot be confirmed - it FAILS the case.
+  for (const id of ["H01-C1", "H05-C1", "H05-C2", "H06-C1", "H06-C2"]) {
+    assert.equal(confirmCase(id, true), OUTCOMES.PASS);
+    assert.throws(() => confirmCase(id, false), /differs from the declared/, `${id} (XI) is declared PASS; a reproduced gap must fail the evidence run`);
   }
 });
 
@@ -173,9 +180,12 @@ test("false-PASS: no current-behavior case reports PASS for a property that is a
 
 // --- 3. finding preservation and documentation binding -----------------------------------
 
-test("finding preservation: XI cases record XI-01/XI-02 as OPEN / MEDIUM / UNCHANGED and only as FAIL reproductions", () => {
-  for (const c of CASES.filter((x) => /^H0[56]-C/.test(x.id) && x.outcome === OUTCOMES.FAIL)) {
-    assert.match(c.related, /XI-0[12] OPEN \/ MEDIUM \/ UNCHANGED/, c.id);
+test("finding preservation: XI cases keep XI-01/XI-02 OPEN / MEDIUM and never claim closure", () => {
+  const xi = CASES.filter((x) => /^H0[56]-C[12]$/.test(x.id));
+  assert.equal(xi.length, 4);
+  for (const c of xi) {
+    assert.match(c.related, /XI-0[12] OPEN \/ MEDIUM/, c.id);
+    assert.doesNotMatch(`${c.related} ${c.title}`, /\bCLOSED\b|\bclosed\b|waived|re-rated/, c.id);
   }
 });
 
