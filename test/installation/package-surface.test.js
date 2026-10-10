@@ -92,7 +92,7 @@ const manifestSet = new Set(manifest);
 
 test("A-1 manifest: the supported entrypoints and every explicit subpath target are shipped", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
-  for (const target of Object.values(pkg.exports)) {
+  for (const target of [...Object.values(pkg.exports), ...Object.values(pkg.bin || {})]) {
     assert.ok(manifestSet.has(target.replace(/^\.\//, "")), `${target} must be in the tarball`);
   }
   assert.ok(manifestSet.has("scripts/ai/index.js"));
@@ -166,11 +166,15 @@ function resolveRelative(fromRel, spec) {
 
 // Every `require(...)` in one file: the literal relative specifiers plus any
 // non-literal require or dynamic import (which the closure test forbids).
+// Controlled-v1 Stage 1: a literal `require.resolve("./x")` is also an edge -
+// the qa-agent CLI locates its internal stage entrypoint that way (it is
+// spawned with process.execPath, not required), so it must ship and count as
+// reachable; a non-literal require.resolve is forbidden like require().
 function scanRequires(file) {
   const src = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
   const relative = [];
   const problems = [];
-  for (const m of src.matchAll(/\brequire\s*\(\s*([^)]*?)\s*\)/g)) {
+  for (const m of src.matchAll(/\brequire(?:\.resolve)?\s*\(\s*([^)]*?)\s*\)/g)) {
     const literal = m[1].match(/^(["'])(.*)\1$/);
     if (!literal) {
       problems.push(`${file}: non-literal require(${m[1]})`);
@@ -198,12 +202,13 @@ test("A-1 closure: every local require of every shipped .js file resolves to a s
 
 // The reverse direction of the closure test (ACG-A1-R01): nothing EXTRA ships.
 // Every shipped .js file must be reachable by `require` from a supported
-// entrypoint (an `exports` target), and every shipped non-JS file must be
-// package metadata or documented runtime-discovered knowledge data.
-test("A-1 minimality: every shipped .js file is reachable from a supported entrypoint; every other file is metadata or documented data", () => {
+// entrypoint, and every shipped non-JS file must be package metadata or
+// documented runtime-discovered knowledge data. Controlled-v1 §9.1: supported
+// entrypoints = `exports` targets ∪ `bin` targets.
+test("A-1 minimality: every shipped .js file is reachable from a supported entrypoint (exports ∪ bin); every other file is metadata or documented data", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   const reachable = new Set();
-  const queue = Object.values(pkg.exports)
+  const queue = [...Object.values(pkg.exports), ...Object.values(pkg.bin || {})]
     .map((target) => target.replace(/^\.\//, ""))
     .filter((target) => target.endsWith(".js"));
   while (queue.length > 0) {
