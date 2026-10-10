@@ -471,6 +471,119 @@ test("requirements check: an output leaf symlinked outside the root is refused (
   assert.equal(fs.readFileSync(victim, "utf8"), "ORIGINAL");
 });
 
+// C1-02 (ARCH-IMPL-m02 / SEC-IMPL-m02): the effective write directory
+// <output.dir>/requirements must be authorized against the same protected
+// prefixes as output.dir itself. A directory symlink is used where the host
+// allows it; otherwise (Windows without the symlink privilege) a junction,
+// which needs no privilege - the redirect class under test is the same.
+function linkDir(target, link) {
+  try {
+    fs.symlinkSync(target, link, "dir");
+    return "symlink";
+  } catch (err) {
+    if (process.platform !== "win32") throw err;
+  }
+  fs.symlinkSync(target, link, "junction");
+  return "junction";
+}
+
+function git(cwd, args) {
+  return require("node:child_process").execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function gitAvailable() {
+  try {
+    git(scratch(), ["--version"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listTree(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    out.push(full);
+    if (entry.isDirectory()) out.push(...listTree(full));
+  }
+  return out.sort();
+}
+
+const REQUIREMENTS_CONFIG = baseConfig({ output: { dir: "out" }, requirements: { source: "file", path: "qa/requirements.json" } });
+
+test("C1-02 case A: <output.dir>/requirements redirected into .git is refused (5) and nothing is written into .git", async () => {
+  const root = withRequirements(makeRoot(REQUIREMENTS_CONFIG));
+  fs.mkdirSync(path.join(root, ".git"));
+  fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+  fs.mkdirSync(path.join(root, "out"));
+  linkDir(path.join(root, ".git"), path.join(root, "out", "requirements"));
+  const before = listTree(path.join(root, ".git"));
+  const r = await runCli(["requirements", "check", "--root", root, "--json"]);
+  assert.equal(r.code, 5, r.stderr);
+  assert.equal(r.json.errors[0].code, "WRITE_TARGET_REFUSED");
+  assert.deepEqual(r.json.artifacts, []);
+  assert.equal(fs.existsSync(path.join(root, ".git", "requirements-check.json")), false);
+  assert.deepEqual(listTree(path.join(root, ".git")), before, "no protected file created");
+});
+
+test("C1-02 case B: <output.dir>/requirements redirected into .git/refs/heads is refused (5); refs unchanged and the repository still works", async (t) => {
+  if (!gitAvailable()) return t.skip("platform-specific: git executable unavailable, a real repository cannot be created");
+  const root = withRequirements(makeRoot(REQUIREMENTS_CONFIG));
+  git(root, ["init", "-q", "-b", "main"]);
+  git(root, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "seed"]);
+  const heads = path.join(root, ".git", "refs", "heads");
+  const refsBefore = git(root, ["for-each-ref"]);
+  const headsBefore = fs.readdirSync(heads).sort();
+  fs.mkdirSync(path.join(root, "out"));
+  linkDir(heads, path.join(root, "out", "requirements"));
+  const r = await runCli(["requirements", "check", "--root", root, "--json"]);
+  assert.equal(r.code, 5, r.stderr);
+  assert.equal(r.json.errors[0].code, "WRITE_TARGET_REFUSED");
+  assert.equal(fs.existsSync(path.join(heads, "requirements-check.json")), false);
+  assert.deepEqual(fs.readdirSync(heads).sort(), headsBefore);
+  assert.equal(git(root, ["for-each-ref"]), refsBefore, "refs unchanged");
+  assert.match(git(root, ["rev-parse", "--verify", "HEAD"]).trim(), /^[0-9a-f]{40}$/, "repository operational");
+});
+
+test("C1-02: <output.dir>/requirements redirected into node_modules, a framework source root or the config location is refused (5)", async () => {
+  const cases = [
+    ["node_modules/pkg", baseConfig({ output: { dir: "out" }, requirements: { source: "file", path: "qa/requirements.json" } })],
+    ["playwright", REQUIREMENTS_CONFIG],
+    ["cfg", REQUIREMENTS_CONFIG, ["--config", "cfg/qa-agent.config.json"]],
+  ];
+  for (const [target, config, extra = []] of cases) {
+    const root = withRequirements(makeRoot(config));
+    fs.mkdirSync(path.join(root, ...target.split("/")), { recursive: true });
+    if (extra.length > 0) fs.renameSync(path.join(root, "qa-agent.config.json"), path.join(root, "cfg", "qa-agent.config.json"));
+    fs.mkdirSync(path.join(root, "out"));
+    linkDir(path.join(root, ...target.split("/")), path.join(root, "out", "requirements"));
+    const r = await runCli(["requirements", "check", "--root", root, ...extra, "--json"]);
+    assert.equal(r.code, 5, `${target}: ${r.stderr}`);
+    assert.equal(r.json.errors[0].code, "WRITE_TARGET_REFUSED", target);
+    assert.equal(fs.existsSync(path.join(root, ...target.split("/"), "requirements-check.json")), false, target);
+  }
+});
+
+test("C1-02: a safe in-root redirect of <output.dir>/requirements still writes the report", async () => {
+  const root = withRequirements(makeRoot(REQUIREMENTS_CONFIG));
+  fs.mkdirSync(path.join(root, "out"));
+  fs.mkdirSync(path.join(root, "elsewhere"));
+  linkDir(path.join(root, "elsewhere"), path.join(root, "out", "requirements"));
+  const r = await runCli(["requirements", "check", "--root", root, "--json"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.json.artifacts, ["out/requirements/requirements-check.json"]);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "elsewhere", "requirements-check.json"), "utf8")).kind, "RequirementsCheckReport");
+});
+
+test("C1-02: the normal safe output path (directories created fresh) still writes the report", async () => {
+  const root = withRequirements(makeRoot(REQUIREMENTS_CONFIG));
+  const r = await runCli(["requirements", "check", "--root", root, "--json"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.json.artifacts, ["out/requirements/requirements-check.json"]);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "out", "requirements", "requirements-check.json"), "utf8")).kind, "RequirementsCheckReport");
+});
+
 // --- output discipline ------------------------------------------------------------
 
 test("output: errors never print stack traces; --json stdout is exactly one object for every command outcome", async () => {

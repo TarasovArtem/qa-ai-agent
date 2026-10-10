@@ -188,6 +188,75 @@ test("classification: a non-JSON model response never leaks the parser's quoted 
   assert.doesNotMatch(stripProviderPayload(stderr), /SENTINEL_MODEL_OUTPUT/);
 });
 
+// C1-01 (ARCH-IMPL-m01 / SEC-IMPL-m01): the JSON parser's excerpt quotes raw
+// model output verbatim, newlines included, so the withheld segment must not
+// end at the first line break. The fake analyze child prints exactly what
+// analyze-failure.js prints for that case (the real parser's message).
+function parserMessage(raw) {
+  try {
+    JSON.parse(raw);
+  } catch (err) {
+    return err.message;
+  }
+  throw new Error("fixture must be malformed JSON");
+}
+
+function fakeAnalyzeChild({ stderr, result }) {
+  return () => {
+    const { EventEmitter } = require("node:events");
+    const { PassThrough } = require("node:stream");
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.send = () => {
+      setImmediate(() => {
+        child.stderr.write(stderr);
+        child.emit("message", { type: "result", ...result });
+        child.stdout.end();
+        child.stderr.end();
+        setImmediate(() => child.emit("close", 1, null));
+      });
+      return true;
+    };
+    return child;
+  };
+}
+
+const MALFORMED_MODEL_OUTPUTS = [
+  '{"results": [\nSECRETFRAG',
+  '{"results": [\n\n"SECRETFRAG"\r\n{\n}}',
+  '{"results": [{"a": "x\u0007\u001b[31m\nSECRETFRAG\t\'"}',
+  '{"results":\r\nSECRETFRAG\r\n"}',
+];
+
+test("C1-01: a multiline malformed model response never reaches stdout, stderr or errors[] (exit 6, PROVIDER_FAILURE, bounded)", async () => {
+  const root = makeRoot(TRIAGE);
+  for (const raw of MALFORMED_MODEL_OUTPUTS) {
+    const detail = parserMessage(raw);
+    const viaStderr = { stderr: `[ai:analyze] Error: AI provider response was not valid JSON: ${detail}\n`, result: { ok: false, message: null } };
+    const viaResult = { stderr: "", result: { ok: false, message: `AI provider response was not valid JSON: ${detail}` } };
+    for (const child of [viaStderr, viaResult]) {
+      const r = await runCli(["triage", "analyze", "--root", root, "--json"], { env: hermeticEnv(local(ID_A)), spawnImpl: fakeAnalyzeChild(child) });
+      const label = JSON.stringify({ raw, via: child.stderr ? "stderr" : "result" });
+      assert.equal(r.code, 6, label);
+      assert.equal(r.json.errors[0].code, "PROVIDER_FAILURE", label);
+      assert.equal(r.json.errors[0].message, "AI provider response was not valid JSON (parser detail withheld).", label);
+      assert.ok(r.json.errors[0].message.length <= 515, label);
+      assert.doesNotMatch(r.stdout, /SECRETFRAG/, `stdout ${label}`);
+      assert.doesNotMatch(r.stderr, /SECRETFRAG/, `stderr ${label}`);
+      assert.doesNotMatch(JSON.stringify(r.json), /SECRETFRAG/, `structured ${label}`);
+    }
+  }
+});
+
+test("C1-01: sanitizeDiagnostics withholds the whole parser excerpt, not just its first line", () => {
+  const detail = parserMessage('{"results": [\nSECRETFRAG');
+  assert.match(detail, /\n/, "fixture precondition: the parser excerpt spans lines");
+  const text = `[ai:analyze] provider: mock\n[ai:analyze] Error: AI provider response was not valid JSON: ${detail}\n`;
+  assert.equal(sanitizeDiagnostics(text), "[ai:analyze] provider: mock\n[ai:analyze] Error: AI provider response was not valid JSON (parser detail withheld).\n");
+  assert.equal(stripProviderPayload(`AI provider response was not valid JSON: ${detail}`), "AI provider response was not valid JSON (parser detail withheld).");
+});
+
 test("diagnostics: forwarded child output never carries stack frames", () => {
   const text = "Error: boom\n    at Object.<anonymous> (/x/y.js:1:1)\n\tat Module._compile (node:internal)\n[ai:collect] wrote reports/ai/context.json\n";
   assert.equal(sanitizeDiagnostics(text), "Error: boom\n[ai:collect] wrote reports/ai/context.json\n");

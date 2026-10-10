@@ -74,7 +74,11 @@ Path containment: `requirements.path` and `output.dir` must be safe POSIX
 relative paths and must realpath inside the root (symlink/junction escapes
 refused). `output.dir` must not overlap `.git`, `node_modules`, `cypress`,
 `playwright`, `frameworkRuntime.testSourceRoot` or the config file — lexically
-and canonically, case-insensitively.
+and canonically, case-insensitively. `requirements check` applies the same
+canonical check to its effective report directory
+`<output.dir>/requirements` before creating anything and again immediately
+before the write, so a symlink/junction below `output.dir` into a protected
+location is refused (exit 5, `WRITE_TARGET_REFUSED`).
 
 A known capability that the release does not enable (e.g. `"apply": true`) is
 schema-valid: `config validate` exits 0 and reports

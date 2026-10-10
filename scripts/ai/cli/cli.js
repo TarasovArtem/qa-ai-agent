@@ -131,10 +131,14 @@ function loadValidatedConfig(root, flags, { allowMissing = false } = {}) {
   return { config, configRelPath: read.configRelPath };
 }
 
-function checkContainment(root, config, configRelPath) {
+function outputProtectedPaths(config, configRelPath) {
   const protectedPaths = [...PROTECTED_OUTPUT_PREFIXES, configRelPath];
   if (config.frameworkRuntime) protectedPaths.push(config.frameworkRuntime.testSourceRoot);
-  assertCanonicallyContained(root, config.output.dir, "output.dir", { protectedPaths });
+  return protectedPaths;
+}
+
+function checkContainment(root, config, configRelPath) {
+  assertCanonicallyContained(root, config.output.dir, "output.dir", { protectedPaths: outputProtectedPaths(config, configRelPath) });
   if (config.requirements) assertCanonicallyContained(root, config.requirements.path, "requirements.path");
 }
 
@@ -221,7 +225,7 @@ function commandRequirementsCheck(ctx) {
   checkContainment(root, config, configRelPath);
   const provider = policy.resolveProvider({ env: ctx.env, platform: ctx.platform, offline: ctx.flags.offline, allow: config.providers.allow });
   policy.enforceOffline(provider);
-  const { summary, artifacts } = runRequirementsCheck({ root, config, product: PRODUCT });
+  const { summary, artifacts } = runRequirementsCheck({ root, config, product: PRODUCT, protectedPaths: outputProtectedPaths(config, configRelPath) });
   return {
     exitCode: EXIT_CODES.OK,
     data: { summary },

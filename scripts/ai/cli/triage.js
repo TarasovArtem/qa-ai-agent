@@ -82,12 +82,19 @@ function resolveInvocation({ stage, env, platform }) {
 }
 
 // The analyzer's non-JSON diagnostic appends the JSON parser's own message,
-// which quotes a fragment of the model output; the CLI never forwards raw
-// provider payload, so that tail is replaced by a fixed sentence.
-const RAW_PAYLOAD_DIAGNOSTIC = /(AI provider response was not valid JSON):[^\r\n]*/g;
+// which quotes a fragment of the model output verbatim - newlines, quotes and
+// control characters included - so its end cannot be located reliably. The
+// CLI never forwards raw provider payload: everything from the diagnostic's
+// separator to the end of the text is replaced by a fixed sentence. The
+// analyzer prints that diagnostic as its final line before exiting, so only
+// the attacker-controlled excerpt (and any stack frames) is dropped.
+const RAW_PAYLOAD_MARKER = "AI provider response was not valid JSON:";
+const RAW_PAYLOAD_WITHHELD = "AI provider response was not valid JSON (parser detail withheld).";
 
 function stripProviderPayload(text) {
-  return text.replace(RAW_PAYLOAD_DIAGNOSTIC, "$1 (parser detail withheld).");
+  const at = text.indexOf(RAW_PAYLOAD_MARKER);
+  if (at === -1) return text;
+  return `${text.slice(0, at)}${RAW_PAYLOAD_WITHHELD}${/\r?\n$/.test(text) ? "\n" : ""}`;
 }
 
 // Forwarded child diagnostics never carry stack frames (a crashing child
