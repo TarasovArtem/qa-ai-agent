@@ -6,7 +6,9 @@ apply security contract**
 Authority: `OD-CONTROLLED-V1-STAGE-4-APPROVAL-DESIGN — APPROVED`
 
 Corrective: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C1 — APPROVED` (design corrective
-C1 for `ARCH-S4-m01..m06`; change record §33)
+C1 for `ARCH-S4-m01..m06`; change record §33);
+`OD-CONTROLLED-V1-STAGE-4-DESIGN-C2 — APPROVED` (design corrective C2 for
+`ARCH-S4-C1-m01`; change record §34)
 
 State: **DESIGN ONLY / SOLE WIP** (`WIP = 1`)
 
@@ -374,21 +376,34 @@ S12 re-verify (time-split defense, §18): reload manifest (sha256 == M0),
     repeat S1-S5 (including derivePackageState) and require crsDigest == C0,
     live context CURRENT, reviewer identity == I0; otherwise
     REVIEW_PACKAGE_CHANGED_DURING_APPROVAL (4) or the S1 refusal
-S13 commit (§16.6 ledger protocol): L = manifest.reviews.length + 1;
-    create review/claim-<LLLL>.json O_CREAT|O_EXCL (exists -> refuse
-    RUN_CHANGED_DURING_COMMAND (4), nothing else written); build the v1 core
-    with the (extracted) v1 builder from P; build record v2; write
-    review/record-<NNNN>-<recordId>.json write-once; re-check manifest
-    sha256 == M0; write the manifest with the appended reviews entry          (4)
-S14 print "decision recorded: <APPROVE|REJECT> (record <sessionId>)"
+S13 commit (§16.6 ledger protocol, claim critical section §9.3.2):
+    a. prepare (pure, no write): L = manifest.reviews.length + 1; build the
+       v1 core with the (extracted) v1 builder from P; build record v2 and
+       its bytes; build the new manifest bytes with the appended reviews
+       entry
+    b. CS-ENTER: switch the session's signal handling to deferral (§9.3.2);
+       create review/claim-<LLLL>.json O_CREAT|O_EXCL (exists -> leave the
+       critical section with no claim of this session, refuse
+       RUN_CHANGED_DURING_COMMAND (4), nothing written)
+    c. write review/record-<NNNN>-<recordId>.json write-once; re-check
+       manifest sha256 == M0; write the manifest bytes of S13a
+    d. CS-EXIT: the manifest write has returned successfully (COMMITTED) or
+       any step of c has failed (ORPHANED); restore normal signal handling   (4)
+S14 if COMMITTED: print "decision recorded: <APPROVE|REJECT> (record
+    <sessionId>)"; if ORPHANED: refuse with the reason of the failing step
+    and the fixed run-quarantine warning (§9.3.2); then honor any deferred
+    termination signal (§9.3.2)
 ```
 
-Interrupts (SIGINT/SIGTERM/SIGHUP), EOF, terminal read errors and the 60-minute
-limit all abort with **no** record and no manifest change. Nothing is written
-before S13. A failure or crash **inside** S13 after the claim was created
-leaves a claim beyond the ledger, which `derivePackageState` treats as
-`QUARANTINED` for every package of the run (§16.7) — fail closed; the decision
-is not recorded and S14 is never printed.
+Interruption outcomes depend on the phase (§9.3.2 is normative):
+
+| Phase | Interruption (EOF, terminal read error, session window, or a handled signal) | Uncatchable termination (§9.3.2) |
+|---|---|---|
+| S1–S12 and S13a (before CS-ENTER) | abort with **no** claim, **no** record and no manifest change | same: nothing was written |
+| S13b–S13c (inside the claim critical section) | a handled signal is **deferred** (neither swallowed nor acted on) until CS-EXIT; the section ends deterministically as COMMITTED or ORPHANED; no terminal read occurs inside the section | the claim may remain without a ledger entry (orphan claim): the run becomes `QUARANTINED` (§16.7 rule 1), permanently, for every package |
+| after CS-EXIT | COMMITTED: the decision is recorded and normal post-commit semantics apply, then the deferred signal is honored; ORPHANED: the run is `QUARANTINED`, then the deferred signal is honored | COMMITTED: the decision is recorded (S14 may not be printed); ORPHANED: as above |
+
+Nothing is written before CS-ENTER.
 
 #### 9.3.1 Non-authoritative session context (INFO-02)
 
@@ -407,6 +422,86 @@ approval policy: whole package; one apply attempt; expires <validity> after the 
 disposition of §30.5 item 14. These lines help the operator confirm *which*
 repository and policy they are deciding in; they change nothing in the
 authority contract.
+
+#### 9.3.2 Claim critical section and abandoned claims (C2)
+
+**Bounds.** The claim critical section starts at **CS-ENTER**, immediately
+before the `O_CREAT|O_EXCL` creation of `review/claim-<LLLL>.json`, and ends at
+**CS-EXIT**, when the write of the manifest bytes carrying the appended
+`reviews` entry has returned successfully (`COMMITTED`) or a step inside the
+section has failed (`ORPHANED`). It contains only the claim create, the
+record-file write, the manifest `M0` re-check and the manifest write. All
+computation (core, record, manifest bytes) is done before CS-ENTER (S13a). The
+section contains no terminal read or write, no prompt, no wait on human input,
+no network and no clock-dependent decision; its duration is bounded by local
+file I/O. The human review session (S1–S12) is never inside it.
+
+**Section outcomes (deterministic).**
+
+| Outcome | Condition | Evidence | Derived state (§16.7) |
+|---|---|---|---|
+| no claim | the `O_EXCL` create failed (`EEXIST` or other error) | nothing of this session | unchanged; refuse `RUN_CHANGED_DURING_COMMAND` (4) or `INTERNAL_ERROR` (1) per the existing mapping |
+| `COMMITTED` | the manifest write returned successfully | claim `LLLL` = ledger entry `LLLL` (completed claim) | the decision exists; normal rules 2–8 |
+| `ORPHANED` | the record write, the `M0` re-check or the manifest write failed after the claim was created | claim beyond the ledger (± an unreferenced record file) | `QUARANTINED` for every package (rule 1) |
+
+On `ORPHANED`, the command keeps the reason code of the failing step (existing
+codes only: `RUN_CHANGED_DURING_COMMAND` (4) or `INTERNAL_ERROR` (1)) and prints
+a fixed stderr warning naming the claim file and stating that the run is
+quarantined and a new run is required. No new reason or exit code is introduced.
+
+**Handled termination signals (deferred inside the section).** `review record`
+installs its interruption handlers at session start (they abort the session in
+S1–S13a, per §9.3). Between CS-ENTER and CS-EXIT the same handlers only
+**record** the first signal received (and ignore repeats of it), so the
+section runs to `COMMITTED` or `ORPHANED`. After CS-EXIT and S14, a recorded
+signal is **honored**: the command restores the default disposition and
+re-raises that signal on itself, so it terminates as the signal requested. A
+deferred signal is never silently swallowed, and it never causes rollback,
+deletion or rewriting of the claim, record or manifest. Per platform:
+
+| Platform | Deferred inside the section | Not deferrable (treated as uncatchable termination) |
+|---|---|---|
+| POSIX | `SIGINT`, `SIGTERM`, `SIGHUP` | `SIGKILL`, and any other signal or event that terminates the process without running a JS handler |
+| `win32` | `SIGINT` (Ctrl+C) and `SIGBREAK` (Ctrl+Break), as emulated by Node | console-window close (`SIGHUP` emulation: Windows terminates the process unconditionally after a short system timeout, so deferral is best-effort only); `process.kill`/`TerminateProcess` (Node has no catchable `SIGTERM` on Windows); logoff/shutdown termination |
+
+The design does **not** claim that every POSIX signal exists or is catchable
+on Windows, and it does not claim that deferral on `win32` console close
+completes the section.
+
+**Uncatchable termination (outside the deferral guarantee).** Signal deferral
+prevents only *avoidable* orphan claims. It cannot prevent an orphan claim
+caused by `SIGKILL` or any hard process termination, a process crash, a
+runtime fatal error (for example out-of-memory abort or native assertion), a
+host or kernel crash, power loss, or any equivalent termination that runs no
+handler. Signal deferral is **not** crash recovery. For every such case:
+
+- the claim file stays exactly as left (possibly empty or partial) and is
+  immutable coordination evidence;
+- no product command deletes, expires, reuses, overwrites or "repairs" it, and
+  no time-based or manual cleanup command exists (§16.7 Permanence);
+- the claim grants **no** authority: a claim is not an approval, and a record
+  not referenced by the ledger is never an active approval (§16.7);
+- the state is fail closed: `derivePackageState` rule 1 makes **every package
+  of the run** `QUARANTINED`.
+
+**Run-wide consequence (normative).** Because claims serialize the single
+run-wide decision ledger, an abandoned claim for slot `L = reviews.length + 1`
+permanently occupies the next ledger position. Consequently, for the
+**ENTIRE RUN** (not only the package under review):
+
+- no further `reviews` entry can be appended: every later `review record`
+  session refuses at S1 (`PACKAGE_QUARANTINED`, rule 1) and could not obtain
+  claim `L` in any case;
+- no new APPROVE or REJECT record can be recorded for any package;
+- `apply` refuses every package at A8/A14 (rule 1), so the run cannot proceed
+  through Stage 4; existing, otherwise valid approvals of other packages in
+  that run become unusable;
+- recovery is a **new run**, under the permanence policy of §30.5 item 12 and
+  the specific policy of §30.5 item 21.
+
+This is **availability loss, never authority escalation**: an abandoned claim
+removes the ability to record or apply decisions; it never creates, revives or
+extends one.
 
 ### 9.4 Why this UX
 
@@ -1163,7 +1258,7 @@ the ledger is rule 1 whatever its content.)
 
 | # | Condition | State | Reason |
 |---|---|---|---|
-| 1 | any claim `LLLL > ledger.length` exists | `QUARANTINED` (all packages of the run) | `LEDGER_INCOMPLETE`: a review session crashed or was interrupted inside S13; whether its decision was meant to exist is unknown |
+| 1 | any claim `LLLL > ledger.length` exists | `QUARANTINED` (all packages of the run) | `LEDGER_INCOMPLETE`: a review session is inside its claim critical section (live claim), or left it `ORPHANED`, or was terminated there by an uncatchable event (§9.3.2); whether its decision was meant to exist is unknown, so the claim grants nothing |
 | 2 | some `R ∈ attempts` has no outcome file | `QUARANTINED` | `UNKNOWN_OUTCOME`: an apply crashed or is still in flight; #23F may have written |
 | 3 | some outcome is `MALFORMED`, `ROLLBACK_INCOMPLETE` or `UNKNOWN` | `QUARANTINED` | the working tree may differ from both before- and after-state |
 | 4 | some outcome is `APPLIED` | `APPLIED` | |
@@ -1192,13 +1287,28 @@ Normative consequences:
   recovery is a human repair of the working tree plus a new run (§30.5
   item 12). No product command deletes, rewrites or "repairs" claim, attempt
   or outcome files.
+- **Claim kinds (C2).** A claim `LLLL ≤ ledger.length` equal to its ledger
+  entry is a *completed* claim. A claim `LLLL > ledger.length` is, to any
+  observer, indistinguishable between a *live* claim (its session is still
+  inside the §9.3.2 critical section, a local-I/O-bounded interval), an
+  *orphan claim after handled failure* (`ORPHANED`) and an *orphan claim after
+  uncatchable termination*. All three are treated identically by rule 1:
+  no authority, every package of the run `QUARANTINED`. A live claim stops
+  matching rule 1 only by its own session reaching `COMMITTED`; an orphan
+  claim matches rule 1 forever. Claims are immutable coordination evidence,
+  never approval authority: there is no stale-claim expiry, deletion, reuse,
+  overwrite or cleanup command, and an abandoned claim quarantines the
+  **entire run** (§9.3.2, §30.5 item 21).
 - **Crash recovery is fail closed.** Every crash point of S13 and of A14–A16
   maps to rule 1, 2 or 3, or to a state in which no authority was granted:
 
   | Crash point | Evidence left | Derived state |
   |---|---|---|
-  | S13 before the claim | nothing | unchanged |
-  | S13 after the claim, before the manifest write | claim beyond ledger (± orphan record) | `QUARANTINED` (rule 1) |
+  | S1–S13a, before CS-ENTER (any interruption) | nothing | unchanged |
+  | inside the claim critical section, handled signal | none extra: the signal is deferred to CS-EXIT (§9.3.2) | `COMMITTED` → decision exists; `ORPHANED` → `QUARANTINED` (rule 1, run-wide) |
+  | inside the claim critical section, step failure | claim beyond ledger (± orphan record) | `QUARANTINED` (rule 1, run-wide) |
+  | inside the claim critical section, uncatchable termination | claim beyond ledger (± orphan record) | `QUARANTINED` (rule 1, run-wide, permanent; new run) |
+  | after CS-EXIT `COMMITTED` | completed claim + ledger entry | decision exists; rules 2–8 |
   | A14 before the attempt file | nothing | unchanged (`APPROVED`) |
   | A14/A15 after the attempt file, before the outcome | attempt only | `QUARANTINED` (rule 2) |
   | A16 after `applied-*`, before `outcome-*` | attempt + applied record | `QUARANTINED` (rule 2) |
@@ -1818,6 +1928,36 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   the confirmation wait is refused);
 - unknown entry in `review/` or `apply/` → `RUN_STATE_INCONSISTENT`.
 
+**Claim critical section and abandoned claims (§9.3.2, C2)**
+
+1. `SIGINT` (and `SIGTERM`/`SIGHUP` on POSIX) delivered before CS-ENTER → the
+   session aborts with no claim, no record and no manifest change;
+2. `SIGINT` (and `SIGTERM`/`SIGHUP` on POSIX; `SIGBREAK` on `win32`) delivered
+   after the claim is created and before the manifest write (injected hook) →
+   the signal is deferred, the section reaches `COMMITTED` deterministically
+   (or `ORPHANED` when a step failure is also injected), and only then does the
+   process terminate by that signal; the signal is never swallowed;
+3. a handled signal after CS-EXIT `COMMITTED` → the decision is recorded and
+   the run state is the normal committed state;
+4. simulated hard termination (child process killed with `SIGKILL`, or an
+   injected abort) after the claim is created → the orphan claim remains
+   unchanged on disk;
+5. the orphan claim grants no authority: no package of the run is `APPROVED`,
+   and an orphan record file is never an active approval;
+6. the orphan claim makes every package of the run `QUARANTINED` (rule 1),
+   including a package holding an otherwise valid approval;
+7. a subsequent `review record` for any package of the run refuses and cannot
+   obtain or bypass claim `L`;
+8. `apply` for any package of the run refuses at A8 and A14 while the orphan
+   claim exists;
+9. no product command deletes, rewrites, expires or reuses the claim, record or
+   manifest after an `ORPHANED` section or a hard termination (directory
+   snapshot before/after every command), and no cleanup command exists
+   (static check of the command surface);
+10. an `ORPHANED` section keeps an existing reason code and prints the fixed
+    run-quarantine warning; no terminal read occurs between CS-ENTER and
+    CS-EXIT.
+
 **Root identity (§17.2)**
 
 - golden digests for fixed `(platform, rootPath, dev, ino)` tuples, including a
@@ -1889,6 +2029,11 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
   `(process.platform, fs.realpathSync.native result canonicalized per §17.2,
   dev, ino)`; a different spelling or location yields refusal, never a false
   match.
+- **INV-17** A ledger claim is coordination evidence, never approval: a claim
+  without its ledger entry grants no authority and quarantines every package
+  of the run (fail closed). Handled termination signals inside the claim
+  critical section are deferred to CS-EXIT, never swallowed; no product path
+  deletes, expires, reuses or overwrites a claim (§9.3.2).
 
 ---
 
@@ -1955,6 +2100,7 @@ independent Architecture C1 re-review and the Security design review.
 | 18 | POSIX superuser (euid 0) refused (§14.4) | refuse | `ARCHITECTURE-DERIVED` (fail-closed narrowing) | `PENDING PO` (confirmation only) |
 | 19 | Repository relocation invalidates pending approvals (§17.2) | invalidate | `ARCHITECTURE-DERIVED` (root binding) | `PENDING PO` (confirmation only) |
 | 20 | CI refusal as product policy, not a boundary (§23) | refuse under `GITHUB_ACTIONS=true` / truthy `CI` | `ARCHITECTURE-DERIVED` policy; its residual is part of R-1 | `PENDING PO` (confirmation only) |
+| 21 | Abandoned review claim / run-wide quarantine (§9.3.2, §16.7 rule 1) | handled termination signals are deferred through the bounded claim critical section; an uncatchable termination (or a step failure) after claim creation may leave an orphan claim; an orphan claim permanently quarantines the **entire run** (all packages, including otherwise valid approvals); the product never auto-deletes, expires, reuses or repairs it; the user must create a new run. Availability loss only, never authority. Specializes item 12 for the run-wide case | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 
 ### 30.4 Documentation follow-ups (upon OD-04 approval; not done here)
 
@@ -2023,7 +2169,10 @@ Architecture then Security review.
 - any `apply` path that writes the manifest, or any second store of apply
   state competing with §16.7;
 - any use of `fs.realpathSync` (non-native) or `canonicalStringify` for
-  `root-identity-v1`.
+  `root-identity-v1`;
+- any automatic or manual claim cleanup, stale-claim expiry, claim reuse or
+  overwrite, or any terminal interaction inside the claim critical section
+  (§9.3.2).
 
 ---
 
@@ -2054,6 +2203,30 @@ CRS-1, PPI-1, record v2 (one added `reviewer.profileDigest` field), manifest v2
 (ledger only), canonical #23F only, `TSB-F02 OPEN / LOW / CONDITIONAL` with
 trigger `FALSE`, `review show` non-authoritative, CI refused as product policy,
 public API and exit codes unchanged, OD-06 not entered.
+
+---
+
+## 34. Design corrective C2 record
+
+Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C2 — APPROVED`. Previous reviewed
+HEAD `53db1a456f16184a73fbc8fdeb8879b1f16cd671` (independent Architecture C1
+re-review: `APPROVED_WITH_NON_BLOCKING_FINDINGS`, 0 B / 0 M / 1 m / 5 INFO).
+This corrective is design-only and addresses exactly `ARCH-S4-C1-m01`; any new
+HEAD invalidates that approval and requires an independent exact-head
+Architecture C2 re-review before the Security design review.
+
+| Finding | Resolution | Sections |
+|---|---|---|
+| `ARCH-S4-C1-m01` abandoned claim wedges the run-wide ledger; consequence not surfaced | one bounded claim critical section (CS-ENTER before the claim `O_EXCL` create → CS-EXIT when the manifest write returns or a step fails; all computation moved before it; no terminal I/O inside); handled signals deferred inside it and honored after it, per platform; uncatchable termination explicitly outside the deferral guarantee; claim kinds (completed / live / orphan after handled failure / orphan after uncatchable termination) all handled by unchanged rule 1; run-wide quarantine and new-run recovery stated normatively; no claim cleanup of any kind; owner clause §30.5 item 21 `PENDING PO`; future tests; INV-17 | §9.3, §9.3.2, §16.7, §28, §29, §30.5, §32.2 |
+
+Unchanged: `derivePackageState` rules and precedence, claim numbering,
+attempt/outcome semantics, manifest v2 (ledger only), apply state external to
+the manifest, reason and exit codes, canonical #23F as the only apply
+authority. The ARCH-S4-C1 INFO findings I01–I05 are not addressed by C2.
+Signal handling and claim semantics add no gate consumer and no approval path:
+`TSB-F02 = OPEN / LOW / CONDITIONAL`, `TSB-F02 TRIGGER = FALSE`.
+`AT-07/TB-01 = RESIDUAL`; R-1..R-5 and every §30.5 clause, including item 21,
+remain `PENDING PO`.
 
 ---
 
