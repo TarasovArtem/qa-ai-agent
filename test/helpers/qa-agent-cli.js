@@ -112,4 +112,33 @@ function spawnRecorder({ fake = false } = {}) {
   return { impl, calls };
 }
 
-module.exports = { REPO_ROOT, PLAYWRIGHT_FIXTURE, scratch, cleanupScratch, baseConfig, makeRoot, hermeticEnv, runCli, spawnRecorder };
+const GENERATIVE_DOUBLE = path.join(__dirname, "generative-provider-double.js");
+
+// Stage 3 test seam: records every spawn exactly as production built it,
+// then - for the generative child only - preloads the test-only provider
+// double (and points it at `scriptFile`). The production-built argv/env are
+// what `calls` records; the double is added on top, never by product code.
+function generativeDoubleSpawn(scriptFile) {
+  const calls = [];
+  const impl = (command, args, options) => {
+    calls.push({ command, args: [...args], options: { ...options, env: { ...options.env } } });
+    const generative = typeof args[0] === "string" && args[0].endsWith("generative-runner.js");
+    if (!generative) return childProcess.spawn(command, args, options);
+    return childProcess.spawn(command, ["--require", GENERATIVE_DOUBLE, ...args], { ...options, env: { ...options.env, QA_AGENT_TEST_PROVIDER_SCRIPT: scriptFile } });
+  };
+  return { impl, calls };
+}
+
+module.exports = {
+  REPO_ROOT,
+  PLAYWRIGHT_FIXTURE,
+  GENERATIVE_DOUBLE,
+  scratch,
+  cleanupScratch,
+  baseConfig,
+  makeRoot,
+  hermeticEnv,
+  runCli,
+  spawnRecorder,
+  generativeDoubleSpawn,
+};

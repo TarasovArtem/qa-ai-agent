@@ -1,11 +1,12 @@
-# `qa-agent` CLI v1 — Controlled-v1 Stages 1–2
+# `qa-agent` CLI v1 — Controlled-v1 Stages 1–3
 
-Status: **implemented on branch `feature/controlled-v1-productization-stages-1-2`**
-(authority `OD-CONTROLLED-V1-PRODUCTIZATION-STAGES-1-2-IMPLEMENTATION`).
+Status: Stages 1–2 complete on `main`; **Stage 3 implemented on branch
+`feature/controlled-v1-productization-stage-3`** (authority
+`OD-CONTROLLED-V1-STAGE-3-IMPLEMENTATION`, upstream `OD-CONTROLLED-V1-OD-02`).
 Governing design: [`controlled-v1-productization-contract-v1.md`](controlled-v1-productization-contract-v1.md).
-This document describes the implemented Stage 1–2 surface only. It does not
-change `ROADMAP.md` lifecycle state and does not authorize Stage 3+, release or
-publication.
+This document describes the implemented surface only. It does not change
+`ROADMAP.md` lifecycle state and does not authorize `review record`, `apply`,
+`execute`, release or publication.
 
 ## 1. Package surface
 
@@ -14,8 +15,9 @@ publication.
 | `exports` | **unchanged** — the same five keys and targets; 19 root names |
 | `bin` | **added**: `qa-agent` → `scripts/ai/cli/qa-agent.js` (not exported; requiring it is unsupported) |
 | Supported entrypoints | `exports ∪ bin` (package-surface minimality is computed over this union) |
-| Tarball | 47 baseline files + 14 `scripts/ai/cli/*.js` modules = 61 files (closed list, tested) |
-| Not shipped | `#22`/`#23`/`generation/**` (OD-02 not entered), tests, fixtures |
+| Tarball | 47 baseline files + 19 `scripts/ai/cli/*.js` modules + 23 Stage 3 private runtime files = 89 files (closed list, tested; [`package-surface-v4.md`](package-surface-v4.md)) |
+| Shipped private (Stage 3, OD-02) | the minimal `#22`/`#23`/`generation` closure of `design`/`plan`/`generate`/`review show` — not exported, unsupported for import |
+| Not shipped | approval gates and review records, `apply`/`execute`/regeneration modules, tests, fixtures, evaluation |
 
 Install and run from a target repository (no global install, no checkout):
 
@@ -37,7 +39,10 @@ npx qa-agent --version
 | `triage aggregate` | `capabilities.triage` | none | valid | `reports/ai/context.json`, `history.json` |
 | `triage analyze` | `capabilities.triage` | effective provider | valid with `mock` | `reports/ai/ai-report.json` |
 | `triage run [--history]` | `capabilities.triage` | effective provider | valid without `--history` | collect → [history] → analyze |
-| `design`, `plan`, `generate`, `review show` | reserved (OD-02) | — | — | none — fixed refusal, exit 5 |
+| `design` | `capabilities.design` | **generative** (`groq`/`gemini`) | **refused (5)** | new run `<output.dir>/runs/<runId>/` (manifest + design artifacts) |
+| `plan --run <id>` | `capabilities.plan` | **generative** | **refused (5)** | plan artifacts in the run |
+| `generate --run <id>` | `capabilities.generate` | **generative** | **refused (5)** | GeneratedChangeSet + review package in the run (proposal only) |
+| `review show --run <id>` | `capabilities.generate` | none | valid | nothing (read-only, non-authoritative) |
 | `review record`, `apply` | reserved (OD-04) | — | — | none — fixed refusal, exit 5 |
 | `execute` | reserved (OD-06) | — | — | none — fixed refusal, exit 5 |
 
@@ -48,7 +53,10 @@ or approval module. There is no `commit`, `push`, `pr`, `merge`, `publish`,
 `--provider` flag. The CLI never prompts.
 
 Global options: `--root <dir>` (default: cwd; never searched upward),
-`--config <path>` (must resolve inside the root), `--offline`, `--json`.
+`--config <path>` (must resolve inside the root), `--offline`, `--json`;
+`--run <id>` for `plan`/`generate`/`review show` (closed grammar
+`yyyymmddThhmmssZ-<16 hex>`; missing → `USAGE_MISSING_RUN`, malformed →
+`USAGE_INVALID_RUN_ID`, both exit 2).
 
 ## 3. Configuration — `qa-agent.config.json` v1
 
@@ -105,14 +113,19 @@ child, provider, network call or write happens before step 13.
 | 12 | invocation trust setup (XI-01) | 5 |
 | 13 | child spawn / provider construction / network / write | — |
 
-Steps 7–10 apply to `triage analyze` and `triage run`. Step 6 is enforced for
-`requirements check` and `triage *`; `info` and `config validate` report it.
+Steps 7–10 apply to `triage analyze`, `triage run`, `design`, `plan` and
+`generate`. For the generative commands step 9 is the generative fit: `mock`
+or `--offline` → exit 5 `CAPABILITY_REQUIRES_GENERATIVE_PROVIDER`. Step 6 is
+enforced for `requirements check`, `triage *`, the generative commands and
+`review show`; `info` and `config validate` report it. For the generative
+commands, every run/artifact input check (exit 4) and the run-directory write
+authorization (exit 5) also complete before step 13.
 
 ## 5. Exit codes and output
 
 `0` ok · `1` internal · `2` usage · `3` configuration · `4` input refused ·
 `5` authority refused · `6` provider/network/model-output failure. `7`/`8`/`10`
-are reserved for `execute` and are never produced by Stage 1–2.
+are reserved for `execute` and are never produced by Stages 1–3.
 
 stdout carries only the result; with `--json` exactly one JSON object
 (`schemaVersion`, `command`, `ok`, `exitCode`, `runId`, `artifacts`, `errors[]`
@@ -165,10 +178,73 @@ so persisted context cannot be rebound to a fresh id. The CLI never sets
 unavailable ≠ zero) and TSB-F04/F06/F07 enforcement stays inside the certified
 stage functions; the CLI adds no bypass.
 
-## 9. Not in Stages 1–2
+## 9. Stage 3 — design, plan, generate, review show (OD-02)
 
-`#22`/`#23` shipping and `design`/`plan`/`generate`/`review show` (OD-02),
-`review record`/`apply` (OD-04), `execute` and any OS support statement
-(OD-06), run manifests, release/publication. `TSB-F02` remains
-`OPEN / LOW / CONDITIONAL` with trigger `FALSE`, enforced by a static import
-test over every shipped module.
+**Chain.** `requirements → design → plan → generate → review show`, all bound
+to one run:
+
+| Command | Consumes | Produces (in `<output.dir>/runs/<runId>/`) |
+|---|---|---|
+| `design` | `requirements.path` → canonical evidence (#22B) | `design/requirement-model.json`, `design/test-case-model.json`, `design/automation-candidate-NNNN.json` (one per test case) |
+| `plan` | design artifacts; live repository context (framework config + `package.json` scripts) | `plan/automation-repository-context.json`, `plan/automation-plan-NNNN.json` (one per `AUTOMATE` candidate; none → exit 4 `NO_AUTOMATE_CANDIDATE`) |
+| `generate` | design + plan artifacts; context must still equal the live repository | `generate/generated-change-set-NNNN.json`, `generate/review-package-NNNN.json` |
+| `review show` | the whole run | stdout only |
+
+**Generative provider.** `design`/`plan`/`generate` require an allowed
+`groq` or `gemini` provider with `AI_MODEL`/`AI_API_KEY`. `mock` and
+`--offline` are refused before any child process exists; there is no
+fallback and no offline generation. Provider calls run only in an isolated
+child (`scripts/ai/cli/generative-runner.js`, `process.execPath`, argv array,
+`shell: false`) whose environment is built from `{}` with only the platform
+baseline, `AI_PROVIDER`, `AI_MODEL` and `AI_API_KEY` — no `QA_FRAMEWORK`,
+invocation, GitHub or `npm_*` key. The parent never loads `config.js` or a
+provider; it validates the child's output with the existing validators before
+writing anything.
+
+**Run manifest and binding** (`manifest.json`, `QaAgentRunManifest` v1):
+run id, product name/version, `RunSemanticProjection` v1 version + SHA-256
+(`projectProfile`, `framework`, `frameworkRuntime`, `knowledge`,
+`requirements.source`/`path` + SHA-256 of the requirements file — never
+`capabilities`, `providers.allow` or `output.dir`), artifact contract
+versions, and per stage the provider name/model plus every artifact's path,
+kind, schema version and SHA-256 of its bytes. Each later command recomputes
+the projection and refuses (exit 4) a different run id
+(`RUN_IDENTITY_MISMATCH`), product version or projection
+(`RUN_BINDING_MISMATCH`), wrong stage order (`RUN_STAGE_ORDER`), a repeated
+stage (`RUN_STAGE_ALREADY_COMPLETED`), changed artifact bytes
+(`RUN_ARTIFACT_DIGEST_MISMATCH`) or an artifact that fails schema/semantic
+re-validation (`RUN_ARTIFACT_INVALID`). Artifacts of another run are never
+adopted. Digests detect corruption, staleness and substitution; they are not
+authenticity and carry no approval.
+
+**Writes.** Only below the authorized run directory, which is checked for
+canonical containment and protected-path overlap before any provider call
+(redirects → exit 5 `WRITE_TARGET_REFUSED`); artifacts first, manifest last;
+nothing is written when generation or validation fails. Target source files,
+the requirements file and the config are never written. Proposed changes are
+data only — never applied.
+
+**Provider output confidentiality.** Child stdout/stderr is never forwarded
+(only a "withheld" count); failures report the step, attempt count and
+closed-vocabulary reason codes only — never model text, validator paths,
+prompts, keys or stacks.
+
+**`review show`.** Re-validates the entire run, re-derives each review
+package from the persisted plan/context/change set and requires equality with
+the persisted package, then prints it with an explicit **non-authoritative**
+statement (control characters escaped in the human view). It records, reads,
+infers and reports no approval and reports whether the live repository still
+matches the context (`CURRENT` / `CHANGED_SINCE_GENERATE` / `UNAVAILABLE`).
+
+**DC-F02 / TSB-F02.** No Stage 3 entrypoint reaches
+`validateApprovedGeneratedChangeSetReview`, `validateApprovedTestDesignReview`
+or the #23F apply consumer; neither gate ships or is exported; there is no
+`review verify`/`status` command. Enforced by a static import graph over the
+shipped files (`test/security/controlled-v1/dc-f02-static-graph.test.js`).
+`TSB-F02` remains `OPEN / LOW / CONDITIONAL`, trigger `FALSE`.
+
+## 10. Not in Stages 1–3
+
+`review record`/`apply` and approval authenticity (OD-04), `execute` and any
+OS support statement (OD-06), release/publication, a programmatic generative
+API (OD-07).

@@ -1,6 +1,7 @@
 /**
  * Controlled-v1 `qa-agent` CLI (Stages 1-2: CLI shell, configuration,
- * baseline commands, supported triage integration).
+ * baseline commands, supported triage integration; Stage 3 / OD-02:
+ * design, plan, generate and the read-only review show).
  *
  * NORMATIVE VALIDATION ORDER (resolves ARCH-PROD-C1-m01). Each command runs
  * the steps that apply to it, strictly in this order; the first failing step
@@ -25,8 +26,12 @@
  *       network / write
  *
  * Steps 7-10 apply only to commands that consume a provider (triage analyze,
- * triage run). Step 6 is enforced for every command that does work
- * (requirements check, triage *); `info` and `config validate` report it.
+ * triage run, design, plan, generate). For design/plan/generate step 9 is
+ * the generative fit: mock or --offline -> exit 5
+ * CAPABILITY_REQUIRES_GENERATIVE_PROVIDER, before any child, provider or
+ * network exists (policy.enforceGenerativeProvider). Step 6 is enforced for
+ * every command that does work (requirements check, triage *, design, plan,
+ * generate, review show); `info` and `config validate` report it.
  *
  * stdout carries only the result (with --json: exactly one JSON object);
  * stderr carries bounded diagnostics - never secrets, raw provider payloads,
@@ -34,7 +39,9 @@
  *
  * Parent-process module graph: this file never loads scripts/ai/config.js,
  * a provider module, or a triage stage module - those are loaded only inside
- * isolated stage children (static proof in the CLI tests).
+ * isolated stage children (static proof in the CLI tests). Provider calls of
+ * design/plan/generate happen only in the generative child; the parent uses
+ * the #22/#23 modules only for their pure validators and builders.
  */
 
 "use strict";
@@ -49,9 +56,13 @@ const { CliError, EXIT_CODES, configError, authorityRefused, boundMessage } = re
 const { readEnv } = require("./env");
 const { CONFIG_FILE_NAME, CONFIG_SCHEMA_VERSION, PROTECTED_OUTPUT_PREFIXES, readConfigText, parseConfigText, validateConfig } = require("./config-file");
 const { assertCanonicallyContained } = require("./paths");
+const { requireRequirements } = require("./run-artifacts");
 const policy = require("./policy");
 const { runRequirementsCheck, REPORT_SCHEMA_VERSION } = require("./requirements-check");
 const triage = require("./triage");
+const { runGenerativeCommand } = require("./generative");
+const { runReviewShow } = require("./review-show");
+const { MANIFEST_SCHEMA_VERSION } = require("./run-store");
 
 const CLI_OUTPUT_SCHEMA_VERSION = 1;
 const PRODUCT = Object.freeze({ name: pkg.name, version: pkg.version });
@@ -64,7 +75,7 @@ function helpText(command) {
     }
     const options = spec.flags
       .filter((f) => f !== "help")
-      .map((f) => (f === "root" || f === "config" ? `--${f} <path>` : `--${f}`))
+      .map((f) => (f === "root" || f === "config" ? `--${f} <path>` : f === "run" ? "--run <id>" : `--${f}`))
       .join(" ");
     return `qa-agent ${command} [${options}]\n\n  ${spec.summary}\n`;
   }
@@ -84,12 +95,14 @@ function helpText(command) {
     "Options:",
     "  --root <dir>       repository root (default: current directory; no upward search)",
     `  --config <path>    configuration file inside the root (default: ${CONFIG_FILE_NAME})`,
-    "  --offline          network-disabled mode (only the mock provider; no History API)",
+    "  --offline          network-disabled mode (only the mock provider; no History API; no AI generation)",
     "  --json             print exactly one JSON object on stdout",
     "  --history          (triage run) include the GitHub History stage",
+    "  --run <id>         (plan, generate, review show) the run created by design",
     "  --help, --version",
     "",
     "Provider: AI_PROVIDER (default mock), AI_MODEL, AI_API_KEY - environment only; never in config.",
+    "design/plan/generate require a generative provider (groq, gemini); mock and --offline are refused.",
     "Exit codes: 0 ok, 1 internal, 2 usage, 3 configuration, 4 input refused, 5 authority refused, 6 provider failure.",
   ];
   return `${lines.join("\n")}\n`;
@@ -162,7 +175,7 @@ function providerReport(provider) {
     offline: provider.offline,
     offlineContradiction: provider.offlineContradiction,
     credentialPresent: provider.credentialPresent,
-    generativeCapable: false,
+    generativeCapable: policy.isGenerativeCapable(provider),
   };
 }
 
@@ -183,12 +196,18 @@ function commandInfo(ctx) {
   const { config, configRelPath } = loadValidatedConfig(root, ctx.flags, { allowMissing: true });
   if (config) checkContainment(root, config, configRelPath);
   const provider = policy.resolveProvider({ env: ctx.env, platform: ctx.platform, offline: ctx.flags.offline, allow: config ? config.providers.allow : ["mock"] });
-  const capabilities = policy.capabilityReport(config);
+  const capabilities = policy.capabilityReport(config, provider);
   return {
     exitCode: EXIT_CODES.OK,
     data: {
       product: PRODUCT,
-      contracts: { config: CONFIG_SCHEMA_VERSION, cliOutput: CLI_OUTPUT_SCHEMA_VERSION, requirementsCheckReport: REPORT_SCHEMA_VERSION, persistedTriageContext: CONTEXT_SCHEMA_VERSION },
+      contracts: {
+        config: CONFIG_SCHEMA_VERSION,
+        cliOutput: CLI_OUTPUT_SCHEMA_VERSION,
+        requirementsCheckReport: REPORT_SCHEMA_VERSION,
+        persistedTriageContext: CONTEXT_SCHEMA_VERSION,
+        runManifest: MANIFEST_SCHEMA_VERSION,
+      },
       config: { path: configRelPath, status: config ? "VALID" : "MISSING" },
       capabilities,
       provider: providerReport(provider),
@@ -210,7 +229,7 @@ function commandConfigValidate(ctx) {
   const { config, configRelPath } = loadValidatedConfig(root, ctx.flags);
   checkContainment(root, config, configRelPath);
   const provider = policy.resolveProvider({ env: ctx.env, platform: ctx.platform, offline: ctx.flags.offline, allow: config.providers.allow });
-  const capabilities = policy.capabilityReport(config);
+  const capabilities = policy.capabilityReport(config, provider);
   const warnings = capabilityWarnings(capabilities);
   return {
     exitCode: EXIT_CODES.OK,
@@ -280,10 +299,55 @@ async function commandTriage(ctx) {
   };
 }
 
+// Stage 3 (OD-02): steps 2-11 here; the run work is in generative.js.
+async function commandGenerative(ctx) {
+  const root = resolveRoot(ctx.flags, ctx.cwd);
+  const { config, configRelPath } = loadValidatedConfig(root, ctx.flags);
+  checkContainment(root, config, configRelPath);
+  requireRequirements(config);
+  const provider = policy.resolveProvider({ env: ctx.env, platform: ctx.platform, offline: ctx.flags.offline, allow: config.providers.allow });
+  policy.enforceGenerativeProvider(provider);
+  policy.enforceCapability(config, ctx.spec.capability);
+  const result = await runGenerativeCommand({
+    stage: ctx.spec.stage,
+    runId: ctx.flags.run,
+    root,
+    config,
+    protectedPaths: outputProtectedPaths(config, configRelPath),
+    provider,
+    env: ctx.env,
+    platform: ctx.platform,
+    spawnImpl: ctx.spawnImpl,
+    diagnostics: ctx.diagnostics,
+    product: PRODUCT,
+  });
+  return {
+    exitCode: EXIT_CODES.OK,
+    data: { runId: result.runId, summary: result.summary, provider: { effective: provider.effective, offline: provider.offline } },
+    artifacts: result.artifacts,
+    human: result.human,
+  };
+}
+
+// Read-only. No provider is used; only the offline contradiction (step 6)
+// and the capability (step 11) are enforced.
+function commandReviewShow(ctx) {
+  const root = resolveRoot(ctx.flags, ctx.cwd);
+  const { config, configRelPath } = loadValidatedConfig(root, ctx.flags);
+  checkContainment(root, config, configRelPath);
+  requireRequirements(config);
+  const provider = policy.resolveProvider({ env: ctx.env, platform: ctx.platform, offline: ctx.flags.offline, allow: config.providers.allow });
+  policy.enforceOffline(provider);
+  policy.enforceCapability(config, ctx.spec.capability);
+  const result = runReviewShow({ runId: ctx.flags.run, root, config, protectedPaths: outputProtectedPaths(config, configRelPath), product: PRODUCT });
+  return { exitCode: EXIT_CODES.OK, data: { runId: result.runId, ...result.data }, artifacts: result.artifacts, human: result.human };
+}
+
 const HANDLERS = Object.freeze({
   info: commandInfo,
   "config validate": commandConfigValidate,
   "requirements check": commandRequirementsCheck,
+  "review show": commandReviewShow,
 });
 
 // --- entry ----------------------------------------------------------------------
@@ -337,7 +401,7 @@ async function run({ argv, env = {}, cwd = process.cwd(), stdout, stderr, platfo
     }
 
     const ctx = { command, spec, flags, env, cwd, platform, spawnImpl, diagnostics: (text) => stderr.write(text) };
-    const outcome = spec.kind === "triage" ? await commandTriage(ctx) : HANDLERS[command](ctx);
+    const outcome = spec.kind === "triage" ? await commandTriage(ctx) : spec.kind === "generative" ? await commandGenerative(ctx) : HANDLERS[command](ctx);
     if (json) {
       stdout.write(`${JSON.stringify(envelope(command, outcome.exitCode, { artifacts: outcome.artifacts || [], ...outcome.data }))}\n`);
     } else {
