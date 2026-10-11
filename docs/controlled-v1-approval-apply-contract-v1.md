@@ -10,7 +10,9 @@ C1 for `ARCH-S4-m01..m06`; change record §33);
 `OD-CONTROLLED-V1-STAGE-4-DESIGN-C2 — APPROVED` (design corrective C2 for
 `ARCH-S4-C1-m01`; change record §34);
 `OD-CONTROLLED-V1-STAGE-4-DESIGN-C3 — APPROVED` (final design corrective C3
-for `SEC-S4-m01..m04`, `ARCH-S4-C2-m01`, `ARCH-S4-C2-m02`; change record §35)
+for `SEC-S4-m01..m04`, `ARCH-S4-C2-m01`, `ARCH-S4-C2-m02`; change record §35);
+`OD-CONTROLLED-V1-STAGE-4-DESIGN-C4 — APPROVED` (final narrow documentation-only
+corrective for `ARCH-S4-C3-m01..m03`, `SEC-S4-C3-m01..m02`; change record §36)
 
 State: **DESIGN ONLY / SOLE WIP** (`WIP = 1`)
 
@@ -39,7 +41,7 @@ implementation stage.
 | Canonical path identity | **`PPI-1` (Portable Path Identity v1)**: a validation-only (never normalizing) portable ASCII path grammar; the approved identity and the written identity are the same byte string (§13) |
 | Reviewer identity | **OS-local account attribution** (`os-local-account-v1`), read from the operating system (never from environment variables, config or flags): POSIX effective uid + account name; Windows account name + token-derived profile-directory digest. It is `LOCAL ACCOUNT ATTRIBUTION`, not personal authentication and not proof of a physical human (§14) |
 | Human decision provenance | **Interactive TTY challenge session** (`interactive-tty-challenge-v1`): full TAP-1 presentation with per-target acknowledgement, a fresh CSPRNG challenge, an exact typed `APPROVE <code>` / `REJECT <code>` line read from the controlling terminal, and re-verification of the package before the record is written (§15). It evidences that an **interactive controlling process** completed the session, not physical human presence |
-| Authority state model | **One deterministic derivation** (`derivePackageState`, §16.7) over the manifest `reviews` ledger, the ledger claims and the `apply/attempt-*` / `apply/outcome-*` files. Apply state is deliberately **external** to the manifest; outcome evidence takes precedence over ledger bookkeeping; crash and power-loss recovery is **fail closed** under an explicit durability model (§16.8: claim → record → crash-safe manifest replacement; attempt durable before #23F → outcome) |
+| Authority state model | **One deterministic derivation** (`derivePackageState`, §16.7) over the canonical run-root inventory (including `manifest.next-*` evidence), the manifest `reviews` ledger, the ledger claims and the `apply/attempt-*` / `apply/outcome-*` files. Apply state is deliberately **external** to the manifest; outcome evidence takes precedence over ledger bookkeeping; crash and power-loss recovery is **fail closed** on storage honoring the explicit durability model (§16.8: claim → record → crash-safe manifest replacement; attempt durable before #23F → outcome); lying storage has the R-3 lost-attempt and lost-supersession residuals |
 | Authenticity | **Integrity + binding, not cryptographic authenticity.** Records stay unkeyed SHA-256 sealed. No signing, no key management, no external identity provider, no network |
 | Review record schema | **`GeneratedChangeSetReviewRecord v2 REQUIRED`**: an authority envelope that embeds an unchanged v1 core consumed by #23F (§16) |
 | Run manifest | **`QaAgentRunManifest v2 REQUIRED`** (append-only `reviews` decision ledger only; **no apply ledger** — apply state lives in write-once run-directory files, §16.6) |
@@ -262,7 +264,8 @@ The quoted text is a **recommendation only**. Every value in it that §30.5
 classifies as `PO ACCEPTANCE REQUIRED` (for example 24 h, single use, offline
 permission, same-principal apply) remains **unresolved** until the explicit
 Product Owner OD-04 disposition, which occurs only after the independent
-Architecture (C1 re-review) and Security design reviews. This document grants
+Architecture C4 exact-head re-review and then the Security C4 exact-head
+re-review. This document grants
 no owner acceptance.
 
 The recommendation is **APPROVE** rather than `ADDITIONAL OWNER DECISION
@@ -358,17 +361,21 @@ S5  B  = CRS-1 bytes of P;  C0 = crsDigest(B);  P' = decode(B), require
 S6  sessionId = 16 CSPRNG bytes (32 lowercase hex);
     challenge = 40 CSPRNG bits as 8 Crockford-base32 characters
     (alphabet 0123456789ABCDEFGHJKMNPQRSTVWXYZ); sessionStartedAt = now
-S7  require the terminal geometry of §10.3.1; render TAP-1 (§10.3) from P'
+S7  start whole-session resize monitoring and require the terminal geometry
+    of §10.3.1; render TAP-1 (§10.3) from P'
     to stdout as hard-wrapped rows, paged per §10.3.1 (page checkpoints
-    inside a target); after each target print
+    inside a target); check geometry before each target, each page checkpoint
+    and each end-of-target prompt; after each target print
     "-- end of target k/N; press Enter to continue --" and read one line from
     the terminal (content ignored, max 64 bytes)
-S8  print the non-authoritative context lines (§9.3.1), then the decision
+S8  re-check geometry immediately before entering S8; print the
+    non-authoritative context lines (§9.3.1), then the decision
     prompt:
        To APPROVE writing exactly these N target(s), type:  APPROVE <challenge>
        To REJECT this package, type:                        REJECT <challenge>
        Anything else, Ctrl-C or end-of-input aborts without recording.
-    read one line (max 64 bytes) from the terminal
+    read one line (max 64 bytes) from the terminal while monitoring geometry;
+    re-check geometry after receipt, before accepting the decision
 S9  accept only an exact match of ^(APPROVE|REJECT) <challenge>$ (case-
     sensitive, one ASCII space, no other characters before the line
     terminator); otherwise re-prompt; after 3 failed lines abort
@@ -385,7 +392,10 @@ S13 commit (§16.6 ledger protocol, claim critical section §9.3.2):
        v1 core with the (extracted) v1 builder from P; build record v2 and
        its bytes; build the new manifest bytes with the appended reviews
        entry
-    b. CS-ENTER: switch the session's signal handling to deferral (§9.3.2);
+    b. immediately before CS-ENTER, verify the geometry and the latched
+       whole-session invariant (§10.3.1); violation -> abort without writing
+       and require a new review session; CS-ENTER: switch the session's signal
+       handling to deferral (§9.3.2);
        create review/claim-<LLLL>.json O_CREAT|O_EXCL (no handle returned,
        e.g. exists -> leave the critical section with no claim of this
        session, refuse RUN_CHANGED_DURING_COMMAND (4), nothing written); the
@@ -770,15 +780,31 @@ exactly one terminal row, so column 1 of every visual row is product-owned:
 TAP-1 VISUAL ROW ATTRIBUTION = UNAMBIGUOUS
 ```
 
-**Terminal geometry (refuse when insufficient).** Before rendering (S7) and
-again before every page checkpoint, `review record` requires
-`process.stdout.columns ≥ W` (100) and `process.stdout.rows ≥ 24`; otherwise
-the session aborts before CS-ENTER with `INTERACTIVE_TERMINAL_REQUIRED` (5)
-and a fixed message naming the required geometry — no claim, record or
-manifest change. There is no degraded or narrower trusted presentation. The
-product relies on the terminal's reported geometry; a terminal that
+**Terminal geometry (whole trusted session, C4).** `review record` requires
+available numeric geometry with `process.stdout.columns ≥ W` (100) and
+`process.stdout.rows ≥ 24`. Verify it at trusted presentation start (S7),
+before each target, before every intra-target page checkpoint, immediately
+before each end-of-target prompt, immediately before entering S8, while
+waiting for decision input, after each decision line is received (including
+re-prompts), and immediately before CS-ENTER / authority commit (after S13a).
+
+Monitor stdout terminal resize events continuously from trusted presentation
+start through the final pre-commit verification, including waits for target,
+page, decision and comment input and the S11–S13a revalidation/preparation
+interval. Re-check geometry on every resize; latch any width below `W`,
+insufficient rows or unavailable geometry as a session violation. Drain
+pending resize observations and freshly verify geometry and the latch at the
+final pre-commit boundary; a decision alone never authorizes bypassing it.
+If width ever drops below `W` during that interval, **ABORT BEFORE AUTHORITY
+COMMIT** with `INTERACTIVE_TERMINAL_REQUIRED` (5) and a fixed message naming
+the required geometry: no claim, record or manifest change. Restoring geometry
+cannot clear the violation or reuse the reviewed session; restart with a fresh
+session and review every target again. Never continue wrapped output, reflow
+to a smaller width or silently degrade. No narrow/degraded trusted mode exists.
+The product relies on the terminal's reported geometry; a terminal that
 misreports it is outside the product's control (R-1/R-5 class: the operator's
-own terminal).
+own terminal). TAP-1 keeps `W = 100`, minimum rows `24`, and `PAGE = 20`;
+later changes follow the TAP contract/version rules (§10.3, §10.3.1).
 
 **Bounded paging inside targets.** The rows of each target are emitted in
 pages of at most `PAGE = 20` rows (a TAP-1 session constant). After every full
@@ -1488,7 +1514,11 @@ QaAgentRunManifest v2 REQUIRED
 Package state is a **pure deterministic function** of on-disk evidence:
 
 ```text
-derivePackageState(N, ledger, claims, attempts, outcomes) -> state
+derivePackageState(N, runRootInventory, ledger, claims, attempts, outcomes) -> state
+  runRootInventory : canonical inventory of immediate run-root entries,
+             including every manifest.next-* candidate (name + entry kind);
+             sorted by exact ASCII name, no normalization or deduplication;
+             validate against the closed run-root grammar of §16.6/§16.8
   ledger   : manifest v2 `reviews` (validated; each referenced record file
              present, sha256 == recordSha256, valid closed v2 schema)
   claims   : names + contents of review/claim-*.json
@@ -1498,10 +1528,20 @@ derivePackageState(N, ledger, claims, attempts, outcomes) -> state
 
 It reads no clock, no environment and no other state. Expiry is a separate,
 explicit time check (`now ≤ notAfter`) applied by `apply` at A12 and A14; it
-never changes the derived state.
+never changes the derived state. Every derivation (S1, S12, A8 and A14) uses
+a fresh inventory with the corresponding validated evidence;
+an unreadable or incomplete inventory fails closed. Inventory enumeration and
+validation feed this single derivation, never a second authority-state layer.
 
 **Run-level validation (any failure → run state `INCONSISTENT`, every command
-on the run refuses `RUN_STATE_INCONSISTENT`, exit 4, permanently):** an entry in
+on the run refuses `RUN_STATE_INCONSISTENT`, exit 4, permanently):** a run-root
+entry outside its closed grammar; malformed, duplicate or impossible temp
+names (including duplicate inventory entries, non-regular files, zero or
+out-of-range indexes); or any recognized `manifest.next-<LLLL>.json` whose
+four-digit index is not exactly `ledger.length + 1`. Stale indexes at or below
+the ledger length and indexes beyond the next slot are `INCONSISTENT`, even
+if an orphan claim also exists. Temp bytes are never parsed as authority; an
+empty or partial next-slot temp is still evidence. Also invalid: an entry in
 `review/` or `apply/` outside the closed name grammar; a ledger entry whose
 record is missing or invalid; a claim `LLLL ≤ ledger.length` whose content does
 not equal ledger entry `LLLL`; a missing claim for a ledger entry; an outcome
@@ -1522,7 +1562,7 @@ the ledger is rule 1 whatever its content.)
 
 | # | Condition | State | Reason |
 |---|---|---|---|
-| 1 | any claim `LLLL > ledger.length` exists | `QUARANTINED` (all packages of the run) | `LEDGER_INCOMPLETE`: a review session is inside its claim critical section (live claim), or left it `ORPHANED`, or was terminated there by an uncatchable event (§9.3.2); whether its decision was meant to exist is unknown, so the claim grants nothing |
+| 1 | any claim `LLLL > ledger.length` exists, **or** the validated run-root inventory contains `manifest.next-<LLLL>.json` with `LLLL = ledger.length + 1`, independently of whether that claim still exists | `QUARANTINED` (all packages of the run) | `LEDGER_INCOMPLETE`: a review session is inside its claim critical section (live claim), or left incomplete claim/temp evidence after failure or termination; whether its decision was meant to exist is unknown, so neither a claim nor a temp grants authority |
 | 2 | some `R ∈ attempts` has no outcome file | `QUARANTINED` | `UNKNOWN_OUTCOME`: an apply crashed or is still in flight; #23F may have written |
 | 3 | some outcome is `MALFORMED`, `ROLLBACK_INCOMPLETE` or `UNKNOWN` | `QUARANTINED` | the working tree may differ from both before- and after-state |
 | 4 | some outcome is `APPLIED` | `APPLIED` | |
@@ -1545,12 +1585,15 @@ Normative consequences:
   active approval.
 - **Single authority per fact.** Which decisions exist and their order: the
   ledger (with claims as its serialization evidence). Whether an approval was
-  consumed and what happened: the `apply/` files. Nothing else (record `status`,
+  consumed and what happened: the `apply/` files. Run-root temp evidence only
+  refuses authority through the above validation/rule 1; it never grants it.
+  §16.8 describes persistence, not a separate state override. Nothing else
+  (record `status`,
   stdout, `review show`, timestamps) contributes.
 - **Permanence.** `QUARANTINED` and `INCONSISTENT` are permanent for the run;
   recovery is a human repair of the working tree plus a new run (§30.5
   item 12). No product command deletes, rewrites or "repairs" claim, attempt
-  or outcome files.
+  or outcome files, nor deletes a leftover manifest temp.
 - **Claim kinds (C2).** A claim `LLLL ≤ ledger.length` equal to its ledger
   entry is a *completed* claim. A claim `LLLL > ledger.length` is, to any
   observer, indistinguishable between a *live* claim (its session is still
@@ -1626,19 +1669,25 @@ The manifest is **never** written in place: the current `run-store` manifest
 write (`O_WRONLY|O_CREAT|O_TRUNC`, truncate-then-write) can leave an empty or
 torn manifest after power loss and MUST NOT be used for any Stage 4 manifest
 commit. A reader sees either the complete old manifest or the complete new
-manifest. `manifest.next-<LLLL>.json` is added to the closed run-directory
-name grammar; it is never read for authority and never deleted by the product
-(it disappears only by being renamed). A leftover `manifest.next-<LLLL>.json`
-with `LLLL = ledger.length + 1` co-occurs with claim `LLLL` and therefore with
-rule 1 (`QUARANTINED`); one with any other `LLLL` makes the run `INCONSISTENT`.
+manifest. `manifest.next-<LLLL>.json` is added to the closed run-root name
+grammar (`LLLL` = four decimal digits, 0001–9999). Its name and entry kind
+are explicit `runRootInventory` input to §16.7; its contents never grant
+authority and the product never deletes it (it disappears only by its own
+session's rename). §16.7 alone determines state: the expected next-slot temp
+is run-wide `QUARANTINED` with or without the corresponding claim; any other
+recognized index, or malformed/duplicate/impossible temp name, is
+`INCONSISTENT`. This section never independently overrides that derivation.
 
 **Directory flush on `win32`.** File flush maps to `FlushFileBuffers`. Node
 does not provide a supported directory `fsync` on Windows (opening a directory
 for flushing is refused). The implementation stage MUST either establish the
 equivalent durability of the directory entry and of the rename with a
-supported primitive on NTFS, demonstrated by real-`win32` tests (§24 item 6a),
+supported primitive on NTFS, justified by documented OS/platform guarantees
+and demonstrated by real-`win32` execution evidence (§24 item 6a),
 or refuse Stage 4 on that platform (fail closed, as INFO-04). It MUST NOT
 silently skip the directory step on any platform.
+Windows manifest-rename sharing violations remain fail-closed availability
+events; neither retry semantics nor a weaker durability mode is authorized here.
 
 **Required ordering (each arrow = the left step's primitive returned
 successfully, including its flushes, before the right step starts).**
@@ -1687,13 +1736,35 @@ storage that does not (durability fault).
 | empty / truncated / missing record referenced by the ledger | prevented: record durable before the manifest commit | ledger entry's record missing or invalid → `INCONSISTENT` | fail closed |
 | manifest persisted before the claim or record was durable (reordering) | prevented by the ordering barriers | missing/invalid claim or record for a ledger entry → `INCONSISTENT` | fail closed |
 | attempt lost after #23F wrote | prevented: #23F is entered only after the attempt is durable | the package would appear `APPROVED` again: residual of the R-3 class (evidence persistence relies on the local storage stack); a replay re-enters #23F, whose live revalidation refuses with zero writes where the earlier writes persisted (CREATE → `EXISTS`, MODIFY → `STALE` base digest) | fail closed except under a storage durability fault (R-3) |
+| acknowledged supersession lost in full: `APPROVE #1` → `REJECT #2`, then all #2 claim/record/manifest evidence lost | prevented once #2's ordered durability primitives returned successfully on conforming storage | on storage that lies about durability, all #2 evidence may disappear after power loss or an equivalent storage fault, leaving the valid #1 ledger prefix visible again; §16.7 can derive `APPROVED` for #1 if still within its original validity window | restored prior authority, R-3 lost-supersession residual |
 | attempt durable, outcome lost after #23F | possible (power fails before outcome flush) | attempt without outcome → rule 2 `QUARANTINED / UNKNOWN_OUTCOME` | fail closed |
 | outcome torn | possible | `MALFORMED` → rule 3 `QUARANTINED` | fail closed |
 | applied record present, outcome lost | possible | rule 2 `QUARANTINED` | fail closed |
 
+**R-3 durability residual (C4).** Non-conforming storage can report successful
+write/flush/durability and later fail to preserve that state across power loss
+or an equivalent storage fault. At least two residual cases are explicit:
+(1) a previously acknowledged durable attempt disappears after mutation work;
+(2) `APPROVE #1` is superseded/revoked by `REJECT #2`, #2's claim, record and
+manifest are reported durable, and faulty storage loses **all** #2 evidence,
+restoring the earlier still-valid #1 as the visible state. Remaining #2 claim
+or temp evidence invokes §16.7 rule 1 or run validation; missing/invalid
+evidence referenced by a surviving #2 ledger entry is `INCONSISTENT`.
+Complete loss may leave no detectable supersession. This does **not** create
+approval authority that never existed;
+it may restore authority that existed previously, was later superseded/revoked,
+and remains within its original validity window. Both residuals stay bounded
+by expiry/`notAfter` (never reset or extended), the same principal,
+package/run/root/project binding, fresh interactive apply confirmation and
+#23F live content/filesystem revalidation. Revalidation can refuse persisted
+earlier writes, but cannot reconstruct wholly lost supersession evidence.
+R-3 remains `PENDING PO` (§30.2, §30.5 item 3).
+
 ```text
 DURABILITY MODEL = EXPLICIT
-POWER-LOSS AUTHORITY = FAIL CLOSED
+POWER-LOSS AUTHORITY = FAIL CLOSED ON CONFORMING STORAGE
+R-3 LOST ATTEMPT = EXPLICIT
+R-3 LOST SUPERSESSION = EXPLICIT
 SEC-S4-m02 = DESIGN RESOLVED
 ```
 
@@ -1923,7 +1994,8 @@ A14 active-approval re-check, immediately before reservation, no interaction
       a. re-read manifest bytes; sha256 == MA, else RUN_CHANGED_DURING_COMMAND
          (4) - covers any later APPROVE/REJECT/session entry for any package;
       b. re-derive S = derivePackageState(NNNN, ...) from a fresh listing of
-         review/ and apply/; require S == APPROVED and S.active == selected
+         the canonical run-root inventory, review/ and apply/; require
+         S == APPROVED and S.active == selected
          (same recordId, recordSha256, ledgerIndex), else refuse with the
          reason of S (4/5) or APPROVAL_NOT_FOUND (5);
       c. require no review/claim-<LLLL>.json with LLLL > ledger length
@@ -1934,9 +2006,14 @@ A14 active-approval re-check, immediately before reservation, no interaction
     exists -> APPROVAL_ALREADY_CONSUMED, 5) and make it durable (§16.8
     D-CREATE, file + directory flush); #23F is never entered before this
     returns successfully
-A14b post-reservation fence: list review/claim-*.json again; if any claim with
-    LLLL > ledger length (as of A14a) now exists, do NOT enter #23F: write
-    outcome NOT_ENTERED and refuse APPROVAL_NOT_FOUND (5)
+A14b post-reservation fence: freshly list the run-root inventory and
+    review/claim-*.json again; apply the same §16.7 run-level validation and
+    rule 1 incomplete-ledger checks (ledger length as of A14a), not a second
+    authority-state derivation. On invalid inventory or any beyond-ledger
+    claim / expected next-slot temp, do NOT enter #23F: write outcome
+    NOT_ENTERED and refuse RUN_STATE_INCONSISTENT (4) for validation failure
+    or APPROVAL_NOT_FOUND (5) for incomplete-ledger evidence. The session's
+    own reserved attempt remains consumption, not a new approval
 A15 call applyApprovedGeneratedChangeSet({ expectedProjectId, repositoryRoot:
     realRoot, automationPlan, repositoryContext, generatedChangeSet,
     reviewPackage: persisted P, reviewRecord: record.core, appliedAt })
@@ -2052,7 +2129,12 @@ only when **all** hold:
    enabled on `win32`: the real-`win32` tests of §28 (profile-directory proof
    §14.5, deferred-signal completion §9.3.2, durability primitives §16.8)
    passing on a real Windows host or runner, with the evidence in the release
-   dossier; absent that evidence, Stage 4 refuses on `win32` (§14.5);
+   dossier. Durability eligibility requires documented OS/platform guarantees
+   as well as real execution evidence; SIGINT/SIGBREAK evidence uses the
+   executable arrangements of §28 test 13. Until **all** required evidence
+   passes for that supported combination, Stage 4 `review record` / `apply`
+   is **REFUSED on that configuration**: no silent downgrade or implied
+   support (§30.5 item 22). This defines eligibility, not an OD-06 matrix;
 7. exact implementation HEAD independently HEAVY-reviewed (Architecture, then
    Security) and post-merge certified;
 8. release-dossier evidence: disabled-path evidence for every other reserved
@@ -2227,9 +2309,18 @@ All tests are future work; none is added here.
   prompt never appears at column 1 of any row; a hostile 1 000-character
   `purpose` wraps with `     + ` continuation rows; `presentationDigest`
   changes when the wrap of a row changes (wrap is digested);
-- terminal geometry: `columns` 99 or `rows` 23 at S7 or at any page
-  checkpoint (resize injected) → `INTERACTIVE_TERMINAL_REQUIRED`, no claim, no
-  record, no manifest change;
+- terminal geometry: unavailable geometry, `columns` 99 or `rows` 23 at S7,
+  before each target or intra-target page checkpoint, immediately before each
+  end-of-target prompt, immediately before S8, during decision input wait,
+  after decision input, and immediately before CS-ENTER →
+  `INTERACTIVE_TERMINAL_REQUIRED`, no claim, record or manifest change;
+- hostile resize with **all targets ≤ 20 rows** (no intra-target checkpoint):
+  shrink below `W` between targets, before an end-target prompt, before S8,
+  while waiting for either APPROVE or REJECT, or after decision receipt but
+  before CS-ENTER (including S10–S13a). Every case aborts before authority
+  commit; restore width to 100 before the next check and verify the violation
+  remains latched, the decision is discarded and only a fresh full review
+  session can proceed. Resize monitoring spans the whole trusted interval;
 - paging: a maximum-size target (50 000 code units) is emitted completely
   across pages of ≤ 20 rows (row sequence identical to the unpaged
   rendering); CRS-1 bytes `B` and `presentationDigest` are identical with and
@@ -2310,7 +2401,8 @@ segment, 301-character path; case-fold duplicate pair in one package; live
 
 - `derivePackageState` table-driven tests covering every rule 1–8 and every
   run-level `INCONSISTENT` condition, with the result independent of directory
-  listing order and of the clock;
+  listing order and of the clock; include the canonical `runRootInventory`
+  in every derivation and verify no §16.8 authority override exists;
 - crash injection at every row of the §16.7 crash table yields exactly the
   listed state; an empty attempt file still consumes; a partial outcome file
   is `MALFORMED` → `QUARANTINED`;
@@ -2371,15 +2463,43 @@ segment, 301-character path; case-fold duplicate pair in one package; live
     (`WIFSIGNALED`, `WTERMSIG`), or exit status `128 + signo` via the fallback;
     the S14 output/warning is completely present before termination; the
     on-disk state equals `derivePackageState` of the expected outcome;
-13. **real `win32`** deferred-signal completion (C3): Ctrl+C (`SIGINT`) and
-    Ctrl+Break (`SIGBREAK`) generated as console control events for a child in
-    its own console process group, delivered inside the section (injected
-    hook), for both `COMMITTED` and `ORPHANED` → the child exits with
+13. **real `win32`** deferred-signal completion (C4 executable design): run
+    a real supported Node major on real Windows; the two events require
+    distinct arrangements, not POSIX simulation or a fake platform adapter:
+    - **SIGBREAK / Ctrl+Break:** create the Node child in its own Windows
+      process group (`CREATE_NEW_PROCESS_GROUP`), with the event helper
+      sharing that console; emit
+      `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, childProcessGroupId)` to
+      that group. The helper must remain outside the target group.
+    - **SIGINT / Ctrl+C:** create the Node child with its own console
+      (`CREATE_NEW_CONSOLE`), with Ctrl+C handling enabled (no inherited
+      ignore-Ctrl+C attribute); after the child is ready, a separate helper
+      detaches any existing console (`FreeConsole` when needed), calls
+      `AttachConsole(childPid)`, then configures **its own** Ctrl+C handling
+      so it survives the broadcast (e.g. `SetConsoleCtrlHandler(NULL, TRUE)`
+      after attachment). It emits
+      `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)` into that console. The
+      child must already exist before the helper sets its ignore attribute,
+      and must not inherit it. Attachment resets the helper's handler table,
+      so configure handling after attachment. A shared-console equivalent
+      is acceptable only if it proves real receipt by the child.
+    `GenerateConsoleCtrlEvent(CTRL_C_EVENT, nonzeroProcessGroupId)` is never
+    valid SIGINT evidence: it does not deliver Ctrl+C to that group. See
+    Microsoft's [event contract](https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent),
+    [attachment contract](https://learn.microsoft.com/en-us/windows/console/attachconsole)
+    and [handler contract](https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler).
+    For each arrangement, require an observable acknowledgement from the
+    actual Node signal handler at the injected in-section hook; successful
+    event generation alone does not prove receipt. Observe real Node behavior
+    for both `COMMITTED` and `ORPHANED` → the child exits with
     `STATUS_CONTROL_C_EXIT` (`0xC000013A`), after the complete S14 output and,
     for `ORPHANED`, the complete quarantine warning; a `COMMITTED` decision is
     present on disk; an `ORPHANED` run is `QUARANTINED`; a retried
     `review record` after `COMMITTED` creates a new session and a new ledger
     entry (never re-commits the old one), and after `ORPHANED` refuses at S1.
+    The exact `STATUS_CONTROL_C_EXIT` implementation remains subject to this
+    real-win32 proof; until it passes for a configuration, Stage 4 on that
+    win32 configuration is **REFUSED** (§24 item 6a, §30.5 item 22).
 
 **Durability and power loss (§16.8, C3)**
 
@@ -2398,9 +2518,22 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   yields exactly the derived states of the §16.8 table; no simulated loss
   yields `APPROVED` for a consumed approval on storage honoring the flushes;
 - a leftover `manifest.next-<LLLL>.json` with `LLLL = ledger.length + 1` →
-  `QUARANTINED`; with any other `LLLL` → `RUN_STATE_INCONSISTENT`;
+  `QUARANTINED` for every package, **with and without** its claim, and with
+  empty/partial temp bytes; any other recognized index (stale or beyond next)
+  → `RUN_STATE_INCONSISTENT` even alongside an orphan claim. Malformed names,
+  duplicate inventory entries and impossible temp names/kinds → fail closed
+  `INCONSISTENT`. Permuting inventory order never changes the derived state;
+- non-conforming-storage fault vectors (R-3): an acknowledged durable attempt
+  lost after mutation work, and `APPROVE #1` → durable `REJECT #2` → all #2
+  claim/record/manifest evidence lost → still-valid #1 visible again. These
+  vectors explicitly model lying durability, not conforming-storage crashes;
+  surviving #2 claim/temp or invalid ledger-referenced evidence fails closed
+  through §16.7. Restored #1 must still pass original expiry,
+  same-principal and package/run/root/project binding, apply confirmation and
+  #23F live revalidation; no new authority or renewed validity is invented;
 - **real `win32`**: the chosen directory-entry/rename durability primitive is
-  exercised, or Stage 4 refuses on `win32` (§16.8).
+  supported by documented OS/platform guarantees and exercised on real win32,
+  or Stage 4 refuses on that configuration (§16.8, §30.5 item 22).
 
 **Root identity (§17.2)**
 
@@ -2466,7 +2599,9 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
 - **INV-14** Uncertainty (unknown outcome, failed check, missing data) never
   creates authority.
 - **INV-15** Package state is exactly `derivePackageState` (§16.7) of the
-  ledger, claims, attempt and outcome files; no other datum (record `status`,
+  canonical run-root inventory (including manifest temp evidence), ledger,
+  claims, attempt and outcome files; §16.8 never independently overrides it.
+  No temp ever grants authority; no other datum (record `status`,
   manifest apply bookkeeping, stdout, timestamps) contributes, and apply
   evidence takes precedence over the ledger.
 - **INV-16** `root-identity-v1` is a byte-deterministic function of
@@ -2483,8 +2618,12 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
   deletes, expires, reuses or overwrites a claim (§9.3.2).
 - **INV-18** Every emitted TAP-1 row is at most 100 columns and starts at
   column 1 with a product-owned gutter or label; terminal soft-wrap is never
-  relied on; the trusted presentation is refused below the required terminal
-  geometry; paging never truncates rows or changes CRS-1 bytes or
+  relied on; the width invariant holds across the **whole trusted session**,
+  from presentation start through final pre-commit geometry verification.
+  Any width below `W` is latched and aborts before authority commit; widening
+  again cannot reuse the session. Required geometry is verified at every
+  §10.3.1 boundary and monitored during input waits. Paging never truncates
+  rows or changes CRS-1 bytes or
   `presentationDigest` (§10.3.1).
 - **INV-19** Authority evidence is persisted in the §16.8 order with explicit
   file and directory flushes; the manifest is committed only by crash-safe
@@ -2510,7 +2649,7 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
 |---|---|---|
 | R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access, or a CI process that unsets `CI`/`GITHUB_ACTIONS` and allocates a pty) can complete the approval and apply sessions. TTY + challenge proves an interactive controlling process, not a physical human; not distinguishable without a hardware user-presence factor. Includes the explicit prompt-injection chain `untrusted model/provider content → TAP-1 → same-principal AI/automation controlling the terminal → malicious instruction → agent types APPROVE <challenge>` (§15.1), which stays inside R-1 because that actor already has repository write authority; the operating rule that `review record`/`apply` MUST NOT be delegated to or driven by an AI agent/automation when human approval provenance is required is **not technically enforceable** | `R-1 ACCEPTANCE = PENDING PO` |
 | R-2 | Reviewer identity is local OS-account attribution: a shared OS account cannot distinguish people; POSIX uid reuse after account deletion; on Windows no SID is available through Node core, so the discriminator is account name + profile-directory digest (§14.5), and UAC elevation is not distinguished | `R-2 ACCEPTANCE = PENDING PO` |
-| R-3 | Records, ledger claims, attempt and outcome files are unkeyed local files; any actor able to write the run directory (same principal, or another account with write permission) can forge well-formed records or delete/forge apply evidence. Forging an approval still requires the bound principal's interactive apply confirmation; deleting an attempt file after use can re-enable a replay only for such a writer. The persistence of this evidence also relies on the local storage stack honoring the §16.8 flush/ordering guarantees; a storage durability fault (e.g. a write cache that acknowledges flushes it does not persist) can lose or tear evidence in ways that are fail closed (`INCONSISTENT` / `QUARANTINED`) except for a lost durable attempt, which is in this residual (§16.8) | `R-3 ACCEPTANCE = PENDING PO` |
+| R-3 | Records, ledger claims, attempt and outcome files are unkeyed local files; any actor able to write the run directory (same principal, or another account with write permission) can forge well-formed records or delete/forge apply evidence. Forging an approval still requires the bound principal's interactive apply confirmation; deleting an attempt file after use can re-enable a replay only for such a writer. Non-conforming storage that reports write/flush/durability success but later fails to preserve it across power loss or an equivalent storage fault has at least two explicit residuals (§16.8): **lost attempt**, an acknowledged durable attempt disappears after mutation work; and **lost supersession**, `APPROVE #1` → `REJECT #2` → #2 claim/record/manifest reported durable → all #2 evidence lost → earlier still-valid #1 visible again. The latter creates no approval authority that never existed; it may restore previously existing authority that was later superseded/revoked, within its original validity window. Both remain bounded by original expiry/`notAfter`, same principal, package/run/root/project binding, fresh apply confirmation and #23F live content/filesystem revalidation; surviving beyond-ledger claims/temps or invalid ledger-referenced evidence fail closed (`INCONSISTENT` / `QUARANTINED`) | `R-3 ACCEPTANCE = PENDING PO` |
 | R-4 | The existing #23F TOCTOU window between final revalidation and the mutating syscall (unchanged, `SECURITY.md` §24) | `R-4 ACCEPTANCE = PENDING PO` |
 | R-5 | Human factors: a genuine reviewer can approve harmful content or misunderstand escaped text; the digests prove correspondence, not comprehension | `R-5 ACCEPTANCE = PENDING PO` |
 
@@ -2532,13 +2671,15 @@ the authority contract; changing it changes the design. `PO ACCEPTANCE
 REQUIRED` = a product policy choice; the value given is a **recommendation
 only**. **No clause is accepted by this document.** Every clause is
 `PENDING PO` until the explicit OD-04 disposition, which occurs only after the
-independent Architecture C1 re-review and the Security design review.
+independent Architecture C4 exact-head re-review and, only after it passes,
+the independent Security C4 exact-head re-review. Items **1–23 all remain
+`PENDING PO`**; C4 grants no acceptance.
 
 | # | Clause | Recommended value / design | Classification | Status |
 |---:|---|---|---|---|
 | 1 | R-1 same-OS-principal automation residual | accept for Controlled-v1, or else `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 | 2 | R-2 shared/local-account attribution residual (incl. Windows discriminator, §14.5) | accept for Controlled-v1 | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 3 | R-3 unkeyed approval record / claim / attempt / outcome integrity | accept for Controlled-v1 (integrity + binding, not authenticity) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 3 | R-3 unkeyed approval record / claim / attempt / outcome integrity and lying-storage durability residual | accept for Controlled-v1 (integrity + binding, not authenticity), including storage reporting successful write/flush/durability but losing state across power loss or equivalent storage fault: an acknowledged durable attempt lost after mutation, and all evidence of durable `REJECT #2` lost after `APPROVE #1`, exposing still-valid #1 again. This restores previously existing, later superseded/revoked authority, never authority that did not exist; bounded by original expiry/notAfter, same principal, package/run/root/project binding, apply confirmation and #23F live content/filesystem revalidation (§16.8, §30.2 R-3) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 | 4 | R-4 existing #23F TOCTOU residual | accept (unchanged, `SECURITY.md` §24) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 | 5 | R-5 human-factors residual | accept | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 | 6 | Whole-package approval granularity (§8) | whole package; no partial approval | architecture selects it (only option compatible with unchanged #23F); its product consequence is `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
@@ -2557,6 +2698,8 @@ independent Architecture C1 re-review and the Security design review.
 | 19 | Repository relocation invalidates pending approvals (§17.2) | invalidate | `ARCHITECTURE-DERIVED` (root binding) | `PENDING PO` (confirmation only) |
 | 20 | CI refusal as product policy, not a boundary (§23) | refuse under `GITHUB_ACTIONS=true` / truthy `CI` | `ARCHITECTURE-DERIVED` policy; its residual is part of R-1 | `PENDING PO` (confirmation only) |
 | 21 | Abandoned review claim / run-wide quarantine (§9.3.2, §16.7 rule 1) | handled termination signals are deferred through the bounded claim critical section; an uncatchable termination (or a step failure) after claim creation may leave an orphan claim; an orphan claim permanently quarantines the **entire run** (all packages, including otherwise valid approvals); the product never auto-deletes, expires, reuses or repairs it; the user must create a new run. Availability loss only, never authority. Specializes item 12 for the run-wide case | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 22 | WIN32 STAGE 4 FAIL-CLOSED ELIGIBILITY | Stage 4 `review record` / `apply` is enabled only for supported Windows + Node combinations where **all** required real-win32 evidence succeeds: reviewer/profile attribution, signal-completion behavior, and filesystem durability / crash-safe replacement assumptions backed by documented OS/platform guarantees and real-win32 execution. Otherwise Stage 4 refuses on that configuration; no silent downgrade or implied support (§24 item 6a). OD-06 is not entered | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 23 | TAP-1 TERMINAL GEOMETRY REFUSAL | trusted approval refuses when required geometry is unavailable: width = 100 columns, minimum rows = 24, page size = 20 rows. No narrow/degraded trusted mode exists; whole-session geometry violation aborts before authority commit and requires a fresh session (§10.3.1). Later changes to these versioned TAP values require the appropriate TAP contract/version handling already defined by the design | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 
 ### 30.4 Documentation follow-ups (upon OD-04 approval; not done here)
 
@@ -2735,6 +2878,72 @@ precedence, reason and exit codes (no new public CLI exit code), public API.
 `TSB-F02 = OPEN / LOW / CONDITIONAL`, `TSB-F02 TRIGGER = FALSE`.
 `AT-07/TB-01 = RESIDUAL / PENDING PO`; R-1..R-5 and every §30.5 clause
 (items 1–21) remain `PENDING PO`. OD-06 NOT ENTERED.
+
+---
+
+## 36. Design corrective C4 record
+
+Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C4 — APPROVED`. Exact reviewed
+baseline HEAD `8003968c77dd7d7c43dc4305e1267247100b9555`, TREE
+`91c8bf0853b2c4b686285be2e076d25b2f7763ed`, base/main
+`45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee`. Architecture C3 and Security C3
+reviews completed with `APPROVED_WITH_NON_BLOCKING_FINDINGS`. Their approvals
+are historical evidence for that exact HEAD; the C4 commit invalidates both
+as approvals of the new HEAD. This final narrow documentation-only corrective
+addresses exactly the five MINOR findings below, with no parallel engineering
+stream (`WIP = 1`).
+
+| Finding | Resolution | Sections |
+|---|---|---|
+| `ARCH-S4-C3-m01` manifest temp authority-state determinism | canonical run-root inventory is explicit input to the single §16.7 derivation; next-slot temp quarantines every package with or without its claim; other indexes and malformed/duplicate/impossible names fail closed; temp never grants authority and §16.8 never overrides state | §1, §16.7, §16.8, §21, §28, §29 INV-15 |
+| `ARCH-S4-C3-m02` executable real-win32 signal evidence | SIGBREAK targets the child's own process group using `CTRL_BREAK_EVENT`; SIGINT uses a child console, attached helper with its own handler configuration and `CTRL_C_EVENT, 0`; real supported Node/Windows receipt and completion evidence required; configuration refused until proof passes | §24 item 6a, §28 test 13 |
+| `ARCH-S4-C3-m03` complete owner policy surface | item 22 win32 fail-closed eligibility and item 23 TAP-1 geometry refusal are `PO ACCEPTANCE REQUIRED / PENDING PO`; item 3 includes both lying-storage residuals; all items 1–23 stay pending | §7, §24, §30.5 |
+| `SEC-S4-C3-m01` whole-session width invariant | all seven required geometry checkpoints plus continuous resize monitoring from presentation start through final pre-commit verification; shrink below W latches abort before authority commit, even after width restoration; restart required; hostile short-target and between-checkpoint vectors | §9.3, §10.3.1, §28, §29 INV-18 |
+| `SEC-S4-C3-m02` R-3 lost supersession | lost acknowledged durable attempt and loss of all later durable REJECT evidence are explicit; earlier still-valid approval can become visible again without creating authority that never existed; bounded by original expiry, principal and package/run/root/project binding, apply confirmation and #23F live revalidation | §16.8, §28, §30.2 R-3, §30.5 item 3 |
+
+```text
+ARCH-S4-C3-m01 = RESOLVED
+AUTHORITY STATE DETERMINISM = SINGLE SOURCE OF TRUTH
+MANIFEST TEMP EVIDENCE = EXPLICIT INPUT
+ARCH-S4-C3-m02 = RESOLVED
+REAL-WIN32 SIGINT TEST = EXECUTABLE DESIGN
+REAL-WIN32 SIGBREAK TEST = EXECUTABLE DESIGN
+ARCH-S4-C3-m03 = RESOLVED
+OWNER POLICY SURFACE = COMPLETE
+OWNER CLAUSES 1–23 = PENDING PO
+SEC-S4-C3-m01 = RESOLVED
+TERMINAL WIDTH INVARIANT = WHOLE TRUSTED SESSION
+RESIZE VIOLATION = ABORT BEFORE AUTHORITY COMMIT
+SEC-S4-C3-m02 = RESOLVED
+R-3 LOST ATTEMPT = EXPLICIT
+R-3 LOST SUPERSESSION = EXPLICIT
+R-3 = PENDING PO
+```
+
+These are design corrections, not execution evidence or independent review
+approval. Previous INFO findings remain INFO. Preserve the implementation
+constraints: `derivePackageState` MUST NOT be exposed by info/status/show as
+an approval verdict; real-win32 durability eligibility requires documented
+OS/platform guarantees and real execution evidence; Windows manifest-rename
+sharing violations fail closed; on-disk authority state is primary over
+process-local status; exact `STATUS_CONTROL_C_EXIT` implementation needs the
+real-win32 proof; paging/fatigue remains R-5 territory. None is claimed fully
+resolved by C4.
+
+Preserved: Option A / TAP-1 authority, CRS-1, PPI-1, ReviewRecord v2,
+Manifest v2, canonical #23F, whole-package decision, single-use approval,
+same-principal apply, claim/attempt/outcome and durability architecture,
+offline operation, project/run/root binding and the AI-driven approval
+prohibition/operating rule. `TSB-F02 = OPEN / LOW / CONDITIONAL`,
+`TSB-F02 TRIGGER = FALSE`; `AT-07/TB-01 = RESIDUAL / PENDING PO`;
+`R-1..R-5 = PENDING PO`; §30.5 items 1–23 all `PENDING PO`. Public API,
+runtime/test code, package, workflows, capability/config and ROADMAP unchanged.
+OD-06 NOT ENTERED; implementation and merge NOT AUTHORIZED / NOT PERFORMED.
+
+**Lifecycle boundary:** after the one C4 commit is pushed to existing PR #245,
+STOP. The required next step is **INDEPENDENT ARCHITECTURE C4 EXACT-HEAD
+RE-REVIEW**. Security C4 follows only after Architecture C4 passes; no OD-04
+disposition before both. PR #245 remains OPEN, ready for that re-review.
 
 ---
 
