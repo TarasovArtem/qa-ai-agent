@@ -5,6 +5,9 @@ apply security contract**
 
 Authority: `OD-CONTROLLED-V1-STAGE-4-APPROVAL-DESIGN — APPROVED`
 
+Corrective: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C1 — APPROVED` (design corrective
+C1 for `ARCH-S4-m01..m06`; change record §33)
+
 State: **DESIGN ONLY / SOLE WIP** (`WIP = 1`)
 
 Document type: **security + software architecture design.** This document
@@ -25,24 +28,25 @@ implementation stage.
 
 | Decision | Result |
 |---|---|
-| OD-04 recommendation | **APPROVE**, conditional on the Product Owner explicitly accepting the residual risks R-1..R-5 (§30.2). If the PO does not accept R-1, the result becomes `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` (hardware-backed user-presence attestation), not this design |
+| OD-04 recommendation | **APPROVE**, conditional on the Product Owner explicitly dispositioning every owner clause of §30.5, including the residual risks R-1..R-5 (§30.2). **No owner clause is accepted by this document**; all remain `PENDING PO`. If the PO does not accept R-1, the result becomes `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` (hardware-backed user-presence attestation), not this design |
 | Approval granularity | **One human decision (`APPROVE` \| `REJECT`) over one complete canonical `GeneratedChangeSetReviewPackage`**, selected explicitly by run id and package ordinal. No per-file or per-operation approval |
 | Trusted approval presentation | **Option A = `TAP-1`** (Trusted Approval Presentation v1): a repository-owned, deterministic, ASCII-only terminal rendering derived from the decoded bytes of `CRS-1`, which in turn is derived from the exact deep-frozen package built by `buildGeneratedChangeSetReviewPackage()`. Shown **only** inside `qa-agent review record`; `review show` stays non-authoritative and unchanged |
 | Canonical review serialization | **`CRS-1` (`CanonicalReviewSerializationV1`)**: byte-exact, ASCII-only canonical JSON with one escape form per UTF-16 code unit (§11) |
 | Canonical path identity | **`PPI-1` (Portable Path Identity v1)**: a validation-only (never normalizing) portable ASCII path grammar; the approved identity and the written identity are the same byte string (§13) |
-| Reviewer identity | **OS-local account attribution** (`os-local-account-v1`), read from the operating system (never from environment variables, config or flags), recorded as attribution, not as personal authentication (§14) |
-| Human decision provenance | **Interactive TTY challenge session** (`interactive-tty-challenge-v1`): full TAP-1 presentation with per-target acknowledgement, a fresh CSPRNG challenge, an exact typed `APPROVE <code>` / `REJECT <code>` line read from the controlling terminal, and re-verification of the package before the record is written (§15) |
+| Reviewer identity | **OS-local account attribution** (`os-local-account-v1`), read from the operating system (never from environment variables, config or flags): POSIX effective uid + account name; Windows account name + token-derived profile-directory digest. It is `LOCAL ACCOUNT ATTRIBUTION`, not personal authentication and not proof of a physical human (§14) |
+| Human decision provenance | **Interactive TTY challenge session** (`interactive-tty-challenge-v1`): full TAP-1 presentation with per-target acknowledgement, a fresh CSPRNG challenge, an exact typed `APPROVE <code>` / `REJECT <code>` line read from the controlling terminal, and re-verification of the package before the record is written (§15). It evidences that an **interactive controlling process** completed the session, not physical human presence |
+| Authority state model | **One deterministic derivation** (`derivePackageState`, §16.7) over the manifest `reviews` ledger, the ledger claims and the `apply/attempt-*` / `apply/outcome-*` files. Apply state is deliberately **external** to the manifest; outcome evidence takes precedence over ledger bookkeeping; crash recovery is **fail closed** |
 | Authenticity | **Integrity + binding, not cryptographic authenticity.** Records stay unkeyed SHA-256 sealed. No signing, no key management, no external identity provider, no network |
 | Review record schema | **`GeneratedChangeSetReviewRecord v2 REQUIRED`**: an authority envelope that embeds an unchanged v1 core consumed by #23F (§16) |
-| Run manifest | **`QaAgentRunManifest v2 REQUIRED`** (reviews/apply ledger entries, §16.6) |
+| Run manifest | **`QaAgentRunManifest v2 REQUIRED`** (append-only `reviews` decision ledger only; **no apply ledger** — apply state lives in write-once run-directory files, §16.6) |
 | Apply path | **Canonical #23F `applyApprovedGeneratedChangeSet` only**, preceded by refusal-only Stage 4 checks; #23F authority semantics unchanged (§22) |
-| Replay | **Single-use per apply attempt.** An approval is consumed atomically before #23F is invoked, whatever the outcome (§20) |
-| CI | `review record` and `apply` **refuse** under `GITHUB_ACTIONS=true` or a truthy `CI` (exit 5) |
-| Offline | `review record` and `apply` **both permitted under `--offline`** (no network or provider is needed) |
+| Replay | **Single-use per apply attempt.** Immediately before consumption, apply re-derives the authority state and requires the selected approval to still be the active one; the approval is then consumed atomically before #23F is invoked, whatever the outcome (§20, §21 A14) |
+| CI | `review record` and `apply` **refuse** under `GITHUB_ACTIONS=true` or a truthy `CI` (exit 5). This is a **product-supported policy refusal, not a security isolation boundary** (§23) |
+| Offline | Recommended: `review record` and `apply` **both permitted under `--offline`** (no network or provider is needed) — `PO ACCEPTANCE REQUIRED` (§30.5) |
 | `TSB-F02` | `OPEN / LOW / CONDITIONAL`; **`TSB-F02 TRIGGER = FALSE`** (§26) |
 | `SEC-S3-m01` | **DESIGN RESOLVED** (§12) |
 | `SEC-S3-m02` | **DESIGN RESOLVED** (§13) |
-| `AT-07` / `TB-01` | **RESIDUAL** (§27) — mitigated for every non-same-principal attacker; the same-OS-principal automation class remains and requires PO acceptance |
+| `AT-07` / `TB-01` | **RESIDUAL** (§27) — mitigated on the supported product path for actors outside the residual classes; the same-OS-principal automation class (R-1) and any actor able to write the run directory (R-3) remain, and their acceptance is `PENDING PO` |
 | `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` | **OPEN**; satisfaction criteria defined (§10.6). Not closed by this design |
 | Public API / exit codes | **Unchanged.** No new root export, subpath or exit code |
 | OD-06 | **NOT ENTERED.** The contract is platform-independent and fail-closed (§13.8) |
@@ -225,7 +229,8 @@ Recommended disposition text (for the Product Owner):
 > - **OD-04.1 Eligible reviewer.** The eligible reviewer is the interactive
 >   operator of the local OS account that runs `qa-agent review record` in the
 >   target repository root. Controlled-v1 has no reviewer role registry; any
->   such account is eligible. Identity is OS-account attribution.
+>   such account is eligible. Identity is local OS-account attribution
+>   (§14), not personal authentication and not proof of a physical human.
 > - **OD-04.2 Decision.** One closed decision (`APPROVE` | `REJECT`) over one
 >   complete canonical review package, made in an interactive TTY challenge
 >   session after a full TAP-1 presentation.
@@ -234,23 +239,36 @@ Recommended disposition text (for the Product Owner):
 >   run-semantic projection, the repository root binding and path policy
 >   `PPI-1`.
 > - **OD-04.4 Lifetime.** An approval is valid for at most **24 hours** after
->   the decision and for **one** apply attempt.
+>   the decision and for **one** apply attempt (values per §30.5 items 10 and
+>   14).
 > - **OD-04.5 Application.** Only `qa-agent apply`, invoked interactively by the
 >   same OS principal, through canonical #23F.
 > - **OD-04.6 Forbidden sources.** No approval from CI, GitHub (PR review,
 >   comment, label, check), config, environment, flags, provider/model output,
->   timeouts or defaults.
+>   timeouts or defaults. The CI refusal is a product policy, not a security
+>   isolation boundary (§23).
 > - **OD-04.7 Assurance level.** Integrity and binding, not cryptographic
->   authenticity. The PO accepts residuals R-1..R-5 (§30.2) for Controlled-v1.
+>   authenticity. The PO dispositions residuals R-1..R-5 (§30.2) for
+>   Controlled-v1.
 > - **OD-04.8 Enablement.** Release enablement additionally requires §24.
+> - **OD-04.9 Owner clauses.** Each clause of §30.5 marked
+>   `PO ACCEPTANCE REQUIRED` is dispositioned explicitly with a final value.
+
+The quoted text is a **recommendation only**. Every value in it that §30.5
+classifies as `PO ACCEPTANCE REQUIRED` (for example 24 h, single use, offline
+permission, same-principal apply) remains **unresolved** until the explicit
+Product Owner OD-04 disposition, which occurs only after the independent
+Architecture (C1 re-review) and Security design reviews. This document grants
+no owner acceptance.
 
 The recommendation is **APPROVE** rather than `ADDITIONAL OWNER DECISION
 REQUIRED` because every element above is within OD-04's own scope (ODR-02:
 eligibility and lifetime) and no element needs signing, key management,
 an external identity provider, mandatory online identity, a new public API, a
 new distribution service, a platform matrix, CI approval authority, partial
-approval or a change to #23F authority semantics. Residual acceptance (OD-04.7)
-is an integral clause of the same decision, not a separate one. If the PO
+approval or a change to #23F authority semantics. Residual disposition (OD-04.7)
+and the owner clauses (OD-04.9) are integral clauses of the same decision, not
+separate ones; all are `PENDING PO`. If the PO
 declines OD-04.7 for R-1, this design returns
 `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` (§32).
 
@@ -278,8 +296,10 @@ Normative rules:
   new run).
 - **G-3** `apply --run <id> --package <NNNN>` applies exactly the package of
   the active approval, through one #23F call.
-- Partial approval is **not** offered; no owner/product consequence arises
-  because the selected option is the preferred one.
+- Partial approval is **not** offered. The architecture selects whole-package
+  granularity; its product consequence (a reviewer who objects to one target
+  must `REJECT` the whole package and generate a new run) is a product policy
+  surfaced as §30.5 item 6, `PO ACCEPTANCE REQUIRED`.
 
 ---
 
@@ -307,16 +327,23 @@ offline contradiction check (5):
 
 1. capability `reviewRecord` (resp. `apply`) requested **and** release-enabled;
 2. `GITHUB_ACTIONS === "true"` or `CI` set to any non-empty value other than
-   `"false"`/`"0"` → refuse (`APPROVAL_CI_FORBIDDEN` / `APPLY_CI_FORBIDDEN`);
+   `"false"`/`"0"` → refuse (`APPROVAL_CI_FORBIDDEN` / `APPLY_CI_FORBIDDEN`).
+   This is a product-supported policy refusal for well-behaved CI
+   environments, **not** a security isolation boundary: a process that can
+   unset these variables and allocate a pseudo-terminal belongs to residual
+   class R-1 (§23);
 3. `process.stdin.isTTY`, `process.stdout.isTTY` and `process.stderr.isTTY`
-   MUST all be `true`; otherwise refuse `INTERACTIVE_TERMINAL_REQUIRED`;
-4. reviewer identity resolvable (§14), otherwise `REVIEWER_IDENTITY_UNAVAILABLE`.
+   MUST all be `true`; otherwise refuse `INTERACTIVE_TERMINAL_REQUIRED`. A TTY
+   evidences an interactive controlling terminal, not a physical human;
+4. reviewer identity resolvable and eligible (§14), otherwise
+   `REVIEWER_IDENTITY_UNAVAILABLE`.
 
 ### 9.3 Session protocol `interactive-tty-challenge-v1` (review record)
 
 ```text
-S1  open run (manifest shape + binding), select package NNNN, refuse if the
-    package state is APPLIED or QUARANTINED                                  (4/5)
+S1  open run (manifest shape + binding), select package NNNN, derive its
+    state with derivePackageState (§16.7); refuse INCONSISTENT (4), APPLIED or
+    QUARANTINED (5)                                                         (4/5)
 S2  rebuild package P from the run's validated plan/context/change set with
     buildGeneratedChangeSetReviewPackage(); require canonical equality with the
     persisted package and its manifest sha256                                (4)
@@ -330,7 +357,8 @@ S6  sessionId = 16 CSPRNG bytes (32 lowercase hex);
 S7  render TAP-1 (§10.3) from P' to stdout; after each target print
     "-- end of target k/N; press Enter to continue --" and read one line from
     the terminal (content ignored, max 64 bytes)
-S8  print the decision prompt:
+S8  print the non-authoritative context lines (§9.3.1), then the decision
+    prompt:
        To APPROVE writing exactly these N target(s), type:  APPROVE <challenge>
        To REJECT this package, type:                        REJECT <challenge>
        Anything else, Ctrl-C or end-of-input aborts without recording.
@@ -340,19 +368,45 @@ S9  accept only an exact match of ^(APPROVE|REJECT) <challenge>$ (case-
     terminator); otherwise re-prompt; after 3 failed lines abort
     HUMAN_DECISION_NOT_CONFIRMED                                             (5)
 S10 optional comment prompt (§9.6); decidedAt = now
-S11 refuse APPROVAL_SESSION_EXPIRED if decidedAt - sessionStartedAt > 60 min (5)
+S11 refuse APPROVAL_SESSION_EXPIRED if decidedAt - sessionStartedAt > session
+    window (recommended 60 min, §30.5 item 15; monotonic clock)              (5)
 S12 re-verify (time-split defense, §18): reload manifest (sha256 == M0),
-    repeat S2-S5 and require crsDigest == C0, live context CURRENT,
-    reviewer identity == I0; otherwise REVIEW_PACKAGE_CHANGED_DURING_APPROVAL (4)
-S13 build the v1 core with the (extracted) v1 builder from P, build record v2,
-    write it write-once (O_CREAT|O_EXCL|O_NOFOLLOW), append the manifest
-    review entry with compare-and-swap on M0                                 (4)
+    repeat S1-S5 (including derivePackageState) and require crsDigest == C0,
+    live context CURRENT, reviewer identity == I0; otherwise
+    REVIEW_PACKAGE_CHANGED_DURING_APPROVAL (4) or the S1 refusal
+S13 commit (§16.6 ledger protocol): L = manifest.reviews.length + 1;
+    create review/claim-<LLLL>.json O_CREAT|O_EXCL (exists -> refuse
+    RUN_CHANGED_DURING_COMMAND (4), nothing else written); build the v1 core
+    with the (extracted) v1 builder from P; build record v2; write
+    review/record-<NNNN>-<recordId>.json write-once; re-check manifest
+    sha256 == M0; write the manifest with the appended reviews entry          (4)
 S14 print "decision recorded: <APPROVE|REJECT> (record <sessionId>)"
 ```
 
 Interrupts (SIGINT/SIGTERM/SIGHUP), EOF, terminal read errors and the 60-minute
 limit all abort with **no** record and no manifest change. Nothing is written
-before S13.
+before S13. A failure or crash **inside** S13 after the claim was created
+leaves a claim beyond the ledger, which `derivePackageState` treats as
+`QUARANTINED` for every package of the run (§16.7) — fail closed; the decision
+is not recorded and S14 is never printed.
+
+#### 9.3.1 Non-authoritative session context (INFO-02)
+
+Immediately before the decision prompt, S8 prints these session lines
+(excluded from `presentationDigest`, never persisted, never authority):
+
+```text
+context (not part of the presentation digest):
+repository root: <realRoot, TAP-1-escaped>
+repository root binding: <root-identity-v1 digest>
+reviewer principal: <principal>
+approval policy: whole package; one apply attempt; expires <validity> after the decision
+```
+
+`<validity>` is rendered from the product constant fixed by the PO
+disposition of §30.5 item 14. These lines help the operator confirm *which*
+repository and policy they are deciding in; they change nothing in the
+authority contract.
 
 ### 9.4 Why this UX
 
@@ -376,6 +430,20 @@ a compact, non-authoritative apply summary (TAP-1 header lines, the ordered
 and a fresh challenge, and requires the exact line `APPLY <challenge>` (same
 rules as S9, 3 attempts). It never re-presents content as approval evidence and
 never records a decision.
+
+**Bounded confirmation lifetime.** The apply interaction is bounded so the
+command cannot hold a stale view of authority state indefinitely:
+
+- the confirmation window starts when the challenge is printed and lasts at
+  most **5 minutes** (recommended value; §30.5 item 17,
+  `PO ACCEPTANCE REQUIRED`); a correct line typed after the window, EOF,
+  interrupt or 3 wrong lines → `APPLY_NOT_CONFIRMED` (5);
+- the window is enforced by a monotonic clock (`process.hrtime.bigint()`),
+  not by wall-clock time, so a wall-clock jump cannot extend it;
+- nothing is consumed or written before or during the confirmation; a refused
+  or expired confirmation leaves the approval exactly as it was;
+- whatever happened during the wait, A14 (§21) re-derives the authority state
+  **after** the confirmation and before consumption.
 
 ### 9.6 Decision vocabulary and comment
 
@@ -504,7 +572,8 @@ independently reviewed and post-merge certified:
 3. `apply` recomputing `crsDigest` and `presentationDigest` and refusing
    mismatches (§21);
 4. the hostile time-split and representation-split tests of §28 passing (R-4);
-5. AT-07 addressed for this surface per §27 with the PO-accepted residuals.
+5. AT-07 addressed for this surface per §27, with the residuals explicitly
+   dispositioned by the PO (§30.2, §30.5).
 
 ---
 
@@ -517,16 +586,18 @@ The input is exactly one value `P`: the `reviewPackage` of a successful
 v1, closed shape), with `recomputeReviewPackageDigest(P) === P.packageDigest`.
 Admitted JSON types: object (all keys ASCII `0x20–0x7E`), array, string,
 `null`, `true`/`false`, and integers `n` with `Number.isSafeInteger(n)`. Any
-other value (non-integer or unsafe number, `-0` is encoded as `0`, `undefined`,
+other value (non-integer or unsafe number, negative zero, `undefined`,
 function, symbol, bigint, non-plain object, non-ASCII key) → refusal
-`REVIEW_SERIALIZATION_UNSUPPORTED`.
+`REVIEW_SERIALIZATION_UNSUPPORTED`. Negative zero (`Object.is(n, -0)`) is
+**refused**, never encoded as `0`: encoding it as `0` would make `E`
+non-injective over the input domain (INFO-01).
 
 ### 11.2 Encoding `E(v)`
 
 | Value | Encoding |
 |---|---|
 | `null` / `true` / `false` | `null` / `true` / `false` |
-| integer `n` | shortest decimal: optional `-`, no `+`, no leading zeros, no exponent, `0` for zero |
+| integer `n` (never `-0`, refused by §11.1) | shortest decimal: optional `-`, no `+`, no leading zeros, no exponent, `0` for zero |
 | string `s` (sequence of UTF-16 code units `u`) | `"` + per code unit: `0x20 ≤ u ≤ 0x7E` and `u ∉ {0x22, 0x5C}` → that ASCII byte; `0x22` → `\"`; `0x5C` → `\\`; every other code unit → `\u` + exactly 4 **lowercase** hex digits of `u` + `"` |
 | array | `[` + `E(items)` joined by `,` + `]` |
 | object | `{` + entries `E(key):E(value)` sorted ascending by key code-unit sequence, joined by `,` + `}` |
@@ -764,20 +835,22 @@ SEC-S3-m02 = DESIGN RESOLVED
 
 | Criterion | A. OS/local authenticated account | B. GitHub identity | C. Cryptographic signature | D. Trusted interactive local session |
 |---|---|---|---|---|
-| Reliability | OS authenticated the login; `os.userInfo()` reads the kernel uid / Windows token, not env | strong for the account | strong for key possession | proves an interactive terminal session, not who |
+| Reliability | OS authenticated the login; `os.userInfo()` reads the process's effective uid (POSIX) / process token (Windows), not env | strong for the account | strong for key possession | proves an interactive controlling process, not who |
 | Spoofing risk | env `USER`/`USERNAME` spoofable — not used; a same-account process is indistinguishable | token theft; any process with the token acts as the user | software key readable by any same-user process | pty-driving same-user automation (A4) |
-| Cross-platform | uid/name on POSIX; name on Windows (uid −1) | uniform | uniform, key storage differs per OS | uniform (Node TTY) |
+| Cross-platform | effective uid + name on POSIX; name + token profile directory on Windows (uid −1; no SID through Node core, §14.4) | uniform | uniform, key storage differs per OS | uniform (Node TTY) |
 | Offline | yes | **no** | yes | yes |
 | Shared-account risk | attribution is to the account only | per person if tokens are personal | per key | none additional |
-| Proves a human saw this review? | no | **no** (token use is not presence) | **no** unless hardware user-presence | **partially**: fresh challenge after full presentation, not proof against A4 |
+| Proves a physical human saw this review? | no | **no** (token use is not presence) | **no** unless hardware user-presence | **no**: proves that an interactive controlling process completed a fresh challenge after the full presentation was emitted; not proof against A4 |
 | Burden | none | login, token scopes, network | key generation, storage, rotation, revocation, recovery | typing one line |
 | Needs owner decision outside OD-04? | no | yes (mandatory online identity, IdP) | yes (signing/key management) | no |
 
 ### 14.2 Decision
 
 **Controlled-v1 mechanism = A + D:** reviewer identity is OS-local account
-attribution (A), and human-decision provenance is the interactive TTY
-challenge session (D). B is rejected (online dependency; a token does not prove
+attribution (A), and decision provenance is the interactive TTY challenge
+session (D), which evidences an interactive controlling process — not a
+physical human. The resulting assurance level is
+`LOCAL ACCOUNT ATTRIBUTION`. B is rejected (online dependency; a token does not prove
 a human saw the presentation; GitHub approvals never become QA Agent
 approvals). C is not required for Controlled-v1: software keys do not stop A4
 (the same principal can use the key), and hardware user-presence keys require
@@ -786,20 +859,76 @@ recorded as the future higher-assurance option (§30.3).
 
 ### 14.3 Identity record (`os-local-account-v1`)
 
-- Source: `os.userInfo()` **only** (never `USER`, `USERNAME`, `LOGNAME`, config,
-  flags or artifacts). Failure → `REVIEWER_IDENTITY_UNAVAILABLE` (5).
+- Source: `os.userInfo()` **only** (never `USER`, `USERNAME`, `LOGNAME`,
+  `HOME`, `USERPROFILE`, config, flags or artifacts; `os.homedir()` is **not**
+  used because it consults environment variables). Failure →
+  `REVIEWER_IDENTITY_UNAVAILABLE` (5).
 - `principal = "os-account-v1:" + TAP-1-escape(username)`; MUST satisfy the
   existing `isValidId` (≤ 128 code units, no control characters, trim-stable);
   otherwise refuse.
-- `uid`: the POSIX uid (integer ≥ 0) or `null` on `win32` (Node reports −1).
+- `uid`: the POSIX effective uid (integer ≥ 1, §14.4) or `null` on `win32`
+  (Node reports −1).
+- `profileDigest`: `null` on POSIX; on `win32` the account discriminator of
+  §14.5.
 - `platform`: `process.platform` value.
 - `assurance: "LOCAL_ACCOUNT_ATTRIBUTION"` — explicitly not personal
-  authentication; a shared OS account attributes all decisions to that account.
-- `apply` MUST resolve the same `principal`, `uid` and `platform`; otherwise
-  `APPLY_PRINCIPAL_MISMATCH` (5).
+  authentication and not proof of a physical human; a shared OS account
+  attributes all decisions to that account.
+- **Principal identity key** (what `apply` compares): POSIX
+  `(platform, uid, principal)`; Windows `(platform, principal, profileDigest)`.
+  `apply` MUST resolve an identical key; otherwise `APPLY_PRINCIPAL_MISMATCH`
+  (5).
 
 No credential, password, token, key or session secret is read, stored or
 printed.
+
+### 14.4 POSIX semantics
+
+| Aspect | Contract |
+|---|---|
+| Which uid | `os.userInfo()` resolves the **effective** uid of the process (libuv `uv_os_get_passwd` → `geteuid()` + `getpwuid_r`). The real uid is not consulted |
+| Username vs uid | the **uid is the identity**; the account name is recorded as human-readable attribution and is also part of the key, so that an account rename between decision and apply refuses (fail closed) |
+| Account rename | same uid, new name → key mismatch → `APPLY_PRINCIPAL_MISMATCH`; a fresh `review record` session is required |
+| uid reuse | a deleted account whose uid is reassigned to a new account is indistinguishable by uid; the name component narrows but does not eliminate this — part of residual R-2 |
+| `sudo` / elevation | `sudo <cmd>` runs with euid 0; `sudo -u bob <cmd>` runs as `bob`. Each invocation is attributed to its **effective** account. A decision recorded as one account can only be applied as the same account |
+| Superuser | euid **0** is **refused** (`REVIEWER_IDENTITY_UNAVAILABLE`, 5) for both commands: attribution to the shared superuser account is not attribution to an operator account, and euid 0 bypasses the file-permission barrier the residual analysis relies on (§30.5 item 18) |
+
+### 14.5 Windows semantics and residual
+
+Node core exposes no supported, environment-independent primitive for the
+account SID: `os.userInfo().uid` is −1 on `win32`, and obtaining the SID would
+require a new native dependency or spawning an external tool (whose lookup
+path is itself environment-controlled). Neither is introduced. Evaluated
+discriminators:
+
+| Candidate | Source | Environment-controlled? | Disposition |
+|---|---|---|---|
+| account name | `os.userInfo().username` (libuv `GetUserNameW` on the process token) | no | **used** — but bare names collide (local `alice` vs domain `alice`; deleted/re-created account) |
+| profile directory | `os.userInfo().homedir` (libuv `GetUserProfileDirectoryW` on the process token) | no — unlike `os.homedir()`, which honors `USERPROFILE` | **used** as a digest: Windows assigns a distinct profile directory per account SID on a machine (a colliding name receives a suffixed directory such as `alice.DOMAIN`) |
+| SID | not available through Node core | — | **not used**; recorded as residual |
+| `whoami /user` subprocess | external process, `PATH`/`SystemRoot`-dependent lookup | yes | **rejected** |
+
+```text
+profileDigest = "sha256:" || lowercase-hex( SHA-256(
+                  ASCII("qa-ai-agent:os-account-profile:v1:")
+                  || E({ "profileDir": <os.userInfo().homedir> }) ) )
+```
+
+`E` is the CRS-1 value encoder (§11.2); only the digest is persisted (no
+profile path). The implementation MUST prove with a test that setting
+`USERPROFILE`/`HOMEDRIVE`/`HOMEPATH` does not change `os.userInfo().homedir`;
+if that property does not hold on the Node versions the product supports, the
+`profileDigest` component MUST be dropped and R-2 widened accordingly before
+enablement (a design defect is then reported, not silently accepted).
+
+**Windows residual (part of R-2):** without the SID, the discriminator is
+`(name, profile-directory digest)`. A deleted and re-created account that
+receives the same name and the same profile directory, or a profile directory
+reassignment by an administrator, is indistinguishable. Elevation (UAC) is
+not detectable through Node core: an elevated and a non-elevated process of
+the same account share the same key. A robust SID-based discriminator is an
+owner implication (new native dependency or identity infrastructure), not part
+of this design (§30.3).
 
 `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD` design disposition: **PARTIALLY
 ADDRESSED BY DESIGN** (OS-account attribution, principal-bound apply) — remains
@@ -810,7 +939,11 @@ ADDRESSED BY DESIGN** (OS-account attribution, principal-bound apply) — remain
 ## 15. Human decision provenance
 
 Authenticated actor ≠ proven conscious human decision. Provenance is
-established independently by the session (§9.3):
+established independently by the session (§9.3). What the session proves is
+bounded: an **interactive controlling process** attached to TTYs on stdin,
+stdout and stderr emitted the full presentation and then returned the exact
+fresh challenge. It does **not** prove physical human presence; a same-principal
+process that drives a pseudo-terminal (A4) satisfies it (R-1).
 
 | Requirement | Mechanism |
 |---|---|
@@ -825,9 +958,13 @@ Approval MUST NOT come from: config, environment variables, model/provider
 output, persisted status alone, automatic defaults, background tasks, CI,
 `--yes`, force flags, implicit timeouts (a timeout always aborts), or piped /
 pre-typed / replayed input (the challenge is fresh; non-TTY stdin is refused).
+These are prohibitions on the **supported product path**; an actor in the
+residual classes R-1/R-3 can bypass the product path entirely.
 
 `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD` design disposition: **ADDRESSED BY
-DESIGN FOR A1, A3, A5, A6, A7, A8** — remains **OPEN**; residual R-1 (A4).
+DESIGN on the supported product path for A1, A3, A7, A8, and for A5/A6 only
+while they lack write access to the run directory** — remains **OPEN**;
+residuals R-1 (A4) and R-3 (any actor able to write the run directory).
 
 ---
 
@@ -887,6 +1024,7 @@ without changing #23F.
     "method": "os-local-account-v1",
     "principal": "os-account-v1:<escaped username>",
     "uid": 1000,
+    "profileDigest": null,
     "platform": "linux",
     "assurance": "LOCAL_ACCOUNT_ATTRIBUTION"
   },
@@ -919,10 +1057,10 @@ authenticity** (unkeyed).
 | `subject.pathPolicy` | canonical-path policy version |
 | `binding.projectId` + `projectionDigest` | project identity (§17) |
 | `binding.repositoryRoot` | root identity (§17) |
-| `reviewer` | identity attribution (§14) |
-| `provenance` | session identity; `sessionStartedAt ≤ decidedAt ≤ sessionStartedAt + 60 min` |
+| `reviewer` | identity attribution (§14); `uid` is an integer ≥ 1 and `profileDigest` is `null` on POSIX; `uid` is `null` and `profileDigest` is a digest on `win32` |
+| `provenance` | session identity; `sessionStartedAt ≤ decidedAt ≤ sessionStartedAt + <session window>` (recommended 60 min, §30.5 item 15) |
 | timestamps | UTC, millisecond ISO-8601 (`run-store` grammar), from the local clock; audit and validity only, never ordering authority |
-| `validity.notAfter` | `decidedAt + 24 h` exactly; product constant, not configurable upward |
+| `validity.notAfter` | `decidedAt + <validity>` exactly; product constant (recommended 24 h, §30.5 item 14 `PO ACCEPTANCE REQUIRED`), never configurable |
 | `validity.use` | `SINGLE_APPLY_ATTEMPT` (§20) |
 | `comment` | `null` or §9.6 string; non-authoritative |
 | `core` | v1 record: `projectId = binding.projectId`, `packageDigest = subject.packageDigest`, `reviewerId = reviewer.principal`, `reviewedAt = provenance.decidedAt`, every decision = `decision`, `comment` = `comment` |
@@ -952,17 +1090,141 @@ QaAgentRunManifest v2 REQUIRED
 ```
 
 - New closed top-level field `reviews: []` of entries
-  `{ packageOrdinal, recordPath, recordSha256, recordId, decision, decidedAt }`,
-  append-only; the active record for a package is its last entry.
-- Artifact path grammar extended with `review/record-<NNNN>-<recordId>.json`,
-  `apply/attempt-<recordId>.json`, `apply/outcome-<recordId>.json`,
-  `apply/applied-<NNNN>-<recordId>.json`.
-- Record, attempt marker and outcome files are write-once
-  (`O_CREAT|O_EXCL|O_NOFOLLOW`) through the existing root-anchored safe-write
-  path. Manifest updates keep the existing compare-and-swap commit point
-  (`RUN_CHANGED_DURING_COMMAND`).
+  `{ ledgerIndex, packageOrdinal, recordPath, recordSha256, recordId, decision, decidedAt }`,
+  append-only, `ledgerIndex` = 1-based position in the array. This is the
+  **decision ledger**: the only authority on which decisions exist and in
+  which order. The active decision of a package is its last entry.
+- **No apply ledger.** Manifest v2 deliberately has **no** `applies` field and
+  is **never written by `apply`**. Apply state (consumption and outcome) is
+  external to the manifest and lives only in the write-once `apply/` files
+  below. The two stores are disjoint in content, so there are no two competing
+  authorities for any fact (§16.7).
+- Manifest artifact path grammar extended with
+  `review/record-<NNNN>-<recordId>.json` (referenced by `reviews` entries).
+- Run-directory files outside the manifest (closed name grammar; any other
+  entry in `review/` or `apply/` makes the run `INCONSISTENT`, §16.7):
+
+  | File | Written by | Meaning |
+  |---|---|---|
+  | `review/claim-<LLLL>.json` | `review record` S13 | ledger slot `LLLL` (4 digits, = `ledgerIndex`) is taken; content `{ ledgerIndex, packageOrdinal, recordId }` |
+  | `review/record-<NNNN>-<recordId>.json` | `review record` S13 | the record v2 |
+  | `apply/attempt-<NNNN>-<recordId>.json` | `apply` A14 | **consumption**: its existence (by name) is the reservation; content `{ packageOrdinal, recordId, recordSha256, principal, startedAt }` is audit only |
+  | `apply/applied-<NNNN>-<recordId>.json` | `apply` A16 | `AppliedChangeSetRecord` when #23F returned one |
+  | `apply/outcome-<NNNN>-<recordId>.json` | `apply` A16, **last** | the outcome; closed shape `{ kind: "QaAgentApplyOutcome", schemaVersion: 1, packageOrdinal, recordId, result, appliedRecordSha256, completedAt }`, `result` ∈ `NOT_ENTERED`, `REFUSED_NO_WRITE`, `APPLIED`, `ROLLED_BACK`, `ROLLBACK_INCOMPLETE`, `UNKNOWN` |
+
+- All of these files are write-once (`O_CREAT|O_EXCL`, plus `O_NOFOLLOW`
+  where the platform defines it) through the existing root-anchored safe-write
+  path, written completely and closed before the next step reads or relies on
+  them.
+- **Ledger serialization protocol.** The existing manifest commit is
+  check-then-write (`RUN_CHANGED_DURING_COMMAND`), which is not atomic between
+  two concurrent writers. After `generate` the only manifest writer is
+  `review record` (stages cannot be re-run: `RUN_STAGE_ALREADY_COMPLETED`), so
+  the decision ledger is serialized by the exclusive claim: a session that
+  started from manifest bytes `M0` with `k` entries may append entry `k+1`
+  only after creating `review/claim-<k+1>.json` with `O_EXCL`. Two sessions
+  starting from the same `M0` compete for the same claim; exactly one wins and
+  the other refuses before writing anything. A lost manifest update between
+  two review sessions is therefore impossible on the product path.
 - Runs created by a product version without v2 are refused by the existing
   product-version binding (exit 4); no migration.
+
+### 16.7 Authority state model (single source of truth)
+
+Package state is a **pure deterministic function** of on-disk evidence:
+
+```text
+derivePackageState(N, ledger, claims, attempts, outcomes) -> state
+  ledger   : manifest v2 `reviews` (validated; each referenced record file
+             present, sha256 == recordSha256, valid closed v2 schema)
+  claims   : names + contents of review/claim-*.json
+  attempts : set of recordIds R such that apply/attempt-<N>-<R>.json exists
+  outcomes : map recordId -> parsed apply/outcome-<N>-<R>.json (or MALFORMED)
+```
+
+It reads no clock, no environment and no other state. Expiry is a separate,
+explicit time check (`now ≤ notAfter`) applied by `apply` at A12 and A14; it
+never changes the derived state.
+
+**Run-level validation (any failure → run state `INCONSISTENT`, every command
+on the run refuses `RUN_STATE_INCONSISTENT`, exit 4, permanently):** an entry in
+`review/` or `apply/` outside the closed name grammar; a ledger entry whose
+record is missing or invalid; a claim `LLLL ≤ ledger.length` whose content does
+not equal ledger entry `LLLL`; a missing claim for a ledger entry; an outcome
+file without the corresponding attempt file; an outcome that parses as a valid
+`QaAgentApplyOutcome` but names a different package or record than its file
+name. These conditions are only producible by tampering, never by a crash of
+the product path. (Attempt-file content is audit only and never validated for
+state, so an attempt file left empty by a crash is still a valid consumption;
+an outcome file left partial by a crash is `MALFORMED`, rule 3; a claim beyond
+the ledger is rule 1 whatever its content.)
+
+**Package state (first matching rule wins):**
+
+| # | Condition | State | Reason |
+|---|---|---|---|
+| 1 | any claim `LLLL > ledger.length` exists | `QUARANTINED` (all packages of the run) | `LEDGER_INCOMPLETE`: a review session crashed or was interrupted inside S13; whether its decision was meant to exist is unknown |
+| 2 | some `R ∈ attempts` has no outcome file | `QUARANTINED` | `UNKNOWN_OUTCOME`: an apply crashed or is still in flight; #23F may have written |
+| 3 | some outcome is `MALFORMED`, `ROLLBACK_INCOMPLETE` or `UNKNOWN` | `QUARANTINED` | the working tree may differ from both before- and after-state |
+| 4 | some outcome is `APPLIED` | `APPLIED` | |
+| 5 | package has no ledger entry | `UNREVIEWED` | |
+| 6 | last ledger entry `e` has `e.recordId ∈ attempts` | `CONSUMED` | the active approval was used (outcome `NOT_ENTERED`, `REFUSED_NO_WRITE` or `ROLLED_BACK`); a new session is required |
+| 7 | `e.decision = REJECT` | `REJECTED` | |
+| 8 | `e.decision = APPROVE` | `APPROVED`, active approval = `e` | expiry checked separately |
+
+Normative consequences:
+
+- **Precedence.** Apply evidence (`attempt-*`, `outcome-*`) takes precedence
+  over the decision ledger: rules 1–4 are evaluated before any ledger entry is
+  looked at. A stale or incomplete ledger can never make a package appear
+  reviewable after an attempt.
+- **Attempt without outcome = `QUARANTINED / UNKNOWN_OUTCOME`.** It never makes
+  an approval reusable: the attempt file consumes the record whatever its
+  content, and rule 2 blocks the package.
+- **Orphan approvals.** A record file not referenced by the ledger (only
+  possible together with a claim beyond the ledger, rule 1) is never an
+  active approval.
+- **Single authority per fact.** Which decisions exist and their order: the
+  ledger (with claims as its serialization evidence). Whether an approval was
+  consumed and what happened: the `apply/` files. Nothing else (record `status`,
+  stdout, `review show`, timestamps) contributes.
+- **Permanence.** `QUARANTINED` and `INCONSISTENT` are permanent for the run;
+  recovery is a human repair of the working tree plus a new run (§30.5
+  item 12). No product command deletes, rewrites or "repairs" claim, attempt
+  or outcome files.
+- **Crash recovery is fail closed.** Every crash point of S13 and of A14–A16
+  maps to rule 1, 2 or 3, or to a state in which no authority was granted:
+
+  | Crash point | Evidence left | Derived state |
+  |---|---|---|
+  | S13 before the claim | nothing | unchanged |
+  | S13 after the claim, before the manifest write | claim beyond ledger (± orphan record) | `QUARANTINED` (rule 1) |
+  | A14 before the attempt file | nothing | unchanged (`APPROVED`) |
+  | A14/A15 after the attempt file, before the outcome | attempt only | `QUARANTINED` (rule 2) |
+  | A16 after `applied-*`, before `outcome-*` | attempt + applied record | `QUARANTINED` (rule 2) |
+  | after `outcome-*` | complete | rules 3–6 |
+
+- **No post-#23F manifest write.** Because `apply` never writes the manifest,
+  a manifest compare-and-swap failure after a filesystem mutation cannot occur.
+  The analogous failure — the outcome file cannot be written after #23F
+  returned — leaves an attempt without an outcome (rule 2, `QUARANTINED`);
+  `apply` then exits 4 with `APPLY_OUTCOME_NOT_RECORDED` and prints a fixed
+  stderr warning naming the #23F status it observed and the affected paths.
+  An exception escaping #23F is recorded as outcome `UNKNOWN` when possible
+  (rule 3) and otherwise leaves rule 2; either way the package is
+  `QUARANTINED` and the exit is 1 (`INTERNAL_ERROR`).
+
+**Filesystem assumption (INFO-04).** The claim and attempt mechanisms require
+that the run directory's filesystem provides reliable atomic exclusive create
+(`O_CREAT|O_EXCL`: exactly one of concurrent creators succeeds) and that a
+completed, closed write is visible to a later open in the same host. Local
+POSIX filesystems and NTFS (`CREATE_NEW`) provide this; some network
+filesystems do not guarantee it. The design does **not** claim universal
+atomicity. Eligibility is fail closed: `root-identity-v1` already refuses UNC
+and device-namespace roots on `win32` (§17.2); for any other configuration the
+implementation stage MUST define how it establishes the property with a
+supported primitive and MUST refuse where it cannot. Any resulting statement of
+supported platforms belongs to OD-06 and is not decided here.
 
 ---
 
@@ -978,18 +1240,72 @@ never used.
 
 ### 17.2 Repository-root identity (`root-identity-v1`)
 
+`root-identity-v1` is defined byte-exactly so that two conforming
+implementations hash the same root to the same bytes.
+
+**Step 1 — canonical root path `rootPath`.** Input: `realRoot` from
+`assertValidRepositoryRoot`.
+
+1. `native = fs.realpathSync.native(realRoot)` (string result). The JS
+   implementation `fs.realpathSync` is **not** used for identity: on Windows it
+   preserves the caller-supplied casing (see `context-utils.js`, D21D-3),
+   whereas `fs.realpathSync.native` resolves through the OS
+   (`realpath(3)` on POSIX; an opened handle's final path on Windows) and
+   returns the stored on-disk casing of every component.
+2. `win32` only:
+   - `native` MUST match `^[A-Za-z]:\\` (a drive-letter path). UNC paths
+     (`\\server\share\…`) and device-namespace paths (`\\?\`, `\\.\`) are
+     **refused** (`REPOSITORY_BINDING_MISMATCH`, 4) — fail-closed eligibility
+     (also INFO-04);
+   - the drive letter is ASCII-uppercased (`a`–`z` → `A`–`Z`, first character
+     only); no other character's case is changed;
+   - every `\` is replaced by `/`;
+   - a trailing `/` is removed except for a bare drive root (`C:/`).
+3. POSIX: `native` is used as returned (already `/`-separated, absolute, no
+   trailing `/` except `/`). No case change is applied.
+4. Nothing else is transformed: no Unicode normalization, no trimming, no
+   lowercasing of segments.
+
+**Step 2 — directory object.** `st = fs.lstatSync(native, { bigint: true })`;
+require `st.isDirectory()` and not `st.isSymbolicLink()`; `dev` and `ino` are
+`st.dev.toString(10)` and `st.ino.toString(10)` (decimal ASCII, no sign, no
+leading zeros except `"0"`).
+
+**Step 3 — serialization and digest.**
+
 ```text
-repositoryRoot.digest = sha256( ASCII("qa-ai-agent:repository-root-binding:v1:")
-                                || UTF-8( canonicalJson({ platform, realRoot, dev, ino }) ) )
+rootIdentity = { "identityVersion": 1, "platform": process.platform,
+                 "rootPath": rootPath, "dev": dev, "ino": ino }
+repositoryRoot.digest = "sha256:" || lowercase-hex( SHA-256(
+                          ASCII("qa-ai-agent:repository-root-binding:v1:")
+                          || E(rootIdentity) ) )
 ```
 
-`realRoot` from `assertValidRepositoryRoot`; `dev`/`ino` from
-`fs.lstatSync(realRoot, { bigint: true })` as decimal strings. Only the digest
-is persisted (no absolute path, no username leak). Any change of path, volume
-or directory object (clone, sibling, move, restore, different machine) makes
-the binding mismatch → re-approval. A change of `dev` across reboot on some
-filesystems fails closed the same way. No Git identity is used: the product
-does not require Git, and live content is revalidated by #23F.
+`E` is the CRS-1 value encoder of §11.2 (sorted keys, no whitespace, every code
+unit outside `0x20–0x7E` as a lowercase `\uXXXX` escape, `"`/`\` escaped).
+Its output is ASCII, so no UTF-8 or Unicode-normalization ambiguity exists
+for non-ASCII root paths. (The #23E `canonicalStringify` is **not** used here:
+it emits non-ASCII raw through `JSON.stringify`.) All values are strings or
+the integer `1`.
+
+**Determinism and residual.** For a given directory, platform and primitive
+result the digest is byte-deterministic. Where a platform's primitive cannot
+yield a unique spelling (for example a filesystem for which `realpath(3)` does
+not report stored casing), a different spelling of the **same** directory
+produces a different digest and therefore a **refusal**, never a false match;
+`dev`/`ino` bind the directory object independently of the spelling, so a
+lossy path decoding can never match a different directory.
+
+**Relocation policy (intended).** Only the digest is persisted (no absolute
+path, no username leak). Any change of path, volume or directory object —
+rename or move of the repository, re-clone, sibling clone, backup restore,
+copy to another machine, a different drive letter mapping — makes the binding
+mismatch → `REPOSITORY_BINDING_MISMATCH` (4). **Relocating the repository
+intentionally invalidates every pending approval**; a fresh `review record`
+session in the new location is required (§30.5 item 19). A change of `dev`
+across reboot on some filesystems fails closed the same way. No Git identity
+is used: the product does not require Git, and live content is revalidated by
+#23F.
 
 ### 17.3 Cross-run binding
 
@@ -1053,35 +1369,48 @@ zero writes.
 ### 20.1 Lifetime
 
 An APPROVE record authorizes **at most one apply attempt** for **one package**
-within **24 hours** of `decidedAt`. Expired → `APPROVAL_EXPIRED` (5). A
-`decidedAt` more than 5 minutes in the future of the apply host clock →
-`REVIEW_RECORD_INVALID` (4).
+within `<validity>` of `decidedAt` (recommended 24 h; §30.5 items 10 and 14).
+Expired → `APPROVAL_EXPIRED` (5). A `decidedAt` more than 5 minutes in the
+future of the apply host clock → `REVIEW_RECORD_INVALID` (4).
 
 ### 20.2 Consumption (atomic reservation)
 
-Immediately before calling #23F, `apply` MUST create
-`apply/attempt-<recordId>.json` with `O_CREAT|O_EXCL|O_NOFOLLOW`. Creation is
-the consumption: if the file exists, refuse `APPROVAL_ALREADY_CONSUMED` (5).
-The reservation is never deleted or released. After #23F returns, `apply`
-writes `apply/outcome-<recordId>.json` (write-once) and, for outcomes with an
-`AppliedChangeSetRecord`, `apply/applied-<NNNN>-<recordId>.json`, then updates
-the manifest. A reservation without an outcome file is `UNKNOWN_OUTCOME`.
+Immediately before calling #23F, and only after the A14 re-check (§21),
+`apply` MUST create `apply/attempt-<NNNN>-<recordId>.json` with `O_CREAT|O_EXCL`
+(plus `O_NOFOLLOW` where defined). Creation is the consumption and the
+**linearization point** of the apply attempt: if the file exists, refuse
+`APPROVAL_ALREADY_CONSUMED` (5). The reservation is never deleted or released.
+After #23F returns, `apply` writes `apply/applied-<NNNN>-<recordId>.json` for
+outcomes with an `AppliedChangeSetRecord`, then `apply/outcome-<NNNN>-<recordId>.json`
+last. `apply` does **not** write the manifest. The resulting state is defined
+solely by `derivePackageState` (§16.7); a reservation without an outcome file
+is `QUARANTINED / UNKNOWN_OUTCOME`.
 
 ### 20.3 Supersession
 
 A new session for a package appends a new `reviews` entry; only the last entry
 is active. Apply refuses a record that is not the active entry
 (`APPROVAL_NOT_FOUND`, 5). A `REJECT` active entry → `APPROVAL_DECISION_REJECTED` (5).
+Supersession is checked when the record is selected (A8) **and again
+immediately before consumption** (A14), and a decision whose ledger claim
+appears between A14 and the attempt file prevents #23F from being entered
+(A14b, outcome `NOT_ENTERED`).
 
 ### 20.4 Outcome consequences (authority semantics only; #23F unchanged)
 
-| #23F outcome | Approval | Package state | Next allowed step |
-|---|---|---|---|
-| refused before any write (`ok:false`, `appliedChangeSetRecord: null`) | consumed | unchanged | new `review record` session (fresh approval), or new run |
-| `APPLIED` | consumed | `APPLIED` | none for this package (`PACKAGE_ALREADY_APPLIED`, 5); human commits |
-| `APPLICATION_FAILED_ROLLED_BACK` | consumed | unchanged (compensated) | new session required; retry never reuses the old approval |
-| `APPLICATION_FAILED_ROLLBACK_INCOMPLETE` | consumed | `QUARANTINED` | no further `review record`/`apply` for this package (`PACKAGE_QUARANTINED`, 5); human repairs the working tree; new run |
-| process crash / unknown outcome | consumed | `QUARANTINED` | as above |
+| #23F outcome | `outcome.result` | Approval | Derived package state (§16.7) | Next allowed step |
+|---|---|---|---|---|
+| not entered (A14b supersession race) | `NOT_ENTERED` | consumed | `CONSUMED` (or the newer decision's state) | new `review record` session |
+| refused before any write (`ok:false`, `appliedChangeSetRecord: null`) | `REFUSED_NO_WRITE` | consumed | `CONSUMED` | new `review record` session (fresh approval), or new run |
+| `APPLIED` | `APPLIED` | consumed | `APPLIED` | none for this package (`PACKAGE_ALREADY_APPLIED`, 5); human commits |
+| `APPLICATION_FAILED_ROLLED_BACK` | `ROLLED_BACK` | consumed | `CONSUMED` | new session required; retry never reuses the old approval |
+| `APPLICATION_FAILED_ROLLBACK_INCOMPLETE` | `ROLLBACK_INCOMPLETE` | consumed | `QUARANTINED` | no further `review record`/`apply` for this package (`PACKAGE_QUARANTINED`, 5); human repairs the working tree; new run |
+| exception escaping #23F | `UNKNOWN` (if writable) | consumed | `QUARANTINED` | as above |
+| process crash / outcome not written | — | consumed | `QUARANTINED / UNKNOWN_OUTCOME` | as above |
+
+Consuming the approval even when #23F refuses before its first write, and
+making `QUARANTINED` permanent (new run required), are product policies
+(§30.5 items 11 and 12, `PO ACCEPTANCE REQUIRED`).
 
 Rationale: the authority to mutate is exercised by entering #23F; dropping an
 attempt can never regain authority (SADR-02), and an uncertain outcome must not
@@ -1100,29 +1429,65 @@ A3  offline contradiction (5)
 A4  capability apply requested + release-enabled (5)
 A5  CI refusal APPLY_CI_FORBIDDEN (5)
 A6  TTY requirement INTERACTIVE_TERMINAL_REQUIRED (5); principal resolved (5)
-A7  open run: manifest shape + binding (product, contracts, projection, runId) (4)
-A8  package NNNN state: APPLIED / QUARANTINED -> 5; active reviews entry -> record
-    path; read record bounded, strict JSON, closed v2 schema, recordSha256 ==
+A7  open run: manifest shape + binding (product, contracts, projection, runId);
+    MA = sha256(manifest bytes) (4)
+A8  S_A = derivePackageState(NNNN, ...) (§16.7): INCONSISTENT -> 4;
+    APPLIED / QUARANTINED / CONSUMED / REJECTED / UNREVIEWED -> 5; APPROVED ->
+    selected = active entry e (recordId, recordSha256, ledgerIndex);
+    read record bounded, strict JSON, closed v2 schema, recordSha256 ==
     manifest entry, recordDigest recomputed (4)
 A9  rebuild P from manifest-verified plan/context/change set; P == persisted
     package; PPI-1 on every target; recompute B, crsDigest, presentationDigest,
     packageDigest, artifact sha256s; compare with record.subject (4)
 A10 binding: projectId, projectionDigest, product, repositoryRoot digest (4)
 A11 core re-derivation (§16.4) (4)
-A12 decision == APPROVE else APPROVAL_DECISION_REJECTED (5); principal ==
-    record.reviewer (5); now <= notAfter (5); no attempt marker (5)
-A13 interactive APPLY <challenge> confirmation (5)
-A14 re-check A12 expiry/marker; create attempt marker O_EXCL (consumption) (5)
+A12 decision == APPROVE else APPROVAL_DECISION_REJECTED (5); principal key ==
+    record.reviewer key (§14.3) (5); now <= notAfter (5)
+A13 interactive APPLY <challenge> confirmation within the bounded window
+    (§9.5) (5)
+A14 active-approval re-check, immediately before reservation, no interaction
+    or other wait in between:
+      a. re-read manifest bytes; sha256 == MA, else RUN_CHANGED_DURING_COMMAND
+         (4) - covers any later APPROVE/REJECT/session entry for any package;
+      b. re-derive S = derivePackageState(NNNN, ...) from a fresh listing of
+         review/ and apply/; require S == APPROVED and S.active == selected
+         (same recordId, recordSha256, ledgerIndex), else refuse with the
+         reason of S (4/5) or APPROVAL_NOT_FOUND (5);
+      c. require no review/claim-<LLLL>.json with LLLL > ledger length
+         (rule 1, would be QUARANTINED);
+      d. principal key re-resolved == record.reviewer key (5); now <= notAfter
+         (5);
+    then create apply/attempt-<NNNN>-<recordId>.json O_EXCL (consumption;
+    exists -> APPROVAL_ALREADY_CONSUMED, 5)
+A14b post-reservation fence: list review/claim-*.json again; if any claim with
+    LLLL > ledger length (as of A14a) now exists, do NOT enter #23F: write
+    outcome NOT_ENTERED and refuse APPROVAL_NOT_FOUND (5)
 A15 call applyApprovedGeneratedChangeSet({ expectedProjectId, repositoryRoot:
     realRoot, automationPlan, repositoryContext, generatedChangeSet,
     reviewPackage: persisted P, reviewRecord: record.core, appliedAt })
-A16 persist outcome, AppliedChangeSetRecord, manifest update; map exit (§25)
+A16 write applied-<NNNN>-<recordId>.json (if any), then outcome-<NNNN>-<recordId>.json
+    (last); no manifest write; map exit (§25); outcome write failure ->
+    APPLY_OUTCOME_NOT_RECORDED (4) with the stderr warning of §16.7
 ```
 
 A1–A14 are refusal-only: none of them grants authority. Authority is granted
 solely by #23F (A15). Live filesystem revalidation, ancestor topology,
 containment, protected paths and rollback are performed by #23F exactly as
 today, plus §13.6.
+
+**Ordering argument (A14/A14b vs. S13).** `review record` creates its ledger
+claim *before* writing its manifest entry; `apply` creates its attempt file
+*before* re-listing claims (A14b). For any concurrent pair, either apply's
+A14a/A14b observes the new claim (apply does not enter #23F), or the claim is
+created after A14b and the decision is ordered **after** the attempt — it then
+applies to the package's post-attempt state as derived by §16.7 (for example,
+it becomes the active decision if the attempt ends `REFUSED_NO_WRITE`, and is
+moot if the package becomes `APPLIED`). `review record` S1/S12 refuse a
+package with an attempt in flight (rule 2). No interleaving lets #23F run for
+an approval that a decision claimed before A14b superseded. The only gap
+between the A14 re-check and the reservation is the in-process, non-interactive
+sequence of A14 itself; the human-scale wait (A13) is always before the
+re-check.
 
 ---
 
@@ -1163,8 +1528,20 @@ merge, execute generated tests, publish, release, create directories (existing
 
 | Command | `GITHUB_ACTIONS=true` or truthy `CI` | `--offline` |
 |---|---|---|
-| `review record` | **REFUSED** (`APPROVAL_CI_FORBIDDEN`, 5) | **permitted** (no network, no provider; identity is local) |
-| `apply` | **REFUSED** (`APPLY_CI_FORBIDDEN`, 5) | **permitted** |
+| `review record` | **REFUSED** (`APPROVAL_CI_FORBIDDEN`, 5) | recommended **permitted** (no network, no provider; identity is local) — §30.5 item 8, `PO ACCEPTANCE REQUIRED` |
+| `apply` | **REFUSED** (`APPLY_CI_FORBIDDEN`, 5) | recommended **permitted** — §30.5 item 9, `PO ACCEPTANCE REQUIRED` |
+
+```text
+CI REFUSAL = PRODUCT-SUPPORTED POLICY / REFUSAL
+CI REFUSAL ≠ SECURITY ISOLATION BOUNDARY
+```
+
+The refusal reads ambient variables (`GITHUB_ACTIONS`, `CI`) that any process
+controls. It reliably stops well-behaved CI configurations and accidental use
+in pipelines; it does **not** stop a process that unsets these variables and
+allocates a pseudo-terminal — that process belongs to the same residual class
+as same-principal automation (R-1). The design never relies on the CI refusal
+as a security control.
 
 No GitHub Actions approval workflow, PR-comment approval, label approval,
 check-run approval, or mapping of a GitHub review approval into a QA Agent
@@ -1182,8 +1559,9 @@ release-disabled* to *available* only when the installed release's
 `RELEASE_CAPABILITIES` marks them enabled, and that build change is permitted
 only when **all** hold:
 
-1. OD-04 dispositioned by the PO as recommended, including OD-04.7 residual
-   acceptance;
+1. OD-04 dispositioned by the PO, including every owner clause of §30.5 and
+   the OD-04.7 residual dispositions, with final values for each policy
+   constant;
 2. separate implementation authorization for Stage 4, including the package
    surface delta (shipping the #23E record builder/gate, #23F and
    `applied-change-set-record.js` modules unexported; new
@@ -1223,9 +1601,9 @@ reserved for `execute`.
 | approval/apply unavailable | `CAPABILITY_NOT_REQUESTED`, `CAPABILITY_NOT_ENABLED_IN_RELEASE` | 5 |
 | CI approval / CI apply | `APPROVAL_CI_FORBIDDEN`, `APPLY_CI_FORBIDDEN` | 5 |
 | non-interactive invocation | `INTERACTIVE_TERMINAL_REQUIRED` | 5 |
-| reviewer identity failure | `REVIEWER_IDENTITY_UNAVAILABLE` | 5 |
+| reviewer identity failure or ineligible principal (POSIX euid 0) | `REVIEWER_IDENTITY_UNAVAILABLE` | 5 |
 | human-decision provenance failure (wrong/absent challenge, EOF, interrupt) | `HUMAN_DECISION_NOT_CONFIRMED` | 5 |
-| session over 60 min | `APPROVAL_SESSION_EXPIRED` | 5 |
+| session window elapsed (recommended 60 min) | `APPROVAL_SESSION_EXPIRED` | 5 |
 | package changed during approval | `REVIEW_PACKAGE_CHANGED_DURING_APPROVAL` | 4 |
 | stale package (live context changed since plan) | `REVIEW_CONTEXT_STALE` | 4 |
 | package digest mismatch | `REVIEW_PACKAGE_DIGEST_MISMATCH` | 4 |
@@ -1233,20 +1611,22 @@ reserved for `execute`.
 | canonical path refusal | `PATH_IDENTITY_REFUSED` | 4 |
 | cross-run mismatch | `REVIEW_RECORD_RUN_MISMATCH` (+ existing `RUN_IDENTITY_MISMATCH`) | 4 |
 | cross-project mismatch | `REVIEW_RECORD_PROJECT_MISMATCH` (+ existing `RUN_BINDING_MISMATCH`) | 4 |
-| repository root mismatch | `REPOSITORY_BINDING_MISMATCH` | 4 |
+| repository root mismatch, or root ineligible for `root-identity-v1` (UNC / device path) | `REPOSITORY_BINDING_MISMATCH` | 4 |
+| run evidence inconsistent (§16.7 run-level validation) | `RUN_STATE_INCONSISTENT` | 4 |
 | invalid approval record (shape, digest, core re-derivation, future timestamp) | `REVIEW_RECORD_INVALID` | 4 |
 | review replay | `APPROVAL_ALREADY_CONSUMED` | 5 |
 | no active approval / superseded | `APPROVAL_NOT_FOUND` | 5 |
 | active decision is REJECT | `APPROVAL_DECISION_REJECTED` | 5 |
 | approval expired | `APPROVAL_EXPIRED` | 5 |
 | apply by another principal | `APPLY_PRINCIPAL_MISMATCH` | 5 |
-| apply not confirmed | `APPLY_NOT_CONFIRMED` | 5 |
+| apply not confirmed (wrong line, EOF, interrupt, confirmation window elapsed) | `APPLY_NOT_CONFIRMED` | 5 |
 | package applied / quarantined | `PACKAGE_ALREADY_APPLIED`, `PACKAGE_QUARANTINED` | 5 |
 | apply binding mismatch (#23F gate, `verifyApprovedChangeBinding`, N-21, changeSetDigest) | `APPLY_BINDING_MISMATCH` | 4 |
 | #23F live-filesystem zero-write refusal (STALE, EXISTS, SYMLINK, PARENT_*, CASE_COLLISION, HARDLINK, NAME_MISMATCH, ESCAPE) | `APPLY_PRECONDITION_FAILED` | 4 |
 | #23F failed after writes, fully compensated | `APPLY_FAILED_ROLLED_BACK` | 4 |
 | #23F failed after writes, compensation incomplete | `APPLY_ROLLBACK_INCOMPLETE` | 4 |
-| manifest CAS failure | `RUN_CHANGED_DURING_COMMAND` (existing) | 4 |
+| outcome file not writable after #23F returned (package becomes `QUARANTINED`) | `APPLY_OUTCOME_NOT_RECORDED` | 4 |
+| manifest changed during command, or ledger claim lost | `RUN_CHANGED_DURING_COMMAND` (existing) | 4 |
 | unexpected exception | `INTERNAL_ERROR` | 1 |
 
 #23F results are mapped from their structured `errors[].path` prefix and the
@@ -1312,16 +1692,16 @@ TSB-F02 TRIGGER = FALSE
 
 | Threat | Attacker | Mitigation | Status |
 |---|---|---|---|
-| Authority escalation (T-ESC) | A1, A3, A7 | only `review record` creates records; closed vocabulary; no flag/config/env/model path; capability + release gate | mitigated |
-| Approval spoofing (T-SPOOF) | A1, A3, A6, A7 | apply recomputes every digest and re-derives the core; TTY + challenge on apply; records only usable in the bound run/root | mitigated except A4 (R-1, R-3) |
-| Reviewer substitution (T-SUBST) | A5 | OS-account attribution; apply requires the same principal; filesystem permissions | mitigated; shared-account attribution residual (R-2) |
-| Non-human approval (T-NONHUMAN) | A1, A3, A7 | TTY on stdin/stdout/stderr; fresh challenge; CI refusal; no `--yes`/timeout/default | mitigated except A4 (R-1) |
-| Replay (T-REPLAY) | A3, A4, A6 | O_EXCL attempt marker, single attempt, append-only manifest, supersession | mitigated (marker deletion by A4 is R-3) |
-| Stale decision (T-STALE) | A2, A6 | 24 h validity; rebuild + digests at S12 and apply; #23F live revalidation | mitigated |
+| Authority escalation (T-ESC) | A1, A3, A7 | on the product path only `review record` creates records; closed vocabulary; no flag/config/env/model path; capability + release gate | mitigated on the product path (an actor able to write the run directory is R-3) |
+| Approval spoofing (T-SPOOF) | A1, A3, A6, A7 | apply recomputes every digest and re-derives the core; TTY + challenge on apply by the bound principal; records only usable in the bound run/root. Every record field is computable from run files, so recomputation proves **consistency, not origin**: an actor who can write the run directory can forge a well-formed record; the remaining barrier is the bound principal's interactive apply confirmation | mitigated for actors without write access to the run directory; R-1, R-3 otherwise |
+| Reviewer substitution (T-SUBST) | A5 | OS-account attribution; apply requires the same principal key; filesystem permissions | mitigated only while A5 cannot write the run directory; shared-account / Windows-discriminator residual (R-2); forged records by a writer (R-3) |
+| Non-human approval (T-NONHUMAN) | A1, A3, A7 | TTY on stdin/stdout/stderr; fresh challenge; CI refusal (policy, not a boundary, §23); no `--yes`/timeout/default. Proves an interactive controlling process, not a physical human | mitigated for non-interactive automation; A4 and any CI process that unsets CI variables and allocates a pty remain (R-1) |
+| Replay (T-REPLAY) | A3, A4, A6 | O_EXCL attempt file, single attempt, append-only ledger with exclusive claims, supersession, A14 re-check, `derivePackageState` precedence | mitigated on the product path (deletion of attempt/outcome files by a run-directory writer is R-3) |
+| Stale decision (T-STALE) | A2, A6 | bounded validity window (§30.5 item 14); rebuild + digests at S12 and apply; #23F live revalidation | mitigated |
 | Cross-run / cross-project (T-XRUN/T-XPROJ) | A6, A8 | runId, manifest entry, artifact sha, projection, projectId, root binding | mitigated |
 | Presentation substitution (T-PRES) | A1, A2, A6 | Option A (TAP-1 ← CRS-1 ← rebuilt `P`), §18, §19 | mitigated |
 | Model fabricates approval (AT-07 original) | A1 | the model never produces or touches a record; model text cannot reach the decision line; `untrusted` labels | mitigated |
-| Forged approval accepted by #23F (TB-01) | A6, A4 | product path accepts only v2 envelopes whose cores are re-derived from rebuilt content and that pass session-independent checks; forging still needs the apply TTY confirmation | mitigated except A4 (R-1/R-3) |
+| Forged approval accepted by #23F (TB-01) | A6, A4 | product path accepts only v2 envelopes whose cores are re-derived from rebuilt content and that pass session-independent checks; forging still needs the bound principal's apply TTY confirmation | residual for any run-directory writer (R-3) and for A4 (R-1) |
 
 ```text
 AT-07/TB-01 = RESIDUAL
@@ -1329,7 +1709,10 @@ AT-07/TB-01 = RESIDUAL
 
 Residual: an automation running as the **same OS principal** with the ability
 to drive a pseudo-terminal can complete both interactive sessions (or forge an
-unkeyed record and complete the apply session). No userspace design without a
+unkeyed record and complete the apply session); any actor able to write the
+run directory can forge or delete unkeyed records, claims and apply files
+(R-3). The TTY + challenge evidence proves an interactive controlling process,
+not physical human presence. No userspace design without a
 hardware user-presence factor can distinguish it from the human. This is
 consistent with existing canonical posture (#23F "never claims immunity to a
 hostile co-resident local process"; capability gating is "not a security
@@ -1345,8 +1728,9 @@ All tests are future work; none is added here.
 **Codecs and rendering**
 
 - CRS-1 golden vectors: ASCII, every escaped class of §12.2, astral pairs,
-  lone surrogates, literal `\u202e` text, `"`/`\`, key ordering, integers,
-  `-0`; decode∘encode identity; non-canonical inputs refused (short escapes,
+  lone surrogates, literal `\u202e` text, `"`/`\`, key ordering, integers;
+  `-0` refused (`REVIEW_SERIALIZATION_UNSUPPORTED`), never encoded as `0`;
+  decode∘encode identity; non-canonical inputs refused (short escapes,
   uppercase hex, whitespace, duplicate keys, reordered keys, BOM, missing LF).
 - TAP-1 golden output for a fixed package; no byte outside `0x20–0x7E`/LF;
   no truncation for maximum-size content; line/finalLF/code-unit counts;
@@ -1372,10 +1756,18 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   and pre-typed typeahead cannot match a fresh challenge;
 - wrong challenge ×3, wrong case, extra spaces, `approve`, trailing text → no
   record; EOF, SIGINT, SIGHUP → no record, no manifest change;
-- session > 60 min → no record; decision before final target impossible;
+- session window elapsed → no record; decision before final target impossible;
 - `CI=true`, `CI=1`, `GITHUB_ACTIONS=true` refused for both commands;
   `--json`, `--yes`, `--force`, `--decision` refused as usage;
-- identity from `os.userInfo()` only: `USER`/`USERNAME` overrides ignored;
+- identity from `os.userInfo()` only: `USER`/`USERNAME`/`HOME`/`USERPROFILE`/
+  `HOMEDRIVE`/`HOMEPATH` overrides ignored (principal key unchanged);
+  POSIX euid 0 refused; account-name change between decision and apply →
+  `APPLY_PRINCIPAL_MISMATCH`; on `win32` (or with an injected platform
+  adapter on a POSIX host) the key includes `profileDigest` and differs for
+  two profile directories with the same account name;
+- apply confirmation window: a correct `APPLY <challenge>` after the window
+  (monotonic clock injected) → `APPLY_NOT_CONFIRMED`, no attempt file;
+- session context lines (§9.3.1) are excluded from `presentationDigest`;
 - comment with non-ASCII/control/bidi re-prompts; comment never affects
   decision.
 
@@ -1401,7 +1793,41 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   re-enable after outcome written; superseded record refused; REJECT refused;
   expired refused; future `decidedAt` refused; other principal refused;
 - each #23F outcome (zero-write refusal, APPLIED, ROLLED_BACK,
-  ROLLBACK_INCOMPLETE, simulated crash) produces the §20.4 state and exit.
+  ROLLBACK_INCOMPLETE, exception, simulated crash) produces the §20.4 state and
+  exit.
+
+**Authority state model and races (§16.7, §21 A14)**
+
+- `derivePackageState` table-driven tests covering every rule 1–8 and every
+  run-level `INCONSISTENT` condition, with the result independent of directory
+  listing order and of the clock;
+- crash injection at every row of the §16.7 crash table yields exactly the
+  listed state; an empty attempt file still consumes; a partial outcome file
+  is `MALFORMED` → `QUARANTINED`;
+- attempt without outcome → `QUARANTINED`, and a later `review record` for the
+  package refuses; apply evidence overrides a ledger whose last entry is a
+  fresh `APPROVE`;
+- outcome file write failure after #23F → `APPLY_OUTCOME_NOT_RECORDED`,
+  `QUARANTINED`, no manifest write by `apply` in any path (static + dynamic);
+- two concurrent `review record` commits from the same `M0` → exactly one claim
+  succeeds, the other writes nothing; no ledger entry is ever lost;
+- a decision committed after A8 and before A14 → apply refuses before creating
+  the attempt file (manifest digest / active-record re-check); a claim created
+  between A14a and A14b → outcome `NOT_ENTERED`, #23F not entered;
+- the A14 re-check runs after the confirmation (an approval superseded during
+  the confirmation wait is refused);
+- unknown entry in `review/` or `apply/` → `RUN_STATE_INCONSISTENT`.
+
+**Root identity (§17.2)**
+
+- golden digests for fixed `(platform, rootPath, dev, ino)` tuples, including a
+  non-ASCII root path, computed with `E`;
+- `win32` canonicalization (drive-letter uppercasing, `\` → `/`, trailing
+  separator, UNC and `\\?\` refusal) tested as pure functions on every host;
+- the same directory opened through a differently cased path on `win32`
+  yields the same `rootPath` (`fs.realpathSync.native`), and `fs.realpathSync`
+  is not used for identity (static check);
+- renamed / moved / restored root → `REPOSITORY_BINDING_MISMATCH`.
 
 **Graph / regression**
 
@@ -1416,10 +1842,20 @@ segment, 301-character path; case-fold duplicate pair in one package; live
 
 ## 29. Security invariants
 
-- **INV-01** No approval record exists except one written by a completed
-  `interactive-tty-challenge-v1` session of `review record`.
-- **INV-02** Only `APPROVE` grants; only in the S9 grammar; only as the human's
-  typed input.
+Scope: every invariant holds **on the supported product path** and for actors
+outside the residual classes R-1 (same-OS-principal automation able to drive
+a pseudo-terminal) and R-3 (any actor able to write the run directory). None
+is claimed against those classes. Each invariant is testable by the §28 tests.
+
+- **INV-01** On the supported product path, the product creates an approval
+  record only at the end of a completed `interactive-tty-challenge-v1` session
+  of `review record`, and `apply` acts only on the active ledger entry of the
+  bound run. The product does **not** claim that no other record can exist:
+  records are unkeyed local files, and an actor in R-1/R-3 can write a
+  well-formed one.
+- **INV-02** Only `APPROVE` grants; only in the S9 grammar; only as a line read
+  from the controlling terminal after a fresh challenge (evidence of an
+  interactive controlling process, not of a physical human).
 - **INV-03** The bytes written by #23F equal the approved bytes, and the paths
   written equal the approved PPI-1 strings, byte-for-byte.
 - **INV-04** The approved representation is TAP-1 of CRS-1 of the rebuilt
@@ -1429,11 +1865,13 @@ segment, 301-character path; case-fold duplicate pair in one package; live
 - **INV-06** No product module other than `change-set-application.js` reaches
   an approval gate; no command reports a verdict from a gate or stored status.
 - **INV-07** An approval is consumed atomically before #23F is entered and is
-  never released.
+  never released; #23F is entered only for the approval that was still the
+  active approval at the A14 re-check and the A14b fence.
 - **INV-08** An approval never crosses run, package, project, projection,
-  repository root, product version or principal.
-- **INV-09** CI never records or applies; non-interactive invocation never
-  records or applies.
+  repository root, product version or principal key.
+- **INV-09** Invocation without TTYs on stdin, stdout and stderr never records
+  or applies. Invocation with `GITHUB_ACTIONS=true` or a truthy `CI` is refused
+  as **product policy**; this is not a security isolation boundary (§23).
 - **INV-10** No path or content is normalized between approval and write.
 - **INV-11** No secret, credential, token or key appears in any record,
   manifest, artifact, stdout or stderr.
@@ -1443,6 +1881,14 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   evidence.
 - **INV-14** Uncertainty (unknown outcome, failed check, missing data) never
   creates authority.
+- **INV-15** Package state is exactly `derivePackageState` (§16.7) of the
+  ledger, claims, attempt and outcome files; no other datum (record `status`,
+  manifest apply bookkeeping, stdout, timestamps) contributes, and apply
+  evidence takes precedence over the ledger.
+- **INV-16** `root-identity-v1` is a byte-deterministic function of
+  `(process.platform, fs.realpathSync.native result canonicalized per §17.2,
+  dev, ino)`; a different spelling or location yields refusal, never a false
+  match.
 
 ---
 
@@ -1452,20 +1898,20 @@ segment, 301-character path; case-fold duplicate pair in one package; live
 
 | ID | Decision | Owner | Recommendation |
 |---|---|---|---|
-| OD-04 | Approval authority model (§7) | Product Owner (`ODR-02` owner) | **APPROVE** as worded in §7 |
-| OD-04-F1 | Validity window (24 h) | Product Owner | accept 24 h; may only be shortened |
+| OD-04 | Approval authority model (§7), including every §30.5 owner clause | Product Owner (`ODR-02` owner) | **APPROVE** as worded in §7; owner clauses `PENDING PO` |
+| OD-04-F1 | Validity window | Product Owner | folded into §30.5 item 14 (recommended 24 h; may only be shortened) |
 | OD-04-F2 | Dedicated exit code for `APPLY_ROLLBACK_INCOMPLETE` | Product Owner | **not required**; defer (exit 4 + distinct reason code) |
 | Stage 4 implementation authorization | incl. package surface delta (§24 item 2) | Product Owner / Governance | separate mission; this design does not authorize it |
 
-### 30.2 Residual risks requiring PO acceptance under OD-04.7
+### 30.2 Residual risks requiring PO disposition under OD-04.7
 
-| ID | Residual |
-|---|---|
-| R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access) can complete the approval and apply sessions. Not distinguishable from the human without a hardware user-presence factor |
-| R-2 | Reviewer identity is OS-account attribution; a shared OS account cannot distinguish people |
-| R-3 | Records and attempt markers are unkeyed local files; a same-principal actor can forge or delete them (forging still requires the interactive apply confirmation; deletion of a marker after use can re-enable a replay only for that actor) |
-| R-4 | The existing #23F TOCTOU window between final revalidation and the mutating syscall (unchanged, `SECURITY.md` §24) |
-| R-5 | Human factors: a genuine reviewer can approve harmful content or misunderstand escaped text; the digests prove correspondence, not comprehension |
+| ID | Residual | Status |
+|---|---|---|
+| R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access, or a CI process that unsets `CI`/`GITHUB_ACTIONS` and allocates a pty) can complete the approval and apply sessions. TTY + challenge proves an interactive controlling process, not a physical human; not distinguishable without a hardware user-presence factor | `R-1 ACCEPTANCE = PENDING PO` |
+| R-2 | Reviewer identity is local OS-account attribution: a shared OS account cannot distinguish people; POSIX uid reuse after account deletion; on Windows no SID is available through Node core, so the discriminator is account name + profile-directory digest (§14.5), and UAC elevation is not distinguished | `R-2 ACCEPTANCE = PENDING PO` |
+| R-3 | Records, ledger claims, attempt and outcome files are unkeyed local files; any actor able to write the run directory (same principal, or another account with write permission) can forge well-formed records or delete/forge apply evidence. Forging an approval still requires the bound principal's interactive apply confirmation; deleting an attempt file after use can re-enable a replay only for such a writer | `R-3 ACCEPTANCE = PENDING PO` |
+| R-4 | The existing #23F TOCTOU window between final revalidation and the mutating syscall (unchanged, `SECURITY.md` §24) | `R-4 ACCEPTANCE = PENDING PO` |
+| R-5 | Human factors: a genuine reviewer can approve harmful content or misunderstand escaped text; the digests prove correspondence, not comprehension | `R-5 ACCEPTANCE = PENDING PO` |
 
 ### 30.3 Deferred (not Controlled-v1)
 
@@ -1474,6 +1920,41 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   design and owner decision.
 - Reviewer role registry / multiple-reviewer policies.
 - A diff view inside TAP (would be an additional derived representation).
+- A SID-based Windows principal discriminator (would narrow R-2); requires a
+  new native dependency or identity infrastructure — an owner implication,
+  not designed here.
+
+### 30.5 Owner policy clauses (OD-04 disposition table)
+
+Classification: `ARCHITECTURE-DERIVED` = follows from the threat model and
+the authority contract; changing it changes the design. `PO ACCEPTANCE
+REQUIRED` = a product policy choice; the value given is a **recommendation
+only**. **No clause is accepted by this document.** Every clause is
+`PENDING PO` until the explicit OD-04 disposition, which occurs only after the
+independent Architecture C1 re-review and the Security design review.
+
+| # | Clause | Recommended value / design | Classification | Status |
+|---:|---|---|---|---|
+| 1 | R-1 same-OS-principal automation residual | accept for Controlled-v1, or else `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 2 | R-2 shared/local-account attribution residual (incl. Windows discriminator, §14.5) | accept for Controlled-v1 | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 3 | R-3 unkeyed approval record / claim / attempt / outcome integrity | accept for Controlled-v1 (integrity + binding, not authenticity) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 4 | R-4 existing #23F TOCTOU residual | accept (unchanged, `SECURITY.md` §24) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 5 | R-5 human-factors residual | accept | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 6 | Whole-package approval granularity (§8) | whole package; no partial approval | architecture selects it (only option compatible with unchanged #23F); its product consequence is `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 7 | OS-local account attribution model (§14) | `os-local-account-v1`; POSIX euid + name; Windows name + profile digest | mechanism `ARCHITECTURE-DERIVED`; adequacy as the Controlled-v1 attribution model `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 8 | Offline `review record` (§23) | permitted | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 9 | Offline `apply` (§23) | permitted | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 10 | Single-use approval (§20) | one apply attempt per approval | `PO ACCEPTANCE REQUIRED` (architecture requires *at most* one attempt under an uncertain outcome; the PO decides that this is the product contract) | `PENDING PO` |
+| 11 | Approval consumed even when #23F refuses before its first write (§20.4) | consumed | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 12 | Permanent `QUARANTINED` requiring a human repair and a new run (§16.7) | permanent | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 13 | Same-principal apply (§14.3) | `apply` only by the identical principal key | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 14 | Approval validity (`notAfter`) | 24 h after `decidedAt`; product constant, never configurable; may only be shortened | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 15 | Interactive review session window | 60 min. Note (INFO-03): a maximum-size package (up to 1 000 000 code units, rendered unabridged with per-target acknowledgement) may not be reviewable within 60 min; the PO chooses the value knowing this. The design does not choose a different value | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 16 | PPI-1 narrowing (§13): Stage 3 `plan`/`generate` artifacts whose paths are not PPI-1-valid can never become approvable or applicable, and `plan`/`generate` will refuse them at acceptance | adopt | narrowing is `ARCHITECTURE-DERIVED` (`SEC-S3-m02`); its product consequence (some previously generated runs become non-approvable) is `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 17 | Apply confirmation window (§9.5) | 5 min, monotonic clock | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 18 | POSIX superuser (euid 0) refused (§14.4) | refuse | `ARCHITECTURE-DERIVED` (fail-closed narrowing) | `PENDING PO` (confirmation only) |
+| 19 | Repository relocation invalidates pending approvals (§17.2) | invalidate | `ARCHITECTURE-DERIVED` (root binding) | `PENDING PO` (confirmation only) |
+| 20 | CI refusal as product policy, not a boundary (§23) | refuse under `GITHUB_ACTIONS=true` / truthy `CI` | `ARCHITECTURE-DERIVED` policy; its residual is part of R-1 | `PENDING PO` (confirmation only) |
 
 ### 30.4 Documentation follow-ups (upon OD-04 approval; not done here)
 
@@ -1492,7 +1973,7 @@ segment, 301-character path; case-fold duplicate pair in one package; live
 | `scripts/ai/cli/policy.js` | `RELEASE_CAPABILITIES.reviewRecord/apply` enabled only at enablement time (§24) |
 | new `scripts/ai/cli/review-record.js`, `scripts/ai/cli/apply.js` | §9.3, §21 |
 | new `canonical-review-serialization.js` (CRS-1 + TAP-1), `path-identity.js` (PPI-1), `review-record-v2.js` (validator), terminal I/O helper | §10–§13, §16 |
-| `scripts/ai/cli/run-store.js` | `QaAgentRunManifest v2`, path grammar, write-once files, reviews ledger |
+| `scripts/ai/cli/run-store.js` | `QaAgentRunManifest v2` (reviews ledger only), path grammar, ledger claims, write-once `review/` and `apply/` files, `derivePackageState` (§16.7), `root-identity-v1` (§17.2) |
 | `scripts/ai/cli/generative.js` / `run-artifacts.js` | PPI-1 at plan/generate acceptance |
 | `scripts/ai/test-automation/generated-change-set-review-record.js` | builder extraction (code motion) |
 | `scripts/ai/test-automation/change-set-application.js` | §13.6 exact-name refusal (strengthening only) |
@@ -1524,6 +2005,8 @@ Architecture then Security review.
 | autonomous or LLM/provider-generated approval | not met (forbidden) |
 | new public CLI exit code | not met (none) |
 | runtime/test change needed by this design mission | not met |
+| C1: a MINOR finding not resolvable design-only (`STOP — DESIGN CORRECTIVE REQUIRES IMPLEMENTATION`) | not met (all six resolved in design, §33) |
+| C1: robust Windows principal requires new native dependency / identity infrastructure | not introduced; recorded as R-2 residual and owner implication (§14.5, §30.3) |
 
 ### 32.2 Future STOP triggers (implementation lifecycle)
 
@@ -1536,9 +2019,44 @@ Architecture then Security review.
 - any network, GitHub or CI dependency for approval or apply;
 - any need for a new exit code → `STOP — PUBLIC CLI CONTRACT DECISION REQUIRED`;
 - any #23F change beyond §22.3;
-- enabling either capability before every §24 prerequisite holds.
+- enabling either capability before every §24 prerequisite holds;
+- any `apply` path that writes the manifest, or any second store of apply
+  state competing with §16.7;
+- any use of `fs.realpathSync` (non-native) or `canonicalStringify` for
+  `root-identity-v1`.
+
+---
+
+## 33. Design corrective C1 record
+
+Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C1 — APPROVED`. Previous reviewed
+HEAD `308467efd3d36ab90075bc0477f716b45484cdfb` (Architecture design review:
+`APPROVED_WITH_NON_BLOCKING_FINDINGS`, 0 B / 0 M / 6 m / 4 INFO). This
+corrective is design-only; any new HEAD invalidates that approval and requires
+an independent exact-head Architecture C1 re-review before the Security
+design review.
+
+| Finding | Resolution | Sections |
+|---|---|---|
+| `ARCH-S4-m01` authoritative state model | single deterministic `derivePackageState` over ledger, claims, attempt and outcome files; apply state deliberately external to the manifest (no `applies` ledger, `apply` never writes the manifest); apply evidence precedes the ledger; attempt without outcome = `QUARANTINED / UNKNOWN_OUTCOME`; exclusive ledger claims remove the lost-update race; crash table fail closed; post-#23F manifest CAS failure impossible by construction, outcome-write failure defined | §1, §9.3, §16.6, §16.7, §20, §21, §25, §29 INV-15 |
+| `ARCH-S4-m02` re-check before consumption | A14 re-reads the manifest digest, re-derives the state and requires the selected record to still be the active approval immediately before the `O_EXCL` attempt file; A14b post-reservation fence; ordering argument; bounded monotonic 5-minute apply confirmation window before the re-check | §9.5, §20.2, §20.3, §21 |
+| `ARCH-S4-m03` byte-deterministic root identity | `fs.realpathSync.native`; `win32` drive-letter uppercasing, `\` → `/`, trailing-separator rule, UNC/device refusal; `dev`/`ino` decimal; CRS-1 encoder `E` before SHA-256; relocation intentionally invalidates approvals | §17.2, §29 INV-16, §28 |
+| `ARCH-S4-m04` OS principal per platform | POSIX effective uid (+ name, rename refuses, euid 0 refused, sudo semantics); Windows name + token-derived profile-directory digest, SID not available through Node core → residual; `LOCAL ACCOUNT ATTRIBUTION`, not a physical human | §14.3–§14.5, §16.2, §30.2 R-2 |
+| `ARCH-S4-m05` overclaimed invariants | INV-01/02/07/09 scoped to the product path and outside R-1/R-3; CI refusal = product policy, not an isolation boundary; TTY + challenge = interactive controlling process; §15, §27 wording aligned | §1, §9.2, §14, §15, §23, §27, §29 |
+| `ARCH-S4-m06` owner policy clauses | §30.5 table of 20 clauses, each classified `ARCHITECTURE-DERIVED` or `PO ACCEPTANCE REQUIRED`, all `PENDING PO`; §7 recommendation marked as recommendation only | §7, §8, §30.2, §30.5 |
+| INFO-01 | `-0` refused, never encoded as `0` | §11.1, §11.2, §28 |
+| INFO-02 | non-authoritative session context lines (root, root binding, principal, policy), excluded from `presentationDigest` | §9.3.1 |
+| INFO-03 | large-package vs. 60-min usability surfaced to the PO; no new value chosen | §30.5 item 15 |
+| INFO-04 | atomic exclusive-create filesystem assumption documented; fail-closed eligibility; no platform matrix | §16.7 |
+
+Preserved unchanged: whole-package approval architecture, Option A / TAP-1,
+CRS-1, PPI-1, record v2 (one added `reviewer.profileDigest` field), manifest v2
+(ledger only), canonical #23F only, `TSB-F02 OPEN / LOW / CONDITIONAL` with
+trigger `FALSE`, `review show` non-authoritative, CI refused as product policy,
+public API and exit codes unchanged, OD-06 not entered.
 
 ---
 
 `IMPLEMENTATION NOT AUTHORIZED` · `MERGE NOT AUTHORIZED` ·
-`FUTURE_REVIEW_PRESENTATION_BINDING_GUARD OPEN` · `AT-07/TB-01 RESIDUAL`
+`FUTURE_REVIEW_PRESENTATION_BINDING_GUARD OPEN` · `AT-07/TB-01 RESIDUAL` ·
+`OWNER CLAUSES PENDING PO`
