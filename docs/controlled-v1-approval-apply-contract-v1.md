@@ -16,12 +16,27 @@ corrective for `ARCH-S4-C3-m01..m03`, `SEC-S4-C3-m01..m02`; change record §36);
 `OD-CONTROLLED-V1-STAGE-4-DESIGN-C5 — APPROVED` (narrow documentation-only
 corrective for `ARCH-S4-C4-01` MAJOR and `ARCH-S4-C4-02` MINOR; change record §37)
 
-State: **DESIGN ONLY / SOLE WIP** (`WIP = 1`)
+DESIGN: **APPROVED / MERGED / POST-MERGE CERTIFIED**
+
+IMPLEMENTATION: **NOT_STARTED / NOT_AUTHORIZED**
+
+Product Owner authority: `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`.
+Architecture C5: **APPROVED**. Security C5: **APPROVED**.
+Exact reviewed HEAD: `864009c7c3e8256e6ca7df934fe5986d74c726da`;
+reviewed TREE: `78d8bfda920b3de6489b777149668709b2ec464d`.
+Owner clauses **1–23 ACCEPTED**; **R-1..R-5 ACCEPTED**;
+**AT-07/TB-01 RESIDUAL**, not closed.
+
+Design PR **#245** merged as `STANDARD_TWO_PARENT`:
+`f8036ad95e9e8acd655d01950060550d71595d81`, merge TREE
+`78d8bfda920b3de6489b777149668709b2ec464d`.
+Post-merge CI: **#650 / 38165314497 / push / SUCCESS** on that exact merge.
 
 Document type: **security + software architecture design.** This document
 changes no runtime code, test, workflow, package manifest, export, capability
-flag, CLI behavior or ROADMAP status. Implementation is **NOT AUTHORIZED**.
-Merge is **NOT AUTHORIZED**. `qa-agent review record` and `qa-agent apply`
+flag or CLI behavior. The approved design is merged; this lifecycle sync
+authorizes no implementation, capability enablement or further merge.
+`qa-agent review record` and `qa-agent apply`
 remain **fixed refusals** (exit 5, `CAPABILITY_NOT_ENABLED_IN_RELEASE`).
 
 Date: 2026-10-11
@@ -36,7 +51,7 @@ implementation stage.
 
 | Decision | Result |
 |---|---|
-| OD-04 recommendation | **APPROVE**, conditional on the Product Owner explicitly dispositioning every owner clause of §30.5, including the residual risks R-1..R-5 (§30.2). **No owner clause is accepted by this document**; all remain `PENDING PO`. If the PO does not accept R-1, the result becomes `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` (hardware-backed user-presence attestation), not this design |
+| OD-04 disposition | **APPROVED** under `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`, on the exact reviewed identity above. Owner clauses 1–23 (§30.5) and residual risks R-1..R-5 (§30.2) are **ACCEPTED**. The original conditional STOP if the PO declines R-1 remains recorded in §7; this disposition accepts R-1 |
 | Approval granularity | **One human decision (`APPROVE` \| `REJECT`) over one complete canonical `GeneratedChangeSetReviewPackage`**, selected explicitly by run id and package ordinal. No per-file or per-operation approval |
 | Trusted approval presentation | **Option A = `TAP-2`** (Trusted Approval Presentation v2): a repository-owned, deterministic, ASCII-only terminal rendering derived from the decoded bytes of `CRS-1`, which in turn is derived from the exact deep-frozen package built by `buildGeneratedChangeSetReviewPackage()`, emitted as hard-wrapped rows of at most 100 columns in which every product-owned row starts with a reserved marker and every dynamic value losslessly escapes that marker, making row attribution independent of width history, with bounded paging and no truncation (§10.3.1). Shown **only** inside `qa-agent review record`; `review show` stays non-authoritative and unchanged |
 | Canonical review serialization | **`CRS-1` (`CanonicalReviewSerializationV1`)**: byte-exact, ASCII-only canonical JSON with one escape form per UTF-16 code unit (§11) |
@@ -50,11 +65,11 @@ implementation stage.
 | Apply path | **Canonical #23F `applyApprovedGeneratedChangeSet` only**, preceded by refusal-only Stage 4 checks; #23F authority semantics unchanged (§22) |
 | Replay | **Single-use per apply attempt.** Immediately before consumption, apply re-derives the authority state and requires the selected approval to still be the active one; the approval is then consumed atomically before #23F is invoked, whatever the outcome (§20, §21 A14) |
 | CI | `review record` and `apply` **refuse** under `GITHUB_ACTIONS=true` or a truthy `CI` (exit 5). This is a **product-supported policy refusal, not a security isolation boundary** (§23) |
-| Offline | Recommended: `review record` and `apply` **both permitted under `--offline`** (no network or provider is needed) — `PO ACCEPTANCE REQUIRED` (§30.5) |
+| Offline | Accepted design: `review record` and `apply` **both permitted under `--offline`** (no network or provider is needed) — owner clauses 8–9 **ACCEPTED** (§30.5); implementation remains unauthorized |
 | `TSB-F02` | `OPEN / LOW / CONDITIONAL`; **`TSB-F02 TRIGGER = FALSE`** (§26) |
 | `SEC-S3-m01` | **DESIGN RESOLVED** (§12) |
 | `SEC-S3-m02` | **DESIGN RESOLVED** (§13) |
-| `AT-07` / `TB-01` | **RESIDUAL** (§27) — mitigated on the supported product path for actors outside the residual classes; the same-OS-principal automation class (R-1) and any actor able to write the run directory (R-3) remain, and their acceptance is `PENDING PO` |
+| `AT-07` / `TB-01` | **RESIDUAL** (§27) — design mitigation on the supported product path for actors outside the residual classes; the same-OS-principal automation class (R-1) and any actor able to write the run directory (R-3) remain, with owner acceptance **ACCEPTED**; no runtime mitigation or closure is claimed |
 | `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` | **OPEN**; satisfaction criteria defined (§10.6). Not closed by this design |
 | Public API / exit codes | **Unchanged.** No new root export, subpath or exit code |
 | OD-06 | **NOT ENTERED.** The contract is platform-independent and fail-closed (§13.8) |
@@ -95,7 +110,7 @@ This design does **not**:
   `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD`, `AT-07`, `TB-01` or `TSB-F02`;
 - change `qa-agent review show`.
 
-## 4. Certified baseline
+## 4. Historical certified design-authoring baseline
 
 ```text
 repository:  TarasovArtem/qa-ai-agent
@@ -223,7 +238,14 @@ Mitigation mapping: §27.
 
 ---
 
-## 7. OD-04 recommended disposition
+## 7. OD-04 disposition and original recommendation
+
+Current disposition: `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED` on HEAD
+`864009c7c3e8256e6ca7df934fe5986d74c726da`, TREE
+`78d8bfda920b3de6489b777149668709b2ec464d`, after Architecture C5
+**APPROVED** and Security C5 **APPROVED**. Owner clauses 1–23 and R-1..R-5
+are **ACCEPTED**. This approves the design; implementation is
+**NOT_STARTED / NOT_AUTHORIZED**. The original recommendation follows.
 
 ```text
 OD-04 RECOMMENDATION = APPROVE
@@ -262,13 +284,12 @@ Recommended disposition text (for the Product Owner):
 > - **OD-04.9 Owner clauses.** Each clause of §30.5 marked
 >   `PO ACCEPTANCE REQUIRED` is dispositioned explicitly with a final value.
 
-The quoted text is a **recommendation only**. Every value in it that §30.5
-classifies as `PO ACCEPTANCE REQUIRED` (for example 24 h, single use, offline
-permission, same-principal apply) remains **unresolved** until the explicit
-Product Owner OD-04 disposition, which occurs only after the independent
-Architecture C5 exact-head re-review and then the Security C5 exact-head
-re-review. This document grants
-no owner acceptance.
+The quoted text records the original recommendation. Values classified by
+§30.5 as `PO ACCEPTANCE REQUIRED` (for example 24 h, single use, offline
+permission, same-principal apply) have now been **ACCEPTED** by the explicit
+Product Owner disposition after independent Architecture C5 and Security C5
+exact-head approvals. Acceptance comes from that owner authority, not from
+the recommendation or the design reviews alone.
 
 The recommendation is **APPROVE** rather than `ADDITIONAL OWNER DECISION
 REQUIRED` because every element above is within OD-04's own scope (ODR-02:
@@ -277,7 +298,7 @@ an external identity provider, mandatory online identity, a new public API, a
 new distribution service, a platform matrix, CI approval authority, partial
 approval or a change to #23F authority semantics. Residual disposition (OD-04.7)
 and the owner clauses (OD-04.9) are integral clauses of the same decision, not
-separate ones; all are `PENDING PO`. If the PO
+separate ones; all are now **ACCEPTED**. The original conditional rule remains: if the PO
 declines OD-04.7 for R-1, this design returns
 `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` (§32).
 
@@ -908,7 +929,7 @@ last page. Boundaries are pure functions of package rows. Paging never removes,
 reorders, merges, re-wraps or truncates them, changes CRS-1 bytes B, or changes
 `presentationDigest`. EOF, interruption or observed/current geometry failure
 aborts before CS-ENTER without writes. Every target is still emitted fully;
-item 15's pending session-window recommendation and R-5 are unchanged.
+item 15's accepted session-window value and R-5 residual are unchanged.
 
 ### 10.4 Labeling
 
@@ -1918,7 +1939,7 @@ by expiry/`notAfter` (never reset or extended), the same principal,
 package/run/root/project binding, fresh interactive apply confirmation and
 #23F live content/filesystem revalidation. Revalidation can refuse persisted
 earlier writes, but cannot reconstruct wholly lost supersession evidence.
-R-3 remains `PENDING PO` (§30.2, §30.5 item 3).
+R-3 remains a residual; owner acceptance is `ACCEPTED` (§30.2, §30.5 item 3).
 
 ```text
 DURABILITY MODEL = EXPLICIT
@@ -2812,26 +2833,26 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
 
 ---
 
-## 30. Open decisions
+## 30. Owner dispositions and remaining decisions
 
 ### 30.1 Decisions
 
 | ID | Decision | Owner | Recommendation |
 |---|---|---|---|
-| OD-04 | Approval authority model (§7), including every §30.5 owner clause | Product Owner (`ODR-02` owner) | **APPROVE** as worded in §7; owner clauses `PENDING PO` |
+| OD-04 | Approval authority model (§7), including every §30.5 owner clause | Product Owner (`ODR-02` owner) | **APPROVED**; owner clauses 1–23 **ACCEPTED** under the exact-head authority recorded above |
 | OD-04-F1 | Validity window | Product Owner | folded into §30.5 item 14 (recommended 24 h; may only be shortened) |
 | OD-04-F2 | Dedicated exit code for `APPLY_ROLLBACK_INCOMPLETE` | Product Owner | **not required**; defer (exit 4 + distinct reason code) |
 | Stage 4 implementation authorization | incl. package surface delta (§24 item 2) | Product Owner / Governance | separate mission; this design does not authorize it |
 
-### 30.2 Residual risks requiring PO disposition under OD-04.7
+### 30.2 Residual risks accepted under OD-04.7
 
 | ID | Residual | Status |
 |---|---|---|
-| R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access, or a CI process that unsets `CI`/`GITHUB_ACTIONS` and allocates a pty) can complete the approval and apply sessions. TTY + challenge proves an interactive controlling process, not a physical human; not distinguishable without a hardware user-presence factor. Includes the explicit prompt-injection chain `untrusted model/provider content → TAP-2 → same-principal AI/automation controlling the terminal → malicious instruction → agent types APPROVE <challenge>` (§15.1), which stays inside R-1 because that actor already has repository write authority; the operating rule that `review record`/`apply` MUST NOT be delegated to or driven by an AI agent/automation when human approval provenance is required is **not technically enforceable** | `R-1 ACCEPTANCE = PENDING PO` |
-| R-2 | Reviewer identity is local OS-account attribution: a shared OS account cannot distinguish people; POSIX uid reuse after account deletion; on Windows no SID is available through Node core, so the discriminator is account name + profile-directory digest (§14.5), and UAC elevation is not distinguished | `R-2 ACCEPTANCE = PENDING PO` |
-| R-3 | Records, ledger claims, attempt and outcome files are unkeyed local files; any actor able to write the run directory (same principal, or another account with write permission) can forge well-formed records or delete/forge apply evidence. Forging an approval still requires the bound principal's interactive apply confirmation; deleting an attempt file after use can re-enable a replay only for such a writer. Non-conforming storage that reports write/flush/durability success but later fails to preserve it across power loss or an equivalent storage fault has at least two explicit residuals (§16.8): **lost attempt**, an acknowledged durable attempt disappears after mutation work; and **lost supersession**, `APPROVE #1` → `REJECT #2` → #2 claim/record/manifest reported durable → all #2 evidence lost → earlier still-valid #1 visible again. The latter creates no approval authority that never existed; it may restore previously existing authority that was later superseded/revoked, within its original validity window. Both remain bounded by original expiry/`notAfter`, same principal, package/run/root/project binding, fresh apply confirmation and #23F live content/filesystem revalidation; surviving beyond-ledger claims/temps or invalid ledger-referenced evidence fail closed (`INCONSISTENT` / `QUARANTINED`) | `R-3 ACCEPTANCE = PENDING PO` |
-| R-4 | The existing #23F TOCTOU window between final revalidation and the mutating syscall (unchanged, `SECURITY.md` §24) | `R-4 ACCEPTANCE = PENDING PO` |
-| R-5 | Human factors: a genuine reviewer can approve harmful content or misunderstand escaped text; the digests prove correspondence, not comprehension | `R-5 ACCEPTANCE = PENDING PO` |
+| R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access, or a CI process that unsets `CI`/`GITHUB_ACTIONS` and allocates a pty) can complete the approval and apply sessions. TTY + challenge proves an interactive controlling process, not a physical human; not distinguishable without a hardware user-presence factor. Includes the explicit prompt-injection chain `untrusted model/provider content → TAP-2 → same-principal AI/automation controlling the terminal → malicious instruction → agent types APPROVE <challenge>` (§15.1), which stays inside R-1 because that actor already has repository write authority; the operating rule that `review record`/`apply` MUST NOT be delegated to or driven by an AI agent/automation when human approval provenance is required is **not technically enforceable** | `R-1 ACCEPTANCE = ACCEPTED` |
+| R-2 | Reviewer identity is local OS-account attribution: a shared OS account cannot distinguish people; POSIX uid reuse after account deletion; on Windows no SID is available through Node core, so the discriminator is account name + profile-directory digest (§14.5), and UAC elevation is not distinguished | `R-2 ACCEPTANCE = ACCEPTED` |
+| R-3 | Records, ledger claims, attempt and outcome files are unkeyed local files; any actor able to write the run directory (same principal, or another account with write permission) can forge well-formed records or delete/forge apply evidence. Forging an approval still requires the bound principal's interactive apply confirmation; deleting an attempt file after use can re-enable a replay only for such a writer. Non-conforming storage that reports write/flush/durability success but later fails to preserve it across power loss or an equivalent storage fault has at least two explicit residuals (§16.8): **lost attempt**, an acknowledged durable attempt disappears after mutation work; and **lost supersession**, `APPROVE #1` → `REJECT #2` → #2 claim/record/manifest reported durable → all #2 evidence lost → earlier still-valid #1 visible again. The latter creates no approval authority that never existed; it may restore previously existing authority that was later superseded/revoked, within its original validity window. Both remain bounded by original expiry/`notAfter`, same principal, package/run/root/project binding, fresh apply confirmation and #23F live content/filesystem revalidation; surviving beyond-ledger claims/temps or invalid ledger-referenced evidence fail closed (`INCONSISTENT` / `QUARANTINED`) | `R-3 ACCEPTANCE = ACCEPTED` |
+| R-4 | The existing #23F TOCTOU window between final revalidation and the mutating syscall (unchanged, `SECURITY.md` §24) | `R-4 ACCEPTANCE = ACCEPTED` |
+| R-5 | Human factors: a genuine reviewer can approve harmful content or misunderstand escaped text; the digests prove correspondence, not comprehension | `R-5 ACCEPTANCE = ACCEPTED` |
 
 ### 30.3 Deferred (not Controlled-v1)
 
@@ -2848,45 +2869,46 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
 
 Classification: `ARCHITECTURE-DERIVED` = follows from the threat model and
 the authority contract; changing it changes the design. `PO ACCEPTANCE
-REQUIRED` = a product policy choice; the value given is a **recommendation
-only**. **No clause is accepted by this document.** Every clause is
-`PENDING PO` until the explicit OD-04 disposition, which occurs only after the
-independent Architecture C5 exact-head re-review and, only after it passes,
-the independent Security C5 exact-head re-review. Items **1–23 all remain
-`PENDING PO`**; C5 grants no acceptance.
+REQUIRED` = a product policy choice requiring explicit owner disposition.
+Items **1–23 are ACCEPTED** under
+`OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`, after independent Architecture C5
+and Security C5 exact-head approvals. Their design values and classifications
+are unchanged. C5 design review alone granted no owner acceptance.
 
 | # | Clause | Recommended value / design | Classification | Status |
 |---:|---|---|---|---|
-| 1 | R-1 same-OS-principal automation residual | accept for Controlled-v1, or else `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 2 | R-2 shared/local-account attribution residual (incl. Windows discriminator, §14.5) | accept for Controlled-v1 | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 3 | R-3 unkeyed approval record / claim / attempt / outcome integrity and lying-storage durability residual | accept for Controlled-v1 (integrity + binding, not authenticity), including storage reporting successful write/flush/durability but losing state across power loss or equivalent storage fault: an acknowledged durable attempt lost after mutation, and all evidence of durable `REJECT #2` lost after `APPROVE #1`, exposing still-valid #1 again. This restores previously existing, later superseded/revoked authority, never authority that did not exist; bounded by original expiry/notAfter, same principal, package/run/root/project binding, apply confirmation and #23F live content/filesystem revalidation (§16.8, §30.2 R-3) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 4 | R-4 existing #23F TOCTOU residual | accept (unchanged, `SECURITY.md` §24) | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 5 | R-5 human-factors residual | accept | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 6 | Whole-package approval granularity (§8) | whole package; no partial approval | architecture selects it (only option compatible with unchanged #23F); its product consequence is `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 7 | OS-local account attribution model (§14) | `os-local-account-v1`; POSIX euid + name; Windows name + profile digest | mechanism `ARCHITECTURE-DERIVED`; adequacy as the Controlled-v1 attribution model `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 8 | Offline `review record` (§23) | permitted | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 9 | Offline `apply` (§23) | permitted | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 10 | Single-use approval (§20) | one apply attempt per approval | `PO ACCEPTANCE REQUIRED` (architecture requires *at most* one attempt under an uncertain outcome; the PO decides that this is the product contract) | `PENDING PO` |
-| 11 | Approval consumed even when #23F refuses before its first write (§20.4) | consumed | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 12 | Permanent `QUARANTINED` requiring a human repair and a new run (§16.7) | permanent | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 13 | Same-principal apply (§14.3) | `apply` only by the identical principal key | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 14 | Approval validity (`notAfter`) | 24 h after `decidedAt`; product constant, never configurable; may only be shortened | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 15 | Interactive review session window | 60 min. Note (INFO-03): a maximum-size package (up to 1 000 000 code units, rendered unabridged with per-target acknowledgement) may not be reviewable within 60 min; the PO chooses the value knowing this. The design does not choose a different value | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 16 | PPI-1 narrowing (§13): Stage 3 `plan`/`generate` artifacts whose paths are not PPI-1-valid can never become approvable or applicable, and `plan`/`generate` will refuse them at acceptance | adopt | narrowing is `ARCHITECTURE-DERIVED` (`SEC-S3-m02`); its product consequence (some previously generated runs become non-approvable) is `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 17 | Apply confirmation window (§9.5) | 5 min, monotonic clock | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 18 | POSIX superuser (euid 0) refused (§14.4) | refuse | `ARCHITECTURE-DERIVED` (fail-closed narrowing) | `PENDING PO` (confirmation only) |
-| 19 | Repository relocation invalidates pending approvals (§17.2) | invalidate | `ARCHITECTURE-DERIVED` (root binding) | `PENDING PO` (confirmation only) |
-| 20 | CI refusal as product policy, not a boundary (§23) | refuse under `GITHUB_ACTIONS=true` / truthy `CI` | `ARCHITECTURE-DERIVED` policy; its residual is part of R-1 | `PENDING PO` (confirmation only) |
-| 21 | Abandoned review claim / run-wide quarantine (§9.3.2, §16.7 rule 1) | handled termination signals are deferred through the bounded claim critical section; an uncatchable termination (or a step failure) after claim creation may leave an orphan claim; an orphan claim permanently quarantines the **entire run** (all packages, including otherwise valid approvals); the product never auto-deletes, expires, reuses or repairs it; the user must create a new run. Availability loss only, never authority. Specializes item 12 for the run-wide case | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 22 | WIN32 STAGE 4 FAIL-CLOSED ELIGIBILITY | Stage 4 `review record` / `apply` is enabled only for supported Windows + Node combinations where **all** required real-win32 evidence succeeds: reviewer/profile attribution, signal-completion behavior, and filesystem durability / crash-safe replacement assumptions backed by documented OS/platform guarantees and real-win32 execution. Otherwise Stage 4 refuses on that configuration; no silent downgrade or implied support (§24 item 6a). OD-06 is not entered | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 23 | TAP-2 TERMINAL GEOMETRY REFUSAL | trusted approval refuses when required geometry is unavailable: width = 100 columns, minimum rows = 24, page size = 20 rows. No narrow/degraded trusted mode exists; observed geometry violation or current invalid checkpoint geometry aborts before authority commit and requires a fresh session; missed transient geometry is not security evidence and cannot cause row impersonation under TAP-2 (§10.3.1). Later changes to these versioned TAP values require the appropriate TAP contract/version handling already defined by the design | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 1 | R-1 same-OS-principal automation residual | accept for Controlled-v1, or else `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 2 | R-2 shared/local-account attribution residual (incl. Windows discriminator, §14.5) | accept for Controlled-v1 | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 3 | R-3 unkeyed approval record / claim / attempt / outcome integrity and lying-storage durability residual | accept for Controlled-v1 (integrity + binding, not authenticity), including storage reporting successful write/flush/durability but losing state across power loss or equivalent storage fault: an acknowledged durable attempt lost after mutation, and all evidence of durable `REJECT #2` lost after `APPROVE #1`, exposing still-valid #1 again. This restores previously existing, later superseded/revoked authority, never authority that did not exist; bounded by original expiry/notAfter, same principal, package/run/root/project binding, apply confirmation and #23F live content/filesystem revalidation (§16.8, §30.2 R-3) | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 4 | R-4 existing #23F TOCTOU residual | accept (unchanged, `SECURITY.md` §24) | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 5 | R-5 human-factors residual | accept | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 6 | Whole-package approval granularity (§8) | whole package; no partial approval | architecture selects it (only option compatible with unchanged #23F); its product consequence is `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 7 | OS-local account attribution model (§14) | `os-local-account-v1`; POSIX euid + name; Windows name + profile digest | mechanism `ARCHITECTURE-DERIVED`; adequacy as the Controlled-v1 attribution model `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 8 | Offline `review record` (§23) | permitted | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 9 | Offline `apply` (§23) | permitted | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 10 | Single-use approval (§20) | one apply attempt per approval | `PO ACCEPTANCE REQUIRED` (architecture requires *at most* one attempt under an uncertain outcome; the PO decides that this is the product contract) | `ACCEPTED` |
+| 11 | Approval consumed even when #23F refuses before its first write (§20.4) | consumed | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 12 | Permanent `QUARANTINED` requiring a human repair and a new run (§16.7) | permanent | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 13 | Same-principal apply (§14.3) | `apply` only by the identical principal key | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 14 | Approval validity (`notAfter`) | 24 h after `decidedAt`; product constant, never configurable; may only be shortened | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 15 | Interactive review session window | 60 min. Note (INFO-03): a maximum-size package (up to 1 000 000 code units, rendered unabridged with per-target acknowledgement) may not be reviewable within 60 min; the PO chooses the value knowing this. The design does not choose a different value | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 16 | PPI-1 narrowing (§13): Stage 3 `plan`/`generate` artifacts whose paths are not PPI-1-valid can never become approvable or applicable, and `plan`/`generate` will refuse them at acceptance | adopt | narrowing is `ARCHITECTURE-DERIVED` (`SEC-S3-m02`); its product consequence (some previously generated runs become non-approvable) is `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 17 | Apply confirmation window (§9.5) | 5 min, monotonic clock | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 18 | POSIX superuser (euid 0) refused (§14.4) | refuse | `ARCHITECTURE-DERIVED` (fail-closed narrowing) | `ACCEPTED` (confirmation only) |
+| 19 | Repository relocation invalidates pending approvals (§17.2) | invalidate | `ARCHITECTURE-DERIVED` (root binding) | `ACCEPTED` (confirmation only) |
+| 20 | CI refusal as product policy, not a boundary (§23) | refuse under `GITHUB_ACTIONS=true` / truthy `CI` | `ARCHITECTURE-DERIVED` policy; its residual is part of R-1 | `ACCEPTED` (confirmation only) |
+| 21 | Abandoned review claim / run-wide quarantine (§9.3.2, §16.7 rule 1) | handled termination signals are deferred through the bounded claim critical section; an uncatchable termination (or a step failure) after claim creation may leave an orphan claim; an orphan claim permanently quarantines the **entire run** (all packages, including otherwise valid approvals); the product never auto-deletes, expires, reuses or repairs it; the user must create a new run. Availability loss only, never authority. Specializes item 12 for the run-wide case | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 22 | WIN32 STAGE 4 FAIL-CLOSED ELIGIBILITY | Stage 4 `review record` / `apply` is enabled only for supported Windows + Node combinations where **all** required real-win32 evidence succeeds: reviewer/profile attribution, signal-completion behavior, and filesystem durability / crash-safe replacement assumptions backed by documented OS/platform guarantees and real-win32 execution. Otherwise Stage 4 refuses on that configuration; no silent downgrade or implied support (§24 item 6a). OD-06 is not entered | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
+| 23 | TAP-2 TERMINAL GEOMETRY REFUSAL | trusted approval refuses when required geometry is unavailable: width = 100 columns, minimum rows = 24, page size = 20 rows. No narrow/degraded trusted mode exists; observed geometry violation or current invalid checkpoint geometry aborts before authority commit and requires a fresh session; missed transient geometry is not security evidence and cannot cause row impersonation under TAP-2 (§10.3.1). Later changes to these versioned TAP values require the appropriate TAP contract/version handling already defined by the design | `PO ACCEPTANCE REQUIRED` | `ACCEPTED` |
 
-### 30.4 Documentation follow-ups (upon OD-04 approval; not done here)
+### 30.4 Canonical lifecycle synchronization
 
-- `docs/controlled-v1-productization-contract-v1.md` §10.2, §10.9, §14, §16,
-  §22 rows for `review record`/`apply` to reference this contract.
-- `ROADMAP.md`: **no ROADMAP conflict found**; lifecycle sync remains the
-  Governance Coordinator's action (`ROADMAP: UNCHANGED`).
+- This authorized four-file sync records the approved, merged and certified
+  Stage 4 design and current stage sequence in `ROADMAP.md`, `SECURITY.md`
+  and both Controlled-v1 contracts. It changes no technical design.
+- `review record`/`apply` remain fixed refusals; implementation needs separate
+  authorization. All three FUTURE review guards remain **OPEN** and require
+  runtime evidence plus a separate authorized closure.
 
 ---
 
@@ -2973,7 +2995,12 @@ resize-history security assumption is rejected/superseded by §10.3.1;
 all current rendering references above are TAP-2, except the deliberately
 unchanged TAP-1 identity string serializer (§14.3, historical §37.1).
 
-## 33. Design corrective C1 record
+## 33. Design corrective C1 record (historical point-in-time)
+
+§§33–37 preserve the point-in-time authoring and review lifecycle of C1–C5.
+Their `PENDING PO`, PR-open and merge-not-authorized statements describe
+those earlier sessions; they do not override the approved owner disposition
+and merged/post-merge-certified design recorded at the top of this document.
 
 Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C1 — APPROVED`. Previous reviewed
 HEAD `308467efd3d36ab90075bc0477f716b45484cdfb` (Architecture design review:
@@ -3003,7 +3030,7 @@ public API and exit codes unchanged, OD-06 not entered.
 
 ---
 
-## 34. Design corrective C2 record
+## 34. Design corrective C2 record (historical point-in-time)
 
 Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C2 — APPROVED`. Previous reviewed
 HEAD `53db1a456f16184a73fbc8fdeb8879b1f16cd671` (independent Architecture C1
@@ -3027,7 +3054,7 @@ remain `PENDING PO`.
 
 ---
 
-## 35. Design corrective C3 record
+## 35. Design corrective C3 record (historical point-in-time)
 
 Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C3 — APPROVED`. Previous reviewed
 HEAD `b2a02a891d634e36f98c1f6bc377466506272d28` (TREE
@@ -3068,7 +3095,7 @@ precedence, reason and exit codes (no new public CLI exit code), public API.
 
 ---
 
-## 36. Design corrective C4 record
+## 36. Design corrective C4 record (historical point-in-time)
 
 Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C4 — APPROVED`. Exact reviewed
 baseline HEAD `8003968c77dd7d7c43dc4305e1267247100b9555`, TREE
@@ -3134,7 +3161,7 @@ disposition before both. PR #245 remains OPEN, ready for that re-review.
 
 ---
 
-## 37. Design corrective C5 record
+## 37. Design corrective C5 record (historical point-in-time)
 
 Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C5 — APPROVED`. Exact parent HEAD
 `f6e7c4126d2f1e541e0d96e405c464425a46330c`, TREE
@@ -3384,6 +3411,7 @@ SEC-S3-m01 = DESIGN RESOLVED
 
 ---
 
-`IMPLEMENTATION NOT AUTHORIZED` · `MERGE NOT AUTHORIZED` ·
+`DESIGN APPROVED / MERGED / POST-MERGE CERTIFIED` ·
+`IMPLEMENTATION NOT_STARTED / NOT_AUTHORIZED` · `FURTHER MERGE NOT AUTHORIZED` ·
 `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD OPEN` · `AT-07/TB-01 RESIDUAL` ·
-`OWNER CLAUSES PENDING PO`
+`OWNER CLAUSES 1–23 ACCEPTED` · `R-1..R-5 ACCEPTED`
