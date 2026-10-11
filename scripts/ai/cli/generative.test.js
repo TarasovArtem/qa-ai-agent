@@ -210,6 +210,112 @@ test("Stage 3 review show: proposed content control characters are escaped in th
   assert.equal(printable("a\u001bb\tc\n"), "a\\u001bb\tc\n");
 });
 
+// ARCH-S3-m05: deceptive Unicode (bidi embeddings/overrides/isolates,
+// zero-width and other format characters) is rendered visibly escaped -
+// never raw, never deleted - while the persisted review package and the
+// --json data keep the exact characters.
+const DECEPTIVE = Object.freeze({
+  "\u202a": "\\u202a",
+  "\u202b": "\\u202b",
+  "\u202c": "\\u202c",
+  "\u202d": "\\u202d",
+  "\u202e": "\\u202e",
+  "\u2066": "\\u2066",
+  "\u2067": "\\u2067",
+  "\u2068": "\\u2068",
+  "\u2069": "\\u2069",
+  "\u200b": "\\u200b",
+  "\u200c": "\\u200c",
+  "\u200d": "\\u200d",
+  "\u200e": "\\u200e",
+  "\u200f": "\\u200f",
+  "\u2060": "\\u2060",
+  "\ufeff": "\\ufeff",
+  "\u00ad": "\\u00ad",
+  "\u061c": "\\u061c",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+  "\u{e0041}": "\\u{e0041}",
+});
+const RAW_DECEPTIVE = /[\u2028\u2029]|\p{Cf}/u;
+
+test("Stage 3 review show (ARCH-S3-m05): printable() escapes every bidi / format / separator character deterministically and keeps the escape unambiguous", () => {
+  for (const [raw, shown] of Object.entries(DECEPTIVE)) {
+    assert.equal(printable(`a${raw}b`), `a${shown}b`, JSON.stringify(raw));
+  }
+  // Trojan-Source shape: the override cannot reorder the rendered text.
+  assert.equal(printable('if (isAdmin) { /*\u202e } \u2066if (isUser)\u2069 \u2066*/ return; }'), "if (isAdmin) { /*\\u202e } \\u2066if (isUser)\\u2069 \\u2066*/ return; }");
+  // Unambiguous: the six characters "\u202e" in the data differ from U+202E.
+  assert.equal(printable("\\u202e"), "\\\\u202e");
+  assert.notEqual(printable("\\u202e"), printable("\u202e"));
+  assert.equal(printable("C:\\dir"), "C:\\\\dir");
+  // Ordinary text, including non-Latin scripts and emoji, is untouched.
+  assert.equal(printable("cy.get('[data-test=\"ok\"]') // мир 世界 مرحبا 🎉\n\tdone"), "cy.get('[data-test=\"ok\"]') // мир 世界 مرحبا 🎉\n\tdone");
+  assert.equal(printable("\ud800"), "\\ud800", "a lone surrogate is shown escaped");
+});
+
+test("Stage 3 review show (ARCH-S3-m05): bidi / zero-width characters in proposed content and purpose are escaped in the rendering, preserved in the data, and NON-AUTHORITATIVE stays displayed", async () => {
+  const content = "describe('login', () => {\n  // access \u202e} \u2066 admin\u2069 \u2067x\u2068y\u2069 \u202dz\u202c\n  it('a\u200bb', () => {});\n});\n";
+  const purpose = "Cover the invalid-login error\u202e (reversed)\u2066 \u200d";
+  const responses = {
+    ...fx.RESPONSES,
+    plan: () => [fx.json(fx.automationPlan({ plannedChanges: [{ path: fx.GENERATED_SPEC, operation: "CREATE", purpose }] }))],
+    generate: () => [fx.json(fx.changeSetResponse({ content }))],
+  };
+  const { root, runId } = await fullChain(fx.makeStage3Root(), responses);
+  const packageFile = path.join(runDir(root, runId), "generate", "review-package-0001.json");
+  const persistedBefore = fs.readFileSync(packageFile);
+
+  const r = await runCli(["review", "show", "--run", runId, "--root", root]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /NON-AUTHORITATIVE: presentation only/);
+  assert.equal(RAW_DECEPTIVE.test(r.stdout), false, "no raw bidi / format character reaches the terminal");
+  for (const escaped of ["\\u202e", "\\u2066", "\\u2067", "\\u2068", "\\u2069", "\\u202d", "\\u202c", "\\u200b", "\\u200d"]) {
+    assert.ok(r.stdout.includes(escaped), `${escaped} is shown escaped`);
+  }
+  assert.ok(r.stdout.includes("purpose: Cover the invalid-login error\\u202e (reversed)\\u2066 \\u200d"), "purpose is escaped, not deleted");
+
+  // The data is never normalized: the persisted package and the --json view
+  // carry the exact characters, and the package bytes are unchanged.
+  const j = await runCli(["review", "show", "--run", runId, "--root", root, "--json"]);
+  assert.equal(j.code, 0, j.stderr);
+  assert.equal(j.json.authority, "NON_AUTHORITATIVE_PRESENTATION");
+  const target = j.json.reviewPackages[0].reviewPackage.reviewTargets[0];
+  assert.equal(target.proposedContent, content);
+  assert.equal(target.purpose, purpose);
+  assert.deepEqual(fs.readFileSync(packageFile), persistedBefore, "review show never rewrites the package");
+  const persisted = readJson(packageFile);
+  assert.equal(persisted.reviewTargets[0].proposedContent, content);
+  assert.equal(recomputeReviewPackageDigest(persisted), persisted.packageDigest);
+});
+
+// The #23C/#23D path validators accept a bidi character inside a planned
+// path today (this corrective does not change validation), so the path
+// reaches review show and must be rendered escaped.
+test("Stage 3 review show (ARCH-S3-m05): a bidi character in a proposed path is shown escaped, never raw", async () => {
+  const deceptivePath = "cypress/e2e/login\u202egnp.cy.js";
+  const responses = {
+    ...fx.RESPONSES,
+    plan: () => [fx.json(fx.automationPlan({ plannedChanges: [{ path: deceptivePath, operation: "CREATE", purpose: "Cover the invalid-login error." }] }))],
+    generate: () => [fx.json(fx.changeSetResponse({ path: deceptivePath }))],
+  };
+  const root = fx.makeStage3Root();
+  const design = await stage(["design"], root, responses.design());
+  assert.equal(design.code, 0, design.stderr);
+  const runId = design.json.runId;
+  const plan = await stage(["plan"], root, responses.plan(), { runId });
+  assert.equal(plan.code, 0, plan.stderr);
+  const generate = await stage(["generate"], root, responses.generate(), { runId });
+  assert.equal(generate.code, 0, generate.stderr);
+  const r = await runCli(["review", "show", "--run", runId, "--root", root]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /NON-AUTHORITATIVE: presentation only/);
+  assert.equal(RAW_DECEPTIVE.test(r.stdout), false, "no raw bidi character reaches the terminal");
+  assert.ok(r.stdout.includes("CREATE cypress/e2e/login\\u202egnp.cy.js"), "the path is shown escaped");
+  const j = await runCli(["review", "show", "--run", runId, "--root", root, "--json"]);
+  assert.equal(j.json.reviewPackages[0].reviewPackage.reviewTargets[0].path, deceptivePath, "the data keeps the exact path");
+});
+
 // --- generative provider policy (mandatory refusals 1-4) -------------------------------
 
 const RUN_ID = "20261011T000000Z-0123456789abcdef";
@@ -615,6 +721,50 @@ test("Stage 3 write/read safety: a symlinked run artifact or manifest is refused
   assert.equal(r.code, 4, r.stderr);
   assert.equal(r.json.errors[0].code, "RUN_ARTIFACT_INVALID");
   noSpawn(r.calls);
+});
+
+// ARCH-S3-m04: `requirements check` keeps following an in-root symlinked
+// requirements leaf; every Stage 3 command refuses it (exit 4,
+// REQUIREMENTS_INPUT_REFUSED) before any spawn or write - including the
+// downstream commands of a run whose requirements file was swapped for a
+// symlink to identical bytes after design.
+function symlinkRequirements(root) {
+  const leaf = path.join(root, "qa", "requirements.json");
+  const real = path.join(root, "qa", "requirements-real.json");
+  fs.renameSync(leaf, real);
+  fs.symlinkSync(real, leaf, "file");
+  assert.ok(fs.lstatSync(leaf).isSymbolicLink());
+}
+
+test("Stage 3 requirements (ARCH-S3-m04): requirements check still follows an in-root symlinked leaf; design refuses it (exit 4) before any spawn", async () => {
+  const root = fx.makeStage3Root();
+  symlinkRequirements(root);
+
+  const check = await runCli(["requirements", "check", "--root", root, "--json"], { env: hermeticEnv() });
+  assert.equal(check.code, 0, `requirements check behavior is unchanged: ${check.stderr}`);
+  assert.equal(check.json.ok, true);
+
+  const rec = spawnRecorder();
+  const design = await runCli(["design", "--root", root, "--json"], { env: fx.generativeEnv(), spawnImpl: rec.impl });
+  assert.equal(design.code, 4, design.stderr);
+  assert.equal(design.json.errors[0].code, "REQUIREMENTS_INPUT_REFUSED");
+  assert.match(design.json.errors[0].message, /symbolic links are refused/);
+  noSpawn(rec.calls);
+  assert.equal(fs.existsSync(path.join(root, "reports", "qa-agent", "runs")), false, "no run directory is created");
+});
+
+test("Stage 3 requirements (ARCH-S3-m04): plan / generate / review show of an existing run refuse a requirements leaf swapped for a symlink (no lineage bypass)", async () => {
+  const { root, runId } = await fullChain();
+  const manifestBefore = fs.readFileSync(path.join(runDir(root, runId), "manifest.json"));
+  symlinkRequirements(root);
+  for (const command of [["plan"], ["generate"], ["review", "show"]]) {
+    const rec = spawnRecorder();
+    const r = await runCli([...command, "--run", runId, "--root", root, "--json"], { env: fx.generativeEnv(), spawnImpl: rec.impl });
+    assert.equal(r.code, 4, `${command.join(" ")}: ${r.stderr}`);
+    assert.equal(r.json.errors[0].code, "REQUIREMENTS_INPUT_REFUSED", command.join(" "));
+    noSpawn(rec.calls);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(runDir(root, runId), "manifest.json")), manifestBefore, "the run is untouched");
 });
 
 test("Stage 3 write safety: an output.dir symlink into a protected path is refused at containment (exit 3)", async () => {

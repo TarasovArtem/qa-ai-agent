@@ -152,28 +152,208 @@ const EXPECTED_INVENTORY = Object.freeze(
 
 // --- static require graph ---------------------------------------------------------
 
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+// A `/` after one of these (or at the start) begins a regular expression
+// literal, otherwise it is division - the usual tokenizer heuristic.
+const REGEX_PRECEDERS = new Set(["", "(", ",", "=", ":", "[", "!", "&", "|", "?", "{", ";", "+", "-", "*", "%", "<", ">", "~", "^"]);
+const REGEX_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
+const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/;
+
+/**
+ * Minimal lexer (not a parser): separates comments, string / template
+ * literals and regular-expression literals from code so that `//` or `/*`
+ * inside a string never starts a comment and a quote inside a regex never
+ * starts a string. Returns:
+ *   code       the source with comments blanked (strings kept)
+ *   bare       the source with comments AND literal contents blanked
+ *              (delimiters kept) - for keyword-level checks
+ *   strings    every string / template-chunk content
+ *   problems   unterminated constructs (the scan is then not trustworthy)
+ * Line structure is preserved in `code` and `bare`.
+ */
+function lexSource(src) {
+  let code = "";
+  let bare = "";
+  const strings = [];
+  const problems = [];
+  const templateDepth = [];
+  const n = src.length;
+  let i = 0;
+  let prev = "";
+  let prevWord = "";
+  const blank = (text) => text.replace(/[^\n]/g, " ");
+  const emit = (text, bareText = text) => {
+    code += text;
+    bare += bareText;
+  };
+
+  // Reads template text from i (just after "`" or after the "}" closing a
+  // "${"). Returns "end", "expr" or "eof".
+  const readTemplate = () => {
+    let text = "";
+    while (i < n) {
+      const ch = src[i];
+      if (ch === "\\") {
+        const esc = src.slice(i, i + 2);
+        text += esc;
+        emit(esc, blank(esc));
+        i += 2;
+        continue;
+      }
+      if (ch === "`") {
+        emit(ch);
+        i += 1;
+        strings.push(text);
+        return "end";
+      }
+      if (ch === "$" && src[i + 1] === "{") {
+        emit("${");
+        i += 2;
+        strings.push(text);
+        templateDepth.push(0);
+        return "expr";
+      }
+      text += ch;
+      emit(ch, blank(ch));
+      i += 1;
+    }
+    problems.push("unterminated template literal");
+    return "eof";
+  };
+
+  while (i < n) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (ch === "/" && next === "/") {
+      const end = src.indexOf("\n", i);
+      const stop = end === -1 ? n : end;
+      const comment = blank(src.slice(i, stop));
+      emit(comment);
+      i = stop;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      const end = src.indexOf("*/", i + 2);
+      if (end === -1) {
+        problems.push("unterminated block comment");
+        break;
+      }
+      emit(blank(src.slice(i, end + 2)));
+      i = end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      let text = "";
+      while (j < n && src[j] !== ch && src[j] !== "\n") {
+        if (src[j] === "\\") {
+          text += src.slice(j, j + 2);
+          j += 2;
+          continue;
+        }
+        text += src[j];
+        j += 1;
+      }
+      if (j >= n || src[j] !== ch) {
+        problems.push("unterminated string literal");
+        break;
+      }
+      emit(src.slice(i, j + 1), `${ch}${blank(src.slice(i + 1, j))}${ch}`);
+      strings.push(text);
+      i = j + 1;
+      prev = ch;
+      prevWord = "";
+      continue;
+    }
+    if (ch === "`" || (ch === "}" && templateDepth.length > 0 && templateDepth[templateDepth.length - 1] === 0)) {
+      if (ch === "}") templateDepth.pop();
+      emit(ch);
+      i += 1;
+      if (readTemplate() === "eof") break;
+      prev = "`";
+      prevWord = "";
+      continue;
+    }
+    if (ch === "/" && (REGEX_PRECEDERS.has(prev) || REGEX_KEYWORDS.has(prevWord))) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < n && src[j] !== "\n") {
+        const c = src[j];
+        if (c === "\\") {
+          j += 2;
+          continue;
+        }
+        if (inClass) {
+          if (c === "]") inClass = false;
+        } else if (c === "[") {
+          inClass = true;
+        } else if (c === "/") {
+          break;
+        }
+        j += 1;
+      }
+      if (j >= n || src[j] !== "/") {
+        problems.push("unterminated regular expression literal");
+        break;
+      }
+      j += 1;
+      while (j < n && /[a-z]/i.test(src[j])) j += 1;
+      const literal = src.slice(i, j);
+      emit(literal, `/${blank(literal.slice(1))}`);
+      i = j;
+      prev = ")";
+      prevWord = "";
+      continue;
+    }
+    if (templateDepth.length > 0 && ch === "{") templateDepth[templateDepth.length - 1] += 1;
+    if (templateDepth.length > 0 && ch === "}") templateDepth[templateDepth.length - 1] -= 1;
+    emit(ch);
+    if (!/\s/.test(ch)) {
+      prevWord = IDENTIFIER_CHAR.test(ch) ? (IDENTIFIER_CHAR.test(prev) ? prevWord : "") + ch : "";
+      prev = ch;
+    }
+    i += 1;
+  }
+  if (templateDepth.length > 0 && !problems.includes("unterminated template literal")) problems.push("unterminated template expression");
+  return { code, bare, strings, problems };
 }
+
+function stripComments(src) {
+  return lexSource(src).code;
+}
+
+// Module-loading forms other than a direct require(...) / require.resolve(...)
+// call. Each makes the static graph unprovable and is reported as a problem.
+// `require.main` (entrypoint detection) is the only other use of `require`.
+const INDIRECT_LOADERS = Object.freeze([
+  [/\brequire\b(?!\s*\(|\s*\.\s*resolve\s*\(|\s*\.\s*main\b)/, "indirect use of require"],
+  [/\bcreateRequire\b/, "createRequire"],
+  [/\bmodule\s*\.\s*require\b/, "module.require"],
+  [/\b_load\s*\(/, "Module._load"],
+  [/\bmainModule\b/, "process.mainModule"],
+  [/\bimport\s*\(/, "dynamic import()"],
+]);
 
 // Literal relative specifiers of require(...) and, optionally,
 // require.resolve(...) (the CLI locates its spawned child entrypoints that
-// way), plus any non-literal require / dynamic import as a problem.
+// way); literal bare (package / builtin) specifiers; and, as problems, any
+// non-literal require, indirect loader or unterminated lexical construct.
 function scanModule(source, { includeResolve = true } = {}) {
-  const src = stripComments(source);
+  const lexed = lexSource(source);
   const relative = [];
-  const problems = [];
+  const bareSpecifiers = [];
+  const problems = [...lexed.problems];
   const pattern = includeResolve ? /\brequire(?:\.resolve)?\s*\(\s*([^)]*?)\s*\)/g : /\brequire\s*\(\s*([^)]*?)\s*\)/g;
-  for (const m of src.matchAll(pattern)) {
-    const literal = m[1].match(/^(["'])(.*)\1$/);
+  for (const m of lexed.code.matchAll(pattern)) {
+    const literal = m[1].match(/^(["'])([^"'`\\]*)\1$/);
     if (!literal) {
       problems.push(`non-literal require(${m[1]})`);
       continue;
     }
     if (literal[2].startsWith(".")) relative.push(literal[2]);
+    else bareSpecifiers.push(literal[2]);
   }
-  if (/\bimport\s*\(/.test(src)) problems.push("dynamic import()");
-  return { relative, problems };
+  for (const [loader, label] of INDIRECT_LOADERS) if (loader.test(lexed.bare)) problems.push(label);
+  return { relative, bare: bareSpecifiers, strings: lexed.strings, problems };
 }
 
 // Node's resolution order for a relative specifier over a set of available
@@ -247,6 +427,7 @@ module.exports = {
   EXCLUDED_PRIVATE,
   PRIVATE_TREES,
   EXPECTED_INVENTORY,
+  lexSource,
   stripComments,
   scanModule,
   resolveIn,

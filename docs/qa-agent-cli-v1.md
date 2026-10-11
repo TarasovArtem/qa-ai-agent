@@ -88,6 +88,22 @@ canonical check to its effective report directory
 before the write, so a symlink/junction below `output.dir` into a protected
 location is refused (exit 5, `WRITE_TARGET_REFUSED`).
 
+Requirements file leaf (ARCH-S3-m04). The two command families intentionally
+differ on a symlinked `requirements.path` leaf:
+
+- `requirements check` keeps its existing semantics: a symlink whose
+  canonical target resolves inside the repository root is followed (an
+  out-of-root target is refused).
+- `design`, `plan`, `generate` and `review show` require the configured
+  requirements file itself to be a **regular, non-symlink file**. They read it
+  once, bounded, through the same descriptor-identity checks as run
+  artifacts, and digest its exact bytes into the run binding. A symlinked
+  leaf is refused **fail-closed** with exit 4 `REQUIREMENTS_INPUT_REFUSED`
+  before any child, provider or write — also for `plan` / `generate` /
+  `review show` of an existing run, so a run cannot be continued through a
+  symlink swapped in after `design`. This narrowing is deliberate; replace
+  the link with the file it points to.
+
 A known capability that the release does not enable (e.g. `"apply": true`) is
 schema-valid: `config validate` exits 0 and reports
 `requested: true, available: false` with the reason; invoking it exits 5.
@@ -232,7 +248,13 @@ prompts, keys or stacks.
 **`review show`.** Re-validates the entire run, re-derives each review
 package from the persisted plan/context/change set and requires equality with
 the persisted package, then prints it with an explicit **non-authoritative**
-statement (control characters escaped in the human view). It records, reads,
+statement. The human view shows every C0/C1 control character, every Unicode
+format character (bidi embeddings/overrides/isolates, zero-width characters,
+BOM, …), the line/paragraph separators and lone surrogates escaped as
+`\uXXXX` / `\u{XXXXX}`, and a literal backslash as `\\`, so the rendering is
+unambiguous and cannot be visually reordered; nothing is deleted, and the
+persisted package and the `--json` data keep the exact characters
+(ARCH-S3-m05). It is not Option A and not approval evidence. It records, reads,
 infers and reports no approval and reports whether the live repository still
 matches the context (`CURRENT` / `CHANGED_SINCE_GENERATE` / `UNAVAILABLE`).
 
