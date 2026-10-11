@@ -13,6 +13,15 @@
  * not in the installed package at all) are asserted as TWO separate proofs:
  * before A-1 only the first held.
  *
+ * Controlled-v1 Stage 3 (OD-02, docs/package-surface-v4.md): A-1's physical
+ * exclusion is narrowed, not dropped. The private trees ship ONLY the
+ * minimal private runtime closure of design/plan/generate/review show
+ * (SHIPPED PRIVATE / NOT EXPORTED); every other private module - approval
+ * gates, review records, application, execution, regeneration - stays
+ * physically absent. Proof A (deep-import denial) now covers shipped and
+ * unshipped private files alike; proof B (physical absence) covers the
+ * still-excluded ones.
+ *
  * Offline and deterministic: the tarball and the Git source are local, and
  * no test needs credentials, a provider, or a live SUT.
  */
@@ -51,7 +60,7 @@ const EXPECTED_ROOT_EXPORTS = [
 
 const EXPECTED_EXPORT_MAP_KEYS = [".", "./destinations/azure-devops", "./package.json", "./providers/azure-devops", "./providers/jira"];
 
-const PRIVATE_TREES = ["scripts/ai/generation/", "scripts/ai/generative-test-design/", "scripts/ai/test-automation/"];
+const { PRIVATE_TREES, STAGE3_PRIVATE_RUNTIME, EXCLUDED_PRIVATE } = require("../helpers/package-inventory");
 
 // ACG-D2: the private #22 directory was renamed away from the name it shared
 // with the deterministic RTI module scripts/ai/test-design.js. The old
@@ -67,14 +76,21 @@ const REPOSITORY_ONLY_CI_HELPERS = ["scripts/ai/format-pr-comment.js", "scripts/
 // Non-JS files a tarball may contain besides runtime-discovered knowledge data.
 const PACKAGE_METADATA_FILES = ["package.json", "README.md"];
 
-// Representative private files: the frozen #22 validators, the #22 evidence
-// layer (including the ACG-A3 adapter), a #22 generator, and a #23 module.
-const PRIVATE_DEEP_IMPORTS = [
+// Representative SHIPPED private files (Stage 3 closure): the frozen #22
+// validators, the #22 evidence layer (including the ACG-A3 adapter), a #22
+// generator and a #23 module. Shipped, but never importable.
+const SHIPPED_PRIVATE_DEEP_IMPORTS = [
   "qa-ai-agent/scripts/ai/generation/requirement-model.js",
   "qa-ai-agent/scripts/ai/generative-test-design/evidence-ingestion.js",
   "qa-ai-agent/scripts/ai/generative-test-design/requirement-model-generator.js",
   "qa-ai-agent/scripts/ai/test-automation/generate-change-set.js",
 ];
+
+// Every still-EXCLUDED private module (approval gates, review records,
+// application, execution, regeneration): neither importable nor installed.
+const EXCLUDED_PRIVATE_DEEP_IMPORTS = EXCLUDED_PRIVATE.map((f) => `qa-ai-agent/${f}`);
+
+const PRIVATE_DEEP_IMPORTS = [...SHIPPED_PRIVATE_DEEP_IMPORTS, ...EXCLUDED_PRIVATE_DEEP_IMPORTS];
 
 function npm(args, cwd) {
   return execSync(`npm ${args}`, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -110,15 +126,13 @@ test("D-2 repository namespace: test-design.js is a file, the old test-design/ d
   assert.equal(require.resolve("../../scripts/ai/test-design"), path.join(REPO_ROOT, "scripts/ai/test-design.js"), "require(\"./test-design\") must resolve to the RTI file");
 });
 
-test("A-1 manifest: no file from the private #22/#23 trees is shipped", () => {
-  for (const tree of PRIVATE_TREES) {
-    assert.deepEqual(
-      manifest.filter((f) => f.startsWith(tree)),
-      [],
-      `${tree} must not be in the tarball`
-    );
-  }
-  assert.equal(manifestSet.has("scripts/ai/generative-test-design/evidence-ingestion.js"), false, "the ACG-A3 adapter is private");
+test("A-1 / OD-02 manifest: the private #22/#23 trees ship exactly the Stage 3 runtime closure and nothing else", () => {
+  assert.deepEqual(
+    manifest.filter((f) => PRIVATE_TREES.some((tree) => f.startsWith(tree))),
+    [...STAGE3_PRIVATE_RUNTIME],
+    "only the minimal private runtime closure of the Stage 3 commands ships"
+  );
+  for (const file of EXCLUDED_PRIVATE) assert.equal(manifestSet.has(file), false, `${file} must not be in the tarball`);
   assert.deepEqual(manifest.filter((f) => f.startsWith(OLD_PRIVATE_DIRECTORY)), [], "the old private path must not appear in the tarball");
 });
 
@@ -366,13 +380,16 @@ for (const kind of ["tarball", "git"]) {
     }
   });
 
-  test(`A-1 ${label}: private files are physically absent from the installed package (proof B: physical surface)`, () => {
-    for (const spec of PRIVATE_DEEP_IMPORTS) {
+  test(`A-1 ${label}: excluded private files are physically absent from the installed package (proof B: physical surface)`, () => {
+    for (const spec of EXCLUDED_PRIVATE_DEEP_IMPORTS) {
       const rel = spec.replace("qa-ai-agent/", "");
       assert.equal(fs.existsSync(path.join(consumers[kind].installed, rel)), false, `${rel} must not be installed`);
     }
-    for (const tree of [...PRIVATE_TREES, OLD_PRIVATE_DIRECTORY]) {
-      assert.equal(fs.existsSync(path.join(consumers[kind].installed, tree)), false, `${tree} must not be installed`);
+    assert.equal(fs.existsSync(path.join(consumers[kind].installed, OLD_PRIVATE_DIRECTORY)), false, `${OLD_PRIVATE_DIRECTORY} must not be installed`);
+    for (const tree of PRIVATE_TREES) {
+      const dir = path.join(consumers[kind].installed, tree);
+      const present = fs.existsSync(dir) ? fs.readdirSync(dir).map((f) => `${tree}${f}`).sort() : [];
+      assert.deepEqual(present, STAGE3_PRIVATE_RUNTIME.filter((f) => f.startsWith(tree)), `${tree} holds exactly its Stage 3 closure files`);
     }
     assert.equal(fs.existsSync(path.join(consumers[kind].installed, "scripts/ai/test-design.js")), true, "the RTI module must be installed");
   });

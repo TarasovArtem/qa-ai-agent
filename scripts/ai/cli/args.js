@@ -7,6 +7,10 @@
  * --provider flag. Reserved commands exist only so the surface shape is
  * stable; their arguments are never interpreted (only --help and --json are
  * recognized) because their sole implementation is a fixed refusal.
+ *
+ * Stage 3 (OD-02): `design`, `plan`, `generate` and `review show` are
+ * supported. `--run <id>` names an existing run directory; its grammar is
+ * closed (RUN_ID_PATTERN) because the value becomes a path segment.
  */
 
 "use strict";
@@ -14,7 +18,13 @@
 const { usageError } = require("./errors");
 
 const COMMON_FLAGS = Object.freeze(["json", "offline", "root", "config", "help"]);
-const VALUE_FLAGS = Object.freeze(["root", "config"]);
+const RUN_FLAGS = Object.freeze([...COMMON_FLAGS, "run"]);
+const VALUE_FLAGS = Object.freeze(["root", "config", "run"]);
+const KNOWN_FLAGS = Object.freeze(["json", "offline", "root", "config", "help", "version", "history", "run"]);
+
+// <UTC yyyymmddThhmmssZ>-<64 random bits as 16 lower-case hex digits>
+// (contract §10.5). Created by `design`; required by every later command.
+const RUN_ID_PATTERN = /^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$/;
 
 const COMMANDS = Object.freeze({
   info: Object.freeze({ kind: "baseline", flags: COMMON_FLAGS, summary: "Show version, contracts, capability and provider status (no network)." }),
@@ -34,10 +44,36 @@ const COMMANDS = Object.freeze({
     flags: Object.freeze([...COMMON_FLAGS, "history"]),
     summary: "Local one-invocation triage: collect -> [history] -> analyze.",
   }),
-  design: Object.freeze({ kind: "reserved", ownerDecision: "OD-02", summary: "Reserved (AI-assisted test design)." }),
-  plan: Object.freeze({ kind: "reserved", ownerDecision: "OD-02", summary: "Reserved (automation planning)." }),
-  generate: Object.freeze({ kind: "reserved", ownerDecision: "OD-02", summary: "Reserved (change-set proposal)." }),
-  "review show": Object.freeze({ kind: "reserved", ownerDecision: "OD-02", summary: "Reserved (presents generate output)." }),
+  design: Object.freeze({
+    kind: "generative",
+    stage: "design",
+    capability: "design",
+    flags: COMMON_FLAGS,
+    summary: "AI test design into a new run: RequirementModel -> TestCaseModel -> AutomationCandidates (generative provider).",
+  }),
+  plan: Object.freeze({
+    kind: "generative",
+    stage: "plan",
+    capability: "plan",
+    requiresRun: true,
+    flags: RUN_FLAGS,
+    summary: "AutomationPlan per AUTOMATE candidate of --run <id> (generative provider; no repository write).",
+  }),
+  generate: Object.freeze({
+    kind: "generative",
+    stage: "generate",
+    capability: "generate",
+    requiresRun: true,
+    flags: RUN_FLAGS,
+    summary: "GeneratedChangeSet proposal + review package for --run <id> (generative provider; never applied).",
+  }),
+  "review show": Object.freeze({
+    kind: "review",
+    capability: "generate",
+    requiresRun: true,
+    flags: RUN_FLAGS,
+    summary: "Read-only, non-authoritative view of the review packages of --run <id> (records no approval).",
+  }),
   "review record": Object.freeze({ kind: "reserved", ownerDecision: "OD-04", summary: "Reserved (human review recording)." }),
   apply: Object.freeze({ kind: "reserved", ownerDecision: "OD-04", summary: "Reserved (apply approved change set)." }),
   execute: Object.freeze({ kind: "reserved", ownerDecision: "OD-06", summary: "Reserved (controlled execution)." }),
@@ -72,7 +108,7 @@ function resolveCommand(words) {
  */
 function parseArgs(argv) {
   if (!Array.isArray(argv)) throw usageError("USAGE_INVALID", "arguments must be an array.");
-  const flags = { json: false, offline: false, root: undefined, config: undefined, help: false, version: false, history: false };
+  const flags = { json: false, offline: false, root: undefined, config: undefined, help: false, version: false, history: false, run: undefined };
   const seen = new Set();
   const words = [];
   let reserved = null;
@@ -90,7 +126,7 @@ function parseArgs(argv) {
 
     if (token.startsWith("-")) {
       const { name, inlineValue } = parseFlagToken(token);
-      if (!name || !["json", "offline", "root", "config", "help", "version", "history"].includes(name)) {
+      if (!name || !KNOWN_FLAGS.includes(name)) {
         throw usageError("USAGE_UNKNOWN_OPTION", 'unknown option. Run "qa-agent --help" for the supported options.');
       }
       if (seen.has(name)) throw usageError("USAGE_DUPLICATE_OPTION", `option --${name} was given more than once.`);
@@ -140,7 +176,11 @@ function parseArgs(argv) {
   for (const flag of seen) {
     if (!spec.flags.includes(flag)) throw usageError("USAGE_OPTION_NOT_APPLICABLE", `option --${flag} is not valid for "${name}".`);
   }
+  if (spec.requiresRun && !flags.help) {
+    if (flags.run === undefined) throw usageError("USAGE_MISSING_RUN", `"${name}" requires --run <id> (the run id printed by "qa-agent design").`);
+    if (!RUN_ID_PATTERN.test(flags.run)) throw usageError("USAGE_INVALID_RUN_ID", "--run must be a run id of the form yyyymmddThhmmssZ-<16 hex digits>.");
+  }
   return Object.freeze({ command: name, spec, flags: Object.freeze(flags) });
 }
 
-module.exports = { COMMANDS, GROUPS, COMMON_FLAGS, parseArgs };
+module.exports = { COMMANDS, GROUPS, COMMON_FLAGS, RUN_ID_PATTERN, parseArgs };

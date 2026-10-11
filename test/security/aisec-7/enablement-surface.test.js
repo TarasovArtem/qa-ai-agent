@@ -17,6 +17,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const fx = require("./lib/fixtures");
+const inv = require("../../helpers/package-inventory");
 const { OUTCOMES } = require("./lib/outcomes");
 const { createEvidenceLedger } = require("./lib/execution-ledger");
 
@@ -68,7 +69,41 @@ test("H12-C1: the public barrel exports exactly the documented symbols and no pr
   confirmCase("H12-C1", JSON.stringify(Object.keys(publicApi).sort()) === JSON.stringify([...DOCUMENTED_EXPORTS].sort()) && leaked.length === 0);
 });
 
-test("H12-C2: the package exports map refuses deep private subpaths and the files list excludes private #22/#23 trees", () => {
+// Manifest-level `files` probe (ARCH-S3-m03). Since Controlled-v1 Stage 3
+// (OD-02) the private #22/#23 trees are excluded as directories and only the
+// exact Stage 3 private runtime closure is re-included file by file; every
+// authority-bearing private module (approval gates / review records,
+// application, execution, regeneration) must stay excluded. Returns the
+// violations of that rule for a `files` list; the canonical lists come from
+// test/helpers/package-inventory.js (no second inventory). The physical
+// tarball proof stays in test/installation/**.
+function privateFilesViolations(files) {
+  const violations = [];
+  const trees = inv.PRIVATE_TREES.map((t) => t.replace(/\/$/, ""));
+  for (const tree of trees) if (!files.includes(`!${tree}`)) violations.push(`missing directory exclusion !${tree}`);
+  files.forEach((entry, index) => {
+    if (entry.startsWith("!")) return;
+    if (/[*?[\]{}]/.test(entry)) {
+      violations.push(`glob include ${entry}`);
+      return;
+    }
+    const clean = entry.replace(/\/$/, "");
+    for (const tree of trees) {
+      if (clean === tree || clean.startsWith(`${tree}/`)) {
+        if (!inv.STAGE3_PRIVATE_RUNTIME.includes(clean)) violations.push(`re-includes ${clean}, which is not in the Stage 3 private runtime closure`);
+      } else if (tree.startsWith(`${clean}/`)) {
+        // A parent include (e.g. "scripts/ai") is safe only when the tree's
+        // exclusion comes after it.
+        const exclusion = files.indexOf(`!${tree}`);
+        if (exclusion < index) violations.push(`${clean} is included after the !${tree} exclusion`);
+      }
+    }
+  });
+  for (const excluded of inv.EXCLUDED_PRIVATE) if (files.includes(excluded) || files.includes(`./${excluded}`)) violations.push(`re-includes excluded ${excluded}`);
+  return violations;
+}
+
+test("H12-C2: the package exports map refuses deep private subpaths, and the files list ships only the exact Stage 3 private runtime closure - every authority-bearing private module stays excluded", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(fx.REPO_ROOT, "package.json"), "utf8"));
   const resolvedRoot = require.resolve(manifest.name);
   assert.equal(resolvedRoot, path.join(fx.AI, "index.js"), "the package name resolves to the public barrel");
@@ -82,8 +117,39 @@ test("H12-C2: the package exports map refuses deep private subpaths and the file
     }
   });
   const noWildcard = Object.keys(manifest.exports).every((k) => !k.includes("*"));
-  const excluded = ["!scripts/ai/test-automation", "!scripts/ai/generation", "!scripts/ai/generative-test-design", "!scripts/ai/evaluation"].every((entry) => manifest.files.includes(entry));
-  confirmCase("H12-C2", refused.every(Boolean) && noWildcard && excluded);
+
+  // The authority-bearing modules this case is about are all in the
+  // canonical EXCLUDED_PRIVATE list.
+  for (const required of [
+    "scripts/ai/test-automation/generated-change-set-review-record.js",
+    "scripts/ai/generative-test-design/test-design-review-record.js",
+    "scripts/ai/test-automation/change-set-application.js",
+    "scripts/ai/test-automation/controlled-execution.js",
+    "scripts/ai/test-automation/regenerate-change-set.js",
+  ]) {
+    assert.ok(inv.EXCLUDED_PRIVATE.includes(required), `${required} is canonically excluded`);
+  }
+  const privateIncludes = manifest.files.filter((f) => !f.startsWith("!") && inv.PRIVATE_TREES.some((t) => f.startsWith(t)));
+  const exactClosure = JSON.stringify([...privateIncludes].sort()) === JSON.stringify([...inv.STAGE3_PRIVATE_RUNTIME].sort());
+  const current = privateFilesViolations(manifest.files);
+  assert.deepEqual(current, [], "the current files list");
+  assert.ok(exactClosure, "the only private re-includes are exactly the Stage 3 private runtime closure");
+
+  // Non-vacuity: each injected re-include of an authority-bearing module, a
+  // whole private tree, a glob, or a parent include after the exclusions is
+  // refused.
+  const injections = [
+    ...inv.EXCLUDED_PRIVATE.map((f) => [...manifest.files, f]),
+    [...manifest.files, "scripts/ai/test-automation"],
+    [...manifest.files, "scripts/ai/test-automation/*.js"],
+    [...manifest.files, "scripts/ai/generative-test-design/**"],
+    manifest.files.filter((f) => f !== "!scripts/ai/test-automation"),
+    [...manifest.files, "scripts/ai"],
+  ];
+  const injectionsRefused = injections.every((files) => privateFilesViolations(files).length > 0);
+  assert.ok(injectionsRefused, "every injected forbidden re-include is detected");
+
+  confirmCase("H12-C2", refused.every(Boolean) && noWildcard && current.length === 0 && exactClosure && injectionsRefused);
 });
 
 test("H12-C3: the XI-affected analyzer is exported with no disable or constraint switch (enablement scope is a release decision)", () => {

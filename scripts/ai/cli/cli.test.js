@@ -96,10 +96,13 @@ test("CLI --version prints exactly the package version", async () => {
 test("CLI --help lists supported commands, marks reserved ones, and offers no --provider flag", async () => {
   const r = await runCli(["--help"]);
   assert.equal(r.code, 0);
-  for (const cmd of ["info", "config validate", "requirements check", "triage collect", "triage history", "triage aggregate", "triage analyze", "triage run"]) {
+  for (const cmd of ["info", "config validate", "requirements check", "triage collect", "triage history", "triage aggregate", "triage analyze", "triage run", "design", "plan", "generate", "review show"]) {
     assert.ok(r.stdout.includes(cmd), cmd);
   }
   assert.match(r.stdout, /Reserved/);
+  const reserved = r.stdout.slice(r.stdout.indexOf("Reserved"));
+  for (const cmd of ["review record", "apply", "execute"]) assert.ok(reserved.includes(cmd), `${cmd} is listed as reserved`);
+  for (const cmd of ["design", "plan", "generate", "review show"]) assert.equal(reserved.slice(0, reserved.indexOf("Options:")).includes(`  ${cmd} `), false, `${cmd} is not reserved`);
   assert.doesNotMatch(r.stdout, /--provider/);
   const sub = await runCli(["triage", "run", "--help"]);
   assert.equal(sub.code, 0);
@@ -108,7 +111,9 @@ test("CLI --help lists supported commands, marks reserved ones, and offers no --
 
 // --- reserved commands ------------------------------------------------------------
 
-const RESERVED = [["design"], ["plan"], ["generate"], ["review", "show"], ["review", "record"], ["apply"], ["execute"]];
+// Stage 3 (OD-02) enabled design/plan/generate/review show; these three stay
+// fixed refusals until OD-04 / OD-06.
+const RESERVED = [["review", "record"], ["apply"], ["execute"]];
 
 test("CLI reserved: every reserved command is a fixed refusal (exit 5, CAPABILITY_NOT_ENABLED_IN_RELEASE), machine-readable with --json", async () => {
   for (const argv of RESERVED) {
@@ -131,7 +136,7 @@ test("CLI reserved: refusals read no input - a nonexistent root, a bogus config 
 });
 
 test("CLI reserved: a config that requests apply/execute cannot make the command run", async () => {
-  const root = makeRoot(baseConfig({ capabilities: { apply: true, execute: true, reviewRecord: true, design: true } }));
+  const root = makeRoot(baseConfig({ capabilities: { apply: true, execute: true, reviewRecord: true, design: true, plan: true, generate: true } }));
   for (const argv of RESERVED) {
     const r = await runCli([...argv, "--root", root]);
     assert.equal(r.code, 5, argv.join(" "));
@@ -256,7 +261,8 @@ test("CLI info --json: version, contracts, capabilities, provider, invocation an
   assert.equal(out.config.status, "VALID");
   assert.deepEqual(out.capabilities.triage, { requested: true, available: true });
   assert.deepEqual(out.capabilities.execute, { requested: true, available: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE" });
-  assert.deepEqual(out.capabilities.design, { requested: false, available: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE" });
+  assert.deepEqual(out.capabilities.design, { requested: false, available: false, reason: "CAPABILITY_NOT_REQUESTED" });
+  assert.equal(out.contracts.runManifest, 1);
   assert.equal(out.provider.effective, "mock");
   assert.equal(out.provider.generativeCapable, false);
   assert.equal(out.invocation.mode, "local-v1-orchestrated");

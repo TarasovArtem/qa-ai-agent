@@ -6,9 +6,10 @@
  *
  *   executable   process.execPath (the running Node binary - never a
  *                PATH-resolved `node`, never `npm run`)
- *   entrypoint   STAGE_RUNNER_PATH, resolved package-relatively from this
- *                module (never from PATH, cwd, config or env)
- *   argv         [STAGE_RUNNER_PATH, <stage>] - an array, shell: false
+ *   entrypoint   STAGE_RUNNER_PATH (triage) or GENERATIVE_RUNNER_PATH
+ *                (Stage 3), a closed choice resolved package-relatively from
+ *                this module (never from PATH, cwd, config or env)
+ *   argv         [<entrypoint>, <stage>] - an array, shell: false
  *   env          the closed per-stage object from child-env.js
  *   input        the validated config snapshot values, sent over the IPC
  *                channel (the child never re-reads qa-agent.config.json)
@@ -23,6 +24,10 @@
 const childProcess = require("child_process");
 
 const STAGE_RUNNER_PATH = require.resolve("./stage-runner.js");
+// Stage 3: provider-backed design/plan/generate run in their own child
+// entrypoint, never in the triage stage runner.
+const GENERATIVE_RUNNER_PATH = require.resolve("./generative-runner.js");
+const RUNNERS = Object.freeze({ triage: STAGE_RUNNER_PATH, generative: GENERATIVE_RUNNER_PATH });
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_FORWARD_BYTES = 64 * 1024;
 const MIN_REDACTION_LENGTH = 4;
@@ -57,11 +62,15 @@ function capture(stream) {
  * @returns {Promise<{ spawnError: boolean, exitCode: number|null, signal: string|null,
  *   result: object|null, stdout: string, stderr: string }>}
  */
-function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = childProcess.spawn, diagnostics }) {
+function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = childProcess.spawn, diagnostics, runner = "triage" }) {
   return new Promise((resolve) => {
+    if (!Object.prototype.hasOwnProperty.call(RUNNERS, runner)) {
+      resolve({ spawnError: true, exitCode: null, signal: null, result: null, stdout: "", stderr: "" });
+      return;
+    }
     let child;
     try {
-      child = spawnImpl(process.execPath, [STAGE_RUNNER_PATH, stage], {
+      child = spawnImpl(process.execPath, [RUNNERS[runner], stage], {
         cwd,
         env,
         shell: false,
@@ -110,4 +119,4 @@ function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = c
   });
 }
 
-module.exports = { STAGE_RUNNER_PATH, MAX_CAPTURE_BYTES, MAX_FORWARD_BYTES, redact, runStageProcess };
+module.exports = { STAGE_RUNNER_PATH, GENERATIVE_RUNNER_PATH, MAX_CAPTURE_BYTES, MAX_FORWARD_BYTES, redact, runStageProcess };

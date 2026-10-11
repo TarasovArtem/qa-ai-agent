@@ -94,11 +94,34 @@ function buildStageEnv({ stage, env, platform = process.platform, framework, inv
     if (provider.network && !offline) copyKeys(out, env, AI_SECRET_KEYS, platform);
   }
 
+  return finalize(out, "buildStageEnv()");
+}
+
+function finalize(out, label) {
   for (const key of Object.keys(out)) {
-    if (NEVER_INHERITED.some((pattern) => pattern.test(key))) throw new Error("buildStageEnv(): refused a never-inherited key");
+    if (NEVER_INHERITED.some((pattern) => pattern.test(key))) throw new Error(`${label}: refused a never-inherited key`);
     if (typeof out[key] !== "string") delete out[key];
   }
   return Object.freeze(out);
+}
+
+/**
+ * Closed environment of the Stage 3 generative child (design/plan/generate):
+ * the platform baseline plus AI_PROVIDER (= effective generative provider),
+ * AI_MODEL and AI_API_KEY - nothing else. No QA_FRAMEWORK (the framework
+ * travels in the validated IPC payload), no XI-01 invocation keys, no GitHub
+ * family, no TEST_BROWSER. Only ever built for an effective, online,
+ * generative-capable network provider; mock never reaches this point.
+ */
+function buildGenerativeEnv({ env, platform = process.platform, provider }) {
+  if (!provider || !provider.effective || !provider.network || provider.offline) {
+    throw new Error("buildGenerativeEnv(): requires an effective, online network provider");
+  }
+  const out = {};
+  copyKeys(out, env, PLATFORM_BASELINE_KEYS, platform);
+  out.AI_PROVIDER = provider.effective;
+  copyKeys(out, env, AI_SECRET_KEYS, platform);
+  return finalize(out, "buildGenerativeEnv()");
 }
 
 module.exports = {
@@ -111,4 +134,5 @@ module.exports = {
   NEVER_INHERITED,
   STAGES,
   buildStageEnv,
+  buildGenerativeEnv,
 };
