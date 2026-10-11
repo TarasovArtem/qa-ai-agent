@@ -12,7 +12,9 @@ C1 for `ARCH-S4-m01..m06`; change record §33);
 `OD-CONTROLLED-V1-STAGE-4-DESIGN-C3 — APPROVED` (final design corrective C3
 for `SEC-S4-m01..m04`, `ARCH-S4-C2-m01`, `ARCH-S4-C2-m02`; change record §35);
 `OD-CONTROLLED-V1-STAGE-4-DESIGN-C4 — APPROVED` (final narrow documentation-only
-corrective for `ARCH-S4-C3-m01..m03`, `SEC-S4-C3-m01..m02`; change record §36)
+corrective for `ARCH-S4-C3-m01..m03`, `SEC-S4-C3-m01..m02`; change record §36);
+`OD-CONTROLLED-V1-STAGE-4-DESIGN-C5 — APPROVED` (narrow documentation-only
+corrective for `ARCH-S4-C4-01` MAJOR and `ARCH-S4-C4-02` MINOR; change record §37)
 
 State: **DESIGN ONLY / SOLE WIP** (`WIP = 1`)
 
@@ -36,11 +38,11 @@ implementation stage.
 |---|---|
 | OD-04 recommendation | **APPROVE**, conditional on the Product Owner explicitly dispositioning every owner clause of §30.5, including the residual risks R-1..R-5 (§30.2). **No owner clause is accepted by this document**; all remain `PENDING PO`. If the PO does not accept R-1, the result becomes `STOP — SIGNING / KEY MANAGEMENT DESIGN REQUIRED` (hardware-backed user-presence attestation), not this design |
 | Approval granularity | **One human decision (`APPROVE` \| `REJECT`) over one complete canonical `GeneratedChangeSetReviewPackage`**, selected explicitly by run id and package ordinal. No per-file or per-operation approval |
-| Trusted approval presentation | **Option A = `TAP-1`** (Trusted Approval Presentation v1): a repository-owned, deterministic, ASCII-only terminal rendering derived from the decoded bytes of `CRS-1`, which in turn is derived from the exact deep-frozen package built by `buildGeneratedChangeSetReviewPackage()`, emitted as hard-wrapped rows of at most 100 columns in which every content-bearing row starts with a product-owned gutter, with bounded paging and no truncation (§10.3.1). Shown **only** inside `qa-agent review record`; `review show` stays non-authoritative and unchanged |
+| Trusted approval presentation | **Option A = `TAP-2`** (Trusted Approval Presentation v2): a repository-owned, deterministic, ASCII-only terminal rendering derived from the decoded bytes of `CRS-1`, which in turn is derived from the exact deep-frozen package built by `buildGeneratedChangeSetReviewPackage()`, emitted as hard-wrapped rows of at most 100 columns in which every product-owned row starts with a reserved marker and every dynamic value losslessly escapes that marker, making row attribution independent of width history, with bounded paging and no truncation (§10.3.1). Shown **only** inside `qa-agent review record`; `review show` stays non-authoritative and unchanged |
 | Canonical review serialization | **`CRS-1` (`CanonicalReviewSerializationV1`)**: byte-exact, ASCII-only canonical JSON with one escape form per UTF-16 code unit (§11) |
 | Canonical path identity | **`PPI-1` (Portable Path Identity v1)**: a validation-only (never normalizing) portable ASCII path grammar; the approved identity and the written identity are the same byte string (§13) |
 | Reviewer identity | **OS-local account attribution** (`os-local-account-v1`), read from the operating system (never from environment variables, config or flags): POSIX effective uid + account name; Windows account name + token-derived profile-directory digest. It is `LOCAL ACCOUNT ATTRIBUTION`, not personal authentication and not proof of a physical human (§14) |
-| Human decision provenance | **Interactive TTY challenge session** (`interactive-tty-challenge-v1`): full TAP-1 presentation with per-target acknowledgement, a fresh CSPRNG challenge, an exact typed `APPROVE <code>` / `REJECT <code>` line read from the controlling terminal, and re-verification of the package before the record is written (§15). It evidences that an **interactive controlling process** completed the session, not physical human presence |
+| Human decision provenance | **Interactive TTY challenge session** (`interactive-tty-challenge-v1`): full TAP-2 presentation with per-target acknowledgement, a fresh CSPRNG challenge, an exact typed `APPROVE <code>` / `REJECT <code>` line read from the controlling terminal, and re-verification of the package before the record is written (§15). It evidences that an **interactive controlling process** completed the session, not physical human presence |
 | Authority state model | **One deterministic derivation** (`derivePackageState`, §16.7) over the canonical run-root inventory (including `manifest.next-*` evidence), the manifest `reviews` ledger, the ledger claims and the `apply/attempt-*` / `apply/outcome-*` files. Apply state is deliberately **external** to the manifest; outcome evidence takes precedence over ledger bookkeeping; crash and power-loss recovery is **fail closed** on storage honoring the explicit durability model (§16.8: claim → record → crash-safe manifest replacement; attempt durable before #23F → outcome); lying storage has the R-3 lost-attempt and lost-supersession residuals |
 | Authenticity | **Integrity + binding, not cryptographic authenticity.** Records stay unkeyed SHA-256 sealed. No signing, no key management, no external identity provider, no network |
 | Review record schema | **`GeneratedChangeSetReviewRecord v2 REQUIRED`**: an authority envelope that embeds an unchanged v1 core consumed by #23F (§16) |
@@ -66,7 +68,7 @@ For Controlled-v1 only, this design defines normatively:
 1. the authority model for `qa-agent review record` and `qa-agent apply` (OD-04);
 2. what a valid human approval is, who may create it, and how the identity and
    the explicit decision are evidenced;
-3. the exact bytes and representation a reviewer approves (`CRS-1`, `TAP-1`)
+3. the exact bytes and representation a reviewer approves (`CRS-1`, `TAP-2`)
    and their binding to the canonical package and to the GeneratedChangeSet;
 4. canonical path identity (`PPI-1`);
 5. the `GeneratedChangeSetReviewRecord v2` and run-manifest deltas;
@@ -239,7 +241,7 @@ Recommended disposition text (for the Product Owner):
 >   (§14), not personal authentication and not proof of a physical human.
 > - **OD-04.2 Decision.** One closed decision (`APPROVE` | `REJECT`) over one
 >   complete canonical review package, made in an interactive TTY challenge
->   session after a full TAP-1 presentation.
+>   session after a full TAP-2 presentation.
 > - **OD-04.3 Subject.** The decision binds the `CRS-1` digest, the
 >   `packageDigest`, the change-set/plan/context digests, the run, the
 >   run-semantic projection, the repository root binding and path policy
@@ -264,7 +266,7 @@ The quoted text is a **recommendation only**. Every value in it that §30.5
 classifies as `PO ACCEPTANCE REQUIRED` (for example 24 h, single use, offline
 permission, same-principal apply) remains **unresolved** until the explicit
 Product Owner OD-04 disposition, which occurs only after the independent
-Architecture C4 exact-head re-review and then the Security C4 exact-head
+Architecture C5 exact-head re-review and then the Security C5 exact-head
 re-review. This document grants
 no owner acceptance.
 
@@ -362,7 +364,7 @@ S6  sessionId = 16 CSPRNG bytes (32 lowercase hex);
     challenge = 40 CSPRNG bits as 8 Crockford-base32 characters
     (alphabet 0123456789ABCDEFGHJKMNPQRSTVWXYZ); sessionStartedAt = now
 S7  start whole-session resize monitoring and require the terminal geometry
-    of §10.3.1; render TAP-1 (§10.3) from P'
+    of §10.3.1; render TAP-2 (§10.3) from P'
     to stdout as hard-wrapped rows, paged per §10.3.1 (page checkpoints
     inside a target); check geometry before each target, each page checkpoint
     and each end-of-target prompt; after each target print
@@ -392,8 +394,8 @@ S13 commit (§16.6 ledger protocol, claim critical section §9.3.2):
        v1 core with the (extracted) v1 builder from P; build record v2 and
        its bytes; build the new manifest bytes with the appended reviews
        entry
-    b. immediately before CS-ENTER, verify the geometry and the latched
-       whole-session invariant (§10.3.1); violation -> abort without writing
+    b. immediately before CS-ENTER, verify current geometry and the
+       observed-violation latch (§10.3.1); detected violation -> abort without writing
        and require a new review session; CS-ENTER: switch the session's signal
        handling to deferral (§9.3.2);
        create review/claim-<LLLL>.json O_CREAT|O_EXCL (no handle returned,
@@ -432,7 +434,7 @@ Immediately before the decision prompt, S8 prints these session lines
 
 ```text
 context (not part of the presentation digest):
-repository root: <realRoot, TAP-1-escaped>
+repository root: <realRoot, TAP-2-escaped>
 repository root binding: <root-identity-v1 digest>
 reviewer principal: <principal>
 approval policy: whole package; one apply attempt; expires <validity> after the decision
@@ -607,7 +609,7 @@ extends one.
 ### 9.5 Apply confirmation (`apply`)
 
 `apply` is also human-invoked and interactive (§21): after all checks it prints
-a compact, non-authoritative apply summary (TAP-1 header lines, the ordered
+a compact, non-authoritative apply summary (TAP-2 header lines, the ordered
 `OPERATION path` list, record id, reviewer principal, `decidedAt`, `notAfter`)
 and a fresh challenge, and requires the exact line `APPLY <challenge>` (same
 rules as S9, 3 attempts). It never re-presents content as approval evidence and
@@ -647,7 +649,7 @@ command cannot hold a stale view of authority state indefinitely:
 
 ### 10.1 Definition
 
-**Option A = the repository-owned trusted approval presentation `TAP-1`,
+**Option A = the repository-owned trusted approval presentation `TAP-2`,
 rendered exclusively inside `qa-agent review record`, from the decoded `CRS-1`
 bytes of the exact deep-frozen package returned by
 `buildGeneratedChangeSetReviewPackage()`.**
@@ -659,7 +661,7 @@ persisted plan/context/change set (manifest-digest verified)
    └─► buildGeneratedChangeSetReviewPackage()  ──►  P  (deep-frozen; == persisted package)
           ├─► CRS-1 encode ──► B (bytes) ──► crsDigest
           │        └─► strict decode ──► P'  (encode(P') == B)
-          │                 └─► TAP-1 render ──► terminal  (presentationDigest)
+          │                 └─► TAP-2 render ──► terminal  (presentationDigest)
           └─► v1 core builder (P) ──► record v2 binds packageDigest(P), crsDigest(B), presentationDigest
 ```
 
@@ -672,168 +674,249 @@ rebuilds itself (§21).
 
 Detached summaries, copied text, reconstructions from another source,
 independently supplied JSON, screenshots, `review show` output (human or
-`--json`), any `--json` output, digest-only assertions without a TAP-1 session,
+`--json`), any `--json` output, digest-only assertions without a TAP-2 session,
 GitHub reviews/comments/labels/checks, and any representation not produced by
-TAP-1 in the same process that writes the record.
+TAP-2 in the same process that writes the record.
 
-### 10.3 TAP-1 layout (exact)
+### 10.3 TAP-2 layout (exact; C5)
 
-All output lines are ASCII `0x20–0x7E` terminated by LF; no ANSI/SGR
-sequences, colors, cursor movement or terminal-dependent features are
-emitted. Field values are rendered with the TAP-1 string rule (§12.4). The
-layout below defines **logical lines**; each logical line is emitted as one or
-more **rows** of at most `W = 100` columns by the deterministic hard-wrap rule
-of §10.3.1, and only rows are emitted.
+**TAP VERSION = TAP-2 INTRODUCED.** The marker, escaping and digest input
+change the fixed TAP-1 byte/rendering contract. TAP-1 is not redefined: its
+previous description is retained as historical design evidence in §37.1,
+alongside the unchanged C1–C4 records. It is not eligible for a new Stage 4
+approval; `subject.presentationVersion` MUST be `TAP-2`, and apply MUST refuse
+any other version before #23F. CRS-1, PPI-1 and the record/manifest v2 schemas
+are unchanged; only the presentation-version value and its derived digest
+change. This adds no approval path or authority.
+
+All emitted rows contain only ASCII `0x20–0x7E`, followed by LF. No ANSI/SGR,
+cursor motion, TAB, CR, backspace or other terminal control is emitted. The
+following is the complete ordered logical layout for digested package rows;
+values use §12.4, and §10.3.1 hard-wraps them before emission. Angle-bracket
+slots are values, never literal syntax. The two `...` slots below mean every
+content line in order, not an emitted ellipsis or permission to omit content.
 
 ```text
-QA-AGENT TRUSTED APPROVAL PRESENTATION TAP-1
-run: <runId>
-package: <NNNN> of <count> (<packagePath>)
-project: <projectId>
-framework: <framework>
-automationPlanId: <automationPlanId>
-packageDigest: <sha256:...>
-crsDigest: <sha256:...>
-changeSetDigest: <sha256:...>
-automationPlanDigest: <sha256:...>
-repositoryContextDigest: <sha256:...>
-pathPolicy: PPI-1
-targets: <N>
-escapes: \uXXXX = one UTF-16 code unit outside printable ASCII (0x20-0x7E)
-escapes: \\ = one literal backslash
-rows: at most 100 columns; nothing is truncated
-rows: "NNNNN| " starts content line NNNNN; "NNNNN+ " continues content line NNNNN
-rows: "     + " continues the field row above
-=== TARGET <k>/<N>: <CREATE|MODIFY> <path>
-purpose (model-generated, untrusted): <purpose>
-baseContentDigest: <sha256:...|none>
-proposedContentDigest: <sha256:...>
-targetDigest: <sha256:...>
-escapedCodeUnits: existing=<e> proposed=<p>
---- EXISTING CONTENT (bound repository context) ---        (MODIFY only)
-00001| <line>
+@Q2:H QA-AGENT TRUSTED APPROVAL PRESENTATION TAP-2
+@Q2:H run: <runId>
+@Q2:H package: <NNNN> of <count> (<packagePath>)
+@Q2:H project: <projectId>
+@Q2:H framework: <framework>
+@Q2:H automationPlanId: <automationPlanId>
+@Q2:H packageDigest: <sha256:...>
+@Q2:H crsDigest: <sha256:...>
+@Q2:H changeSetDigest: <sha256:...>
+@Q2:H automationPlanDigest: <sha256:...>
+@Q2:H repositoryContextDigest: <sha256:...>
+@Q2:H pathPolicy: PPI-1
+@Q2:H targets: <N>
+@Q2:H escapes: \uXXXX = one escaped UTF-16 code unit; \u0040 = reserved marker
+@Q2:H escapes: \\ = one literal backslash
+@Q2:H rows: at most 100 columns; nothing is truncated
+@Q2:H rows: C NNNNN| starts content; c NNNNN+ continues it; f continues a field
+@Q2:T === TARGET <k>/<N>: <CREATE|MODIFY> <path>
+@Q2:F purpose (model-generated, untrusted): <purpose>
+@Q2:F baseContentDigest: <sha256:...|none>
+@Q2:F proposedContentDigest: <sha256:...>
+@Q2:F targetDigest: <sha256:...>
+@Q2:F escapedCodeUnits: existing=<e> proposed=<p>
+@Q2:B --- EXISTING CONTENT (bound repository context) ---
+@Q2:C 00001| <line>
 ...
---- END EXISTING (lines=<L>, finalLF=<yes|no>, codeUnits=<U>) ---
-+++ PROPOSED CONTENT (model-generated, untrusted) +++
-00001| <line>
+@Q2:B --- END EXISTING (lines=<L>, finalLF=<yes|no>, codeUnits=<U>) ---
+@Q2:B +++ PROPOSED CONTENT (model-generated, untrusted) +++
+@Q2:C 00001| <line>
 ...
-+++ END PROPOSED (lines=<L>, finalLF=<yes|no>, codeUnits=<U>) +++
+@Q2:B +++ END PROPOSED (lines=<L>, finalLF=<yes|no>, codeUnits=<U>) +++
 ```
 
-Content rules: the content string is split on LF (U+000A); if it ends with LF
-the final empty element is dropped and `finalLF=yes`; each line is rendered as
-a 5-digit, zero-padded 1-based line number, `| `, and the TAP-1-escaped line.
-Every line of every target is emitted — **no truncation, elision, folding,
-diff or summarization** (content is already bounded: 50 000 code units per
-file, 1 000 000 per change set). No diff is shown in v1: diff algorithms are an
-additional derived representation with implementation-dependent output.
+The existing-content block appears only for MODIFY. Content is split on LF;
+if it ends in LF the final empty element is dropped and `finalLF=yes`;
+otherwise `finalLF=no`. Each line has a five-digit zero-padded 1-based number.
+Every code unit of every content line is rendered, including empty lines:
+**no truncation, elision, folding, diff or summarization**. Existing bounds
+(50 000 code units per file, 1 000 000 per change set) are unchanged. Counts
+and final-LF metadata allow reconstruction of the exact original content;
+escaping is display-only and never modifies the package or written bytes.
 
-`presentationDigest` = SHA-256 over
-`qa-ai-agent:trusted-approval-presentation:v1:` followed by the exact bytes of
-the emitted **rows** (after the §10.3.1 hard wrap, each row terminated by LF),
-header through the last target's END row. The wrap is therefore part of the
-digest. Session lines (page checkpoints, Enter prompts, decision prompt,
-challenge, comment prompt, §9.3.1 context) are excluded.
+**Trusted presentation serialization/digest.** Define the closed descriptor
+`D2` below, encoded with the unchanged CRS-1 encoder `E` (§11.2), sorted keys
+and no extra fields. `ASCII(E(D2)) || LF` is part of trusted presentation
+serialization; it is not a detached display substitute.
 
-#### 10.3.1 Row discipline, terminal geometry and paging (C3, `SEC-S4-m01`)
+```json
+{
+  "presentationVersion": "TAP-2",
+  "marker": "@",
+  "prefixes": ["@Q2:H ", "@Q2:T ", "@Q2:F ", "@Q2:B ", "@Q2:C ", "@Q2:c ", "@Q2:f ", "@Q2:P ", "@Q2:E ", "@Q2:X ", "@Q2:I ", "@Q2:A ", "@Q2:R ", "@Q2:M ", "@Q2:S "],
+  "escapeRule": "tap2-utf16-0040-005c-v1",
+  "layoutRule": "tap2-layout-10.3-v1",
+  "wrapRule": "tap2-greedy-whole-token-10.3.1-v1",
+  "sessionRule": "tap2-closed-session-10.3.1-v1",
+  "width": 100,
+  "minimumRows": 24,
+  "pageRows": 20
+}
+```
 
-Terminal soft-wrap is never relied on: a terminal that wraps a long line
-produces visual rows with no product gutter, in which hostile content (for
-example space padding followed by `=== TARGET 2/2: CREATE …` or
-`+++ END PROPOSED …`) could visually start at column 1 and impersonate
-product UI. TAP-1 therefore owns the visual row structure itself.
+```text
+presentationBytes = ASCII(E(D2)) || LF || packageRows
+presentationDigest = "sha256:" || lowercase-hex(SHA-256(
+  ASCII("qa-ai-agent:trusted-approval-presentation:v2:") || presentationBytes))
+```
 
-**Fixed row width.** `W = 100` columns, a TAP-1 constant (changing it changes
-`presentationDigest` and is a new presentation version, `TAP-2`). It is never
-derived from the terminal. Because every emitted character is printable ASCII
-`0x20–0x7E` (TAB and every non-ASCII code unit are escaped, §12.4), one
-character occupies exactly one column, so row width is a pure function of the
-characters and identical on every platform and Node version.
+`packageRows` is the exact emitted hard-wrapped row sequence from the header
+through the last target's END row, each terminated by LF. Version, reserved
+marker, complete prefixes, escape/layout/wrap/session rule identities and
+constants all participate in the digest. The rule identifiers bind exactly
+the normative rules here: their semantics MUST NOT be silently changed under
+the same identifier/version. Any rendering-semantics change requires a new
+TAP version and descriptor/digest domain. Session-instance bytes (page/Enter
+prompts, context, decision/challenge, comment, result) remain excluded;
+their marker/escaping/template rules are nevertheless bound by `D2`. Apply
+recomputes the same descriptor and package rows from the rebuilt package.
 
-**Hard-wrap rule (deterministic).** A rendered logical line is a product-owned
-prefix followed by a rendered value (or, for structural lines, product text
-only). The rendered value is split into **tokens**: each escape sequence
-(`\\` or `\uXXXX`) is one token and every other character is one token, so an
-escape is never split across rows. Rows are filled greedily with whole tokens:
+#### 10.3.1 Closed row attribution, geometry and paging (C5)
 
-| Logical line | First row | Continuation rows |
+**Reserved product marker and closed row classes.** The reserved sentinel is
+one ASCII code unit `@` (U+0040). Every product-owned row starts at logical
+column 1 with exactly one full prefix from this closed table. No class,
+raw unmarked fallback, or implicit extension is allowed. A visually valid
+product row requires the complete prefix at column 1 and that class's
+product template; an incomplete prefix or an unmarked visual continuation
+has no product authority/control meaning.
+
+| Prefix (one trailing ASCII space) | Only permitted row class/template |
+|---|---|
+| `@Q2:H ` | initial header/metadata/escape/row-description lines in §10.3, in their listed order |
+| `@Q2:T ` | `=== TARGET k/N: OPERATION path` in builder order |
+| `@Q2:F ` | the five target field labels listed in §10.3 |
+| `@Q2:B ` | the four existing/proposed block start/end templates in §10.3 |
+| `@Q2:C ` | `NNNNN\| ` followed by a content line's first escaped chunk |
+| `@Q2:c ` | `NNNNN+ ` followed by the same content line's next escaped chunk |
+| `@Q2:f ` | `     + ` followed by the next escaped chunk of a non-content logical line |
+| `@Q2:P ` | `-- target k/N page p/Q (rows a-b of R); press Enter to continue --` |
+| `@Q2:E ` | `-- end of target k/N; press Enter to continue --` |
+| `@Q2:X ` | the six context/root/principal/policy/operating-rule lines of §9.3.1 |
+| `@Q2:I ` | `Anything else, Ctrl-C or end-of-input aborts without recording.` |
+| `@Q2:A ` | `To APPROVE writing exactly these N target(s), type:  APPROVE challenge` |
+| `@Q2:R ` | `To REJECT this package, type:                        REJECT challenge` |
+| `@Q2:M ` | `Optional comment (ASCII, 1..500 characters; empty line skips):` |
+| `@Q2:S ` | product result/refusal/warning reports from §9.3 S14, §9.3.2 and §25; fixed product labels/reason vocabulary, all variable text escaped |
+
+Only the renderer inserts raw `@`, exactly once at the start of each emitted
+row; even fixed product text after the prefix MUST contain no raw `@`.
+All dynamic values, including validated IDs, paths, repository/root/principal
+context and diagnostic values, use §12.4. In particular every package-derived
+`@` becomes the six printable bytes `\u0040`; backslash becomes `\\`.
+This applies before hard wrapping, with no unescaped interpolation anywhere.
+The marker may not be printed raw in explanatory text or template legends.
+A field value that includes the complete reserved prefix is escaped code
+unit by code unit, deterministically and losslessly, like any other value.
+
+The S7–S10 prompt bodies and §9.3.1 context are emitted under the corresponding
+prefixes above; their quoted bodies elsewhere are logical templates before
+this rule. Re-prompts repeat A/R/I, with S for the product's refusal reason;
+there is no new prompt class. The optional comment prompt uses M. No package
+value may select a row class or template. Enter/checkpoint acknowledgements,
+APPROVE/REJECT input grammar, challenge and whole-package decision are
+unchanged. Terminal input/echo is not renderer output or a product-owned TAP
+row. Same-principal terminal-driving/fabrication remains R-1; the proof is
+about attacker-controlled package data flowing through the trusted renderer.
+No input-mode or C4 signal-handling change, native/PTY dependency, or new
+provenance factor is introduced.
+
+**Fixed width and deterministic hard wrap.** `W = 100`, minimum rows `24`,
+`PAGE = 20` are unchanged. Count the complete marker prefix in row width.
+Printable ASCII is one column under the existing plain-text terminal model.
+Construct the logical body from the exact fixed template and its escaped
+dynamic slots. Fixed product text contributes one token per character;
+each dynamic escape `\\` or `\uXXXX` is one indivisible token, and every
+other dynamic printable character is one token. The construction, not a
+lexical scan of product legends, determines token boundaries. Greedily take
+the longest whole-token prefix fitting the remaining row width; no padding.
+
+| Logical line | First row prefix/body before value | Later row prefix/body before value |
 |---|---|---|
-| content line `k` of a block | `NNNNN\| ` + tokens (≤ `W − 7` columns) | `NNNNN+ ` (same 5-digit number `k`) + tokens (≤ `W − 7` columns) |
-| field line (`<label>: <value>`, including `purpose`, `=== TARGET` and digest lines) | `<label>: ` + tokens (≤ `W` columns in total) | `     + ` (five spaces, `+`, space) + tokens (≤ `W − 7` columns) |
-| structural line (product text only) | fixed text, ≤ `W` columns by construction | none |
+| content line k | `@Q2:C NNNNN\| ` (13 columns) | `@Q2:c NNNNN+ ` (13 columns, same k) |
+| field/header/target/context/prompt/report | its table prefix (6 columns) + greedily filled body tokens | `@Q2:f      + ` (13 columns) + remaining body tokens |
+| fixed structural line | its table prefix + fixed text, at most W columns | none |
 
-Every row ends at its last token (no padding). An empty content line is the
-single row `NNNNN| `. A field or content value whose rendering fits on the
-first row produces no continuation row.
+Each content chunk has at most `W - 13 = 87` columns; other first body chunks
+have at most `W - 6 = 94` columns. Continuation body chunks have at most 87
+columns. Fixed structural text fits W; long prompts and reports follow the
+same greedy rule with no discretionary split or alternative layout.
+Empty content emits `@Q2:C NNNNN| `.
+Every row ends in LF; removing prefixes and joining chunks before decoding
+recovers exact values. Counts/finalLF recover content LFs. No information is
+truncated, and no detached summary substitutes for canonical content.
 
-**Attribution property.** Every row that carries any untrusted or
-content-derived character starts at column 1 with a product-owned gutter or
-label drawn from a closed set (`NNNNN| `, `NNNNN+ `, `     + `, or a fixed
-field label); hostile content can begin at column 8 at the earliest on content
-and continuation rows, and never at column 1 of any row. Structural rows
-(`QA-AGENT …`, `escapes: …`, `rows: …`, `=== TARGET …`, `--- …`, `+++ …`) are
-emitted only by the renderer and contain no unescaped untrusted text beyond
-their labeled value. Combined with "no soft-wrap" (below), each emitted row is
-exactly one terminal row, so column 1 of every visual row is product-owned:
+**Width-history-independent attribution proof.** After the first prefix,
+no emitted row contains another raw `@`: dynamic data escapes it, fixed text
+excludes it, and escape tokens contain none. Ordinary terminal soft-wrap/reflow
+only partitions/repositions printable characters; it cannot create `@` or
+decode visible escape text into it. Therefore a continuation made from any
+suffix after an emitted row's initial marker cannot start any full reserved
+prefix, at any width or wrap boundary. A wrap inside a genuine prefix leaves
+an incomplete prefix or a suffix with no sentinel, never another valid class.
+Reflow that moves a genuine complete marker preserves the origin of that
+product row; it cannot change package text into a marked row. No interpretation
+concatenates distinct visual rows to recognize a prefix. This holds for target,
+block/end, page/checkpoint, context/root/policy, decision and APPROVE/REJECT
+rows, even for padding followed by byte-for-byte template imitations.
 
-```text
-TAP-1 VISUAL ROW ATTRIBUTION = UNAMBIGUOUS
-```
-
-**Terminal geometry (whole trusted session, C4).** `review record` requires
-available numeric geometry with `process.stdout.columns ≥ W` (100) and
-`process.stdout.rows ≥ 24`. Verify it at trusted presentation start (S7),
-before each target, before every intra-target page checkpoint, immediately
-before each end-of-target prompt, immediately before entering S8, while
-waiting for decision input, after each decision line is received (including
-re-prompts), and immediately before CS-ENTER / authority commit (after S13a).
-
-Monitor stdout terminal resize events continuously from trusted presentation
-start through the final pre-commit verification, including waits for target,
-page, decision and comment input and the S11–S13a revalidation/preparation
-interval. Re-check geometry on every resize; latch any width below `W`,
-insufficient rows or unavailable geometry as a session violation. Drain
-pending resize observations and freshly verify geometry and the latch at the
-final pre-commit boundary; a decision alone never authorizes bypassing it.
-If width ever drops below `W` during that interval, **ABORT BEFORE AUTHORITY
-COMMIT** with `INTERACTIVE_TERMINAL_REQUIRED` (5) and a fixed message naming
-the required geometry: no claim, record or manifest change. Restoring geometry
-cannot clear the violation or reuse the reviewed session; restart with a fresh
-session and review every target again. Never continue wrapped output, reflow
-to a smaller width or silently degrade. No narrow/degraded trusted mode exists.
-The product relies on the terminal's reported geometry; a terminal that
-misreports it is outside the product's control (R-1/R-5 class: the operator's
-own terminal). TAP-1 keeps `W = 100`, minimum rows `24`, and `PAGE = 20`;
-later changes follow the TAP contract/version rules (§10.3, §10.3.1).
-
-**Bounded paging inside targets.** The rows of each target are emitted in
-pages of at most `PAGE = 20` rows (a TAP-1 session constant). After every full
-page that is not the target's last row, the session prints the session line
-`-- target k/N page p/Q (rows a-b of R); press Enter to continue --` and reads
-one line (content ignored, max 64 bytes) before the next page; the existing
-end-of-target prompt follows the last page. Page boundaries are a pure
-function of the row sequence. Paging only interleaves session lines between
-rows: it never removes, reorders, merges, re-wraps or truncates a row, never
-changes CRS-1 bytes `B`, and never changes `presentationDigest` (which covers
-rows only). EOF, interrupt or a geometry failure at a checkpoint aborts the
-session before CS-ENTER with no write. Every row of every target is still
-emitted: **no truncation**. Paging adds checkpoints to large packages; this
-bears on, but does not change, the §30.5 item 15 session-window
-recommendation (INFO-03).
+This proof uses the existing terminal model: ASCII characters and LF are
+preserved and terminal control bytes are absent. A malicious terminal or an
+R-1 same-principal process can fabricate output, as already residual; no
+protection against that actor is added or claimed. **Trusted presentation
+security MUST NOT depend on complete resize-history observation.**
 
 ```text
-TAP-1 LARGE TARGET PAGING = DESIGNED
-SEC-S4-m01 = DESIGN RESOLVED
+TRUSTED ROW ATTRIBUTION = WIDTH-HISTORY INDEPENDENT
+UNOBSERVED SHRINK/RESTORE = NO AUTHORITY-REPRESENTATION AMBIGUITY
+SOFT-WRAP IMPERSONATION = IMPOSSIBLE BY CONSTRUCTION
 ```
+
+**Geometry and truthful resize monitoring.** Keep C4's explicit checks at S7,
+before each target, before each intra-target page checkpoint, before each
+end-target prompt, before S8, during decision-input waits, after each decision
+line (including re-prompts), and immediately before CS-ENTER after S13a.
+Current geometry MUST be available numeric `stdout.columns >= 100` and
+`stdout.rows >= 24`. Monitor resize notifications through the same entire
+interval, including target/page/decision/comment waits and S11–S13a.
+A detected invalid geometry latches abort; current insufficient/unavailable
+geometry at any check also aborts `INTERACTIVE_TERMINAL_REQUIRED` (5) before
+CS-ENTER, with no claim/record/manifest change. Restoration does not clear an
+observed violation; restart and review every target in a fresh session.
+No narrow/degraded trusted mode or width-dependent renderer is allowed.
+
+Resize events may be delayed or coalesced, and shrink → restore may be missed.
+Final `stdout.columns/rows` sampling cannot reconstruct past geometry.
+Draining pending event callbacks does not establish complete resize history;
+there is no reliable JavaScript observation fence proving that no resize
+occurred between the last sample and CS-ENTER. A Windows interval with no
+console write/raw TTY read may reveal no transient size change. Monitoring
+detects **observed violations only**; it never proves absence of unobserved
+intervals. Geometry checks/monitoring remain UX requirements, availability
+protection and defense-in-depth under owner item 23. A missed transient
+violation may not abort, but cannot impersonate a product row by the proof
+above. No complete-history security claim survives C5.
+
+**Bounded paging.** Each target is emitted in pages of at most 20 package
+rows, interleaving P checkpoints after full non-final pages and E after the
+last page. Boundaries are pure functions of package rows. Paging never removes,
+reorders, merges, re-wraps or truncates them, changes CRS-1 bytes B, or changes
+`presentationDigest`. EOF, interruption or observed/current geometry failure
+aborts before CS-ENTER without writes. Every target is still emitted fully;
+item 15's pending session-window recommendation and R-5 are unchanged.
 
 ### 10.4 Labeling
 
-Model-generated fields are labeled `untrusted` (purpose, proposed content).
-TAP-1 never renders a model-provided string in a position where it could be
-mistaken for product UI: every value appears after a fixed product-owned
-label on the same row, content rows always carry the `NNNNN| ` gutter, and
-every hard-wrapped continuation row carries the `NNNNN+ ` or `     + ` gutter
-(§10.3.1).
+Model-derived purpose and proposed content remain explicitly `untrusted`.
+Every content/value uses the reserved-marker escape rule and fixed product
+class/template. Hard-wrapped rows are product-marked; terminal-created
+continuations lack a valid marker. Labels alone and geometry history are not
+row-attribution security evidence (§10.3.1).
 
 ### 10.5 Relationship to `review show`
 
@@ -849,10 +932,10 @@ The guard stays **OPEN**. It may be proposed for closure only by a separately
 authorized closure lifecycle after **all** of the following exist on `main`,
 independently reviewed and post-merge certified:
 
-1. a TAP-1 renderer and CRS-1 codec implementing §10–§12 exactly, with committed
+1. a TAP-2 renderer and CRS-1 codec implementing §10–§12 exactly, with committed
    golden vectors;
 2. `review record` implementing §9.3 so that the only path to a record v2 is
-   the TAP-1 session;
+   the TAP-2 session;
 3. `apply` recomputing `crsDigest` and `presentationDigest` and refusing
    mismatches (§21);
 4. the hostile time-split and representation-split tests of §28 passing (R-4);
@@ -942,15 +1025,15 @@ deterministic functions of the same object.
 | 1 | Machine artifact (run files) | unchanged: `JSON.stringify(value, null, 2) + "\n"`, raw Unicode preserved, bytes bound by manifest sha256 | evidence; never shown as approval |
 | 2 | Machine CLI `--json` (stdout) | value-equivalent JSON; Stage 4 commands MUST emit ASCII-safe JSON (every code unit outside `0x20–0x7E` as `\uXXXX`); existing commands SHOULD adopt the same value-preserving escaping (§12.3) | advisory; never approval evidence |
 | 3 | Human non-authoritative display (`review show`) | unchanged Stage 3 `printable()` rule | `NON_AUTHORITATIVE` |
-| 4 | Trusted authoritative approval presentation (`TAP-1`) | ASCII-only rule §12.4, independent of the Unicode database | the only representation a decision may be made on |
+| 4 | Trusted authoritative approval presentation (`TAP-2`) | ASCII-only rule §12.4, independent of the Unicode database | the only representation a decision may be made on |
 
 The underlying semantic data (artifact strings, approved bytes) is **never**
 altered by any representation: escaping is applied to rendered text only, and
 #23F writes the exact approved code units encoded as UTF-8.
 
-### 12.2 Character classes (TAP-1 and CRS-1)
+### 12.2 Character classes (TAP-2 and unchanged CRS-1)
 
-| Class | TAP-1 / CRS-1 treatment |
+| Class | TAP-2 / CRS-1 treatment |
 |---|---|
 | Unicode `Cf` (incl. bidi embeddings U+202A–U+202E, isolates U+2066–U+2069, LRM/RLM/ALM U+200E/U+200F/U+061C, zero-width U+200B–U+200D, U+2060–U+2064, BOM/ZWNBSP U+FEFF, soft hyphen U+00AD, tag characters) | escaped `\uXXXX` (non-ASCII) |
 | Unicode `Cs` (lone or paired surrogates) | escaped per code unit |
@@ -958,11 +1041,14 @@ altered by any representation: escaping is applied to rendered text only, and
 | U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR | escaped |
 | TAB U+0009, CR U+000D | escaped (`\u0009`, `\u000d`) — so CRLF and tab/space indentation differences are visible |
 | other non-ASCII (letters, marks, NBSP, ideographic space, confusables) | escaped |
+| reserved marker U+0040 | TAP-2: `\u0040`; CRS-1 unchanged: literal `@` |
 | backslash U+005C | `\\` |
 | literal text `\u202e` (6 ASCII characters) | rendered `\\u202e`, distinct from the escaped character `\u202e` |
 
+Only TAP-2 adds the reserved-marker exception; CRS-1 is unchanged.
+
 Rule choice: a code-unit range rule (`0x20–0x7E`) instead of General-Category
-matching makes TAP-1 and CRS-1 output identical on every Node/ICU version.
+matching makes TAP-2 and CRS-1 output identical on every Node/ICU version.
 Readability cost for non-ASCII text is accepted for the approval surface; each
 target reports `escapedCodeUnits` so the reviewer sees that escaping occurred.
 
@@ -975,12 +1061,18 @@ escaping is a value-preserving change (same JSON value) and is RECOMMENDED for
 the Stage 4 implementation to protect humans piping `--json` to a terminal; it
 does not change the `cliOutput` v1 schema.
 
-### 12.4 TAP-1 string rule
+### 12.4 TAP-2 string rule
 
-For a single-line field: each UTF-16 code unit `u` in `0x20–0x7E` except `0x5C`
-is emitted as-is; `0x5C` → `\\`; every other `u` (including LF) → `\u` + 4
-lowercase hex digits. For content blocks: identical, except that the string is
-first split on LF (§10.3), so LF never appears inside a rendered line.
+For a single-line field (`tap2-utf16-0040-005c-v1`): each UTF-16 code unit
+`u` in `0x20–0x7E` except `0x40` and `0x5C` is emitted as-is; `0x40` ->
+`\u0040`; `0x5C` -> `\\`; every other `u` (including LF) -> `\u` + 4
+lowercase hex digits. For content blocks: identical, except that the string
+is first split on LF (§10.3), so LF never appears inside a rendered line.
+
+Decode escapes only after removing row framing and joining hard-wrap chunks.
+`\u0040` decodes to U+0040; literal `\u0040` text renders as `\\u0040`, so
+the two are distinct. Counts/finalLF reconstruct the exact content LFs.
+Every original code unit is recovered; no package bytes are changed.
 
 ```text
 SEC-S3-m01 = DESIGN RESOLVED
@@ -1084,8 +1176,8 @@ what #23F accepts and does not change its authority semantics (§22.3).
 WHAT EXACT PATH IDENTITY DOES THE HUMAN APPROVE?
   The exact PPI-1-valid ASCII string reviewTargets[k].path of the package whose
   packageDigest and crsDigest are bound in the record, displayed verbatim in
-  TAP-1 (no escaping can occur: every PPI-1 character is printable ASCII and
-  not a backslash).
+  TAP-2 (no escaping can occur: PPI-1 permits neither backslash nor the
+  reserved marker `@`, and every allowed character is printable ASCII).
 
 WHAT EXACT PATH IDENTITY MAY #23F WRITE?
   realRoot joined with the same string's "/"-segments, where realRoot is the
@@ -1147,7 +1239,9 @@ recorded as the future higher-assurance option (§30.3).
   `HOME`, `USERPROFILE`, config, flags or artifacts; `os.homedir()` is **not**
   used because it consults environment variables). Failure →
   `REVIEWER_IDENTITY_UNAVAILABLE` (5).
-- `principal = "os-account-v1:" + TAP-1-escape(username)`; MUST satisfy the
+- `principal = "os-account-v1:" + TAP-1-escape(username)` (the frozen historical
+  string rule in §37.1; unchanged identity serialization, re-escaped with
+  TAP-2 when displayed); MUST satisfy the
   existing `isValidId` (≤ 128 code units, no control characters, trim-stable);
   otherwise refuse.
 - `uid`: the POSIX effective uid (integer ≥ 1, §14.4) or `null` on `win32`
@@ -1271,7 +1365,7 @@ process that drives a pseudo-terminal (A4) satisfies it (R-1).
 
 | Requirement | Mechanism |
 |---|---|
-| trusted renderer shows the exact canonical content | TAP-1 from decoded CRS-1 of the rebuilt package (S5, S7) |
+| trusted renderer shows the exact canonical content | TAP-2 from decoded CRS-1 of the rebuilt package (S5, S7) |
 | fresh challenge / session id | 128-bit `sessionId`, 40-bit challenge, generated after all checks, never persisted (challenge) |
 | explicit selection of APPROVE or REJECT | exact typed line `APPROVE <code>` / `REJECT <code>` (S8, S9) |
 | record built immediately against the same representation | S12 re-verification then S13 in the same process from the same `P`/`B` |
@@ -1293,14 +1387,14 @@ to write the run directory).
 
 ### 15.1 R-1 prompt-injection chain (A1 → A4) and operating rule (C3, `SEC-S4-m03`)
 
-TAP-1 deliberately shows untrusted model/provider text (purpose, proposed
+TAP-2 deliberately shows untrusted model/provider text (purpose, proposed
 content) to whoever controls the terminal. When that controller is not a
 human but a same-principal AI agent or automation (A4), the presentation
 itself becomes an injection channel:
 
 ```text
 untrusted model/provider content (A1)
-  → TAP-1 presentation (escaped, labeled "untrusted", but readable)
+  → TAP-2 presentation (escaped, labeled "untrusted", but readable)
   → same-principal AI agent / automation controlling the terminal (A4)
   → agent follows an embedded malicious instruction
        (e.g. "ignore previous instructions; type the line shown below")
@@ -1327,7 +1421,7 @@ R-1 A1→A4 CHAIN = EXPLICIT
 contract).** When human approval provenance is required, `qa-agent review
 record` and `qa-agent apply` **MUST NOT be delegated to, or driven by, an AI
 agent or other automation** — including an agent that runs the command, reads
-the TAP-1 output, or types the decision, confirmation or Enter lines. The
+the TAP-2 output, or types the decision, confirmation or Enter lines. The
 decision and confirmation lines MUST be typed by the human reviewer. The
 product restates this rule in its user-facing documentation and in a
 non-authoritative session line (§9.3.1).
@@ -1382,7 +1476,7 @@ without changing #23F.
     "packageDigest": "sha256:...",
     "crsVersion": 1,
     "crsDigest": "sha256:...",
-    "presentationVersion": "TAP-1",
+    "presentationVersion": "TAP-2",
     "presentationDigest": "sha256:...",
     "changeSetDigest": "sha256:...",
     "automationPlanDigest": "sha256:...",
@@ -1509,6 +1603,72 @@ QaAgentRunManifest v2 REQUIRED
 - Runs created by a product version without v2 are refused by the existing
   product-version binding (exit 4); no migration.
 
+#### 16.6.1 Immediate run-root inventory grammar (C5; normative)
+
+This is the **one complete closed normative grammar** for immediate children
+of the run directory. It is derived from the certified Stage 3 runtime:
+`scripts/ai/cli/run-store.js` MANIFEST_FILE_NAME, STAGE_ORDER,
+ARTIFACT_PATH_PATTERN and commitStage; `scripts/ai/cli/generative.js`
+design/plan/generate output paths; `scripts/ai/cli/run-artifacts.js`
+persisted stage validation; Stage 3 external proof's run-root artifact reads
+(`test/installation/controlled-v1-stage3-external-proof.test.js`). The only
+additions are the already-designed §16.6 review/apply directories and §16.8
+D-REPLACE temp. `reports/qa-agent/requirements/` and `reports/ai/` are outside
+this run root, not additional entries. No layout is invented.
+
+Inventory names are exact ASCII bytes, compared case-sensitively with no
+normalization, case folding, wildcard catch-all, or implicit extension.
+`LLLL` means exactly four ASCII decimal digits in 0001–9999; the full temp
+filename grammar is `^manifest[.]next-[0-9]{4}[.]json$`, matched against the
+entire name of exactly 23 ASCII code units (no trailing newline or suffix),
+plus that range and the next-slot constraint. Each fixed name has multiplicity
+at most one; duplicate
+names in an enumeration are invalid rather than deduplicated.
+
+| Exact immediate name / grammar | Entry kind | Required / optional and multiplicity | Contents participate in authority? | Malformed / unreadable handling; mismatch state |
+|---|---|---|---|---|
+| `manifest.json` | regular file | REQUIRED, exactly 1 for a persisted run | YES, validated v2 ledger/projection/product/artifact bindings, only as §16.7 input; never standalone authority | missing, unreadable, malformed/duplicate-key JSON, wrong schema/binding or kind -> INCONSISTENT / fail closed; existing manifest-load refusals remain (4) |
+| `design` | directory | REQUIRED, exactly 1: every persisted Stage 3 run begins with completed design | YES, validated manifest-bound artifacts reconstruct the package; directory existence alone grants nothing | unreadable/non-directory/redirected entry, missing required directory or invalid referenced contents -> INCONSISTENT / fail closed |
+| `plan` | directory | OPTIONAL, 0..1 before plan completes; REQUIRED exactly 1 when manifest stages contains plan (including Stage 4 selected-package runs) | YES, validated context/plans reconstruct the package; directory alone grants nothing | present unreadable/wrong kind/redirect, missing when required or invalid referenced contents -> INCONSISTENT / fail closed |
+| `generate` | directory | OPTIONAL, 0..1 before generate completes; REQUIRED exactly 1 when manifest stages contains generate (including every Stage 4 selected-package run) | YES, validated change sets/packages reconstruct the exact subject; directory alone grants nothing | present unreadable/wrong kind/redirect, missing when required or invalid referenced contents -> INCONSISTENT / fail closed |
+| `review` | directory | OPTIONAL, 0..1 while reviews is empty; REQUIRED exactly 1 for any ledger entry; may exist empty before first claim | YES, records/claims are validated under §16.6/§16.7; directory alone grants nothing | unreadable/wrong kind/redirect, missing for nonempty ledger or contents violating §16.6/§16.7 -> INCONSISTENT; orphan next claim remains QUARANTINED under rule 1 regardless of its bytes |
+| `apply` | directory | OPTIONAL, 0..1; empty first-use directory is permitted; absence means no observable apply evidence, not permission to bypass §16.7 | YES, attempt existence consumes and outcome evidence determines state; applied-record audit bytes never independently grant approval | unreadable/wrong kind/redirect or invalid names/evidence relationships -> INCONSISTENT; empty attempts / partial outcomes keep existing §16.7 consumption/quarantine semantics |
+| `manifest.next-LLLL.json` with grammar/range above | regular file | OPTIONAL, 0..1 total; present index MUST equal ledger.length + 1 (and fit 0001–9999) | NO content authority: bytes are opaque, never parsed, adopted or used to grant authority; name/kind are refusal evidence | wrong kind, duplicate/multiple temp, invalid/range/stale/future/impossible index -> INCONSISTENT; unreadable name/kind -> INCONSISTENT; empty/partial/unreadable temp bytes are not read and do not change next-slot QUARANTINED (rule 1) |
+
+Each allowed directory must be an actual directory, not a symlink/junction or
+other redirected entry; each allowed file must be an actual regular file,
+not a symlink, directory, device, socket or other entry kind. Exact entry kind
+and complete canonical containment must be established from on-disk evidence.
+An unreadable/incomplete root enumeration or unreadable kind is INCONSISTENT.
+Every other immediate entry, including case variants, suffixes, backup files,
+hidden files and undeclared directories, is **INCONSISTENT / FAIL CLOSED**.
+No path repair or acceptance of an alias is allowed.
+
+The Stage 3 stage directories are created while artifacts are written,
+before commitStage writes the manifest last. Optional plan/generate directories
+therefore allow pre-commit Stage 3 presence; they do not declare a stage
+complete or adopt unreferenced bytes. The existing closed manifest path/schema,
+exact artifact digest and canonical rebuild checks remain required. This table
+closes immediate-root membership, not a new descendant artifact layout;
+§16.6 remains the closed review/apply file grammar. Package selection still
+requires completed generate, so all three Stage 3 directories are required
+for a Stage 4 approval/apply session. Absence of wholly lost apply evidence
+cannot reconstruct storage history; R-3 is unchanged.
+
+Grammar validation is an input to `derivePackageState(...runRootInventory...)`
+(§16.7), not a separate authority verdict or post-derivation override.
+Run-level INCONSISTENT precedes package rules; a valid expected-next temp
+quarantines every package with or without a claim; stale/future/impossible
+or multiple temps are INCONSISTENT. No temp grants authority.
+
+```text
+ARCH-S4-C4-02 = RESOLVED
+RUN-ROOT GRAMMAR = COMPLETE / CLOSED / NORMATIVE
+RUN-ROOT ENTRY KINDS = EXPLICIT
+UNKNOWN ROOT ENTRY = INCONSISTENT
+AUTHORITY STATE DETERMINISM = SINGLE SOURCE OF TRUTH
+```
+
 ### 16.7 Authority state model (single source of truth)
 
 Package state is a **pure deterministic function** of on-disk evidence:
@@ -1518,7 +1678,7 @@ derivePackageState(N, runRootInventory, ledger, claims, attempts, outcomes) -> s
   runRootInventory : canonical inventory of immediate run-root entries,
              including every manifest.next-* candidate (name + entry kind);
              sorted by exact ASCII name, no normalization or deduplication;
-             validate against the closed run-root grammar of §16.6/§16.8
+             validate against the sole immediate run-root grammar of §16.6.1
   ledger   : manifest v2 `reviews` (validated; each referenced record file
              present, sha256 == recordSha256, valid closed v2 schema)
   claims   : names + contents of review/claim-*.json
@@ -1669,8 +1829,8 @@ The manifest is **never** written in place: the current `run-store` manifest
 write (`O_WRONLY|O_CREAT|O_TRUNC`, truncate-then-write) can leave an empty or
 torn manifest after power loss and MUST NOT be used for any Stage 4 manifest
 commit. A reader sees either the complete old manifest or the complete new
-manifest. `manifest.next-<LLLL>.json` is added to the closed run-root name
-grammar (`LLLL` = four decimal digits, 0001–9999). Its name and entry kind
+manifest. `manifest.next-<LLLL>.json` is the regular-file temp entry in the sole
+immediate run-root grammar of §16.6.1 (`LLLL` = 0001–9999). Its name and entry kind
 are explicit `runRootInventory` input to §16.7; its contents never grant
 authority and the product never deletes it (it disappears only by its own
 session's rename). §16.7 alone determines state: the expected next-slot temp
@@ -1892,17 +2052,17 @@ zero writes.
 
 | Threat | Fail-closed behavior |
 |---|---|
-| terminal view differs from JSON | approval is made only on TAP-1, a deterministic function of `B`; `--json` is never approval evidence and is refused for `review record` |
-| bidi visual deception (Trojan Source) | every bidi/format code unit is escaped in TAP-1 and CRS-1; refused outright in paths (PPI-1) |
+| terminal view differs from JSON | approval is made only on TAP-2, a deterministic function of `B`; `--json` is never approval evidence and is refused for `review record` |
+| bidi visual deception (Trojan Source) | every bidi/format code unit is escaped in TAP-2 and CRS-1; refused outright in paths (PPI-1) |
 | escaped vs literal escape text | backslash always rendered `\\`; one escape form per code unit |
 | filename looks different than actual target | PPI-1 printable-ASCII-only paths, displayed verbatim; exact on-disk name check (§13.6) |
-| content truncation | TAP-1 renders every line; line counts, final-LF flag and code-unit counts printed per block |
+| content truncation | TAP-2 renders every line; line counts, final-LF flag and code-unit counts printed per block |
 | reordered operations | order = builder order (plannedChanges), bound in `packageDigest`/`crsDigest`; #23F binds by index |
 | duplicate operations | #23D refuses duplicate paths; one review target per change |
 | duplicate canonical paths | PPI-1 case-fold duplicate refusal + #23F batch/sibling checks |
 | different Unicode normalization | no normalization anywhere; paths ASCII-only; content written as exact code units |
-| different serialization implementations | one CRS-1/TAP-1 module used by both commands; golden vectors; decode→encode canonicality; `packageDigest` recomputed independently by the existing primitive |
-| UI-impersonating model text | fixed product labels per row, gutters on content and on every hard-wrapped continuation row, fixed 100-column rows with no reliance on terminal soft-wrap, refusal below the required terminal geometry, bounded paging (§10.3.1), `untrusted` labels, ASCII-only output, no ANSI |
+| different serialization implementations | one CRS-1/TAP-2 module used by both commands; golden vectors; decode→encode canonicality; `packageDigest` recomputed independently by the existing primitive |
+| UI-impersonating model text | reserved sentinel on every product row, no raw sentinel in dynamic data, lossless deterministic escaping; terminal-created continuations cannot impersonate any closed row class regardless of missed resize history (§10.3.1); geometry remains UX/availability/defense-in-depth |
 | model text instructing a terminal-driving agent to approve | not mitigable by rendering; operating rule of §15.1 (not technically enforceable); residual R-1 |
 
 ---
@@ -2119,7 +2279,7 @@ only when **all** hold:
    surface delta (shipping the #23E record builder/gate, #23F and
    `applied-change-set-record.js` modules unexported; new
    `package-surface-v5` record) — an R-5 trigger;
-3. CRS-1 + TAP-1 + PPI-1 implemented with golden vectors;
+3. CRS-1 + TAP-2 + PPI-1 implemented with golden vectors;
 4. `review record` session §9.3 and `apply` §21 implemented; record v2 and
    manifest v2 validators implemented; builder extraction §16.5;
 5. §13.6 strengthening implemented in #23F;
@@ -2213,7 +2373,7 @@ Proposed call graph:
 ```text
 review record  (future scripts/ai/cli/review-record.js)
   → run-artifacts / run-store            (load, rebuild package)
-  → canonical review serialization       (CRS-1, TAP-1)       [new, gate-free]
+  → canonical review serialization       (CRS-1, TAP-2)       [new, gate-free]
   → path identity                         (PPI-1)              [new, gate-free]
   → v1 record builder module              (extracted, §16.5)   [gate-free]
   ✗ never imports generated-change-set-review-record.js (gate definer)
@@ -2262,7 +2422,7 @@ TSB-F02 TRIGGER = FALSE
 | Replay (T-REPLAY) | A3, A4, A6 | O_EXCL attempt file, single attempt, append-only ledger with exclusive claims, supersession, A14 re-check, `derivePackageState` precedence | mitigated on the product path (deletion of attempt/outcome files by a run-directory writer is R-3) |
 | Stale decision (T-STALE) | A2, A6 | bounded validity window (§30.5 item 14); rebuild + digests at S12 and apply; #23F live revalidation | mitigated |
 | Cross-run / cross-project (T-XRUN/T-XPROJ) | A6, A8 | runId, manifest entry, artifact sha, projection, projectId, root binding | mitigated |
-| Presentation substitution (T-PRES) | A1, A2, A6 | Option A (TAP-1 ← CRS-1 ← rebuilt `P`), §18, §19 | mitigated |
+| Presentation substitution (T-PRES) | A1, A2, A6 | Option A (TAP-2 ← CRS-1 ← rebuilt `P`), §18, §19 | mitigated |
 | Model fabricates approval (AT-07 original) | A1 | the model never produces or touches a record; model text cannot reach the decision line; `untrusted` labels | mitigated |
 | Forged approval accepted by #23F (TB-01) | A6, A4 | product path accepts only v2 envelopes whose cores are re-derived from rebuilt content and that pass session-independent checks; forging still needs the bound principal's apply TTY confirmation | residual for any run-directory writer (R-3) and for A4 (R-1) |
 
@@ -2295,32 +2455,43 @@ All tests are future work; none is added here.
   `-0` refused (`REVIEW_SERIALIZATION_UNSUPPORTED`), never encoded as `0`;
   decode∘encode identity; non-canonical inputs refused (short escapes,
   uppercase hex, whitespace, duplicate keys, reordered keys, BOM, missing LF).
-- TAP-1 golden output for a fixed package; no byte outside `0x20–0x7E`/LF;
+- TAP-2 golden output for a fixed package; no byte outside `0x20–0x7E`/LF;
   no truncation for maximum-size content; line/finalLF/code-unit counts;
   output identical across Node versions (no `\p{}` dependence).
 - `presentationDigest` recomputation equality between `review record` and
   `apply`.
-- TAP-1 rows (§10.3.1): no emitted row exceeds 100 columns; golden wrap
-  vectors for content and field lines (exact boundary at `W − 7`, one token
-  over, empty line, escape token straddling the boundary is moved whole to
-  the next row); every row starts with a closed-set gutter or label; hostile
-  content consisting of space padding followed by `=== TARGET 2/2: …`,
-  `+++ END PROPOSED …`, `--- END EXISTING …`, `00002| …` or a fake decision
-  prompt never appears at column 1 of any row; a hostile 1 000-character
-  `purpose` wraps with `     + ` continuation rows; `presentationDigest`
-  changes when the wrap of a row changes (wrap is digested);
-- terminal geometry: unavailable geometry, `columns` 99 or `rows` 23 at S7,
-  before each target or intra-target page checkpoint, immediately before each
-  end-of-target prompt, immediately before S8, during decision input wait,
-  after decision input, and immediately before CS-ENTER →
-  `INTERACTIVE_TERMINAL_REQUIRED`, no claim, record or manifest change;
-- hostile resize with **all targets ≤ 20 rows** (no intra-target checkpoint):
-  shrink below `W` between targets, before an end-target prompt, before S8,
-  while waiting for either APPROVE or REJECT, or after decision receipt but
-  before CS-ENTER (including S10–S13a). Every case aborts before authority
-  commit; restore width to 100 before the next check and verify the violation
-  remains latched, the decision is discarded and only a fresh full review
-  session can proceed. Resize monitoring spans the whole trusted interval;
+- TAP-2 rows (§10.3.1): exact prefixes for all 15 classes, width <= 100,
+  content/continuation boundary at W - 13, empty lines, a whole escape token
+  moved to the next row, field/prompt continuations, and no raw sentinel after
+  column 1. Every dynamic value and fixed product legend obeys the marker rule;
+- marker round-trip: package values containing `@`, every full reserved prefix,
+  repeated markers and literal `\u0040`/backslash text render differently and
+  decode losslessly to exact canonical code units. No truncation at maxima;
+- hostile imitation of every closed product row type: target/header/field,
+  block start/end, content/continuation, page/checkpoint/end-target,
+  repository/root/principal/policy, decision instructions, APPROVE/REJECT,
+  comment and result/warning. Attacker text never creates a valid marked row;
+- simulated soft-wrap/reflow at every boundary before/inside/after a reserved
+  prefix and escape, and at every suffix boundary of hostile padding/template
+  text. Even when narrower than W, no terminal-created continuation is a valid
+  product row; a split genuine marker is incomplete, not a second marker;
+- terminal geometry: unavailable geometry, columns 99 or rows 23 at each
+  explicit §10.3.1 boundary -> INTERACTIVE_TERMINAL_REQUIRED, no writes;
+- observed invalid resize with all targets <= 20 rows, during any input wait,
+  or S10–S13a: abort before commit, restoration leaves the abort latched;
+- **missed resize history**: shrink below W then restore before callback
+  handling; coalesced notification reporting only restored geometry; real
+  Windows interval with no console write/raw TTY read; resize after target
+  display but before decision, and after the final sample before CS-ENTER.
+  Exercise each with observed and missed notifications. Observed/current
+  violations abort; unobserved restored intervals need not abort. In all cases
+  a terminal-created continuation cannot be interpreted as a valid product
+  row. Callback draining never counts as proof of complete history;
+- presentationDigest changes if version, sentinel/prefix, escaping semantics,
+  fixed templates, wrapping or any descriptor rule changes; reject old TAP-1
+  records/version mismatches. Session-instance bytes remain excluded but
+  their rendering-rule identities are in D2. Rule/version reuse after a
+  semantic change is prohibited;
 - paging: a maximum-size target (50 000 code units) is emitted completely
   across pages of ≤ 20 rows (row sequence identical to the unpaged
   rendering); CRS-1 bytes `B` and `presentationDigest` are identical with and
@@ -2517,6 +2688,15 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   flush, and reordering unflushed writes) at every step of S13 and A14–A16
   yields exactly the derived states of the §16.8 table; no simulated loss
   yields `APPROVED` for a consumed approval on storage honoring the flushes;
+- immediate run-root grammar (§16.6.1): each of the seven forms at its
+  required/optional multiplicity; Stage 3 design-only, design+plan and
+  design+plan+generate roots, with Stage 4 review/apply/temp additions;
+  missing required entries, duplicate inventory names, extra entry, case
+  variant, invalid kind/symlink/junction, unreadable root/directory/manifest
+  or kind -> INCONSISTENT. Optional pre-commit stage directories never grant
+  stage completion. Empty/unreadable next-temp bytes still quarantine by name;
+  multiple temps, 0000/10000, stale/future indexes -> INCONSISTENT. Exercise
+  each through the same derivePackageState with no authority-state override;
 - a leftover `manifest.next-<LLLL>.json` with `LLLL = ledger.length + 1` →
   `QUARANTINED` for every package, **with and without** its claim, and with
   empty/partial temp bytes; any other recognized index (stale or beyond next)
@@ -2575,7 +2755,7 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
   interactive controlling process, not of a physical human).
 - **INV-03** The bytes written by #23F equal the approved bytes, and the paths
   written equal the approved PPI-1 strings, byte-for-byte.
-- **INV-04** The approved representation is TAP-1 of CRS-1 of the rebuilt
+- **INV-04** The approved representation is TAP-2 of CRS-1 of the rebuilt
   canonical package; `apply` recomputes all three digests.
 - **INV-05** `applyApprovedGeneratedChangeSet` is the sole write path; its
   checks are never bypassed or replaced.
@@ -2616,15 +2796,15 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
   to CS-EXIT, never swallowed, and completed per platform (§9.3.2); the exit
   appearance never overrides the on-disk authority state; no product path
   deletes, expires, reuses or overwrites a claim (§9.3.2).
-- **INV-18** Every emitted TAP-1 row is at most 100 columns and starts at
-  column 1 with a product-owned gutter or label; terminal soft-wrap is never
-  relied on; the width invariant holds across the **whole trusted session**,
-  from presentation start through final pre-commit geometry verification.
-  Any width below `W` is latched and aborts before authority commit; widening
-  again cannot reuse the session. Required geometry is verified at every
-  §10.3.1 boundary and monitored during input waits. Paging never truncates
-  rows or changes CRS-1 bytes or
-  `presentationDigest` (§10.3.1).
+- **INV-18** Every product-owned TAP-2 row has a closed reserved prefix at
+  logical column 1 and no later raw sentinel. All dynamic data escapes the
+  sentinel losslessly and deterministically. A terminal-created continuation
+  cannot impersonate any product-owned row independently of width history.
+  Rows are hard-wrapped to 100 columns; observed invalid/current insufficient
+  geometry aborts before commit and the observed latch cannot be cleared by
+  restoration. Resize monitoring is defense-in-depth/availability, never
+  complete-history evidence. Paging never truncates or changes B or
+  presentationDigest; version/marker/escaping rules are digested (§10.3.1).
 - **INV-19** Authority evidence is persisted in the §16.8 order with explicit
   file and directory flushes; the manifest is committed only by crash-safe
   replacement; #23F is entered only after the attempt file is durable; every
@@ -2647,7 +2827,7 @@ is claimed against those classes. Each invariant is testable by the §28 tests.
 
 | ID | Residual | Status |
 |---|---|---|
-| R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access, or a CI process that unsets `CI`/`GITHUB_ACTIONS` and allocates a pty) can complete the approval and apply sessions. TTY + challenge proves an interactive controlling process, not a physical human; not distinguishable without a hardware user-presence factor. Includes the explicit prompt-injection chain `untrusted model/provider content → TAP-1 → same-principal AI/automation controlling the terminal → malicious instruction → agent types APPROVE <challenge>` (§15.1), which stays inside R-1 because that actor already has repository write authority; the operating rule that `review record`/`apply` MUST NOT be delegated to or driven by an AI agent/automation when human approval provenance is required is **not technically enforceable** | `R-1 ACCEPTANCE = PENDING PO` |
+| R-1 | Same-OS-principal automation able to drive a pseudo-terminal (e.g. an AI coding agent with shell access, or a CI process that unsets `CI`/`GITHUB_ACTIONS` and allocates a pty) can complete the approval and apply sessions. TTY + challenge proves an interactive controlling process, not a physical human; not distinguishable without a hardware user-presence factor. Includes the explicit prompt-injection chain `untrusted model/provider content → TAP-2 → same-principal AI/automation controlling the terminal → malicious instruction → agent types APPROVE <challenge>` (§15.1), which stays inside R-1 because that actor already has repository write authority; the operating rule that `review record`/`apply` MUST NOT be delegated to or driven by an AI agent/automation when human approval provenance is required is **not technically enforceable** | `R-1 ACCEPTANCE = PENDING PO` |
 | R-2 | Reviewer identity is local OS-account attribution: a shared OS account cannot distinguish people; POSIX uid reuse after account deletion; on Windows no SID is available through Node core, so the discriminator is account name + profile-directory digest (§14.5), and UAC elevation is not distinguished | `R-2 ACCEPTANCE = PENDING PO` |
 | R-3 | Records, ledger claims, attempt and outcome files are unkeyed local files; any actor able to write the run directory (same principal, or another account with write permission) can forge well-formed records or delete/forge apply evidence. Forging an approval still requires the bound principal's interactive apply confirmation; deleting an attempt file after use can re-enable a replay only for such a writer. Non-conforming storage that reports write/flush/durability success but later fails to preserve it across power loss or an equivalent storage fault has at least two explicit residuals (§16.8): **lost attempt**, an acknowledged durable attempt disappears after mutation work; and **lost supersession**, `APPROVE #1` → `REJECT #2` → #2 claim/record/manifest reported durable → all #2 evidence lost → earlier still-valid #1 visible again. The latter creates no approval authority that never existed; it may restore previously existing authority that was later superseded/revoked, within its original validity window. Both remain bounded by original expiry/`notAfter`, same principal, package/run/root/project binding, fresh apply confirmation and #23F live content/filesystem revalidation; surviving beyond-ledger claims/temps or invalid ledger-referenced evidence fail closed (`INCONSISTENT` / `QUARANTINED`) | `R-3 ACCEPTANCE = PENDING PO` |
 | R-4 | The existing #23F TOCTOU window between final revalidation and the mutating syscall (unchanged, `SECURITY.md` §24) | `R-4 ACCEPTANCE = PENDING PO` |
@@ -2671,9 +2851,9 @@ the authority contract; changing it changes the design. `PO ACCEPTANCE
 REQUIRED` = a product policy choice; the value given is a **recommendation
 only**. **No clause is accepted by this document.** Every clause is
 `PENDING PO` until the explicit OD-04 disposition, which occurs only after the
-independent Architecture C4 exact-head re-review and, only after it passes,
-the independent Security C4 exact-head re-review. Items **1–23 all remain
-`PENDING PO`**; C4 grants no acceptance.
+independent Architecture C5 exact-head re-review and, only after it passes,
+the independent Security C5 exact-head re-review. Items **1–23 all remain
+`PENDING PO`**; C5 grants no acceptance.
 
 | # | Clause | Recommended value / design | Classification | Status |
 |---:|---|---|---|---|
@@ -2699,7 +2879,7 @@ the independent Security C4 exact-head re-review. Items **1–23 all remain
 | 20 | CI refusal as product policy, not a boundary (§23) | refuse under `GITHUB_ACTIONS=true` / truthy `CI` | `ARCHITECTURE-DERIVED` policy; its residual is part of R-1 | `PENDING PO` (confirmation only) |
 | 21 | Abandoned review claim / run-wide quarantine (§9.3.2, §16.7 rule 1) | handled termination signals are deferred through the bounded claim critical section; an uncatchable termination (or a step failure) after claim creation may leave an orphan claim; an orphan claim permanently quarantines the **entire run** (all packages, including otherwise valid approvals); the product never auto-deletes, expires, reuses or repairs it; the user must create a new run. Availability loss only, never authority. Specializes item 12 for the run-wide case | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 | 22 | WIN32 STAGE 4 FAIL-CLOSED ELIGIBILITY | Stage 4 `review record` / `apply` is enabled only for supported Windows + Node combinations where **all** required real-win32 evidence succeeds: reviewer/profile attribution, signal-completion behavior, and filesystem durability / crash-safe replacement assumptions backed by documented OS/platform guarantees and real-win32 execution. Otherwise Stage 4 refuses on that configuration; no silent downgrade or implied support (§24 item 6a). OD-06 is not entered | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
-| 23 | TAP-1 TERMINAL GEOMETRY REFUSAL | trusted approval refuses when required geometry is unavailable: width = 100 columns, minimum rows = 24, page size = 20 rows. No narrow/degraded trusted mode exists; whole-session geometry violation aborts before authority commit and requires a fresh session (§10.3.1). Later changes to these versioned TAP values require the appropriate TAP contract/version handling already defined by the design | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
+| 23 | TAP-2 TERMINAL GEOMETRY REFUSAL | trusted approval refuses when required geometry is unavailable: width = 100 columns, minimum rows = 24, page size = 20 rows. No narrow/degraded trusted mode exists; observed geometry violation or current invalid checkpoint geometry aborts before authority commit and requires a fresh session; missed transient geometry is not security evidence and cannot cause row impersonation under TAP-2 (§10.3.1). Later changes to these versioned TAP values require the appropriate TAP contract/version handling already defined by the design | `PO ACCEPTANCE REQUIRED` | `PENDING PO` |
 
 ### 30.4 Documentation follow-ups (upon OD-04 approval; not done here)
 
@@ -2717,7 +2897,7 @@ the independent Security C4 exact-head re-review. Items **1–23 all remain
 | `scripts/ai/cli/args.js` | `review record`/`apply` move from `reserved` to real specs; `--package` flag; `--json` not applicable |
 | `scripts/ai/cli/policy.js` | `RELEASE_CAPABILITIES.reviewRecord/apply` enabled only at enablement time (§24) |
 | new `scripts/ai/cli/review-record.js`, `scripts/ai/cli/apply.js` | §9.3, §21 |
-| new `canonical-review-serialization.js` (CRS-1 + TAP-1), `path-identity.js` (PPI-1), `review-record-v2.js` (validator), terminal I/O helper | §10–§13, §16 |
+| new `canonical-review-serialization.js` (CRS-1 + TAP-2), `path-identity.js` (PPI-1), `review-record-v2.js` (validator), terminal I/O helper | §10–§13, §16 |
 | `scripts/ai/cli/run-store.js` | `QaAgentRunManifest v2` (reviews ledger only), path grammar, ledger claims, write-once `review/` and `apply/` files, `derivePackageState` (§16.7), `root-identity-v1` (§17.2), durability primitives `D-CREATE`/`D-REPLACE`/`D-DIR` replacing the in-place `O_TRUNC` manifest write for Stage 4 (§16.8) |
 | `scripts/ai/cli/generative.js` / `run-artifacts.js` | PPI-1 at plan/generate acceptance |
 | `scripts/ai/test-automation/generated-change-set-review-record.js` | builder extraction (code motion) |
@@ -2777,14 +2957,21 @@ Architecture then Security review.
 - any Stage 4 manifest commit by in-place or `O_TRUNC` write, any skipped
   file or directory flush of §16.8, or any entry into #23F before the attempt
   file is durable;
-- any TAP-1 row wider than 100 columns, any row carrying content without a
-  product-owned gutter, or any degraded presentation below the required
+- any TAP-2 row wider than 100 columns, any product row without a closed
+  reserved prefix, any raw reserved sentinel in dynamic text, or any degraded
+  presentation below the required
   terminal geometry (§10.3.1);
 - enabling Stage 4 on `win32` without the real-`win32` evidence of §24
   item 6a, or any `win32` fallback of `profileDigest` to environment-derived
   or `null` values (§14.5).
 
 ---
+
+Historical-note boundary: §33–§36 preserve earlier exact-head design
+records, not current normative TAP behavior or C5 approval. C4's complete
+resize-history security assumption is rejected/superseded by §10.3.1;
+all current rendering references above are TAP-2, except the deliberately
+unchanged TAP-1 identity string serializer (§14.3, historical §37.1).
 
 ## 33. Design corrective C1 record
 
@@ -2944,6 +3131,256 @@ OD-06 NOT ENTERED; implementation and merge NOT AUTHORIZED / NOT PERFORMED.
 STOP. The required next step is **INDEPENDENT ARCHITECTURE C4 EXACT-HEAD
 RE-REVIEW**. Security C4 follows only after Architecture C4 passes; no OD-04
 disposition before both. PR #245 remains OPEN, ready for that re-review.
+
+---
+
+## 37. Design corrective C5 record
+
+Authority: `OD-CONTROLLED-V1-STAGE-4-DESIGN-C5 — APPROVED`. Exact parent HEAD
+`f6e7c4126d2f1e541e0d96e405c464425a46330c`, TREE
+`88cff5ec686e9599f330019d6b573df05e577c8b`, base/main
+`45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee`. PR #245 is OPEN, non-draft,
+unmerged, existing branch `design/controlled-v1-stage4-approval-security`;
+working tree clean and unrelated stash preserved at preflight. WIP = 1.
+
+**Architecture C4 = REJECTED**, with `ARCH-S4-C4-01` MAJOR and
+`ARCH-S4-C4-02` MINOR. **Security C4 = NOT PERFORMED / NOT AUTHORIZED**.
+C5 is a narrow documentation-only authoring corrective for exactly these
+two findings. It is not an independent Architecture or Security review.
+The new HEAD invalidates the Architecture C4 exact-head review as approval
+of this HEAD; the rejected C4 verdict remains historical evidence.
+
+| Finding | Design corrective | Sections |
+|---|---|---|
+| ARCH-S4-C4-01 (MAJOR) | no complete resize-history assumption; TAP-2 closed product row sentinel/prefixes, lossless deterministic marker escaping, suffix/soft-wrap proof independent of width history, descriptor/version/digest binding, truthful observed-only geometry monitoring and hostile future vectors | §1, §9.3, §10–§12, §16.2, §19, §24, §28, INV-18, owner item 23 |
+| ARCH-S4-C4-02 (MINOR) | one evidence-derived complete closed immediate-root inventory with exact names, kinds, presence/multiplicity, content authority and malformed/unreadable handling; single derivePackageState input; existing temp/quarantine/precedence semantics preserved | §16.6.1, §16.7, §16.8, §28 |
+
+```text
+ARCH-S4-C4-01 = RESOLVED
+TRUSTED ROW ATTRIBUTION = WIDTH-HISTORY INDEPENDENT
+RESERVED PRODUCT MARKER = DEFINED
+CONTENT MARKER ESCAPING = LOSSLESS / DETERMINISTIC
+SOFT-WRAP IMPERSONATION = IMPOSSIBLE BY CONSTRUCTION
+TAP VERSION = TAP-2 INTRODUCED
+RESIZE HISTORY = NOT TRUSTED AS COMPLETE SECURITY EVIDENCE
+OBSERVED RESIZE = FAIL-CLOSED
+UNOBSERVED SHRINK/RESTORE = NO AUTHORITY-REPRESENTATION AMBIGUITY
+ARCH-S4-C4-02 = RESOLVED
+RUN-ROOT GRAMMAR = COMPLETE / CLOSED / NORMATIVE
+UNKNOWN ROOT ENTRY = INCONSISTENT
+AUTHORITY STATE DETERMINISM = SINGLE SOURCE OF TRUTH
+```
+
+These are authoring resolutions, subject to independent exact-head re-review;
+future test vectors are requirements, not implemented or executed TAP tests.
+No native/PTY dependency, runtime/test implementation, new authority model or
+public API is introduced. SECURITY.md's canonical guard cross-reference is
+updated only to match TAP-2. Historical TAP-1 design is preserved below.
+
+Preserved: C4 win32 SIGINT/SIGBREAK arrangements and fail-closed eligibility;
+owner items 22–23 (23 keeps the same geometry constants/refusal policy, with
+truthful observed-only enforcement); R-3 lost-attempt/lost-supersession
+residuals; Option A; CRS-1; PPI-1; ReviewRecord v2; Manifest v2; canonical
+#23F; whole-package/single-use approval; same-principal apply; offline
+operation; project/run/root binding; claim/attempt/outcome;
+AI-driven-approval operating restriction. `TSB-F02 = OPEN / LOW / CONDITIONAL`,
+`TSB-F02 TRIGGER = FALSE`; `AT-07/TB-01 = RESIDUAL / PENDING PO`;
+`R-1..R-5 = PENDING PO`; owner items 1–23 all PENDING PO. Existing INFO
+constraints remain. OD-06 NOT ENTERED; OD-04 disposition, implementation
+and merge NOT AUTHORIZED / NOT PERFORMED.
+
+**Lifecycle boundary:** after one C5 commit on the exact parent is pushed to
+existing PR #245, STOP. **STAGE 4 DESIGN C5 COMPLETE / PR #245 OPEN / READY
+FOR ARCHITECTURE C5 EXACT-HEAD RE-REVIEW**. Next step is independent
+Architecture C5 exact-head re-review; Security review only after Architecture
+passes. No review, OD-04 disposition, implementation or merge in this session.
+CI is execution evidence, not design approval.
+
+### 37.1 Historical TAP-1 design evidence (superseded; not normative for C5)
+
+The following is the pre-C5 §10.3–§10.4 and §12.4 description, retained
+verbatim as historical evidence of the fixed TAP-1 contract. Its internal
+section references address the pre-C5 document at the parent above. The
+geometry-based no-soft-wrap/complete-history attribution claim was rejected
+in Architecture C4; it is explicitly superseded by TAP-2 and MUST NOT be used
+as current security evidence. Its frozen string escape rule alone continues
+to define the existing reviewer principal serialization, not terminal display.
+
+````markdown
+
+### 10.3 TAP-1 layout (exact)
+
+All output lines are ASCII `0x20–0x7E` terminated by LF; no ANSI/SGR
+sequences, colors, cursor movement or terminal-dependent features are
+emitted. Field values are rendered with the TAP-1 string rule (§12.4). The
+layout below defines **logical lines**; each logical line is emitted as one or
+more **rows** of at most `W = 100` columns by the deterministic hard-wrap rule
+of §10.3.1, and only rows are emitted.
+
+```text
+QA-AGENT TRUSTED APPROVAL PRESENTATION TAP-1
+run: <runId>
+package: <NNNN> of <count> (<packagePath>)
+project: <projectId>
+framework: <framework>
+automationPlanId: <automationPlanId>
+packageDigest: <sha256:...>
+crsDigest: <sha256:...>
+changeSetDigest: <sha256:...>
+automationPlanDigest: <sha256:...>
+repositoryContextDigest: <sha256:...>
+pathPolicy: PPI-1
+targets: <N>
+escapes: \uXXXX = one UTF-16 code unit outside printable ASCII (0x20-0x7E)
+escapes: \\ = one literal backslash
+rows: at most 100 columns; nothing is truncated
+rows: "NNNNN| " starts content line NNNNN; "NNNNN+ " continues content line NNNNN
+rows: "     + " continues the field row above
+=== TARGET <k>/<N>: <CREATE|MODIFY> <path>
+purpose (model-generated, untrusted): <purpose>
+baseContentDigest: <sha256:...|none>
+proposedContentDigest: <sha256:...>
+targetDigest: <sha256:...>
+escapedCodeUnits: existing=<e> proposed=<p>
+--- EXISTING CONTENT (bound repository context) ---        (MODIFY only)
+00001| <line>
+...
+--- END EXISTING (lines=<L>, finalLF=<yes|no>, codeUnits=<U>) ---
++++ PROPOSED CONTENT (model-generated, untrusted) +++
+00001| <line>
+...
++++ END PROPOSED (lines=<L>, finalLF=<yes|no>, codeUnits=<U>) +++
+```
+
+Content rules: the content string is split on LF (U+000A); if it ends with LF
+the final empty element is dropped and `finalLF=yes`; each line is rendered as
+a 5-digit, zero-padded 1-based line number, `| `, and the TAP-1-escaped line.
+Every line of every target is emitted — **no truncation, elision, folding,
+diff or summarization** (content is already bounded: 50 000 code units per
+file, 1 000 000 per change set). No diff is shown in v1: diff algorithms are an
+additional derived representation with implementation-dependent output.
+
+`presentationDigest` = SHA-256 over
+`qa-ai-agent:trusted-approval-presentation:v1:` followed by the exact bytes of
+the emitted **rows** (after the §10.3.1 hard wrap, each row terminated by LF),
+header through the last target's END row. The wrap is therefore part of the
+digest. Session lines (page checkpoints, Enter prompts, decision prompt,
+challenge, comment prompt, §9.3.1 context) are excluded.
+
+#### 10.3.1 Row discipline, terminal geometry and paging (C3, `SEC-S4-m01`)
+
+Terminal soft-wrap is never relied on: a terminal that wraps a long line
+produces visual rows with no product gutter, in which hostile content (for
+example space padding followed by `=== TARGET 2/2: CREATE …` or
+`+++ END PROPOSED …`) could visually start at column 1 and impersonate
+product UI. TAP-1 therefore owns the visual row structure itself.
+
+**Fixed row width.** `W = 100` columns, a TAP-1 constant (changing it changes
+`presentationDigest` and is a new presentation version, `TAP-2`). It is never
+derived from the terminal. Because every emitted character is printable ASCII
+`0x20–0x7E` (TAB and every non-ASCII code unit are escaped, §12.4), one
+character occupies exactly one column, so row width is a pure function of the
+characters and identical on every platform and Node version.
+
+**Hard-wrap rule (deterministic).** A rendered logical line is a product-owned
+prefix followed by a rendered value (or, for structural lines, product text
+only). The rendered value is split into **tokens**: each escape sequence
+(`\\` or `\uXXXX`) is one token and every other character is one token, so an
+escape is never split across rows. Rows are filled greedily with whole tokens:
+
+| Logical line | First row | Continuation rows |
+|---|---|---|
+| content line `k` of a block | `NNNNN\| ` + tokens (≤ `W − 7` columns) | `NNNNN+ ` (same 5-digit number `k`) + tokens (≤ `W − 7` columns) |
+| field line (`<label>: <value>`, including `purpose`, `=== TARGET` and digest lines) | `<label>: ` + tokens (≤ `W` columns in total) | `     + ` (five spaces, `+`, space) + tokens (≤ `W − 7` columns) |
+| structural line (product text only) | fixed text, ≤ `W` columns by construction | none |
+
+Every row ends at its last token (no padding). An empty content line is the
+single row `NNNNN| `. A field or content value whose rendering fits on the
+first row produces no continuation row.
+
+**Attribution property.** Every row that carries any untrusted or
+content-derived character starts at column 1 with a product-owned gutter or
+label drawn from a closed set (`NNNNN| `, `NNNNN+ `, `     + `, or a fixed
+field label); hostile content can begin at column 8 at the earliest on content
+and continuation rows, and never at column 1 of any row. Structural rows
+(`QA-AGENT …`, `escapes: …`, `rows: …`, `=== TARGET …`, `--- …`, `+++ …`) are
+emitted only by the renderer and contain no unescaped untrusted text beyond
+their labeled value. Combined with "no soft-wrap" (below), each emitted row is
+exactly one terminal row, so column 1 of every visual row is product-owned:
+
+```text
+TAP-1 VISUAL ROW ATTRIBUTION = UNAMBIGUOUS
+```
+
+**Terminal geometry (whole trusted session, C4).** `review record` requires
+available numeric geometry with `process.stdout.columns ≥ W` (100) and
+`process.stdout.rows ≥ 24`. Verify it at trusted presentation start (S7),
+before each target, before every intra-target page checkpoint, immediately
+before each end-of-target prompt, immediately before entering S8, while
+waiting for decision input, after each decision line is received (including
+re-prompts), and immediately before CS-ENTER / authority commit (after S13a).
+
+Monitor stdout terminal resize events continuously from trusted presentation
+start through the final pre-commit verification, including waits for target,
+page, decision and comment input and the S11–S13a revalidation/preparation
+interval. Re-check geometry on every resize; latch any width below `W`,
+insufficient rows or unavailable geometry as a session violation. Drain
+pending resize observations and freshly verify geometry and the latch at the
+final pre-commit boundary; a decision alone never authorizes bypassing it.
+If width ever drops below `W` during that interval, **ABORT BEFORE AUTHORITY
+COMMIT** with `INTERACTIVE_TERMINAL_REQUIRED` (5) and a fixed message naming
+the required geometry: no claim, record or manifest change. Restoring geometry
+cannot clear the violation or reuse the reviewed session; restart with a fresh
+session and review every target again. Never continue wrapped output, reflow
+to a smaller width or silently degrade. No narrow/degraded trusted mode exists.
+The product relies on the terminal's reported geometry; a terminal that
+misreports it is outside the product's control (R-1/R-5 class: the operator's
+own terminal). TAP-1 keeps `W = 100`, minimum rows `24`, and `PAGE = 20`;
+later changes follow the TAP contract/version rules (§10.3, §10.3.1).
+
+**Bounded paging inside targets.** The rows of each target are emitted in
+pages of at most `PAGE = 20` rows (a TAP-1 session constant). After every full
+page that is not the target's last row, the session prints the session line
+`-- target k/N page p/Q (rows a-b of R); press Enter to continue --` and reads
+one line (content ignored, max 64 bytes) before the next page; the existing
+end-of-target prompt follows the last page. Page boundaries are a pure
+function of the row sequence. Paging only interleaves session lines between
+rows: it never removes, reorders, merges, re-wraps or truncates a row, never
+changes CRS-1 bytes `B`, and never changes `presentationDigest` (which covers
+rows only). EOF, interrupt or a geometry failure at a checkpoint aborts the
+session before CS-ENTER with no write. Every row of every target is still
+emitted: **no truncation**. Paging adds checkpoints to large packages; this
+bears on, but does not change, the §30.5 item 15 session-window
+recommendation (INFO-03).
+
+```text
+TAP-1 LARGE TARGET PAGING = DESIGNED
+SEC-S4-m01 = DESIGN RESOLVED
+```
+
+### 10.4 Labeling
+
+Model-generated fields are labeled `untrusted` (purpose, proposed content).
+TAP-1 never renders a model-provided string in a position where it could be
+mistaken for product UI: every value appears after a fixed product-owned
+label on the same row, content rows always carry the `NNNNN| ` gutter, and
+every hard-wrapped continuation row carries the `NNNNN+ ` or `     + ` gutter
+(§10.3.1).
+
+### 12.4 TAP-1 string rule
+
+For a single-line field: each UTF-16 code unit `u` in `0x20–0x7E` except `0x5C`
+is emitted as-is; `0x5C` → `\\`; every other `u` (including LF) → `\u` + 4
+lowercase hex digits. For content blocks: identical, except that the string is
+first split on LF (§10.3), so LF never appears inside a rendered line.
+
+```text
+SEC-S3-m01 = DESIGN RESOLVED
+```
+
+---
+
+````
 
 ---
 
