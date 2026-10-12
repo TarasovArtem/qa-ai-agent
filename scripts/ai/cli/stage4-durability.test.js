@@ -16,6 +16,16 @@ test("D-CREATE loops writes then fsync, close, directory fsync; never truncates"
   assert.deepEqual(log.map(x => x[0]), ["open", "write", "write", "write", "fsync", "close", "open", "fsync", "close"]);
   await assert.rejects(store.create("claim.json", Buffer.from("new")), e => !e.created && e.causeCode === "EEXIST");
 });
+test("D-CREATE open/write/fsync/close/directory-fsync faults preserve immutable evidence semantics", async () => {
+  const file = "/run/claim.json";
+  for (const phase of ["open", "write", "fsync", "close", "directory-fsync"]) {
+    const failure = phase === "directory-fsync" ? "fsync:/run" : `${phase}:${file}`;
+    const { store, files } = fake(failure);
+    await assert.rejects(store.create("claim.json", Buffer.from("claim")), e => e.created === (phase !== "open"));
+    assert.equal(files.has(file), phase !== "open", phase);
+    if (phase !== "open") await assert.rejects(store.create("claim.json", Buffer.from("retry")), e => !e.created && e.causeCode === "EEXIST");
+  }
+});
 test("D-REPLACE pre-rename faults preserve old manifest; post-rename fsync cannot rollback", async () => {
   const temp = "/run/manifest.next-0001.json";
   for (const phase of ["open", "write", "fsync", "close", "rename"]) {

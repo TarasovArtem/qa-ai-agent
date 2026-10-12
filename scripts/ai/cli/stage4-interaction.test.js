@@ -42,6 +42,20 @@ test("SIGINT, SIGHUP and SIGTERM before the decision abort without creating a cl
     assert.equal(tty.processAdapter.completedSignal, signal);
   }
 });
+test("review session expiry after TAP-2 output aborts before challenge authority", async () => {
+  let ticks = 0n, tty;
+  tty = fx.scriptedTerminal({ answer(text, output) {
+    if (text.startsWith("@Q2:P ") || text.startsWith("@Q2:E ")) return "";
+    if (text.startsWith("@Q2:I ")) {
+      ticks = 60n * 60n * 1_000_000_000n + 1n;
+      const challenge = /type:  APPROVE ([0-9A-Z]{8})/.exec(output)[1];
+      return `APPROVE ${challenge}`;
+    }
+  } });
+  const f = fx.makeRun({ terminal: tty });
+  await assert.rejects(runReviewRecord({ ...f.ctx, monotonic: () => ticks }), { code: "APPROVAL_SESSION_EXPIRED" });
+  assert.equal(fs.existsSync(path.join(f.runDirReal, "review")), false);
+});
 test("approval is derived from durable claim, record and manifest; apply consumes it once", async () => {
   const f = fx.makeRun();
   const approved = await runReviewRecord(f.ctx);
@@ -51,6 +65,12 @@ test("approval is derived from durable claim, record and manifest; apply consume
   assert.equal(apply.result, "APPLIED");
   assert.equal(fs.existsSync(path.join(f.root, "cypress/e2e/generated/login.cy.js")), true);
   await assert.rejects(runApply(f.ctx), { code: "PACKAGE_ALREADY_APPLIED" });
+});
+test("apply refuses a changed OS principal before reserving an attempt", async () => {
+  const f = fx.makeRun(); await runReviewRecord(f.ctx);
+  const changed = { ...f.ctx, ...fx.withTerminal(f, fx.scriptedTerminal()), resolvePrincipal: () => ({ method: "os-local-account-v1", principal: "os-account-v1:other", uid: 1001, profileDigest: null, platform: "linux", assurance: "LOCAL_ACCOUNT_ATTRIBUTION" }) };
+  await assert.rejects(runApply(changed), { code: "APPLY_PRINCIPAL_MISMATCH" });
+  assert.equal(fs.existsSync(path.join(f.runDirReal, "apply")), false);
 });
 test("concurrent review reservations allow exactly one claim to commit", async () => {
   const f = fx.makeRun(), first = fx.scriptedTerminal(), second = fx.scriptedTerminal();
@@ -155,6 +175,10 @@ test("v2 closed schema, core consistency, expiry, future time and run binding re
   }
   const expiredAt = Date.parse(record.validity.notAfter) + 1;
   await assert.rejects(runApply({ ...f.ctx, now: () => new Date(expiredAt) }), { code: "APPROVAL_EXPIRED" });
+  const badDigest = structuredClone(record); badDigest.recordDigest = `sha256:${"0".repeat(64)}`;
+  assert.throws(() => validateRecord(badDigest, { reviewPackage: rebuilt.reviewPackage }), { code: "REVIEW_RECORD_INVALID" });
+  const inconsistentDecision = structuredClone(record); inconsistentDecision.decision = "REJECT"; inconsistentDecision.recordDigest = recordDigest(inconsistentDecision);
+  assert.throws(() => validateRecord(inconsistentDecision, { reviewPackage: rebuilt.reviewPackage }), { code: "REVIEW_RECORD_INVALID" });
   assert.throws(() => validateRecord(record, { reviewPackage: rebuilt.reviewPackage, now: Date.parse(record.provenance.decidedAt) - 300001 }), { code: "REVIEW_RECORD_INVALID" });
   const crossRun = structuredClone(record); crossRun.subject.runId = "20261012T120001Z-0123456789abcdef"; crossRun.recordDigest = recordDigest(crossRun);
   assert.throws(() => verifyRecordBinding(crossRun, rebuilt, Date.parse(record.provenance.decidedAt)), { code: "REVIEW_RECORD_RUN_MISMATCH" });
