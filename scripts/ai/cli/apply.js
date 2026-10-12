@@ -29,34 +29,44 @@ async function runApply(ctx) {
   try {
     let run = openStage4Run(ctx); assertState(run.state); const manifestAtStart = run.digest;
     const record = selectedRecord(run), rebuilt = rebuildSubject(ctx, run);
+    const checkedRecordSha256 = run.state.active.recordSha256, checkedLedgerIndex = run.state.active.ledgerIndex;
     const principal = (ctx.resolvePrincipal || resolvePrincipal)({ platform: ctx.platform });
     const now = (ctx.now ? ctx.now() : new Date()).getTime();
     const checked = verifyRecordBinding(record, rebuilt, now);
     if (checked.decision !== "APPROVE" || checked.reviewer.platform !== principal.platform || principalKey(checked.reviewer) !== principalKey(principal)) throw authorityRefused("APPLY_PRINCIPAL_MISMATCH", "apply must run under the same OS account principal that approved this package.");
     if (checked.provenance.decidedAt > new Date(now).toISOString() || Date.parse(checked.validity.notAfter) < now) throw authorityRefused("APPROVAL_EXPIRED", "the approval is expired or has a future decision time.");
     const challenge = freshChallenge(ctx.randomBytes || crypto.randomBytes);
-    await session.report("S", `Apply summary: project ${checked.binding.projectId}; package ${ctx.packageOrdinal}; ${checked.subject.targetCount} target(s).`);
-    for (const [i, target] of rebuilt.reviewPackage.reviewTargets.entries()) await session.report("S", `${i + 1}. ${target.operation} ${target.path}`);
-    await session.report("S", `record: ${checked.recordId}; reviewer: ${checked.reviewer.principal}; decidedAt: ${checked.provenance.decidedAt}; notAfter: ${checked.validity.notAfter}`);
+    await session.applyHeader(rebuilt.presentation);
+    await session.report(`Apply summary: project ${checked.binding.projectId}; package ${ctx.packageOrdinal}; ${checked.subject.targetCount} target(s).`);
+    for (const [i, target] of rebuilt.reviewPackage.reviewTargets.entries()) await session.report(`${i + 1}. ${target.operation} ${target.path}`);
+    await session.report(`record: ${checked.recordId}; reviewer: ${checked.reviewer.principal}; decidedAt: ${checked.provenance.decidedAt}; notAfter: ${checked.validity.notAfter}`);
     await session.confirmApply(challenge);
     if (session.elapsed() > APPLY_CONFIRM_MS) throw authorityRefused("APPLY_NOT_CONFIRMED", "the five-minute apply confirmation window elapsed.");
     run = openStage4Run(ctx); assertState(run.state);
     if (run.digest !== manifestAtStart) throw inputRefused("RUN_CHANGED_DURING_COMMAND", "the manifest changed during apply confirmation.");
     const active = selectedRecord(run), freshSubject = rebuildSubject(ctx, run), freshPrincipal = (ctx.resolvePrincipal || resolvePrincipal)({ platform: ctx.platform });
-    const freshRecord = verifyRecordBinding(active, freshSubject, (ctx.now ? ctx.now() : new Date()).getTime());
-    if (freshRecord.recordId !== checked.recordId || freshRecord.decision !== "APPROVE" || principalKey(freshRecord.reviewer) !== principalKey(freshPrincipal)) throw authorityRefused("APPROVAL_SUPERSEDED", "the active approval or OS principal changed during apply confirmation.");
+    const reservationNow = (ctx.now ? ctx.now() : new Date()).getTime();
+    const freshRecord = verifyRecordBinding(active, freshSubject, reservationNow);
+    if (freshRecord.recordId !== checked.recordId || freshRecord.decision !== "APPROVE" || run.state.active.recordSha256 !== checkedRecordSha256 || run.state.active.ledgerIndex !== checkedLedgerIndex) throw authorityRefused("APPROVAL_NOT_FOUND", "the active approval changed during apply confirmation.");
+    if (principalKey(freshRecord.reviewer) !== principalKey(freshPrincipal)) throw authorityRefused("APPLY_PRINCIPAL_MISMATCH", "the OS principal changed during apply confirmation.");
+    if (reservationNow > Date.parse(freshRecord.validity.notAfter)) throw authorityRefused("APPROVAL_EXPIRED", "the approval expired during apply confirmation.");
     const attemptId = freshRecord.recordId, ordinal = ctx.packageOrdinal;
+    const persistenceWarning = status => session.report(`WARNING: apply audit/outcome durability is unconfirmed; #23F status: ${status}; affected targets: ${freshSubject.reviewPackage.reviewTargets.map(t => t.path).join(", ")}; attempt ${run.runDirReal}/apply/attempt-${ordinal}-${attemptId}.json; applied ${run.runDirReal}/apply/applied-${ordinal}-${attemptId}.json; outcome ${run.runDirReal}/apply/outcome-${ordinal}-${attemptId}.json; approval remains consumed; the run is quarantined. Do not retry; start a new run.`, { warning: true });
     const durable = (ctx.durableStore || (() => require("./stage4-durability").createDurableStore({ root: ctx.root, runDirReal: run.runDirReal, protectedPaths: ctx.protectedPaths })))();
     session.enterCritical();
     try {
       await durable.ensureDirectory("apply");
+      const reservingPrincipal = (ctx.resolvePrincipal || resolvePrincipal)({ platform: ctx.platform });
+      if (principalKey(reservingPrincipal) !== principalKey(freshRecord.reviewer)) throw authorityRefused("APPLY_PRINCIPAL_MISMATCH", "the OS principal changed before reservation.");
+      if ((ctx.now ? ctx.now() : new Date()).getTime() > Date.parse(freshRecord.validity.notAfter)) throw authorityRefused("APPROVAL_EXPIRED", "the approval expired before reservation.");
       const attemptName = `apply/attempt-${ordinal}-${attemptId}.json`;
       try { await durable.create(attemptName, Buffer.alloc(0)); }
       catch (error) {
+        if (!error.created && error.causeCode === "EEXIST") throw authorityRefused("APPROVAL_ALREADY_CONSUMED", "another apply session reserved this approval.");
         if (error.created) {
           const notEntered = { kind: "QaAgentApplyOutcome", schemaVersion: 1, packageOrdinal: ordinal, recordId: attemptId, result: "NOT_ENTERED", appliedRecordSha256: null, completedAt: (ctx.now ? ctx.now() : new Date()).toISOString() };
           try { await durable.create(`apply/outcome-${ordinal}-${attemptId}.json`, Buffer.from(store.serialize(notEntered))); }
-          catch { await session.report("X", "WARNING: apply outcome durability is unconfirmed; the run is quarantined. Do not retry.", { warning: true }); throw inputRefused("APPLY_OUTCOME_NOT_RECORDED", "the attempt reservation outcome could not be durably recorded."); }
+          catch { await persistenceWarning("NOT_ENTERED"); throw inputRefused("APPLY_OUTCOME_NOT_RECORDED", "the attempt reservation outcome could not be durably recorded."); }
           throw inputRefused("APPLY_PRECONDITION_FAILED", "attempt reservation durability was not confirmed; #23F was not entered.");
         }
         throw error;
@@ -71,7 +81,7 @@ async function runApply(ctx) {
       if (!fence.ok) {
         const outcome = { kind: "QaAgentApplyOutcome", schemaVersion: 1, packageOrdinal: ordinal, recordId: attemptId, result: "NOT_ENTERED", appliedRecordSha256: null, completedAt: (ctx.now ? ctx.now() : new Date()).toISOString() };
         try { await durable.create(`apply/outcome-${ordinal}-${attemptId}.json`, Buffer.from(store.serialize(outcome))); }
-        catch { await session.report("X", "WARNING: apply outcome durability is unconfirmed; the run is quarantined. Do not retry.", { warning: true }); throw inputRefused("APPLY_OUTCOME_NOT_RECORDED", "the apply reservation result could not be durably recorded."); }
+        catch { await persistenceWarning("NOT_ENTERED"); throw inputRefused("APPLY_OUTCOME_NOT_RECORDED", "the apply reservation result could not be durably recorded."); }
         throw fence.code === "APPROVAL_NOT_FOUND" ? authorityRefused("APPROVAL_NOT_FOUND", "a review claim or manifest replacement raced with apply reservation.") : inputRefused(fence.code, "the run evidence changed or became invalid after apply reservation.");
       }
       const appliedAt = (ctx.now ? ctx.now() : new Date()).toISOString();
@@ -83,22 +93,32 @@ async function runApply(ctx) {
       } catch (cause) { applied = null; }
       let appliedRecordSha256 = null;
       let result = !applied ? "UNKNOWN" : applied.appliedChangeSetRecord ? resultName(applied.appliedChangeSetRecord) : applied.ok ? "NOT_ENTERED" : "REFUSED_NO_WRITE";
-      if (applied && applied.appliedChangeSetRecord) {
-        const bytes = Buffer.from(store.serialize(applied.appliedChangeSetRecord));
-        const appliedName = `apply/applied-${ordinal}-${attemptId}.json`;
-        await durable.create(appliedName, bytes); appliedRecordSha256 = store.sha256(bytes);
+      // All required post-#23F evidence, including every D-CREATE flush,
+      // shares one failure boundary. Never publish normal success on failure.
+      try {
+        if (applied && applied.appliedChangeSetRecord) {
+          const bytes = Buffer.from(store.serialize(applied.appliedChangeSetRecord));
+          await durable.create(`apply/applied-${ordinal}-${attemptId}.json`, bytes);
+          appliedRecordSha256 = store.sha256(bytes);
+        }
+        const outcome = { kind: "QaAgentApplyOutcome", schemaVersion: 1, packageOrdinal: ordinal, recordId: attemptId, result, appliedRecordSha256, completedAt: (ctx.now ? ctx.now() : new Date()).toISOString() };
+        await durable.create(`apply/outcome-${ordinal}-${attemptId}.json`, Buffer.from(store.serialize(outcome)));
+      } catch {
+        await persistenceWarning(applied && applied.appliedChangeSetRecord ? applied.appliedChangeSetRecord.status : result);
+        if (!applied) throw new CliError(1, "INTERNAL_ERROR", "the canonical apply routine threw and UNKNOWN outcome could not be durably recorded; the run is quarantined.");
+        throw inputRefused("APPLY_OUTCOME_NOT_RECORDED", "the apply audit/outcome could not be durably recorded; approval remains consumed.");
       }
-      const outcome = { kind: "QaAgentApplyOutcome", schemaVersion: 1, packageOrdinal: ordinal, recordId: attemptId, result, appliedRecordSha256, completedAt: (ctx.now ? ctx.now() : new Date()).toISOString() };
-      try { await durable.create(`apply/outcome-${ordinal}-${attemptId}.json`, Buffer.from(store.serialize(outcome))); }
-      catch { await session.report("X", "WARNING: apply outcome durability is unconfirmed; the run is quarantined. Do not retry.", { warning: true }); throw inputRefused("APPLY_OUTCOME_NOT_RECORDED", "the apply result could not be durably recorded."); }
       if (!applied) throw new CliError(1, "INTERNAL_ERROR", "the canonical apply routine threw; UNKNOWN outcome was durably recorded and the run is quarantined.");
       if (!applied.ok) {
-        if (result === "ROLLBACK_INCOMPLETE") await session.report("X", `WARNING: rollback incomplete; affected targets: ${(applied.appliedChangeSetRecord.changes || []).map(c => c.path).join(", ")}; record apply/applied-${ordinal}-${attemptId}.json; the run is quarantined.`, { warning: true });
+        if (result === "ROLLBACK_INCOMPLETE") await session.report(`WARNING: rollback incomplete; affected targets: ${(applied.appliedChangeSetRecord.changes || []).map(c => c.path).join(", ")}; outcome apply/outcome-${ordinal}-${attemptId}.json; the run is quarantined.`, { warning: true });
         throw refusalForOutcome(applied, result);
       }
-      await session.report("T", `apply completed: ${result}; package ${ordinal}; record ${attemptId}`);
+      await session.report(`apply completed: ${result}; package ${ordinal}; record ${attemptId}`);
       return { runId: ctx.runId, packageOrdinal: ordinal, result, recordId: attemptId };
     } finally { session.exitCritical(); }
+  } catch (e) {
+    await session.report(`refused: ${e.code || "INTERNAL_ERROR"}; ${e.message}`, { warning: true });
+    throw e;
   } finally { session.dispose(); if (session.interrupted) session.completeSignal(); }
 }
 module.exports = { runApply };

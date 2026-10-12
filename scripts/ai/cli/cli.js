@@ -350,6 +350,21 @@ const HANDLERS = Object.freeze({
   "review show": commandReviewShow,
 });
 
+async function commandStage4(ctx) {
+  const capability = ctx.command === "apply" ? "apply" : "reviewRecord";
+  const release = policy.RELEASE_CAPABILITIES[capability];
+  // Production graph reachability does not enable authority. This immutable,
+  // product-owned gate precedes config, identity, terminal and run access.
+  if (!release.enabled) throw authorityRefused(release.reason, `"${ctx.command}" is reserved and not enabled in this release (pending ${release.ownerDecision}).`);
+  const root = resolveRoot(ctx.flags, ctx.cwd);
+  const { config, configRelPath } = loadValidatedConfig(root, ctx.flags);
+  checkContainment(root, config, configRelPath);
+  policy.enforceCapability(config, capability);
+  const options = { ...ctx, stdin: process.stdin, root, config, product: PRODUCT, runId: ctx.flags.run, packageOrdinal: ctx.flags.package,
+    protectedPaths: outputProtectedPaths(config, configRelPath) };
+  return ctx.command === "apply" ? require("./apply").runApply(options) : require("./review-record").runReviewRecord(options);
+}
+
 // --- entry ----------------------------------------------------------------------
 
 /**
@@ -387,6 +402,10 @@ async function run({ argv, env = {}, cwd = process.cwd(), stdout, stderr, platfo
     if (spec && spec.kind === "reserved") {
       if (flags.help) {
         stdout.write(helpText(command));
+        return EXIT_CODES.OK;
+      }
+      if (command === "apply" || command === "review record") {
+        await commandStage4({ command, flags, env, cwd, stdout, stderr, platform });
         return EXIT_CODES.OK;
       }
       throw authorityRefused("CAPABILITY_NOT_ENABLED_IN_RELEASE", `"${command}" is reserved and not enabled in this release (pending ${spec.ownerDecision}).`);

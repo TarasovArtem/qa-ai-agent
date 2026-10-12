@@ -213,9 +213,9 @@ test("A-1 closure: every local require of every shipped .js file resolves to a s
 });
 
 // The reverse direction of the closure test (ACG-A1-R01): nothing EXTRA ships.
-// Stage 4A is an intentional private implementation closure that remains
-// unreachable from supported entrypoints while the release capability is off.
-test("A-1 minimality: shipped JS is reachable from exports/bin or the private Stage 4A closure", () => {
+// Every shipped implementation participates in the production graph, even
+// while its capability is release-disabled. No private-runtime exemption.
+test("A-1 minimality: shipped JS is reachable from exports/bin", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   const reachable = new Set();
   const queue = [...Object.values(pkg.exports), ...Object.values(pkg.bin || {})]
@@ -234,7 +234,7 @@ test("A-1 minimality: shipped JS is reachable from exports/bin or the private St
   const extra = [];
   for (const file of manifest) {
     if (file.endsWith(".js")) {
-      if (!reachable.has(file) && !STAGE4_PRIVATE_RUNTIME.includes(file)) extra.push(`${file}: shipped .js not reachable from a supported entrypoint or the approved private Stage 4A closure`);
+      if (!reachable.has(file)) extra.push(`${file}: shipped .js not reachable from exports/bin`);
     } else if (!reachable.has(file)) {
       const isMetadata = PACKAGE_METADATA_FILES.includes(file) || /^LICENSE/i.test(file);
       const isKnowledgeData = /^scripts\/ai\/knowledge\/units\/[^/]+\.json$/.test(file);

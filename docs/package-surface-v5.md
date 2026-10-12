@@ -15,8 +15,10 @@ metadata, and the `qa-agent` bin target are unchanged. No wildcard export or
 runtime dependency was added. The Stage 4 implementation modules are not
 available through package subpath imports.
 
-The existing CLI command table keeps `review record` and `apply` as reserved
-fixed refusals. The installed bin returns
+The CLI command table keeps `review record` and `apply` reserved. Their
+production routes check the immutable release capability gate before loading
+Stage 4 authority modules or accessing config, identity, terminal or run state.
+The installed bin returns
 `CAPABILITY_NOT_ENABLED_IN_RELEASE` for both commands regardless of config,
 environment, provider, model, or `--offline`. `info --json` continues to show
 both capabilities as unavailable.
@@ -49,7 +51,10 @@ scripts/ai/test-automation/generated-change-set-review-record-builder.js
 The Stage 4 `apply.js` private closure reaches the canonical #23F application
 and its existing #23E gate. The `review-record.js` closure reaches neither.
 The builder is gate-free and does not define or call an approval gate. No
-Stage 4 module is a supported API or CLI route in this release.
+Stage 4 module is a supported API in this release. Every shipped Stage 4
+implementation file is transitively reachable from the production bin;
+§9.1 minimality has no whitelist exception. Reachability does not make the
+capability available: both release capabilities remain disabled.
 
 ## Evidence
 

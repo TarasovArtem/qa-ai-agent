@@ -52,9 +52,17 @@ function createDurableStore({ root, runDirReal, protectedPaths = [], io = fs.pro
     // Authorize the existing run root before creating its direct child.
     safe("manifest.json");
     const dir = path.join(runDirReal, name);
-    try { await io.mkdir(dir, { mode: 0o700 }); await flushDirectory(runDirReal); }
-    catch (e) { if (e.code !== "EEXIST") throw durabilityError(e); }
-    safe(`${name}/probe.json`); // no write: verifies actual directory kind/containment
+    try {
+      try { await io.mkdir(dir, { mode: 0o700 }); }
+      catch (e) { if (e.code !== "EEXIST") throw e; }
+      const st = await io.lstat(dir);
+      if (!st.isDirectory() || st.isSymbolicLink() || await io.realpath(dir) !== dir) throw new Error("invalid evidence directory kind");
+      safe(`${name}/probe.json`); // verifies actual directory kind/containment
+      // Visibility is not durability: a concurrent creator may not yet have
+      // flushed the parent entry, or may have failed doing so. Every user
+      // establishes D-DIR before writing authority evidence in this child.
+      await flushDirectory(runDirReal);
+    } catch (e) { throw durabilityError(e); }
   }
   async function replace(bytes, ledgerIndex, { expectedDigest } = {}) {
     let renamed = false;

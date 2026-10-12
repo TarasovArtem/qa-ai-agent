@@ -45,7 +45,15 @@ class TerminalSession {
     if (this.geometryViolated || !Number.isInteger(this.stdout.columns) || this.stdout.columns < 100 || !Number.isInteger(this.stdout.rows) || this.stdout.rows < 24) { this.geometryViolated = true; throw authorityRefused("INTERACTIVE_TERMINAL_REQUIRED", "TAP-2 requires at least 100 columns and 24 rows; an observed violation requires a fresh session."); }
   }
   async emit(kind, ...parts) { for (const row of rows(kind, ...parts)) await writeComplete(this.stdout, row + "\n"); }
-  async report(kind, text, { warning = false } = {}) { const stream = warning ? this.stderr : this.stdout; for (const row of rows(kind, text)) await writeComplete(stream, row + "\n"); }
+  async report(text, { warning = false } = {}) {
+    const stream = warning ? this.stderr : this.stdout;
+    for (const row of rows("S", escapeTokens(text))) await writeComplete(stream, row + "\n");
+  }
+  async applyHeader(presentation) {
+    // Apply reuses only the contract's ordered TAP-2 metadata header. Content
+    // is never shown again as approval evidence during apply confirmation.
+    for (const row of presentation.header) { this.checkTime(); await writeComplete(this.stdout, row + "\n"); }
+  }
   async readLine(maxBytes, prompt) {
     this.checkTime(); if (this.geometryActive) this.checkGeometry(); if (this.closed) throw this.refusal();
     // Lines received while no prompt is pending are discarded, never saved

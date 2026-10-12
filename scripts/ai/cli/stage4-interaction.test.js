@@ -80,6 +80,8 @@ test("concurrent review reservations allow exactly one claim to commit", async (
   ]);
   assert.equal(results.filter(x => x.status === "fulfilled").length, 1);
   assert.equal(results.filter(x => x.status === "rejected").length, 1);
+  assert.equal(results.find(x => x.status === "rejected").reason.code, "RUN_CHANGED_DURING_COMMAND");
+  assert.equal(results.find(x => x.status === "rejected").reason.exitCode, 4);
   const run = openStage4Run(f.ctx);
   assert.equal(run.manifest.reviews.length, 1);
   assert.equal(run.state.state, "APPROVED");
@@ -108,6 +110,8 @@ test("concurrent apply confirmations create one attempt reservation and one muta
   ]);
   assert.equal(results.filter(x => x.status === "fulfilled").length, 1);
   assert.equal(results.filter(x => x.status === "rejected").length, 1);
+  assert.equal(results.find(x => x.status === "rejected").reason.code, "APPROVAL_ALREADY_CONSUMED");
+  assert.equal(results.find(x => x.status === "rejected").reason.exitCode, 5);
   const applyDir = path.join(f.runDirReal, "apply");
   assert.equal(fs.readdirSync(applyDir).filter(n => n.startsWith("attempt-")).length, 1);
   assert.equal(fs.readdirSync(applyDir).filter(n => n.startsWith("outcome-")).length, 1);

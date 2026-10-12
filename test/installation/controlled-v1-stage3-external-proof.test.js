@@ -160,12 +160,13 @@ test("Stage 3 external: the installed package is a real copy outside the checkou
   assert.deepEqual(installedPkg.bin, inv.EXPECTED_BIN);
 });
 
-test("Stage 3 external: the static closure over the INSTALLED files is complete and reaches exactly the Stage 3 private closure", () => {
+test("Stage 3/4A external: installed exports/bin reach every shipped implementation without exceptions", () => {
   const available = new Set(inv.listFiles(installed));
   const c = inv.staticClosure({ baseDir: installed, available, entries: inv.supportedEntrypoints(installedPkg) });
   assert.deepEqual(c.missing, []);
   assert.deepEqual(c.problems, []);
-  assert.deepEqual([...c.reached].filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))).sort(), [...inv.STAGE3_PRIVATE_RUNTIME]);
+  assert.deepEqual([...c.reached].filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))).sort(), [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t)))].sort());
+  assert.deepEqual([...available].filter(f => f.endsWith(".js") && !c.reached.has(f)), []);
 });
 
 test("Stage 4A external: private runtime files ship but remain unexported and release-disabled", () => {

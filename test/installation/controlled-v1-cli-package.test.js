@@ -111,12 +111,14 @@ test("§9.1 closure: every require of every reachable file resolves to a shipped
   assert.deepEqual(c.problems, []);
 });
 
-test("§9.1 minimality: supported entrypoints reach the supported closure; Stage 4A files have their own private closure", () => {
+test("§9.1 minimality: every shipped implementation is reachable from exports/bin without exceptions", () => {
   const c = closureOver(manifestSet);
-  const unreachable = manifest.filter((f) => f.endsWith(".js") && !c.reached.has(f) && !inv.STAGE4_PRIVATE_RUNTIME.includes(f));
+  const unreachable = manifest.filter((f) => f.endsWith(".js") && !c.reached.has(f));
   assert.deepEqual(unreachable, []);
   const reachedPrivate = [...c.reached].filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))).sort();
-  assert.deepEqual(reachedPrivate, [...inv.STAGE3_PRIVATE_RUNTIME]);
+  assert.deepEqual(reachedPrivate, [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t)))].sort());
+  const bin = inv.staticClosure({ baseDir: REPO_ROOT, available: manifestSet, entries: [pkg.bin["qa-agent"]] });
+  for (const file of inv.STAGE4_PRIVATE_RUNTIME) assert.ok(bin.reached.has(file), `${file} reachable from production bin`);
   for (const entry of ["scripts/ai/cli/review-record.js", "scripts/ai/cli/apply.js"]) {
     const stage4 = inv.staticClosure({ baseDir: REPO_ROOT, available: manifestSet, entries: [entry] });
     assert.deepEqual(stage4.missing, [], entry); assert.deepEqual(stage4.problems, [], entry);
@@ -125,7 +127,7 @@ test("§9.1 minimality: supported entrypoints reach the supported closure; Stage
 });
 
 test("§9.1 negative proof: removing any required Stage 3 private runtime file (or new CLI module) makes the closure proof fail", () => {
-  for (const removed of [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE3_CLI_FILES]) {
+  for (const removed of [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE3_CLI_FILES, ...inv.STAGE4_PRIVATE_RUNTIME]) {
     const available = new Set(manifest.filter((f) => f !== removed));
     const c = closureOver(available);
     assert.ok(c.missing.length > 0, `removing ${removed} must be detected`);
