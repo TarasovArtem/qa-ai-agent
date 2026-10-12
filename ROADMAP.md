@@ -38,7 +38,16 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified implementation baseline
+Latest certified main baseline (Stage 4 design, not implementation):
+  main: f8036ad95e9e8acd655d01950060550d71595d81
+  TREE: 78d8bfda920b3de6489b777149668709b2ec464d
+  design PR #245; STANDARD_TWO_PARENT; post-merge #650 / 38165314497 / push / SUCCESS
+
+Latest certified Controlled-v1 implementation baseline (Stage 3):
+  main: 45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee
+  TREE: 34d0fa47765d12602ee6a285d197480d087de1ed
+
+Historical certification anchor
 (TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation merge):
   main: 8aa7c5191e662942f1d73539c740904d385c646d
   TREE: 7b6ca33d4afb85899dfcf2d545a007799f247729
@@ -71,7 +80,7 @@ Historical RTI certification anchor (not the current repository HEAD):
 `XI-01` + `XI-02` remediation merge (PR #238), post-merge certified on its exact
 SHA (see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
 evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence) in §8);
-it is the latest certified implementation baseline and the baseline this
+it is a historical certified implementation baseline and the baseline the
 triage-boundary canonical closure sync was authored against, not a claim about
 any later `main` HEAD. `30bca0183f1ffe75f87db9694f5e91a914ed4d73` is the
 `TSB-F06` + `ADV-01` remediation merge (PR #235), post-merge certified on its
@@ -113,9 +122,10 @@ and README's own RTI section for the full RTI evidence chain.
 | `RTI-1` .. `RTI-8` — Requirements & Test-Design Integration | `COMPLETE_ON_MAIN` | See [§5](#5-rti-closure). |
 | `RTI Integrated Audit` | `PASS WITH DEFERRED DEBT` | See [§5](#5-rti-closure). |
 
-`ID-3` (formal release/productization planning) remains **planning-complete,
-implementation not started** — see [§12](#12-productization). This is
-unchanged by RTI closure or conformance remediation; architectural
+`ID-3` formal release planning remains **planning-complete**. Controlled-v1
+productization stages 1–3 are **COMPLETE_ON_MAIN**; Stage 4 design is
+**APPROVED / MERGED / POST-MERGE CERTIFIED**, while its implementation is
+**NOT_STARTED / NOT_AUTHORIZED** — see [§12](#12-productization). Architectural
 independence and formal release maturity are deliberately different axes and
 are never conflated in this project's own documentation.
 
@@ -581,8 +591,9 @@ release blockers / required remediations, `TSB-F01` + `TSB-F03` are
 `COMPLETE_ON_MAIN / CLOSED` (PR #235), `TSB-F02` remains conditional and its
 trigger is not currently met, and `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
 `COMPLETE_ON_MAIN / CLOSED` (design PR #237, implementation PR #238); the
-Controlled-v1 supported package/API/CLI/productization boundary is
-`NOT_STARTED / NEXT / NOT ACTIVATED` (see
+Controlled-v1 stages 1–3 are `COMPLETE_ON_MAIN`, Stage 4 design is
+`APPROVED / MERGED / POST-MERGE CERTIFIED`, and Stage 4 implementation is
+`NOT_STARTED / NEXT / NOT ACTIVATED` (`NOT_AUTHORIZED`; see
 [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
 record grants no activation, start or implementation authority.
 
@@ -1094,9 +1105,10 @@ are `COMPLETE_ON_MAIN / CLOSED` (PR #230), `TSB-F05` is `COMPLETE_ON_MAIN /
 CLOSED` (PR #232 design, PR #233 implementation), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235), `TSB-F02` remains conditional (trigger
 not currently met), `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
-`COMPLETE_ON_MAIN / CLOSED` (PR #237 design, PR #238 implementation) and the
-Controlled-v1 supported package/API/CLI/productization boundary is
-`NOT_STARTED / NEXT / NOT ACTIVATED` (see the
+`COMPLETE_ON_MAIN / CLOSED` (PR #237 design, PR #238 implementation). The
+Controlled-v1 stages 1–3 are `COMPLETE_ON_MAIN`, Stage 4 design is
+`APPROVED / MERGED / POST-MERGE CERTIFIED`, and Stage 4 implementation is
+`NOT_STARTED / NEXT / NOT ACTIVATED` (`NOT_AUTHORIZED`; see the
 [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 The decision itself and the internal `MEM`/`RAG`/`LEARN` order are unchanged;
 the later Controlled v1 decision places the first product release before `MEM`.
@@ -1220,7 +1232,8 @@ PR #220 certified completion                     COMPLETE
     TSB-F02 (conditional)                        OPEN / LOW / CONDITIONAL —
                                                  condition not currently triggered
     step 5: TSB-F04 + TSB-F07 + XI-01 + XI-02    COMPLETE_ON_MAIN / CLOSED (PR #238)
-→ Controlled-v1 productization                   NOT_STARTED / NEXT / NOT ACTIVATED
+→ Controlled-v1 Stage 4 implementation           NOT_STARTED / NEXT / NOT ACTIVATED
+→ remaining Controlled-v1 productization stages as already designed
 → qa-agent-demo external E2E validation          NOT_STARTED
 → Controlled Release (separate Product Owner release grant)
                                                  NOT APPROVED
@@ -1266,8 +1279,9 @@ is conditional and its trigger is not currently met; step 5 (`TSB-F04` +
 `TSB-F07` + `XI-01` + `XI-02`) is `COMPLETE_ON_MAIN / CLOSED` (PR #238; see
 [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
 evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)). The
-next eligible step is the Controlled-v1 supported package/API/CLI/productization
-boundary: `NOT_STARTED / NEXT / NOT ACTIVATED`.
+next eligible step is Controlled-v1 Stage 4 implementation:
+`NOT_STARTED / NEXT / NOT ACTIVATED`; stages 1–3 are `COMPLETE_ON_MAIN`
+and Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`.
 
 **Provenance — what must never be claimed about this decision:**
 
@@ -1317,9 +1331,10 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
        step 5: TSB-F04 + TSB-F07 + XI-01 + XI-02 (COMPLETE_ON_MAIN / CLOSED /
          REMEDIATED; design PR #237, implementation PR #238;
          MERGED + POST-MERGE CERTIFIED)
-  →  Controlled-v1 supported package/API/CLI/productization boundary
+  →  Controlled-v1 Stage 4 implementation
        (NOT_STARTED / NEXT / NOT ACTIVATED)
-  →  qa-agent-demo external E2E validation
+  →  remaining Controlled-v1 productization stages as already designed
+  →  qa-agent-demo external E2E validation (NOT_STARTED)
   →  QA AI Agent v1.0 Controlled Agent Release (NOT APPROVED;
        separate PO release grant required)
   →  MEM-1 .. MEM-6   (NOT ACTIVATED)
@@ -1330,8 +1345,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (`TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` canonical closure
-sync).** Per
+**Current sequence (Controlled-v1 Stage 4 / OD-04 canonical state sync).** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
@@ -1367,22 +1381,79 @@ PR #237, merged) and its implementation, which is merged and post-merge certifie
 (PR #238; see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
 evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)); each
 of `TSB-F04`, `TSB-F07`, `XI-01` and `XI-02` is separately `CLOSED_ON_MAIN /
-REMEDIATED`. Its canonical closure sync (this ROADMAP sync) is the only active
-governance lifecycle and the sole WIP (`WIP = 1`) until its own certified
-lifecycle completes. The Controlled-v1 supported package/API/CLI/productization
-boundary is the canonical next eligible step (`NOT_STARTED / NEXT / NOT
-ACTIVATED`), eligible only after this canonical closure completes and only under
-its own separate authorization; "NEXT" designates sequencing eligibility only,
-not activation or implementation authority, and no productization branch,
-design or implementation exists. If a dependent supported consumer of the
+REMEDIATED`. Controlled-v1 productization stages 1–3 are `COMPLETE_ON_MAIN`;
+Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED` (see the
+[current certification record](#controlled-v1-stage-4-design-certification-and-current-productization-state)
+below). This four-file canonical state sync is the active governance lifecycle
+under `WIP = 1`; it performs no independent review, merge or implementation.
+Controlled-v1 Stage 4 implementation is the canonical next eligible step:
+`NOT_STARTED / NEXT / NOT ACTIVATED`, with implementation `NOT_AUTHORIZED`.
+"NEXT" designates sequencing eligibility only; separate implementation
+authorization is still required. Later productization stages retain their
+designed order, followed by `qa-agent-demo` (`NOT_STARTED`) and Controlled
+Release (`NOT APPROVED`). If a dependent supported consumer of the
 `TSB-F02` approval gates is later introduced (including by Controlled-v1
 productization), `TSB-F02` becomes a release blocker / implementation required
-under its owner disposition. This sync does not start any remediation,
-architecture decision or productization, does not close, waive or accept risk
-for any finding other than recording the already-certified `TSB-F04` +
-`TSB-F07` + `XI-01` + `XI-02` remediation, does not activate any
+under its owner disposition. `TSB-F02 TRIGGER = FALSE`; this sync records
+the existing OD-04 owner acceptance of clauses 1–23 and R-1..R-5, without
+closing AT-07/TB-01 or any FUTURE review guard. It starts no implementation,
+closes, waives or re-rates no security finding, does not activate any
 `MEM`/`RAG`/`LEARN` stage and does not approve Controlled Release (`NOT
 APPROVED`). The steps after `AISEC-6` are strictly serial under `WIP = 1`.
+
+### Controlled-v1 Stage 4 design certification and current productization state
+
+```text
+Controlled-v1 productization:
+  Stage 1 — CLI/config shell:                  COMPLETE_ON_MAIN
+  Stage 2 — triage:                            COMPLETE_ON_MAIN
+  Stage 3 — design/plan/generate/review show:   COMPLETE_ON_MAIN
+  Stage 3 merge/certified baseline:            45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee
+  Stage 4 — human approval + apply:
+    design:                                   APPROVED / MERGED / POST-MERGE CERTIFIED
+    implementation:                           NOT_STARTED / NEXT / NOT ACTIVATED
+    implementation authority:                 NOT_AUTHORIZED
+
+OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED
+Architecture C5:                              APPROVED
+Security C5:                                  APPROVED
+Owner clauses 1–23:                           ACCEPTED
+R-1..R-5:                                     ACCEPTED
+AT-07/TB-01:                                  RESIDUAL
+Design PR:                                    #245
+Reviewed HEAD:                                864009c7c3e8256e6ca7df934fe5986d74c726da
+Reviewed TREE:                                78d8bfda920b3de6489b777149668709b2ec464d
+Merge:                                        f8036ad95e9e8acd655d01950060550d71595d81
+Merge TREE:                                   78d8bfda920b3de6489b777149668709b2ec464d
+Topology:                                     STANDARD_TWO_PARENT
+Parents:                                      45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee
+                                              864009c7c3e8256e6ca7df934fe5986d74c726da
+Post-merge CI:                                #650 / 38165314497 / push / SUCCESS
+FUTURE_REVIEW_PRESENTATION_BINDING_GUARD:       OPEN
+FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD:      OPEN
+FUTURE_HUMAN_DECISION_PROVENANCE_GUARD:         OPEN
+TSB-F02:                                      OPEN / LOW / CONDITIONAL
+TSB-F02 TRIGGER:                              FALSE
+OD-06:                                       NOT ENTERED
+qa-agent-demo:                                NOT_STARTED
+Controlled Release:                           NOT APPROVED
+```
+
+The approved design contract is
+[docs/controlled-v1-approval-apply-contract-v1.md](docs/controlled-v1-approval-apply-contract-v1.md).
+Design approval and owner acceptance do not implement Stage 4 or close the
+three FUTURE review guards: runtime evidence and separate authorized closure
+remain required. `qa-agent review record` and `qa-agent apply` remain disabled /
+fixed refusals. Inspection of the current CLI entrypoints, package exports,
+and approval-gate consumers confirms no dependent supported consumer:
+the CLI reaches neither approval gate, the public API exports neither gate,
+and the existing private #23F consumer independently checks each decision.
+`TSB-F02` is not closed, waived, re-rated or risk-accepted.
+
+This sync uses `OD-CONTROLLED-V1-STAGE-4-CANONICAL-SYNC — APPROVED`, review
+class `LIGHT`, and stops at PR creation and initial exact-HEAD CI observation.
+Its lifecycle is `CANONICAL SYNC PR OPEN / READY FOR INDEPENDENT LIGHT
+EXACT-HEAD REVIEW`; no implementation or merge is authorized.
 
 This is the canonical future sequence following the [subsequent owner
 decisions](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
@@ -1437,9 +1508,10 @@ applicable Controlled-v1 release blockers / required remediations, `TSB-F01` +
 `COMPLETE_ON_MAIN / CLOSED` (PR #233), `TSB-F06` + `ADV-01` is
 `COMPLETE_ON_MAIN / CLOSED` (PR #235), `TSB-F02` remains conditional (trigger
 not currently met), `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is
-`COMPLETE_ON_MAIN / CLOSED` (PR #238) and the Controlled-v1 supported
-package/API/CLI/productization boundary is `NOT_STARTED / NEXT / NOT
-ACTIVATED`; this sync activates nothing.
+`COMPLETE_ON_MAIN / CLOSED` (PR #238). Controlled-v1 stages 1–3 are
+`COMPLETE_ON_MAIN`, Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`,
+and Stage 4 implementation is `NOT_STARTED / NEXT / NOT ACTIVATED`
+(`NOT_AUTHORIZED`); this sync activates nothing.
 
 **Slice lifecycle status semantics.** This project's governance already
 defines a slice's lifecycle as: implementation → independent exact-head
@@ -1619,8 +1691,9 @@ evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence));
 open/conditional 1). The separate `XI-01` and `XI-02` security findings are
 also `CLOSED_ON_MAIN / REMEDIATED` (PR #238). Within applicable Controlled-v1
 release blockers / required remediations, `TSB-F02`'s condition is not currently
-triggered and the next eligible step is the Controlled-v1 supported
-package/API/CLI/productization boundary: `NOT_STARTED / NEXT / NOT ACTIVATED`
+triggered and the next eligible step is Controlled-v1 Stage 4 implementation:
+`NOT_STARTED / NEXT / NOT ACTIVATED` (`NOT_AUTHORIZED`); stages 1–3 are
+`COMPLETE_ON_MAIN` and Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`
 (see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 Controlled Release is `NOT APPROVED`. `D-1` and `D-3` remain `DEFERRED`. No
 remediation, architecture decision, productization, `MEM`/`RAG`/`LEARN` or other
@@ -3484,6 +3557,11 @@ evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence).
 
 ### TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure evidence
 
+This is historical point-in-time evidence of PR #238 and its canonical
+closure sync. Its productization `NOT_STARTED` and next-stage annotations
+describe that earlier certification, not the current state. Current stages
+and sequence are recorded in the Stage 4 certification block above.
+
 ```text
 Stage:                 TSB-F04 + TSB-F07 + XI-01 + XI-02 — canonical triage
                        trust-boundary remediation (closed provider-result
@@ -4416,8 +4494,9 @@ are `COMPLETE_ON_MAIN / CLOSED` (PR #230), `TSB-F05` is `COMPLETE_ON_MAIN /
 CLOSED` (PR #233), `TSB-F06` + `ADV-01` is `COMPLETE_ON_MAIN / CLOSED`
 (PR #235), `TSB-F02` remains conditional (trigger not currently met),
 `TSB-F04` + `TSB-F07` + `XI-01` + `XI-02` is `COMPLETE_ON_MAIN / CLOSED`
-(PR #238) and the Controlled-v1 supported package/API/CLI/productization
-boundary is `NOT_STARTED / NEXT / NOT ACTIVATED` (see
+(PR #238). Controlled-v1 stages 1–3 are `COMPLETE_ON_MAIN`, Stage 4 design is
+`APPROVED / MERGED / POST-MERGE CERTIFIED`, and Stage 4 implementation is
+`NOT_STARTED / NEXT / NOT ACTIVATED` (`NOT_AUTHORIZED`; see
 [§7](#subsequent-owner-decision--controlled-v1-two-stage-release-model)); this
 sync grants no activation.
 
@@ -4578,9 +4657,10 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   TSB-F06 + ADV-01 is COMPLETE_ON_MAIN / CLOSED (PR #235; see §8 closure
   evidence), TSB-F02 remains conditional (trigger not currently met),
   TSB-F04 + TSB-F07 + XI-01 + XI-02 is COMPLETE_ON_MAIN / CLOSED (PR #238;
-  see §8 closure evidence) and the Controlled-v1 supported
-  package/API/CLI/productization boundary is NOT_STARTED / NEXT /
-  NOT ACTIVATED; this sync activates nothing)
+  see §8 closure evidence); Controlled-v1 stages 1–3 are COMPLETE_ON_MAIN,
+  Stage 4 design is APPROVED / MERGED / POST-MERGE CERTIFIED, and Stage 4
+  implementation is NOT_STARTED / NEXT / NOT ACTIVATED / NOT_AUTHORIZED;
+  this sync activates nothing)
 ```
 
 This distinction is load-bearing: **RTI does not block AISEC. Governance
@@ -4649,10 +4729,11 @@ evidence](#tsb-f06--adv-01-remediation-closure-evidence)) and `TSB-F04` +
 `TSB-F07` + `XI-01` + `XI-02` is `COMPLETE_ON_MAIN / CLOSED` (PR #238; see
 [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
 evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence));
-`TSB-F02` remains conditional (trigger not currently met) and the next eligible
-step is the Controlled-v1 supported package/API/CLI/productization boundary:
-`NOT_STARTED / NEXT / NOT ACTIVATED`, each later step requiring its own
-separate authorization.
+`TSB-F02` remains conditional (trigger not currently met). Controlled-v1 stages
+1–3 are `COMPLETE_ON_MAIN`, Stage 4 design is
+`APPROVED / MERGED / POST-MERGE CERTIFIED`, and the next eligible step is
+Stage 4 implementation: `NOT_STARTED / NEXT / NOT ACTIVATED`
+(`NOT_AUTHORIZED`), each later step requiring its own separate authorization.
 
 `GOV-AUTO-1` ([§6](#gov-auto-1--governance-pre-review-framework)) is not an AISEC stage: by owner decision (§7) it is
 sequenced after `AISEC-3` and before `AISEC-4`, and `AISEC-4`'s own scope is
@@ -5032,7 +5113,10 @@ both now `COMPLETE_ON_MAIN`; applicable release blockers / remediation, with
 `TSB-F01` + `TSB-F03`, `TSB-F05`, `TSB-F06` + `ADV-01` and `TSB-F04` +
 `TSB-F07` + `XI-01` + `XI-02` `COMPLETE_ON_MAIN / CLOSED` and `TSB-F02`
 conditional (trigger not currently met); Controlled-v1 productization
-(`NOT_STARTED / NEXT / NOT ACTIVATED`) and `qa-agent-demo` validation — see the [Controlled v1
+(stages 1–3 `COMPLETE_ON_MAIN`, Stage 4 design approved/merged/certified,
+Stage 4 implementation `NOT_STARTED / NEXT / NOT ACTIVATED` / `NOT_AUTHORIZED`,
+then the remaining designed stages) and `qa-agent-demo` validation
+(`NOT_STARTED`) — see the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model) and
 [§8](#8-current-critical-path)).
 
@@ -5058,7 +5142,9 @@ Recording this scope now does not start the audit; it remains
 ## 12. Productization
 
 ```text
-Controlled-v1 productization:   NOT_STARTED / REQUIRED BEFORE CONTROLLED V1.0
+Controlled-v1 productization:   STAGES 1–3 COMPLETE_ON_MAIN / REQUIRED BEFORE CONTROLLED V1.0
+Stage 4 design:                APPROVED / MERGED / POST-MERGE CERTIFIED
+Stage 4 implementation:        NOT_STARTED / NEXT / NOT ACTIVATED / NOT_AUTHORIZED
 Full-Autonomy productization:   NOT_STARTED / DEFERRED UNTIL AFTER FULL PROJECT STRICT AUDIT
 ```
 
@@ -5075,9 +5161,12 @@ lifecycle scopes:
   and its trigger is not currently met, and becomes a release blocker if
   productization introduces a dependent supported consumer of its approval
   gates; the preceding Type & Schema Boundary Audit is `COMPLETE_ON_MAIN`). It
-  is currently `NOT_STARTED / NEXT / NOT ACTIVATED`: eligible only after the
-  triage-boundary canonical closure sync completes and only under its own
-  separate authorization. At minimum it
+  has governing design approved/merged/certified and stages 1–3
+  `COMPLETE_ON_MAIN`. Stage 4 design is `APPROVED / MERGED / POST-MERGE
+  CERTIFIED`; Stage 4 implementation is `NOT_STARTED / NEXT / NOT ACTIVATED`
+  and `NOT_AUTHORIZED`. Later stages remain separately governed in the
+  [designed phase order](docs/controlled-v1-productization-contract-v1.md#211-implementation-phasing-advisory-architecture-recommendation--not-authorized).
+  At minimum productization
   includes: version/install/upgrade policy; a supported high-level package/API
   or CLI surface (separately designed, versioned, reviewed and
   compatibility-tested); external consumer guidance; rollback/version lifecycle;
@@ -5107,8 +5196,10 @@ exports/files; each such change remains a separately authorized lifecycle.
 
 `ID-3` planning is complete; implementation (formal version policy,
 production release tags, npm-registry-publication decision, consumer install
-guidance, rollback/version lifecycle, a CLI/convenience surface, reusable CI
-integration) has not begun. Proven **architectural independence** and proven
+guidance, rollback/version lifecycle, reusable CI integration) remains
+separately governed; the Controlled-v1 CLI/config, triage and generative /
+read-only review surfaces are implemented in stages 1–3. Stage 4
+implementation has not begun. Proven **architectural independence** and proven
 **installability** (`ID-2`, `ACQ-UPG`) are explicitly not the same claim as
 **formal release maturity** — see README's own "Package Maturity vs.
 Architectural Independence" section for the full distinction.
@@ -5223,9 +5314,11 @@ evidence](#tsb-f06--adv-01-remediation-closure-evidence)), `TSB-F04` +
 `TSB-F07` + `XI-01` + `XI-02` is `COMPLETE_ON_MAIN / CLOSED` (PR #238; see
 [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
 evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)),
-`TSB-F02` remains conditional (trigger not currently met) and the Controlled-v1
-supported package/API/CLI/productization boundary is `NOT_STARTED / NEXT / NOT
-ACTIVATED`; no sync grants any remaining step activation or implementation
+`TSB-F02` remains conditional (trigger not currently met). Controlled-v1
+stages 1–3 are `COMPLETE_ON_MAIN`, Stage 4 design is
+`APPROVED / MERGED / POST-MERGE CERTIFIED`, and Stage 4 implementation is
+`NOT_STARTED / NEXT / NOT ACTIVATED` (`NOT_AUTHORIZED`);
+no sync grants any remaining step activation or implementation
 authority. See
 [§6](#gov-auto-1--governance-pre-review-framework) and
 [§9](#9-aisec--agentic-trust--ai-security-foundation)).
@@ -5264,8 +5357,8 @@ TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation:
                                  POST-MERGE CERTIFIED (design PR #237;
                                  implementation PR #238; merge
                                  8aa7c5191e662942f1d73539c740904d385c646d)
-active governance lifecycle:     TSB-F04 + TSB-F07 + XI-01 + XI-02 canonical
-                                 closure sync (this ROADMAP sync / SOLE WIP)
+active governance lifecycle:     Controlled-v1 Stage 4 / OD-04 canonical
+                                 state sync (LIGHT / SOLE WIP; no implementation)
 Audit findings:                  TSB-F01, TSB-F03, TSB-F04, TSB-F05, TSB-F06,
                                  TSB-F07 CLOSED_ON_MAIN / REMEDIATED;
                                  TSB-F02 OPEN / LOW / CONDITIONAL
@@ -5281,10 +5374,11 @@ Triage-boundary review debt:     ARCH-IMPL-m01; 6 Architecture implementation
                                  SEC-C2-I01..SEC-C2-I07 OPEN / PRESERVED
 TSB-F02 trigger:                 FALSE (no dependent supported consumer;
                                  remains OPEN / LOW / CONDITIONAL)
-next eligible:                   Controlled-v1 supported package/API/CLI/
-                                 productization boundary
+next eligible:                   Controlled-v1 Stage 4 implementation
                                  NOT_STARTED / NEXT / NOT ACTIVATED
-Controlled-v1 productization:    NOT_STARTED / NEXT / NOT ACTIVATED
+Controlled-v1 productization:    Stages 1–3 COMPLETE_ON_MAIN
+Stage 4 design:                  APPROVED / MERGED / POST-MERGE CERTIFIED
+Stage 4 implementation:          NOT_STARTED / NOT_AUTHORIZED
 qa-agent-demo E2E validation:    NOT_STARTED
 MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
 Controlled Release:              NOT APPROVED
@@ -5297,10 +5391,11 @@ Canonical release sequence:
       (TSB-F01 + TSB-F03 COMPLETE_ON_MAIN; TSB-F05 COMPLETE_ON_MAIN;
        TSB-F06 + ADV-01 COMPLETE_ON_MAIN; TSB-F02 conditional, not
        triggered; TSB-F04 + TSB-F07 + XI-01 + XI-02 COMPLETE_ON_MAIN)
-  → Controlled-v1 supported package/API/CLI/productization boundary
-      (next: NOT_STARTED / NEXT / NOT ACTIVATED)
-  → qa-agent-demo external E2E validation
-  → QA AI Agent v1.0 Controlled Agent Release   (Stage 1)
+  → Controlled-v1 Stage 4 implementation
+      (next: NOT_STARTED / NEXT / NOT ACTIVATED; NOT_AUTHORIZED)
+  → remaining Controlled-v1 productization stages as already designed
+  → qa-agent-demo external E2E validation (NOT_STARTED)
+  → QA AI Agent v1.0 Controlled Agent Release   (Stage 1; NOT APPROVED)
   → MEM-1 .. MEM-6
   → RAG-1 .. RAG-12
   → MEM-7 .. MEM-9
@@ -5315,12 +5410,12 @@ pipelines #1-#23, RTI and the proven installation boundary — see
 research/design (target architecture, not implemented controls) and the
 completed `AISEC-7` adversarial harness (evidence, not remediation) and the
 completed Type & Schema Boundary Audit (finding classification, not
-remediation), plus a future,
-not-yet-designed
-**Controlled-v1 supported product surface** between external consumers such as
+remediation), plus the approved productization design and completed stages
+1–3 of the **Controlled-v1 supported product surface** between external consumers such as
 `qa-agent-demo` and the private internal implementation. The Memory, Retrieval /
 RAG and Feedback / Learning layers below are future Full-Autonomy layers; none
-exists today.
+exists today. Stage 4 design is approved/merged/certified; its runtime
+implementation remains `NOT_STARTED / NOT_AUTHORIZED`.
 
 **Target architecture, including the layers recorded by this update**
 (conceptual — not a claim that any of these layers are implemented;
