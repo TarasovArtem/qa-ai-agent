@@ -35,4 +35,12 @@ test("empty/partial orphan claims and expected temp quarantine every package, ev
   assert.equal(derivePackageState("0001", reviewed()).state, "APPROVED");
   const lost = reviewed(); lost.ledger = []; assert.equal(derivePackageState("0001", lost).state, "QUARANTINED");
 });
+test("crash after applied-record creation but before outcome remains consumed and quarantined", () => {
+  const e = reviewed(); e.runRootInventory.push({ name: "apply", kind: "directory" });
+  e.applyEntries.push(
+    { name: `attempt-0001-${id}.json`, kind: "file", value: null },
+    { name: `applied-0001-${id}.json`, kind: "file", value: null, sha256: hash },
+  );
+  assert.equal(derivePackageState("0001", e).state, "QUARANTINED");
+});
 module.exports = { evidence, reviewed, id, hash };
