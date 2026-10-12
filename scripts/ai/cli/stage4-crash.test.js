@@ -39,6 +39,7 @@ function cleanup(point) {
   fs.rmSync(point.root, { recursive: true, force: true });
 }
 for (const [boundary, state, mutated] of [
+  ["review-directory-durable", "UNREVIEWED", false],
   ["review-before-claim", "UNREVIEWED", false], ["review-claim-handle", "QUARANTINED", false],
   ["review-claim-durable", "QUARANTINED", false], ["review-record-durable", "QUARANTINED", false],
   ["review-temp-fsync", "QUARANTINED", false], ["review-renamed", "APPROVED", false], ["review-committed", "APPROVED", false],
@@ -52,6 +53,46 @@ for (const [boundary, state, mutated] of [
     assert.equal(observed(c.point).state, state);
     assert.equal(fs.existsSync(path.join(c.point.root, "cypress/e2e/generated/login.cy.js")), mutated);
     if (boundary.startsWith("apply-") && boundary !== "apply-before-attempt") assert.notEqual(observed(c.point).state, "APPROVED");
+  } finally { if (c.child.exitCode === null && c.child.signalCode === null) c.child.kill("SIGKILL"); cleanup(c.point); }
+});
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) test(`ARCH-S4A-C1-09 real ${signal} after D-DIR aborts before claim`, { skip: process.platform !== "linux", timeout: 20000 }, async () => {
+  const c = await start("review-directory-durable");
+  const manifestBefore = fs.readFileSync(path.join(c.point.runDirReal, "manifest.json"));
+  try {
+    assert.ok(c.child.kill(signal)); assert.equal((await c.next("signal-observed")).signal, signal);
+    c.child.send("continue");
+    assert.deepEqual(await c.ended, { code: null, signal });
+    assert.equal(observed(c.point).state, "UNREVIEWED");
+    assert.deepEqual(fs.readdirSync(path.join(c.point.runDirReal, "review")), []);
+    assert.deepEqual(fs.readFileSync(path.join(c.point.runDirReal, "manifest.json")), manifestBefore);
+    assert.match(c.error, /HUMAN_DECISION_NOT_CONFIRMED/);
+    assert.doesNotMatch(c.output, /decision recorded/);
+  } finally { if (c.child.exitCode === null && c.child.signalCode === null) c.child.kill("SIGKILL"); cleanup(c.point); }
+});
+for (const geometry of [{ columns: 99 }, { rows: 23 }]) test(`ARCH-S4A-C1-09 real child pre-claim geometry ${JSON.stringify(geometry)} aborts without authority`, { skip: process.platform !== "linux", timeout: 20000 }, async () => {
+  const c = await start("review-directory-durable");
+  const manifestBefore = fs.readFileSync(path.join(c.point.runDirReal, "manifest.json"));
+  try {
+    c.child.send(geometry);
+    const done = await c.next("done");
+    assert.equal(done.code, "INTERACTIVE_TERMINAL_REQUIRED"); assert.equal(done.exitCode, 5);
+    assert.deepEqual(await c.ended, { code: 5, signal: null });
+    assert.equal(observed(c.point).state, "UNREVIEWED");
+    assert.deepEqual(fs.readdirSync(path.join(c.point.runDirReal, "review")), []);
+    assert.deepEqual(fs.readFileSync(path.join(c.point.runDirReal, "manifest.json")), manifestBefore);
+  } finally { if (c.child.exitCode === null && c.child.signalCode === null) c.child.kill("SIGKILL"); cleanup(c.point); }
+});
+test("ARCH-S4A-C1-09 real child stalled success callback is outside CRITICAL after durable approval", { skip: process.platform !== "linux", timeout: 20000 }, async () => {
+  const c = await start("review-report-stalled");
+  try {
+    assert.equal((await c.next("report-phase")).phase, "FINISHED");
+    assert.equal(observed(c.point).state, "APPROVED");
+    assert.equal(c.child.exitCode, null); assert.equal(c.child.signalCode, null);
+    assert.doesNotMatch(c.output, /decision recorded/);
+    c.child.send("continue");
+    assert.equal((await c.next("done")).result.state, "APPROVED");
+    assert.deepEqual(await c.ended, { code: 0, signal: null });
+    assert.match(c.output, /decision recorded: APPROVE/);
   } finally { if (c.child.exitCode === null && c.child.signalCode === null) c.child.kill("SIGKILL"); cleanup(c.point); }
 });
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) for (const disposition of ["commit", "orphan"]) test(`ARCH-S4A-07 real deferred ${signal}: ${disposition.toUpperCase()} disposition before native termination`, { skip: process.platform !== "linux", timeout: 20000 }, async () => {

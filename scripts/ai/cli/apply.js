@@ -19,7 +19,18 @@ function resultName(r) {
 function refusalForOutcome(applied, result) {
   if (result === "ROLLED_BACK") return inputRefused("APPLY_FAILED_ROLLED_BACK", "#23F failed after mutation and completed compensation; this approval remains consumed.");
   if (result === "ROLLBACK_INCOMPLETE") return inputRefused("APPLY_ROLLBACK_INCOMPLETE", "#23F compensation was incomplete; the run is quarantined.");
-  if ((applied.errors || []).some(e => /^\$(?:\.reviewRecord|\.reviewPackage|\.generatedChangeSet)/.test(e.path || ""))) return inputRefused("APPLY_BINDING_MISMATCH", "the approved package, record or change set failed canonical #23F binding checks.");
+  // #23F live target failures are INVARIANT_VIOLATION at changes[i],
+  // which is also under generatedChangeSet. Only specific structured
+  // binding fields/categories demonstrate a mismatch; never parse messages.
+  const bindingFields = {
+    INVALID_REFERENCE: new Set(["$.generatedChangeSet.changeSetDigest", "$.reviewRecord.packageDigest", "$.reviewRecord.decisions", "$.reviewPackage", "$.reviewPackage.reviewTargets"]),
+    INVALID_VALUE: new Set(["$.generatedChangeSet.changeSetDigest", "$.reviewPackage.packageDigest", "$.reviewRecord.recordDigest"]),
+    PROJECT_MISMATCH: new Set(["$.generatedChangeSet.projectId", "$.reviewPackage.projectId", "$.reviewRecord.projectId"]),
+  };
+  const bindingFailure = (applied.errors || []).some(e => bindingFields[e.code]?.has(e.path) ||
+    e.code === "INVALID_REFERENCE" && /^\$\.reviewPackage\.reviewTargets\[\d+\](?:\.(?:operation|path|baseContentDigest|proposedContent))?$/.test(e.path || "") ||
+    e.code === "INVALID_VALUE" && /^\$\.reviewPackage\.reviewTargets\[\d+\]\.targetDigest$/.test(e.path || ""));
+  if (bindingFailure) return inputRefused("APPLY_BINDING_MISMATCH", "the approved package, record or change set failed canonical #23F binding checks.");
   return inputRefused("APPLY_PRECONDITION_FAILED", "#23F refused the proposal before any target mutation; this approval remains consumed.");
 }
 async function runApply(ctx) {
@@ -34,7 +45,7 @@ async function runApply(ctx) {
     const now = (ctx.now ? ctx.now() : new Date()).getTime();
     const checked = verifyRecordBinding(record, rebuilt, now);
     if (checked.decision !== "APPROVE" || checked.reviewer.platform !== principal.platform || principalKey(checked.reviewer) !== principalKey(principal)) throw authorityRefused("APPLY_PRINCIPAL_MISMATCH", "apply must run under the same OS account principal that approved this package.");
-    if (checked.provenance.decidedAt > new Date(now).toISOString() || Date.parse(checked.validity.notAfter) < now) throw authorityRefused("APPROVAL_EXPIRED", "the approval is expired or has a future decision time.");
+    if (Date.parse(checked.validity.notAfter) < now) throw authorityRefused("APPROVAL_EXPIRED", "the approval is expired.");
     const challenge = freshChallenge(ctx.randomBytes || crypto.randomBytes);
     await session.applyHeader(rebuilt.presentation);
     await session.report(`Apply summary: project ${checked.binding.projectId}; package ${ctx.packageOrdinal}; ${checked.subject.targetCount} target(s).`);

@@ -121,7 +121,7 @@ class TerminalSession {
     }
     throw this.refusal();
   }
-  enterCritical() { this.checkTime(); this.checkGeometry(); this.phase = "CRITICAL"; }
+  enterCritical() { this.checkTime(); if (this.closed) throw this.refusal(); this.checkGeometry(); this.phase = "CRITICAL"; }
   exitCritical() { this.phase = "FINISHED"; }
   dispose() {
     this.stdout.removeListener("resize", this.resize); this.stdin.removeListener("error", this.onInputError);

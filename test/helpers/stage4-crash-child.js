@@ -7,6 +7,7 @@ const fx = require("./stage4-fixtures");
 const { createDurableStore } = require("../../scripts/ai/cli/stage4-durability");
 const { runReviewRecord } = require("../../scripts/ai/cli/review-record");
 const { runApply } = require("../../scripts/ai/cli/apply");
+const { TerminalSession } = require("../../scripts/ai/cli/terminal-session");
 const boundary = process.argv[2], disposition = process.argv[3];
 async function main() {
   const f = fx.makeRun();
@@ -16,7 +17,7 @@ async function main() {
     if (name !== boundary || paused) return;
     paused = true;
     process.send({ type: "boundary", name, root: f.root, runDirReal: f.runDirReal });
-    await new Promise(resolve => process.once("message", resolve));
+    return new Promise(resolve => process.once("message", resolve));
   }
   let lastFile = "";
   const io = { ...fs.promises,
@@ -40,7 +41,17 @@ async function main() {
     async rename(a, b) { await fs.promises.rename(a, b); await checkpoint("review-renamed"); },
   };
   const d = createDurableStore({ root: f.ctx.root, runDirReal: f.runDirReal, protectedPaths: f.ctx.protectedPaths, io });
-  const create = d.create, replace = d.replace;
+  const create = d.create, replace = d.replace, ensureDirectory = d.ensureDirectory;
+  d.ensureDirectory = async name => {
+    await ensureDirectory(name);
+    if (name === "review") {
+      const message = await checkpoint("review-directory-durable");
+      if (message && typeof message === "object") {
+        if (Object.hasOwn(message, "columns")) tty.stdout.columns = message.columns;
+        if (Object.hasOwn(message, "rows")) tty.stdout.rows = message.rows;
+      }
+    }
+  };
   d.create = async (name, ...args) => {
     if (name.startsWith("review/claim-")) await checkpoint("review-before-claim");
     if (name.startsWith("apply/attempt-")) await checkpoint("apply-before-attempt");
@@ -57,6 +68,18 @@ async function main() {
   // re-raise the same signal with its native default disposition, unchanged.
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.once(signal, () => process.send({ type: "signal-observed", signal }));
   const tty = fx.scriptedTerminal({ onWrite: text => process.stdout.write(text) });
+  let reportPhase;
+  const report = TerminalSession.prototype.report;
+  TerminalSession.prototype.report = function (...args) { reportPhase = this.phase; return report.apply(this, args); };
+  const stdoutWrite = tty.stdout.write.bind(tty.stdout);
+  tty.stdout.write = (text, callback) => {
+    if (boundary === "review-report-stalled" && String(text).startsWith("@Q2:S decision recorded:")) {
+      process.send({ type: "report-phase", phase: reportPhase });
+      checkpoint("review-report-stalled").then(() => stdoutWrite(text, callback)).catch(callback);
+      return false; // deliberately withhold the report write callback
+    }
+    return stdoutWrite(text, callback);
+  };
   const stderrWrite = tty.stderr.write.bind(tty.stderr);
   tty.stderr.write = (...args) => { process.stderr.write(args[0]); return stderrWrite(...args); };
   const ctx = { ...fx.withTerminal(f, tty), processAdapter: process, durableStore: () => d };
