@@ -90,7 +90,8 @@ test("Stage 3 success: design -> plan -> generate -> review show with schemas, r
   const dir = runDir(root, runId);
   const manifest = readJson(path.join(dir, "manifest.json"));
   assert.equal(manifest.kind, "QaAgentRunManifest");
-  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.schemaVersion, 2);
+  assert.deepEqual(manifest.reviews, []);
   assert.equal(manifest.runId, runId);
   assert.deepEqual(manifest.product, { name: pkg.name, version: pkg.version });
   assert.equal(manifest.projection.projectionVersion, 1);

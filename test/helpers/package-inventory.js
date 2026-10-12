@@ -78,17 +78,34 @@ const STAGE3_PRIVATE_RUNTIME = Object.freeze([
   "scripts/ai/test-automation/generated-change-set.js",
 ]);
 
+// Stage 4A private implementation closure. These files ship to make the
+// approved implementation available to the installation, but remain behind
+// the unchanged release capability gate and are not package exports.
+const STAGE4_PRIVATE_RUNTIME = Object.freeze([
+  "scripts/ai/cli/apply.js",
+  "scripts/ai/cli/canonical-review-serialization.js",
+  "scripts/ai/cli/path-identity.js",
+  "scripts/ai/cli/review-record-v2.js",
+  "scripts/ai/cli/review-record.js",
+  "scripts/ai/cli/stage4-durability.js",
+  "scripts/ai/cli/stage4-principal.js",
+  "scripts/ai/cli/stage4-run.js",
+  "scripts/ai/cli/stage4-state.js",
+  "scripts/ai/cli/terminal-session.js",
+  "scripts/ai/test-automation/applied-change-set-record.js",
+  "scripts/ai/test-automation/change-set-application.js",
+  "scripts/ai/test-automation/generated-change-set-review-record.js",
+  "scripts/ai/test-automation/generated-change-set-review-record-builder.js",
+].sort());
+
 // Private modules that remain REPOSITORY-ONLY (approval gates, review
 // records, application, execution, regeneration).
 const EXCLUDED_PRIVATE = Object.freeze([
   "scripts/ai/generative-test-design/test-design-review-canonical.js",
   "scripts/ai/generative-test-design/test-design-review-package.js",
   "scripts/ai/generative-test-design/test-design-review-record.js",
-  "scripts/ai/test-automation/applied-change-set-record.js",
   "scripts/ai/test-automation/automation-execution-record.js",
-  "scripts/ai/test-automation/change-set-application.js",
   "scripts/ai/test-automation/controlled-execution.js",
-  "scripts/ai/test-automation/generated-change-set-review-record.js",
   "scripts/ai/test-automation/regenerate-change-set.js",
 ]);
 
@@ -116,6 +133,7 @@ const EXPECTED_INVENTORY = Object.freeze(
     "scripts/ai/destinations/azure-devops-test-case-destination.js",
     "scripts/ai/framework-runtime-config.js",
     ...STAGE3_PRIVATE_RUNTIME,
+    ...STAGE4_PRIVATE_RUNTIME,
     "scripts/ai/index.js",
     "scripts/ai/knowledge/loader.js",
     "scripts/ai/knowledge/schema.js",
@@ -424,6 +442,7 @@ module.exports = {
   STAGE3_CLI_FILES,
   CLI_FILES,
   STAGE3_PRIVATE_RUNTIME,
+  STAGE4_PRIVATE_RUNTIME,
   EXCLUDED_PRIVATE,
   PRIVATE_TREES,
   EXPECTED_INVENTORY,

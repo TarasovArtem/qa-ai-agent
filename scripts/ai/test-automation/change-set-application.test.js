@@ -317,6 +317,26 @@ test("MODIFY target missing on the real filesystem rejects", () => {
   cleanup(root);
 });
 
+test("Stage 4 §13.6 refuses a case-mismatched existing ancestor before any write", () => {
+  const root = makeRoot();
+  fs.renameSync(path.join(root, "cypress", "e2e"), path.join(root, "cypress", "E2E"));
+  const checked = revalidateCreateTarget(root, "cypress/e2e/tests/new_spec.cy.js");
+  assert.deepEqual(checked, { ok: false, reason: "ANCESTOR_NAME_MISMATCH" });
+  const chain = buildChain();
+  const result = apply(root, chain);
+  assert.equal(result.ok, false); assert.equal(result.appliedChangeSetRecord, null);
+  assert.equal(fs.existsSync(path.join(root, "cypress", "E2E", "tests", "new_spec.cy.js")), false);
+  cleanup(root);
+});
+
+test("Stage 4 §13.6 refuses a case-mismatched MODIFY leaf", () => {
+  const root = makeRootWithExisting();
+  fs.renameSync(path.join(root, "cypress", "e2e", "tests", "existing_spec.cy.js"), path.join(root, "cypress", "e2e", "tests", "Existing_spec.cy.js"));
+  const checked = revalidateModifyTarget(root, "cypress/e2e/tests/existing_spec.cy.js", OLD_DIGEST);
+  assert.deepEqual(checked, { ok: false, reason: "TARGET_NAME_MISMATCH" });
+  cleanup(root);
+});
+
 test("MODIFY target existing as a directory rejects", () => {
   const root = makeRoot();
   fs.mkdirSync(path.join(root, "cypress/e2e/tests/existing_spec.cy.js"));

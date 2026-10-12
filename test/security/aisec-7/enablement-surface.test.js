@@ -90,7 +90,7 @@ function privateFilesViolations(files) {
     const clean = entry.replace(/\/$/, "");
     for (const tree of trees) {
       if (clean === tree || clean.startsWith(`${tree}/`)) {
-        if (!inv.STAGE3_PRIVATE_RUNTIME.includes(clean)) violations.push(`re-includes ${clean}, which is not in the Stage 3 private runtime closure`);
+        if (!inv.STAGE3_PRIVATE_RUNTIME.includes(clean) && !inv.STAGE4_PRIVATE_RUNTIME.includes(clean)) violations.push(`re-includes ${clean}, which is not in the approved Stage 3/Stage 4A private runtime closures`);
       } else if (tree.startsWith(`${clean}/`)) {
         // A parent include (e.g. "scripts/ai") is safe only when the tree's
         // exclusion comes after it.
@@ -103,7 +103,7 @@ function privateFilesViolations(files) {
   return violations;
 }
 
-test("H12-C2: the package exports map refuses deep private subpaths, and the files list ships only the exact Stage 3 private runtime closure - every authority-bearing private module stays excluded", () => {
+test("H12-C2: private Stage 3/4A files stay unexported and only their exact private runtime closures ship", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(fx.REPO_ROOT, "package.json"), "utf8"));
   const resolvedRoot = require.resolve(manifest.name);
   assert.equal(resolvedRoot, path.join(fx.AI, "index.js"), "the package name resolves to the public barrel");
@@ -119,21 +119,24 @@ test("H12-C2: the package exports map refuses deep private subpaths, and the fil
   const noWildcard = Object.keys(manifest.exports).every((k) => !k.includes("*"));
 
   // The authority-bearing modules this case is about are all in the
-  // canonical EXCLUDED_PRIVATE list.
+  // canonical excluded list, except the newly approved Stage 4A review gate
+  // and apply implementation, which ship privately and remain unexported.
   for (const required of [
-    "scripts/ai/test-automation/generated-change-set-review-record.js",
     "scripts/ai/generative-test-design/test-design-review-record.js",
-    "scripts/ai/test-automation/change-set-application.js",
     "scripts/ai/test-automation/controlled-execution.js",
     "scripts/ai/test-automation/regenerate-change-set.js",
   ]) {
     assert.ok(inv.EXCLUDED_PRIVATE.includes(required), `${required} is canonically excluded`);
   }
-  const privateIncludes = manifest.files.filter((f) => !f.startsWith("!") && inv.PRIVATE_TREES.some((t) => f.startsWith(t)));
-  const exactClosure = JSON.stringify([...privateIncludes].sort()) === JSON.stringify([...inv.STAGE3_PRIVATE_RUNTIME].sort());
+  for (const shipped of [
+    "scripts/ai/test-automation/generated-change-set-review-record.js",
+    "scripts/ai/test-automation/change-set-application.js",
+  ]) assert.ok(inv.STAGE4_PRIVATE_RUNTIME.includes(shipped), `${shipped} is in the private Stage 4A closure`);
+  const privateIncludes = manifest.files.filter((f) => !f.startsWith("!") && (inv.PRIVATE_TREES.some((t) => f.startsWith(t)) || inv.STAGE4_PRIVATE_RUNTIME.includes(f)));
+  const exactClosure = JSON.stringify([...privateIncludes].sort()) === JSON.stringify([...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME].sort());
   const current = privateFilesViolations(manifest.files);
   assert.deepEqual(current, [], "the current files list");
-  assert.ok(exactClosure, "the only private re-includes are exactly the Stage 3 private runtime closure");
+  assert.ok(exactClosure, "the only private re-includes are exactly the Stage 3 and Stage 4A private runtime closures");
 
   // Non-vacuity: each injected re-include of an authority-bearing module, a
   // whole private tree, a glob, or a parent include after the exclusions is
