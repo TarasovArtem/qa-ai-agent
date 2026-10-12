@@ -32,6 +32,7 @@ function createDurableStore({ root, runDirReal, protectedPaths = [], io = fs.pro
     try { await h.sync(); } finally { await h.close(); }
   }
   async function create(name, bytes, { directoryFlush = true } = {}) {
+    if (/^manifest(?:\.next-[0-9]{4})?\.json$/.test(name)) require("./run-store").assertManifestSize(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, "utf8"));
     let created = false, h;
     try {
       const target = safe(name);
@@ -65,6 +66,9 @@ function createDurableStore({ root, runDirReal, protectedPaths = [], io = fs.pro
     } catch (e) { throw durabilityError(e); }
   }
   async function replace(bytes, ledgerIndex, { expectedDigest } = {}) {
+    // Defense for alternate internal callers; review preflights this before
+    // CS-ENTER. Never create a temp manifest with reader-incompatible bytes.
+    require("./run-store").assertManifestSize(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, "utf8"));
     let renamed = false;
     try {
       if (!Number.isInteger(ledgerIndex) || ledgerIndex < 1 || ledgerIndex > 9999) throw new Error("ledger capacity");

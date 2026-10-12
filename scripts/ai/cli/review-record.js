@@ -45,8 +45,9 @@ async function runReviewRecord(ctx) {
     const claimBytes = Buffer.from(json(claim));
     const recordBytes = Buffer.from(json(record)), recordSha256 = store.sha256(recordBytes);
     const next = { ...fresh.manifest, reviews: [...fresh.manifest.reviews, { ledgerIndex, packageOrdinal: ctx.packageOrdinal, recordPath: `review/record-${ctx.packageOrdinal}-${recordId}.json`, recordSha256, recordId, decision, decidedAt }] };
-    store.validateManifestShape(next);
-    const nextBytes = Buffer.from(json(next));
+    // Shape -> canonical UTF-8 bytes -> reader size bound, all before
+    // CS-ENTER or any claim/record authority evidence can be created.
+    const nextBytes = store.serializeManifest(next);
     const warning = text => orphanWarning(session, `${text} Claim: ${fresh.runDirReal}/${claimName}; the run is quarantined if the commit is absent or incomplete; start a new run. Authority follows on-disk evidence.`);
     const durable = (ctx.durableStore || (() => require("./stage4-durability").createDurableStore({ root: ctx.root, runDirReal: fresh.runDirReal, protectedPaths: ctx.protectedPaths })))();
     await durable.ensureDirectory("review");

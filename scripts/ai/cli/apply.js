@@ -23,11 +23,17 @@ function refusalForOutcome(applied, result) {
   // which is also under generatedChangeSet. Only specific structured
   // binding fields/categories demonstrate a mismatch; never parse messages.
   const bindingFields = {
-    INVALID_REFERENCE: new Set(["$.generatedChangeSet.changeSetDigest", "$.reviewRecord.packageDigest", "$.reviewRecord.decisions", "$.reviewPackage", "$.reviewPackage.reviewTargets"]),
-    INVALID_VALUE: new Set(["$.generatedChangeSet.changeSetDigest", "$.reviewPackage.packageDigest", "$.reviewRecord.recordDigest"]),
-    PROJECT_MISMATCH: new Set(["$.generatedChangeSet.projectId", "$.reviewPackage.projectId", "$.reviewRecord.projectId"]),
+    // #23D validator: plan/context digests, reviewed changeset digest,
+    // and full canonical changeset equality. #23E/#23F: package/record
+    // relationship, canonical package equality and per-target decisions.
+    INVALID_REFERENCE: new Set(["$.generatedChangeSet.automationPlanDigest", "$.generatedChangeSet.repositoryContextDigest", "$.generatedChangeSet.changeSetDigest", "$.generatedChangeSet", "$.reviewRecord.packageDigest", "$.reviewRecord.decisions", "$.reviewPackage", "$.reviewPackage.reviewTargets"]),
+    INVALID_VALUE: new Set(["$.repositoryContext.framework", "$.generatedChangeSet.changeSetDigest", "$.reviewPackage.packageDigest", "$.reviewRecord.recordDigest"]),
+    MISSING_FIELD: new Set(["$.generatedChangeSet.changes"]),
+    PROJECT_MISMATCH: new Set(["$.repositoryContext.projectId", "$.generatedChangeSet.projectId", "$.reviewPackage.projectId", "$.reviewRecord.projectId"]),
   };
   const bindingFailure = (applied.errors || []).some(e => bindingFields[e.code]?.has(e.path) ||
+    e.code === "INVALID_REFERENCE" && /^\$\.generatedChangeSet\.changes\[\d+\]\.path$/.test(e.path || "") ||
+    e.code === "INVALID_VALUE" && /^\$\.generatedChangeSet\.changes\[\d+\]\.(?:operation|baseContentDigest)$/.test(e.path || "") ||
     e.code === "INVALID_REFERENCE" && /^\$\.reviewPackage\.reviewTargets\[\d+\](?:\.(?:operation|path|baseContentDigest|proposedContent))?$/.test(e.path || "") ||
     e.code === "INVALID_VALUE" && /^\$\.reviewPackage\.reviewTargets\[\d+\]\.targetDigest$/.test(e.path || ""));
   if (bindingFailure) return inputRefused("APPLY_BINDING_MISMATCH", "the approved package, record or change set failed canonical #23F binding checks.");

@@ -264,6 +264,7 @@ function openRunDirectory(root, runDirRel, protectedPaths) {
 }
 
 function writeRunFile(root, runDirRel, relName, text, protectedPaths) {
+  if (relName === MANIFEST_FILE_NAME) assertManifestSize(Buffer.from(text, "utf8"));
   const authorized = authorizeRunDirectory(root, runDirRel, protectedPaths);
   const intended = path.join(root.realRoot, ...runDirRel.split("/"), ...relName.split("/"));
   let target;
@@ -294,6 +295,18 @@ function writeRunFile(root, runDirRel, relName, text, protectedPaths) {
 
 function serialize(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+// Reader and every manifest writer share this byte bound. Check the bytes
+// that will actually be persisted, including UTF-8 and the trailing newline.
+function assertManifestSize(bytes) {
+  if (bytes.length > MAX_MANIFEST_BYTES) throw inputRefused("RUN_STATE_INCONSISTENT", "the proposed manifest exceeds the run's manifest byte capacity.");
+}
+function serializeManifest(manifest) {
+  validateManifestShape(manifest);
+  const bytes = Buffer.from(serialize(manifest), "utf8");
+  assertManifestSize(bytes);
+  return bytes;
 }
 
 // --- manifest -------------------------------------------------------------------------
@@ -450,8 +463,8 @@ function commitStage(root, runDirRel, protectedPaths, { manifest, previousDigest
     }
   }
   const next = { ...manifest, stages: [...manifest.stages, stageRecord(stage, { provider, model, completedAt: now.toISOString(), artifacts })] };
-  validateManifestShape(JSON.parse(JSON.stringify(next)));
-  writeRunFile(root, runDirRel, MANIFEST_FILE_NAME, serialize(next), protectedPaths);
+  const nextBytes = serializeManifest(next);
+  writeRunFile(root, runDirRel, MANIFEST_FILE_NAME, nextBytes, protectedPaths);
   return next;
 }
 
@@ -488,5 +501,7 @@ module.exports = {
   readBoundedFile,
   decodeJson,
   serialize,
+  serializeManifest,
+  assertManifestSize,
   MAX_MANIFEST_BYTES,
 };
