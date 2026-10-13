@@ -290,10 +290,9 @@ test("Stage 3 review show (ARCH-S3-m05): bidi / zero-width characters in propose
   assert.equal(recomputeReviewPackageDigest(persisted), persisted.packageDigest);
 });
 
-// The #23C/#23D path validators accept a bidi character inside a planned
-// path today (this corrective does not change validation), so the path
-// reaches review show and must be rendered escaped.
-test("Stage 3 review show (ARCH-S3-m05): a bidi character in a proposed path is shown escaped, never raw", async () => {
+// SEC-S4A-01: canonical PPI-1 now refuses deceptive target identities at
+// acceptance. ARCH-S3-m05 content/purpose escaping above remains required.
+test("Stage 3 plan (SEC-S4A-01): a bidi character in a proposed path is refused before persistence", async () => {
   const deceptivePath = "cypress/e2e/login\u202egnp.cy.js";
   const responses = {
     ...fx.RESPONSES,
@@ -304,17 +303,14 @@ test("Stage 3 review show (ARCH-S3-m05): a bidi character in a proposed path is 
   const design = await stage(["design"], root, responses.design());
   assert.equal(design.code, 0, design.stderr);
   const runId = design.json.runId;
+  const dir = runDir(root, runId);
+  const before = fs.readFileSync(path.join(dir, "manifest.json"));
   const plan = await stage(["plan"], root, responses.plan(), { runId });
-  assert.equal(plan.code, 0, plan.stderr);
-  const generate = await stage(["generate"], root, responses.generate(), { runId });
-  assert.equal(generate.code, 0, generate.stderr);
-  const r = await runCli(["review", "show", "--run", runId, "--root", root]);
-  assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /NON-AUTHORITATIVE: presentation only/);
-  assert.equal(RAW_DECEPTIVE.test(r.stdout), false, "no raw bidi character reaches the terminal");
-  assert.ok(r.stdout.includes("CREATE cypress/e2e/login\\u202egnp.cy.js"), "the path is shown escaped");
-  const j = await runCli(["review", "show", "--run", runId, "--root", root, "--json"]);
-  assert.equal(j.json.reviewPackages[0].reviewPackage.reviewTargets[0].path, deceptivePath, "the data keeps the exact path");
+  assert.equal(plan.code, 6, plan.stderr);
+  assert.equal(plan.json.errors[0].code, "PROVIDER_OUTPUT_REFUSED");
+  assert.equal(RAW_DECEPTIVE.test(plan.stdout + plan.stderr), false);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "manifest.json")), before);
+  assert.equal(fs.existsSync(path.join(dir, "plan")), false);
 });
 
 // --- generative provider policy (mandatory refusals 1-4) -------------------------------

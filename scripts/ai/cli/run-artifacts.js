@@ -16,11 +16,11 @@
  *   plan           validateGenerationChain incl. plans, one plan per AUTOMATE
  *                  candidate, config framework; the repository context is
  *                  rebuilt from the live repository (#23B) and must equal the
- *                  persisted one exactly
+ *                  persisted one exactly; target paths satisfy PPI-1
  *   generate       validateGeneratedChangeSet (#23D, TSB-F01) per plan, and
  *                  the review package rebuilt with
  *                  buildGeneratedChangeSetReviewPackage (#23E) must equal the
- *                  persisted one exactly
+ *                  persisted one exactly; PPI-1 precedes package construction
  *
  * Validators return closed-vocabulary reason codes only (never validator
  * messages or paths, which can quote model-chosen key names). No module
@@ -41,6 +41,7 @@ const { buildAutomationRepositoryContext } = require("../test-automation/automat
 const { validateGeneratedChangeSet } = require("../test-automation/generated-change-set");
 const { buildGeneratedChangeSetReviewPackage, recomputeReviewPackageDigest } = require("../test-automation/generated-change-set-review-package");
 const { configError, inputRefused } = require("./errors");
+const { assertPathIdentity } = require("./path-identity");
 const store = require("./run-store");
 
 const { requirementsDigest, canonicalJson } = store;
@@ -157,6 +158,15 @@ function validatePlans({ requirementModel, testCaseModel, automationCandidates, 
     if (plan.framework !== framework) errors.push({ code: ERROR_CODES.INVARIANT_VIOLATION });
     if (ids.has(plan.id)) errors.push({ code: ERROR_CODES.DUPLICATE_ID });
     ids.add(plan.id);
+    // Schema/chain validation above owns shape; canonical PPI-1 owns path
+    // acceptance. Return validation codes so fresh/persisted callers retain
+    // their distinct provider-output (6) and invalid-input (4) mappings.
+    try {
+      assertPathIdentity(plan.plannedChanges.map(change => change.path), framework);
+    } catch (error) {
+      if (!error || error.code !== "PATH_IDENTITY_REFUSED") throw error;
+      errors.push({ code: ERROR_CODES.INVALID_PATH });
+    }
   });
   return codesOf(errors);
 }
@@ -180,6 +190,14 @@ function validateGenerated({ automationPlans, repositoryContext, generatedChange
     if (!isPlainObject(generatedChangeSet) || generatedChangeSet.automationPlanId !== automationPlan.id) return { codes: [ERROR_CODES.INVALID_REFERENCE] };
     const valid = validateGeneratedChangeSet({ automationPlan, repositoryContext, generatedChangeSet, expectedProjectId: projectId });
     if (!valid.ok) return { codes: codesOf(valid.errors) };
+    // #23D guarantees complete 1:1 plan/change path binding. Re-run PPI-1
+    // independently here, before any review package is built or accepted.
+    try {
+      assertPathIdentity(generatedChangeSet.changes.map(change => change.path), automationPlan.framework);
+    } catch (error) {
+      if (!error || error.code !== "PATH_IDENTITY_REFUSED") throw error;
+      return { codes: [ERROR_CODES.INVALID_PATH] };
+    }
     const built = buildGeneratedChangeSetReviewPackage({ automationPlan, repositoryContext, generatedChangeSet, expectedProjectId: projectId });
     if (!built.ok) return { codes: codesOf(built.errors) };
     if (persistedPackages !== undefined) {
