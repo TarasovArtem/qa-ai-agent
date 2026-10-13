@@ -1,31 +1,34 @@
-# Controlled-v1 OD-06 execution contract v1 — systemd authority STOP
+# Controlled-v1 OD-06 execution contract v1 — scoped controller broker design
 
 Date: 2026-10-13 (Europe/Berlin).
 
-Design authority: `OD-CONTROLLED-V1-OD-06-EXECUTION-DESIGN — APPROVED`.
-Continuation authority: `OD-CONTROLLED-V1-OD-06-C1-RUNNER-CONTAINMENT — APPROVED`.
-Controller authority: `OD-CONTROLLED-V1-OD-06-OP-06-02-SYSTEMD-CONTROLLER — APPROVED`.
+Design authority: OD-CONTROLLED-V1-OD-06-EXECUTION-DESIGN — APPROVED.
+Continuation: OD-CONTROLLED-V1-OD-06-C1-RUNNER-CONTAINMENT — APPROVED.
+Controller: OD-CONTROLLED-V1-OD-06-OP-06-02-SYSTEMD-CONTROLLER — APPROVED.
+Broker: OD-CONTROLLED-V1-OD-06-OP-06-03-SCOPED-CONTROLLER-BROKER — APPROVED.
 
-Mission result: **STOP — OWNER SECURITY/DEPLOYMENT DECISION REQUIRED**.
+Mission result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
+INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent
+approval, runner certification, PO OD-06 acceptance or release approval.
 
-OP-06-02 is **APPLIED**. The selected controller is the host-provided systemd
-system service manager, using one transient `.service` per attempt on a
-provisioned self-hosted Linux runner with cgroup v2. Selection is not reopened.
-The new blocker is management authority: standard transient-unit authorization
-does not enforce the closed service properties. Section 4 records the evidence.
-Sections 1–2 preserve historical discovery; sections 3–13 govern this continuation.
+OP-06-03 is APPLIED. Host systemd, transient .service and cgroup v2 remain
+selected. Sole privileged mediation boundary: root-owned, operator-installed,
+one-shot execution controller broker. Runner gets no direct manage-units,
+generic sudo, systemctl or systemd-run authority. Only OP-06-02's privileged
+helper prohibition is superseded; custom daemon prohibition remains.
+Sections 1–2 preserve historical discovery; sections 3–13 govern this proposal.
 
-This remains **DESIGN ONLY**, an internally complete STOP record, not a complete
-implementable execution contract or runner certification. Independent design
-constraints and the proposed TSB-F02 consumer graph are resolved below;
-authority-dependent qualification/protocols remain explicitly blocked.
-No unsafe grant, helper, daemon or broader privilege is adopted.
+**DESIGN ONLY**: no broker/source/test/workflow/package/export implementation,
+execute activation, Stage 5, release or merge. Normal product remains npm.
+Exactly one new host provisioning executable artifact; its fixed policy,
+configuration and durable state are operator-managed controller contract
+parts, never target-repository components or permanent QA Agent services.
 
-`execute` remains reserved and release-disabled; invocation returns exit 5.
-Stage 4B remains **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**; reviewRecord/apply
-remain release-enabled subject to their existing target opt-ins and gates.
-Controlled Release remains **NOT APPROVED**. No ROADMAP completion state,
-finding disposition, FUTURE guard, source, test, workflow or public API changes.
+Execute stays reserved (exit 5), RELEASE_CAPABILITIES.execute disabled.
+Stage 4B COMPLETE_ON_MAIN / POST-MERGE CERTIFIED; reviewRecord/apply semantics
+and target opt-ins unchanged. TSB-F02 OPEN / LOW / CONDITIONAL; TAP-2/CRS-1/
+PPI-1, R-1..R-5, AT-07/TB-01 unchanged; FUTURE guards OPEN.
+Controlled Release NOT APPROVED. No canonical ROADMAP closure.
 
 ## 1. Certified baseline and original preflight (historical)
 
@@ -190,278 +193,398 @@ refusal, not authenticated CI-origin detection.
 
 ## 3. Applied decisions and continuation preflight
 
-| Fact | Verified locally on 2026-10-13 |
+| Fact | Verified on 2026-10-13 |
 |---|---|
 | Repository / branch | TarasovArtem/qa-ai-agent / design/controlled-v1-od06-execution |
-| Starting HEAD / tree | 0cc24cfb8cf77200eccc8d556822f1349a805eda / af6713a2190883741366162a1917d6ac5229f1d1 |
+| Authorized starting HEAD / tree | 8a697ba2c825d0b88c945eeb6d2c38ba03f5c1e0 / ce6c93f9c6e11fcf4169271f6c552c9cc3d0e1d9 |
 | Preserved first STOP | 76c1ce8bbafe5f0aed36507fbbc924c3a973ebb7 |
-| Certified base | 126d105841cf404c92752ae54bb616ed710d7f53 |
+| Preserved second design STOP | 0cc24cfb8cf77200eccc8d556822f1349a805eda |
+| Preserved authority STOP | 8a697ba2c825d0b88c945eeb6d2c38ba03f5c1e0 |
+| Certified base / fetched origin/main | 126d105841cf404c92752ae54bb616ed710d7f53 |
+| Remote design branch before delivery | Same certified base; push preserves local STOP ancestry by fast-forward |
 | Starting worktree | Clean; supplied checkpoint matches |
-| Exact changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
-| Host | Windows; not eligible Linux controller evidence |
-| Remote state | No fresh fetch or remote certification claimed |
-| Commit policy | One new direct child of starting HEAD; no amend/squash/rebase/discard |
+| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
+| Host | Windows; not Linux controller evidence |
+| Open PR inventory | Dependency #243/#250/#251/#252, historical proof #132; no competing engineering PR observed |
+| Commit policy | One direct child of supplied HEAD; no amend/squash/rebase/reset/force-push |
 
-Binding controller/runner disposition:
-
-| Runner | Disposition |
+| Runner | Execute disposition |
 |---|---|
-| Provisioned self-hosted Linux | Initial execute candidate; eligible only after every mandatory check succeeds |
+| Provisioned self-hosted Linux | Initial candidate; eligible only with exact qualified profile and all mandatory checks |
 | Windows | REFUSED |
-| macOS | DEFERRED |
-| Generic Linux workstation/server | DEFERRED |
-| GitHub-hosted Linux | DEFERRED |
-| Containerized Linux | DEFERRED |
-| Generic Linux VM | DEFERRED |
+| macOS / generic Linux / GitHub-hosted Linux / containerized Linux / generic VM | DEFERRED |
 
-A provisioned self-hosted runner may physically be a VM; a generic VM is not
-eligible merely because it runs Linux. Labels/config booleans are not proof.
-Execute-only CI cannot weaken Stage 4 TTY/CI approval/apply prohibitions or
-permit copied-root authorization.
+A qualified self-hosted runner may physically be a VM; labels/config booleans
+do not prove eligibility. Non-execute commands retain current per-command
+OS/storage/TTY/CI gates; no new platform support. Execute CI cannot bypass
+Stage 4 approval/apply prohibitions or copied-root refusal.
+Existing [Cypress workflow](../.github/workflows/cypress.yml) unchanged.
 
-Existing [Cypress workflow](../.github/workflows/cypress.yml) Ubuntu/container
-jobs do not certify this controller or scoped grant. No workflow is changed.
+Claim: controlled privileged management and process lifecycle / full
+process-tree containment. No malicious-code sandbox, filesystem/network/
+target-secret isolation, or general intra-account privilege isolation.
+Tests retain runner-account authority subject to explicit controls below.
+No immediate client-death termination: manager deadline and later durable
+reconciliation bound orphans; broker is not a daemon.
 
-The security claim is exactly:
+## 4. Scoped authority and closed broker interface
 
-> systemd/cgroup provides only: `process lifecycle / full process-tree containment`
+### 4.1 Enforcement and evidence
 
-It is NOT:
+Historical STOP evidence remains valid: name-limited Polkit does not enforce
+complete transient properties. See [v256 manager](https://raw.githubusercontent.com/systemd/systemd/v256/src/core/dbus-manager.c),
+[pinned manager](https://raw.githubusercontent.com/systemd/systemd/195a17c59b22f5b0fa626fdb4917107cdc281bac/src/core/dbus-manager.c)
+and [authorization](https://raw.githubusercontent.com/systemd/systemd/195a17c59b22f5b0fa626fdb4917107cdc281bac/src/core/dbus-util.c).
+OP-06-03 resolves authority through broker validation, not broader Polkit.
 
-- filesystem sandbox;
-- network sandbox;
-- secret isolation;
-- malicious-code sandbox;
-- privilege-separation guarantee.
+Fixed native artifact: /usr/local/libexec/qa-agent-controller-v1,
+contractVersion="qa-agent-controller-v1", request/response/journal version 1.
+Root entry accepts zero argv, one bounded request, exits after that operation.
+Create may remain attached within its finite lifecycle budget. No listener/
+scheduler/background service/custom daemon. No privileged Node/shell/npm/
+target config/framework/library import or privileged child command.
 
-Immediate client-death termination is **NOT claimed**. The manager owns a
-started service independently of qa-agent; finite runtime enforcement and
-later durable reconciliation replace the former immediate parent-death
-detection obligation. No independent QA Agent daemon is implied.
+The same immutable artifact has fixed --workload-v1 mode, used only as the
+broker-built service executable under explicit non-root systemd User/Group.
+It refuses root/unexpected UID/GID, clears inherited environment, consumes
+broker-created memory-only launch envelope, closes control FDs, sets stdin
+to /dev/null and execs qualified Node once. No controller authority; this
+is a mode of the single artifact, not another helper.
 
-## 4. Privilege feasibility — the new mandatory STOP
+### 4.2 Minimal closed request
 
-### 4.1 Primary evidence
+Wire: u32 big-endian length + exactly that many strict UTF-8 JSON bytes;
+<=262144 bytes/depth<=12/intake<=5000 ms. No BOM/duplicate keys/invalid
+Unicode/NUL/trailing JSON. All §4–11 schemas recursively closed/all keys
+required; unknown/coercion/default merging refused, null explicit only.
+One later result-proposal frame permitted during attached create after BOUND;
+any other extra frame refuses/reconciles.
 
-Evidence inspected on 2026-10-13: immutable systemd v256 tag and upstream
-commit `195a17c59b22f5b0fa626fdb4917107cdc281bac`. These are evidence samples,
-not a certified support range or a claim about every downstream patch.
-
-| Evidence | What it establishes |
+| Operation | Exact top-level keys |
 |---|---|
-| [v256 transient-unit handler](https://raw.githubusercontent.com/systemd/systemd/v256/src/core/dbus-manager.c) | method_start_transient_unit authorizes manage-units before processing caller properties and auxiliary units; this version does not pass a unit name to that authorization call |
-| [Pinned upstream manager](https://raw.githubusercontent.com/systemd/systemd/195a17c59b22f5b0fa626fdb4917107cdc281bac/src/core/dbus-manager.c) | The newer handler passes the requested main unit name and start verb, then applies the property array and processes auxiliary units |
-| [Pinned upstream authorization](https://raw.githubusercontent.com/systemd/systemd/195a17c59b22f5b0fa626fdb4917107cdc281bac/src/core/dbus-util.c) | manage-units polkit details contain unit/verb and presentation metadata, not executable, user, timeout, kill mode, dependencies, auxiliary names or applied-package identity |
-| [v256 execution contract](https://raw.githubusercontent.com/systemd/systemd/v256/man/systemd.exec.xml) | System services default to root unless another User is selected; an ordinary user manager cannot switch to a different workload user |
+| create | schemaVersion, contractVersion, operation, executionId, root, subject, framework, targets, timeoutMs, environment |
+| reconcile | schemaVersion, contractVersion, operation, executionId |
 
-**Inference:** permitting a non-root account to create a name-matching system
-transient service does not enforce a safe QA request. A caller can use D-Bus
-directly, retain the allowed name, and change/omit User, substitute ExecStart,
-omit the finite runtime, alter containment/dependencies or supply auxiliary
-units. The npm client's positive property builder cannot constrain other code
-running with that granted OS authority. The name proves neither workload
-ownership nor approved-content execution.
+schemaVersion=1, contractVersion literal above. executionId=32 lowercase hex
+OS-random 128 bits generated by client; broker independently validates
+grammar/non-reuse. Create starts/observes one attempt; reconcile combines
+inspect/stop incomplete/cleanup exact protected attempt. Cancellation calls
+reconcile from another one-shot invocation. No generic inspect/kill/restart/
+update API. No command string/shell/raw properties/unit file/executable/argv/
+cwd/user/group/slice/kill/restart/manager endpoint/request path/caller FDs.
 
-A dedicated slice/root-owned namespace drop-in supplies defaults, not an
-established immutable request allowlist. No verified stock policy in the
-inspected evidence enforces the whole request. A separately approved, proven
-host enforcement policy is not claimed impossible.
-
-### 4.2 Alternatives and dispositions
-
-| Authority model | Disposition / reason |
+| Create record | Exact keys / types |
 |---|---|
-| Unrestricted root qa-agent | REFUSED; explicit mission STOP condition |
-| Broad systemctl / manage-units grant | REFUSED; system administration and arbitrary transient properties |
-| Prefix/exact-name plus start/stop polkit rule | REFUSED for creation; no property/auxiliary validation; exact names alone do not fix this |
-| User manager under workload UID | REFUSED; workload can reconfigure manager/services |
-| Separate unprivileged user manager | Cannot launch a different workload UID; using its own UID restores workload control |
-| sudo systemd-run with arbitrary args/property wildcards | REFUSED; executable/property authority remains broader than contract |
-| Restricted sudo with exact immutable requests | No complete safe dynamic-target/attempt protocol proven; no wildcard policy invented |
-| Privileged request-validating helper or custom broker/daemon | OWNER SECURITY/DEPLOYMENT DECISION REQUIRED; outside authorized deployment |
-| Custom MAC/patched manager enforcement | OWNER SECURITY/DEPLOYMENT DECISION REQUIRED for a named policy and qualification; not assumed present |
+| root | platform="linux", path=canonical absolute, dev=decimal string, ino=decimal string, digest=H matching Stage 4 root-identity-v1 |
+| subject | runId, packageOrdinal, applyRecordId, packageDigest=H, appliedRecordSha256=H, bindingDigest=H, product={name:"qa-ai-agent",version:exact enrolled version} |
+| targets[] | path=canonical PPI-1 relative executable spec, operation="CREATE"/"MODIFY", afterDigest=H |
+| environment[] | name=§9 SUT grammar, value=bounded UTF-8 string |
 
-**OP-06-03 — MANAGEMENT AUTHORITY: OWNER SECURITY/DEPLOYMENT DECISION
-REQUIRED.** This names the new question, not an approved decision.
+H=sha256: +64 lowercase hex. Whole-string regexes: ID ^[0-9a-f]{32}$;
+runId ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$; ordinal ^(?!0000)[0-9]{4}$.
+Root path<=4096 UTF-8 bytes/no controls/'%' specifier; dev/ino 1..20 decimal
+digits/no sign/leading zero except "0". No path repair. Targets 1..100
+unique/sorted ASCII, exactly ALL executable specs in applied package, no
+subset/suite fallback. Framework cypress/playwright agrees with enrolled
+config/plan/package; timeout integer 1000..600000. Environment SUT data only,
+no secret file/handle references; no provider execution facts.
 
-The owner must select/authorize concrete enforcement of every transient request
-field before target code, controller protection, scoped cancellation/recovery,
-no uncontrolled auxiliary units and no arbitrary property updates. Any broader
-authority/deployment requirement needs explicit disposition. No root/broad
-admin acceptance, helper or daemon is adopted. OP-06-02 remains APPLIED;
-systemd remains SELECTED.
+Current config v1 unchanged. Later separately approved config revision uses
+closed execute={timeoutMs,sutEnvironmentNames}, default T=600000, <=32
+unique names subset of root enrollment. Runtime values only these named
+caller environment entries, no wholesale inherit; missing refuses/empty
+allowed. No new CLI option authorized by this design.
 
-**STOP at this boundary.** The expected no-helper/no-daemon deployment cannot
-currently be established with the evidenced authority path. No grant/install
-recipe or runner certification is delivered. Sections below fix independent
-constraints and identify unfinished work, without treating unproven authority
-as a completed implementation contract.
+### 4.3 Independent broker validation boundary
 
-## 5. Eligibility and operator provisioning obligations
+Before privileged action broker independently checks:
 
-Every check is mandatory before framework/config/dependency code. Inspect
-data/controller facts; never execute a target preflight script. Missing proof
-means failure, never degraded mode.
+1. Artifact/config/state integrity, protocol/schema/version, effective root,
+   zero argv and authenticated enrolled caller UID/GID/account. No identity
+   from request/ordinary caller environment.
+2. Literal operator-enrolled canonical root/dev/inode/digest/account/storage;
+   descriptor-relative no-follow/beneath/no-mount-crossing opens of fixed
+   data locations; no wildcard ancestor/home or caller evidence pathname.
+   Root must be a runner-owned repository below a literal operator workspace,
+   never /, a system directory or an ancestor of controller artifacts. The
+   workspace anchor is root-protected; enrolling root/home itself is forbidden.
+3. Enrolled config/bounded Stage 4 data, request successful apply outcome/
+   record/chain identities/framework, approved afterDigest of ALL changes/
+   fresh canonical bytes and exact specs. Client still performs §8.1 full
+   gate-free reconstruction; broker reconstructs §11 launch/security
+   binding from fixed data and compares bindingDigest, imports no target JS.
+4. Exact qualified Node/framework/native/fingerprint/adapter; metadata as
+   bounded data; recheck canonical files immediately before submission.
+5. Timeout/SUT enrolled names/bounds; constructs complete launch envelope
+   and systemd payload; no raw caller property/privilege semantics.
+6. Protected claims/consumption, reconciliation and namespace; collisions/
+   unbound units; manager/boot/cgroup/property/non-root UID/nonprivileged
+   group identity, absence of direct manager/sudo/delegation escape rights.
+   Qualification excludes caller-accessible user managers/schedulers/agents
+   that can launch requested descendants outside the owned service; config
+   labels or clearing DBUS_SESSION_BUS_ADDRESS cannot prove this absence.
+7. Durable SUBMITTING before D-Bus; actual property/InvocationID/cgroup
+   readback and durable CONTROLLER_BOUND before returning bound observation.
 
-| Check | Required evidence / refusal condition |
+Unknown/unsupported property/default/identity REFUSE before start.
+Possible accepted start -> error/scoped recovery, no fallback. Mismatch
+terminated only with proved protected ownership, otherwise operator quarantine.
+Namespace necessary, never sufficient.
+
+Root controller history prevents consumption deletion/replay, not approval
+authenticity: forged self-consistent account-writable Stage 4/result evidence
+remains R-3/AT-07/TB-01. Same-account TOCTOU/dynamic imports remain R-4.
+Neither residual permits target root execution/arbitrary management.
+
+## 5. Invocation, provisioning and artifact integrity
+
+### 5.1 Narrow invocation
+
+Operator-owned sudo rule shape (not installed by this mission):
+
+    qa_runner ALL=(root:root) NOPASSWD: NOSETENV: NOLOG_INPUT: NOLOG_OUTPUT: /usr/local/libexec/qa-agent-controller-v1 ""
+
+qa_runner substituted once as literal enrolled account. Empty argument
+specifier forbids argv; omission permits arguments, as [upstream sudoers](https://raw.githubusercontent.com/sudo-project/sudo/main/docs/sudoers.man.in)
+documents. No command/argument wildcard/generic sudo/shell/systemctl/
+systemd-run/caller-selected privileged executable.
+
+Operator visudo/effective policy qualification: env_reset, fixed secure_path,
+no caller cwd/chroot/env preservation/setenv/PAM loader injection, no payload
+I/O/debug/core logging. Sudo must supply/overwrite authentication metadata
+unforgeably under allowed options; broker uses that qualified context,
+never ordinary SUDO_UID as account proof. Absent/ambiguous/direct-root
+context refuses; spoofed SUDO_* and all sudo options are negative tests.
+Broker safe fixed cwd, closes FDs>2, ignores other ambient env.
+
+Client launches absolute qualified sudo with fixed
+["-n","--","/usr/local/libexec/qa-agent-controller-v1"], shell:false, framed
+stdin. Command accounting may retain fixed executable name only; no stdin/
+env/stdout/stderr/proposal logs. Runner gets no direct
+org.freedesktop.systemd1.manage-units/equivalent create/update/stop/migration.
+
+**If narrowly enforceable invocation/authentication unavailable:
+STOP — OWNER SECURITY DECISION REQUIRED.** No broader fallback. A bad host
+fails qualification; a different mechanism needs owner decision.
+
+### 5.2 Integrity and exact qualification
+
+| Component | Owner / expected permissions |
 |---|---|
-| OS / class | Linux, operator-qualified provisioned self-hosted runner; other matrix classes refuse |
-| systemd baseline | Exact host build qualified for all required properties/APIs; version list BLOCKED by section 4, not guessed as >=256 |
-| cgroup v2 | Active unified hierarchy, protected domain/non-threaded subtree, subtree kill/population observation; no writable migration/delegation escape |
-| Reachable manager | Protected host system manager on authenticated local system bus; exact manager/boot identity; no user-manager or caller endpoint fallback |
-| Transient creation | Supported service creation/property types; no scope/start-then-attach; no probe launching target code |
-| Scoped authority | Enforced restrictions; no root/sudo/broad management/migration rights defeating containment; BLOCKED, section 4 |
-| Namespace | Product grammar usable; no active/stale conflicts, aliases, overrides or unbound units |
-| Recovery | Authorized stop/kill/read/reconcile/drain and complete durable attempts; no lost claim history |
-| Storage / account | Stage 4 canonical storage/directory fsync, bound principal, durable evidence ownership; privileged workload refuses |
-| Root / apply | Canonical project/root/product/run/package and exact applied bytes, section 8 |
-| Framework | Target-local qualified dependency/entrypoint/runtime/native payload; no install/download/PATH fallback |
-| Environment / evidence | Positive projection and finite capture/import/persistence; no secret-value persistence |
+| Broker | root:root 0755, regular/non-symlink/no setuid or file capability, protected ancestors/libraries |
+| /etc/qa-agent-controller-v1 / enrollment.json | root:root 0700 / 0600, no runner-writable includes |
+| sudoers.d exact rule | root:root 0440, protected parent |
+| /var/lib/qa-agent-controller-v1 | root:root 0700, journal/claims/tombstones 0600, durable fsync filesystem |
+| /run/qa-agent-controller-v1 and workloads parent | root:root 0711, traversable but non-writable/non-listable by runner; descriptor-anchored workload leaf runner-owned 0700 |
 
-Any mandatory eligibility failure: **execute → authority refusal / exit 5
-before spawn**. Malformed config remains 3; input/content mismatch remains 4.
-Durability failure before start forbids start. Failure after a possibly
-accepted start request is execution/controller failure 7 plus reconciliation,
-not a harmless pre-spawn refusal.
+Runner-controlled/replaced broker/config invalid. Enrollment strict JSON
+<=1048576 bytes exact keys {schemaVersion,contractVersion,enabled,brokerSha256,
+profileDigest,caller,roots,qualification}; version1/literal contract/boolean/
+H hashes. caller={uid,gid,account}, IDs integer1..4294967294, account<=64 ASCII
+[A-Za-z0-9_-]+. roots<=64 exact {root,projectId,outputDir,framework,sutNames,
+fingerprint}, §4 root/existing project ID grammar/configured canonical
+relative outputDir<=300 bytes safe segments/no '..'/framework literal/
+<=32 SUT names/§8 fingerprint.
+qualification={profileVersion,osBuild,kernelBuild,systemdBuild,sudoBuild,
+nodePath,nodeVersion,nodeSha256,brokerBuild,frameworkProfiles};
+profileVersion="od06-linux-v1", builds<=256 ASCII/no controls, nodePath
+absolute canonical<=4096, nodeVersion exact22.x.y/hash H.
+frameworkProfiles<=2 unique {framework,packageVersion,packageSha256,nativePath,
+nativeVersion,nativeSha256,browserPath,browserVersion,browserSha256,adapterVersion};
+paths<=4096 absolute/versions<=256/hashes H, adapters od06-cypress-v1/
+od06-playwright-v1. profileDigest hashes qualification (§11), no templates.
 
-Runner operator provisions outside the target repository/npm installation:
+Later product-owned qualification manifest lists exact tested tuples and
+npm/broker digests. Enrollment cannot qualify unlisted builds; no >=version/
+floating latest/distro label inference. Empty manifest refuses all.
+No Linux tuple certified in Windows session. Real evidence populates future
+Stage 5 outputs, not an unresolved controller design choice.
 
-1. Qualified Linux/systemd/cgroup-v2 host, Node 22, protected manager/bus,
-   durable filesystem and local framework/native dependencies; exact versions.
-2. Non-root runner account without containment-defeating rights, protected
-   host configuration and qualified tool/cache paths. New account separation
-   required by an enforcement model needs OP-06-03 disposition.
-3. Only owner-approved scoped management/recovery authority. No safe policy
-   recipe is adopted. Optional slice is organization, not an authority
-   boundary; its necessity belongs to the chosen enforcement model.
-4. Closed QA unit namespace and durable claims/attempt storage; qualification
-   of crash/restart/reboot/orphan and failed cleanup.
-5. Conceptual install/enable: operator installs prerequisites/policy,
-   qualifies/enrolls host, then target operator opts in. npm installation or
-   execute=true cannot activate the separately gated release capability.
-   qa-agent performs no automatic system provisioning/postinstall.
-6. Removal/revocation: block new starts, drain owned attempts, prove empty,
-   reconcile outcomes, retain consumed/quarantine history, revoke grants,
-   then remove optional host artifacts. Failed drain retains quarantine.
+Every check before target code: exact qualified Linux/self-hosted/account/
+OS/kernel/systemd/sudo/Node/broker/storage/bus; cgroup v2 protected domain,
+no runner migration/delegation; fixed property/FD/stop/kill support; no
+namespace aliases/drop-ins/hooks/unbound units; durable crash/boot history;
+canonical root/apply/framework/native/env/capture/result bounds. No target
+preflight script. Pre-start authority exit5/input4/config3; post-submit
+uncertainty controller7/reconciliation.
 
-No target test architecture change, new QA Agent service/helper, Docker, OCI
-or Kubernetes requirement is adopted.
+### 5.3 Install, compatibility, upgrade and revocation
 
-## 6. Service, identity and finite lifecycle constraints
+Operator installs single digest-identified broker/rule/config, qualifies
+host, then target opts in. Npm does no root install/postinstall/upgrade or
+target system config. Distribution/signature/release packaging and exact
+npm/broker compatibility pair require later owner approval; design fixes
+version IDs/fail-closed matching, not publication channel/new exports.
+Both sides match versions and enrolled qualified exact builds.
 
-### 6.1 Required semantics versus adapter details
+Upgrade: disable creates, reconcile/drain/prove empty/fsync outcomes/history,
+revoke invocation during atomic verified root-owned replacement, requalify,
+operator reenables. No ABI fallback/consumption reset/silent journal migration.
+Removal: disable creates; retain reconcile until empty/durable; revoke rule/
+broker; retain consumed/quarantine history; safe runtime cleanup. Failed
+drain retains quarantine; emergency revocation is not stop proof. Lost/
+restored history/re-enrollment cannot manufacture fresh consumption.
+Cleanup descriptor-anchored/no symlink/mount traversal/root recursive target
+deletion. No permanent QA Agent service, Docker/OCI/Kubernetes requirement.
 
-Required semantics, conditional on viable section 4 authority:
+## 6. Fixed service, identity and finite lifecycle
 
-- One transient `.service`, never `.scope`, contains target code before its
-  first instruction. Manager remains outside the tree.
-- One exact absolute executable/literal argv, canonical root cwd, explicit
-  non-root workload identity, closed projected environment, disabled stdin.
-- `KillMode=control-group`, `SendSIGKILL=yes`, finite runtime/start/stop
-  bounds; restart disabled; no delegation/migration escape/property update.
-- No shell, npm script, provider commands, arbitrary caller properties,
-  auxiliary units or target ExecStartPre/Post/ExecStop hooks.
-- Read back actual identity/properties before treating start as bound;
-  acknowledgment is not evidence of framework success.
+### 6.1 Complete property construction
 
-Candidate mapping: Type=exec, ExitType=cgroup, Restart=no, Delegate=no,
-KillSignal=SIGTERM, FinalKillSignal=SIGKILL, RuntimeMaxSec=T/1000,
-RuntimeRandomizedExtraSec=0, TimeoutStartSec=30, TimeoutStopSec=30,
-SendSIGKILL=yes. No notify type or deadline extension. D-Bus property
-names/types, complete manager-default environment suppression, enforceable
-properties and exact stop/kill/empty interface are BLOCKED by section 4.
-These settings do not certify that a host uses subtree cgroup.kill.
+StartTransientUnit(name,"fail",properties,[]) on host manager only.
+No aux/scope/start-then-attach/replacement/generic updates. Protected sole
+creator plus claims/preexistence checks enforce collision refusal, never
+kill unknown name. [v256 service setter](https://raw.githubusercontent.com/systemd/systemd/v256/src/core/dbus-service.c),
+[execution setter](https://raw.githubusercontent.com/systemd/systemd/v256/src/core/dbus-execute.c)
+and [service semantics](https://raw.githubusercontent.com/systemd/systemd/v256/man/systemd.service.xml)
+evidence API shapes, not qualified builds.
 
-### 6.2 Unit identity
+Complete D-Bus payload allowlist, broker-built; unsupported/extra REFUSE:
 
-executionId: 32 lowercase hex digits from 128 bits of OS randomness, never
-caller/provider text. Name: `qa-agent-exec-v1-<executionId>.service`, exactly
-`^qa-agent-exec-v1-[0-9a-f]{32}\.service$`, with whole-string matching.
-Run/package/project/principal live in durable attempt data, not name text.
-Bind manager boot ID and unit invocation ID when available; a recreated
-name is not the original unit.
+| Property | Signature | Fixed value |
+|---|---|---|
+| Type / ExitType / Restart | s each | exec / cgroup / no |
+| ExecStart | a(sasb) | one (fixed broker path,[fixed broker path,"--workload-v1"],false), no privilege prefixes |
+| ExecStartPre / ExecStartPost / ExecStop / ExecStopPost / ExecReload | a(sasb) each | [] |
+| WorkingDirectory | s | independently validated enrolled canonical root |
+| User / Group | s each | enrolled nonzero numeric UID/GID decimal |
+| SupplementaryGroups | as | []; effective account groups still must be qualified/nonprivileged |
+| DynamicUser / SetLoginEnvironment | b each | false |
+| NoNewPrivileges | b | true; workload cannot acquire sudo broker authority |
+| CapabilityBoundingSet / AmbientCapabilities | t each | 0 |
+| Delegate / RemainAfterExit | b each | false |
+| KillMode | s | control-group |
+| KillSignal / FinalKillSignal | i each | 15 / 9 |
+| SendSIGKILL | b | true |
+| RuntimeMaxUSec | t | timeoutMs * 1000 |
+| RuntimeRandomizedExtraUSec | t | 0 |
+| TimeoutStartUSec / TimeoutStopUSec | t each | 30000000 |
+| TimeoutStartFailureMode / TimeoutStopFailureMode | s each | terminate |
+| NotifyAccess | s | none |
+| CollectMode | s | inactive; failed facts retained until recorded/reset |
+| Environment / PassEnvironment / UnsetEnvironment | as each | [] |
+| EnvironmentFiles | a(sb) | [] |
+| StandardInputFileDescriptor | h | broker-created sealed anonymous launch-envelope memfd |
+| StandardOutputFileDescriptor / StandardErrorFileDescriptor | h each | broker-created pipe write ends |
+| LimitCORE / LimitCORESoft | t each | 0 |
 
-Durably reserve ID/run/package/root before start. Start mode cannot replace
-existing units. Collision fails and consumes the reserved attempt: do not
-kill the unknown unit or choose another ID to bypass consumption. IDs/names
-are never reused after cleanup/reboot. Missing units never revive authority.
-Lookup: durable ID -> exact name -> manager boot/invocation binding; scan
-closed namespace for unbound units. Unknown ownership quarantines the runner
-until operator resolution; no wildcard kill. Protected reservation/history
-enforcement remains BLOCKED.
+No dedicated slice; qualified system.slice/one protected domain per service.
+Slice omitted/not caller selectable. Effective critical defaults must match
+qualification: dependencies/no alias/drop-in/hooks/restart forcing/PAM/
+credential load/delegation/executable changes. Unknown default -> refuse.
+No further writable property extension/sandbox/quota claim.
 
-### 6.3 Timeout and termination
+Native artifact/libraries protected; manager default env cannot inject unsafe
+loader values before native workload clearenv. Workload imports no target code
+until exact §9 env installed. Secrets never in Environment/StandardInputData/
+credential properties/argv/transient settings/core/debug/journal. Real host
+FD/no-log/UID qualification mandatory; workload root refusal supplements User.
 
-Fixed proposed numeric contract, not activated defaults: integer T,
-1000..600000 ms inclusive; default 600000 ms. Future closed target execute
-configuration selects T; no provider/arbitrary CLI override. No zero,
-infinity, negative, float or extension. These retain the earlier proposed
-budget; no additional numeric owner choice is required for this artifact.
+### 6.2 Unit and launch identity
 
-Controller runtime bound starts at service active runtime. Independent
-30000 ms start and 30000 ms stop budgets bound setup/grace. Adapter binds
-monotonic timeline. Surviving client observes through start + T + stop +
-30000 ms confirmation, at most T+90000 ms from request, never resetting on
-output/polls. Observation expiry alone is EXECUTION_ERROR / 7, not timeout 8.
-Client death does not change the installed deadline. Manager restart/reboot
-and deadline enforcement still require host qualification.
+Name exactly qa-agent-exec-v1-<executionId>.service, whole-string
+^qa-agent-exec-v1-[0-9a-f]{32}\.service$. Protected attempt binds root/package/
+principal/manager boot/InvocationID/transient flag/cgroup path/dev/inode/
+properties digest. Recreated name/changed boot not original invocation.
+Reservation before send, collisions consume attempt/no ID bypass/no reuse.
+RefUnit held while attached, facts durable before UnrefUnit. Bounded
+namespace enumeration before create; unknown member quarantines runner,
+no wildcard kill. Lookup protected attempt -> exact unit -> full binding.
 
-Cancellation/recovery/timeout closes admission, sends control-group SIGTERM,
-escalates to full-tree SIGKILL within stop budget, then confirms empty within
-30000 ms. Successful proof requires manager terminal/non-running state, no
-pending start/restart job, and authoritative cgroup-v2 `populated=0` for the
-bound subtree with admission/migration closed. Missing/inaccessible subtree
-needs manager-backed removal/boot proof, not an ENOENT assumption.
+Type=exec proves bootstrap only. STARTED requires broker observation of
+manager-bound MainPID UID/executable/cgroup matching qualified Node for
+this invocation. PID observation never termination fallback. Missing/
+fast-raced launch proof -> error even zero exit; report cannot prove launch.
+Qualification covers fast workloads without relaxing proof.
 
-Stop request success, leader exit or PID enumeration are not empty proof.
-No competing raw cgroup writer is introduced. Exact authorized manager
-subtree-kill/population/removal operations remain BLOCKED; no shell/PID/group
-substitute. Uninterruptible tasks may outlast SIGKILL: finite escalation/
-confirmation is claimed, not guaranteed physical extinction in finite time.
-Failure retains claims and QUARANTINED / 7 for operator recovery.
+### 6.3 Timeout, whole-tree kill and empty proof
 
-TIMED_OUT / 8 needs durable manager timeout facts for the exact invocation,
-confirmed whole-tree termination and completed durable cleanup. Local
-observation expiry, signal exit or absent evidence cannot supply exit 8.
+T integer1000..600000/default600000 target config only; no extension/reset.
+RuntimeMaxUSec active-runtime bound; 30000 ms start + T +30000 stop +30000
+confirmation = <=T+90000 observation from request, monotonic/no poll renewal.
+Reconcile <=60000 stop/confirmation +5000 intake, bounded manager calls.
 
-## 7. Bounded orphan state and reconciliation
+Allowed methods after protected ownership check only: GetUnit,
+ListUnitsByPatterns read-only enumeration, Properties.GetAll closed fields,
+RefUnit/UnrefUnit, StopUnit(name,"fail"), KillUnit(name,"all",9) escalation,
+ResetFailedUnit(name) only after durable terminal/empty proof. Returned
+object/job binds exact manager/name; no caller signal/job/unit/cgroup/object/
+SetUnitProperties/Restart/Enable/Link/AttachProcesses.
 
-Smallest justified proposed durable state set:
+Stop closes admission, control-group SIGTERM, full-unit SIGKILL by30000 ms,
+empty confirmation within30000 ms. Qualified manager proves nested groups/
+forks covered; leader-only build ineligible. No raw cgroup writer/shell/
+PID/process-group fallback. Secure anchored root-owned cgroup.events read:
+populated=0 + manager terminal + no start/restart job + admission/migration
+closed. Removal needs authenticated retained terminal binding and qualified
+removal guarantee/no jobs/recreated unit; reboot requires old-boot extinction/
+protected journal continuity/clean namespace. ENOENT/leader/ack insufficient.
+Uninterruptible tasks may survive; finite escalation, not guaranteed finite
+extinction. Failure QUARANTINED7/claims retained. Timeout8 only exact manager
+timeout/invocation/deadline +empty/durable cleanup; local expiry/cancel/
+signal/missing proof error7. No immediate parent-death guarantee.
 
-| State | Role / allowed successor |
+## 7. Protected ownership and bounded reconciliation
+
+Broker alone writes protected host store. Root/package/ID order; short
+runner admission lock serializes namespace/reservation only. One active
+per root/all runs, independent roots concurrent; no stale-PID stealing.
+Consumed tombstones indexed BOTH root+run+ordinal AND root+packageDigest+
+applyRecordId, independent of product version. New ID/upgrade/reboot/copied
+ledger/deleted target evidence never resets or authorizes retry.
+
+Recoverable transaction: fsync intent, PREPARED/claims/tombstones/data/
+directories, committed marker/fsync. Partial intent blocks root; no start
+before complete. SUBMITTING/fsync before D-Bus, no uncertain resubmit.
+Readback/fsync CONTROLLER_BOUND; terminal+empty/fsync before claim removal/
+fsync. Tombstones retained; crash during release recovered before admission.
+
+Durable root claims exclude competing creates, not recovery calls. Short
+per-attempt operation locks serialize journal transitions/manager actions,
+never held across lifecycle waits. Reconcile durably marks an incomplete
+attempt ORPHANED and closes admission before stop; attached create observes
+the transition and cannot accept late PASS. One terminal writer wins;
+others return committed record. Cancellation needs no lifetime mutex.
+
+| State | Allowed successor |
 |---|---|
-| PREPARED | Nonterminal consumed reservation; CONTROLLER_BOUND, ORPHANED, EXECUTION_ERROR or QUARANTINED |
-| CONTROLLER_BOUND | Nonterminal exact unit/submission binding, not framework-start proof; STARTED, ORPHANED, EXECUTION_ERROR or QUARANTINED |
-| STARTED | Nonterminal confirmed framework launch; PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR, ORPHANED or QUARANTINED |
-| ORPHANED | Nonterminal unresolved ownership/outcome, no start; EXECUTION_ERROR, fully proved TIMED_OUT or QUARANTINED |
-| PASSED / TEST_FAILED / TIMED_OUT / EXECUTION_ERROR | Terminal consumed outcomes after durable cleanup; no retry or outcome rewrite |
-| QUARANTINED | Terminal attempt with retained recovery claim; operator may clear separate root/runner quarantine after proof, never revive this attempt |
+| PREPARED | SUBMITTING, ORPHANED, EXECUTION_ERROR, QUARANTINED |
+| SUBMITTING | CONTROLLER_BOUND, ORPHANED, EXECUTION_ERROR, QUARANTINED |
+| CONTROLLER_BOUND | STARTED, ORPHANED, EXECUTION_ERROR, QUARANTINED |
+| STARTED | PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR, ORPHANED, QUARANTINED |
+| ORPHANED | EXECUTION_ERROR, proven TIMED_OUT, QUARANTINED |
+| PASSED / TEST_FAILED / TIMED_OUT / EXECUTION_ERROR | Terminal consumed, no successor/retry |
+| QUARANTINED | Terminal/claims retained; separate incident may clear quarantine, never revive/rewrite attempt |
 
-No COMPLETED state: completion without evidence/cleanup is not an outcome.
-Inconsistency discovered after terminal commit creates a separate quarantine
-incident, never overwrites evidence with PASS. Atomic fsynced state writes
-are required; ambiguous writes remain unresolved even if parseable. Closed
-journal/schema/protected claim protocol remain BLOCKED by section 4.
+No COMPLETED. Broker lifecycle-only, never parses target reports. Attached
+client supplies §11 proposal after non-root parsing; broker cross-checks
+process/binding/structure and commits after empty. Lost proposal/client
+death -> error; incomplete report/exit never reconstructed PASS. Valid
+durably committed terminal result returns as recorded; later inconsistency
+separate quarantine incident, not success rewrite.
 
-Dead clients return no exit. Reconciler marks incomplete attempts ORPHANED
-and checks exact manager identity. Never reconstruct incomplete PASS or
-TEST_FAILED from an exit/report. Only a previously durably committed, fully
-validated terminal record may be returned as its recorded result.
+<=256 incomplete attempts/runner, <=64 roots, <=256 namespace units,
+<=16777216 persisted bytes/attempt; capacity exhausted refuses.
+Tombstones/history never silently pruned. Before create <=256 individually
+bounded fixed-ID reconciliations; no daemon/recovery promise while no caller/
+operator returns. Systemd runtime independent. Lost/corrupt history runner
+quarantine. Recovery caller must own protected attempt; stored binding
+governs even if enrollment disabled, config cannot widen old authority.
 
-| Case | Finalization | Retry / quarantine | Synchronous exit / cleanup |
-|---|---|---|---|
-| A: incomplete + ACTIVE (including activating/deactivating jobs) | ORPHANED pending stop; EXECUTION_ERROR after empty/cleanup, or fully proven TIMED_OUT | NO retry; retain root claim; QUARANTINED if identity/stop/cleanup unproven | 7 or qualified 8; stop/kill/empty and durable finalization |
-| B: incomplete + FAILED | EXECUTION_ERROR, or TIMED_OUT only with invocation deadline and empty/cleanup proof | NO retry; quarantine unproven ownership/population/cleanup | 7/qualified 8; FAILED alone is not empty proof; drain/finalize |
-| C: incomplete + INACTIVE | EXECUTION_ERROR for unknown outcome; fully proven timeout may yield TIMED_OUT | NO retry; quarantine failed cleanup proof | 7/qualified 8; inspect jobs/population, persist outcome then release claim |
-| D: incomplete + missing unit | EXECUTION_ERROR only with authenticated removal/reboot proof and reconciled namespace; otherwise QUARANTINED | NO retry; missing proof requires quarantine | 7; no missing-unit PASS/timeout inference; investigate identity/history |
-| E: crash before framework start | ORPHANED; proven no submission/no unit ambiguity -> EXECUTION_ERROR; uncertain submission -> A–D | NO retry even without launch; ambiguity quarantines | 7; drain possibly accepted unit and finalize consumed reservation |
-| F: crash after framework start | ORPHANED; manager continues lifecycle/deadline; A–D later produce error/qualified timeout | NO retry; claim until cleanup; failure quarantines | 7/qualified 8; no immediate death-termination claim |
-| G: hard timeout during absence | TIMED_OUT only with exact retained timeout evidence, empty and durable cleanup; otherwise EXECUTION_ERROR/QUARANTINED | NO retry; quarantine unproven identity/cleanup | Qualified 8, otherwise 7; reconcile, never restart |
-| H: cleanup/stop fails | QUARANTINED; preliminary success/failure/timeout is not normal terminal result | NO retry; quarantine root and runner if namespace/controller ownership ambiguous | 7; retain claims/evidence for operator drain |
+| Case | Finalization / retry / cleanup / synchronous exit |
+|---|---|
+| A incomplete ACTIVE/activating/deactivating | ORPHANED; stop/kill/empty ->error7 or proven timeout8; no retry; failure H |
+| B incomplete FAILED | Error7/proven timeout8; FAILED insufficient; drain/finalize/no retry; ambiguity H |
+| C incomplete INACTIVE | Unknown error7; exact timeout permits8; inspect jobs/population/finalize/no retry; failure H |
+| D incomplete missing | Removal/reboot proof ->error7, never PASS/missing-unit timeout; otherwise H/no retry |
+| E crash before framework | No-send/no-unit proof error7; SUBMITTING uncertainty A–D; consumed without launch/no retry |
+| F crash after framework | Manager independent deadline/later A–D; no immediate death-kill/report PASS/no retry |
+| G timeout during absence | Retained exact deadline/timeout+empty/durable ->8; otherwise error/H/no retry |
+| H stop/cleanup/identity fails | QUARANTINED7/root claims; runner quarantine if ambiguous ownership; operator exact drain/no retry |
 
-A–G use H for failed cleanup. Reconcile before any execution affecting the
-root and inspect runner-wide unknown namespace units. Empty plus unknown
-outcome is error, never PASS. Restart/reboot/lost journal cannot allow replay.
+Reconcile all prior incomplete root attempts and scan runner unknown namespace
+before creates. Already quarantined retains claims until separate operator
+incident resolution; replay never revived. Dead client returns no exit.
 
 ## 8. Applied evidence, exact targets and executable resolution
 
@@ -512,116 +635,149 @@ Only exact applied Cypress/Playwright specs from that package execute.
 Helper/config-only packages refuse; no suite fallback, arbitrary target,
 arbitrary framework args or provider command. Config/import/dependency code
 remains untrusted inside lifecycle containment, not a transitive sandbox.
-Exact transitive config/dependency fingerprint/compatibility and result
-adapter remain BLOCKED qualification work. Recheck cannot freeze against
+Sections 8.2 and 9 close fingerprint/compatibility and results; real Linux qualification remains mandatory. Recheck cannot freeze against
 same-account writers (R-4); matching bytes do not cure authority ambiguity.
 
-### 8.2 Closed launch resolution
+### 8.2 Closed executable/native adapters and fingerprint
 
-Never execute node_modules/.bin: shims/shebangs/.cmd are not executable
-authority. Use qualified absolute Node 22 plus canonical target-local JS
-entrypoint. Read bounded package metadata as data, verifying exact name/
-version/bin and canonical ownership without imports/evaluation. Reject
-ancestor/global/PATH fallback, arbitrary config binary/provider selection,
-links/redirects/out-of-root packages or entries; recheck before submission.
+No .bin/.cmd/shebang/PATH/global/ancestor/npx/npm-script/install/download.
+Fixed non-root workload mode execs exact root-owned qualified Node22;
+target-local metadata read as bounded data:
 
-| Framework | Closed JS candidate / qualification still required |
+| Framework | Fixed metadata / generated Node argv |
 |---|---|
-| Cypress | root/node_modules/cypress/package.json name cypress, bin cypress -> bin/cypress; absolute Node + canonical bin/cypress; matching dist/cli and qualified native Cypress payload |
-| Playwright | root/node_modules/@playwright/test/package.json matching name, playwright -> cli.js; absolute Node + canonical cli.js; matching local playwright/playwright-core and qualified native browser |
+| Cypress | node_modules/cypress/package.json name/version, bin cypress="bin/cypress"; [node,root+"/node_modules/cypress/bin/cypress","run","--headless","--browser",qualifiedAbsoluteChromium,"--spec",commaJoinedExactAbsoluteSpecs,"--reporter","junit","--reporter-options","mochaFile="+attemptReportPath] |
+| Playwright | node_modules/@playwright/test/package.json name/version, bin playwright="cli.js"; [node,root+"/node_modules/@playwright/test/cli.js","test","--config="+root+"/playwright.config.js","--project=chromium","--reporter=junit",...anchoredEscapedAbsoluteSpecRegexes] |
 
-No npx/npm script, install/download, ambient Cypress cache, target
-CYPRESS_RUN_BINARY, Playwright channel/executablePath override or global
-browser fallback. Native provisioning needs closed canonical ownership,
-version/digest and product-generated selectors. [Cypress native installation](https://docs.cypress.io/app/references/advanced-installation)
-and [Playwright browser reference](https://playwright.dev/docs/browsers)
-describe separate payloads; package-owned JS alone is insufficient.
+PPI-1 paths/no comma/glob; Playwright escapes all regex metacharacters/
+anchors ^...$. Caller never sends argv. No subset/grep/suite fallback/custom
+config/project/browser selection. Conventional config entries fixed;
+target imports only non-root service. Qualified adapter proves ALL exact
+specs selected, config additions/exclusions/incomplete selection ->error.
+Command syntax is version-qualified, not proof of any installed version.
 
-Historical installed versions are not Linux support grants. Exact supported
-framework/native versions, payload paths and literal argv adapters remain
-BLOCKED at this authority STOP. Legacy Cypress chrome selector is not adopted
-as it could select ambient browser. Both frameworks remain DEFERRED.
+Exact local framework/reporter/JS closure, Cypress native/cache/browser or
+Playwright/playwright-core/Chromium profile paths/versions/digests.
+Native/Node/broker ancestors root-owned/non-writable; target dependencies
+remain target code. No ambient channel/executablePath/cache/download/global
+browser fallback. [Cypress provisioning](https://docs.cypress.io/app/references/advanced-installation)
+and [Playwright browsers](https://playwright.dev/docs/browsers) establish
+separate native provisioning.
 
-## 9. Retry, concurrency, environment and finite evidence
+fingerprint exact {algorithm:"od06-files-v1",files,digest:H};
+files1..4096 unique/sorted {path,sha256:H,size}, canonical root-relative
+<=300 bytes, size integer0..16777216/total hashed<=67108864 bytes.
+Required: fixed config/root package.json/package-lock.json/local framework
+metadata/entrypoint/exact qualified executable JS/reporter closure, Playwright/
+core where applicable/profile-enumerated static config imports. Broker
+checks exact required membership/fresh bytes/no link/hardlink/mount escape,
+no caller exclusion. Dynamic imports remain account code, not transitive
+sandbox/freeze; Node/native/broker bound separately by profileDigest.
+Required-file/version changes demand operator requalification, never target
+self-enrollment. Applied ALL changes independently checked.
 
-### 9.1 Consumption and ownership
+## 9. Environment, evidence and result taxonomy
 
-One durable reservation per successful applied package. Retry after PASSED,
-TEST_FAILED, TIMED_OUT, EXECUTION_ERROR, ORPHANED or QUARANTINED: **NO**.
-Fresh executionId does not renew authority; new separately approved/applied
-package required. Reservation consumes even before launch. Evidence deletion,
-reboot or unit collection never resets it.
+### 9.1 Fresh environment and confidential handoff
 
-Exclusive same-ID, same-run/package and root locks. Serialize all runs in
-one canonical root, covering targets/config/reports. Independent roots may
-run with disjoint authoritative claims and no runner quarantine. Acquire
-root -> package -> ID; conflict/ambiguous owner refuses (5), no stale-PID
-stealing. Durable protected claim placement/anti-deletion history BLOCKED.
-
-### 9.2 Environment categories
-
-Positive projection for the actual manager-launched workload, suppressing
-manager defaults/inheritance. Names carry no authority; never persist values.
+Native workload mode clears inherited env before Node and installs exactly:
 
 | Category | Policy |
 |---|---|
-| REQUIRED | Product-derived PATH/HOME/CI/GITHUB_ACTIONS; qualified fixed tool directories, per-attempt home, CI=true, GITHUB_ACTIONS=false; initial executable absolute |
-| ALLOWED | Product-derived LANG/LC_ALL/TMPDIR only, qualified literal locale/per-attempt temp; no ambient copy |
-| STRIPPED | AI_API_KEY, Groq/Gemini/Google/all provider aliases; GITHUB_TOKEN/GH_TOKEN/GitHub credentials; npm auth/NPM_TOKEN/NODE_AUTH_TOKEN/npm config/package families; NODE_OPTIONS/NODE_PATH/loader/preload and every other ambient name |
-| TARGET-OWNED PASS-THROUGH | Explicit finite SUT credential names/values from target operator runtime authority; no provider/product/GitHub/npm/loader/control names or wildcard |
-| Cypress controls | Only qualified product-generated payload/cache/reporter values; no CYPRESS_* ambient/pass-through copying |
-| Playwright controls | Only qualified product-generated browser/reporter values; no PLAYWRIGHT_* ambient/pass-through copying |
+| REQUIRED | PATH=fixed qualified tool directories, HOME=per-attempt runner leaf, CI="true", GITHUB_ACTIONS="false" |
+| ALLOWED | LANG=LC_ALL="C.UTF-8", TMPDIR=per-attempt runner leaf |
+| STRIPPED | All ambient names: AI/provider/GitHub/npm credentials/config, NODE_OPTIONS/NODE_PATH/preload/loader and all unlisted names |
+| TARGET-OWNED | Explicit enrolled/requested SUT_[A-Z][A-Z0-9_]{0,59}, <=32 unique; value<=4096 UTF-8 bytes/total name+value<=65536/no NUL |
+| Cypress controls | Product-only CYPRESS_CACHE_FOLDER=qualified cache, CYPRESS_RUN_BINARY=qualified native Cypress, no other CYPRESS_* |
+| Playwright controls | Product-only PLAYWRIGHT_BROWSERS_PATH=qualified payloads, PLAYWRIGHT_JUNIT_OUTPUT_FILE=exact attempt report, no other PLAYWRIGHT_* |
 
-Proposed pass-through bounds: <=32 unique names, exact
-`SUT_[A-Z][A-Z0-9_]{0,59}` with whole-string matching; values <=4096 UTF-8
-bytes, no NUL; total <=65536 bytes. Adapters explicitly map SUT values when
-needed; no reserved credential relabeled SUT. Exact future config/schema and
-qualified PATH/HOME/native values remain BLOCKED, not current schema changes.
+No credential relabeling into SUT aliases. Fixed locale/tools qualified.
+Attempt paths /run/qa-agent-controller-v1/workloads/<ID>, protected ancestors,
+runner leaf only. No credential reference/handle/file transport or value
+echo/hash/persistence.
 
-No generic secret protection: account-accessible files/network and deliberate
-SUT values remain accessible. Empty HOME is not filesystem isolation. No
-secret/handle is intentionally persisted, including manager/system logging;
-raw stdout/stderr must not default to journald.
+Anonymous sealed memfd envelope exactly {schemaVersion:1,executionId,
+rootDigest,nodePath,argv,environment}; rootDigest H, qualified nodePath/argv
+broker-built, environment exact projected name/value array.
+<=262144 bytes, <=128 argv entries, each<=32768/total<=65536; overflow refuses.
+Broker creates/seals FD/passes StandardInputFileDescriptor/closes handoff.
+Workload checks UID/version/bounds, clears inherited env, reads/closes FD,
+sets stdin null, execs Node. No caller descriptors.
 
-### 9.3 Evidence bounds and result taxonomy
+Upstream [Environment setter](https://raw.githubusercontent.com/systemd/systemd/v256/src/core/dbus-execute.c)
+writes transient settings; secret Environment/StandardInputData/credentials
+are forbidden. Real-host proof: no secret payload in manager transient files/
+journal/sudo I/O/core/debug/product evidence. OS swap/account-readable memory/
+target deliberate secret output outside isolation claim. Product never
+intentionally persists values; empty HOME/NoNewPrivileges is not sandbox.
 
-Fixed proposed limits:
+### 9.2 Finite capture/import/persistence
 
-| Resource | Limit / behavior |
-|---|---|
-| stdout | 200000 bytes transient retention; cap before chunk copy; drain/discard excess, record truncation/counters; no unbounded concatenation |
-| stderr | Independent same 200000-byte cap |
-| Imported reports | <=8 regular files, <=1048576 bytes each, <=8388608 total; bounded read/parse; no symlink/recursive/arbitrary path import |
-| All persisted product evidence | <=16777216 bytes per attempt including records/controller/report projections; check before write |
-| Truncation | Never infer success from partial report; stream truncation is a fact, absent result proof is error |
+Root broker handles opaque stdout/stderr bytes only, per-stream<=200000,
+cap BEFORE copy/drain-discard overflow/saturating counters. No root report
+parser. Wire output frames: kind byte1 stdout/2 stderr/3 structural JSON,
+u32 big-endian length<=262144 +payload (raw frames<=65536); <=16 queued
+frames/<=4194304 queued bytes. Slow/dead reader
+drops raw frames/marks truncation, never blocks deadline. No raw values in
+journal/log/persistence.
 
-Persist only bounded closed structural facts/counters/hashes/refs from
-qualified adapters. No raw secret-bearing streams/report strings, exception
-text, labels, environment values or unbounded journal. Size does not justify
-raw persistence. Arbitrary target disk/network/resource use is outside these
-bounds, not a quota/sandbox. Structural report grammar and safe manager
-transport/retention remain BLOCKED qualification work.
+Client parses reports non-root: <=8 exact generated regular owner-checked/
+no-follow files, <=1048576 each/<=8388608 total, no recursive/arbitrary path.
+All persisted product data<=16777216/attempt including root journal/records/
+report projections. Persist structural counts/digests/refs/truncation only,
+no raw stream/label/message/stack/env/secret handle/provider material.
+Target disk/network/report output is account activity, not product quota.
 
-PASSED needs confirmed run, qualified complete success and durable empty-tree
-cleanup. TEST_FAILED needs qualified actual failed-test evidence, not nonzero
-exit alone. Signal/cancel/missing report/start/controller/cleanup failure ->
-EXECUTION_ERROR / 7, with quarantine for unresolved ownership/cleanup.
+### 9.3 Qualified structural results and exits
 
-| Result/category | Exit |
+Exact enrolled-version JUnit profiles; non-root parser, DTD/external entities/
+network expansion forbidden, depth<=32/testcases<=10000. Closed
+testsuites/testsuite/testcase envelope and bounded totals agree with complete
+enumeration. Transient labels/file attributes map canonical requested specs.
+Cypress per-spec output/Playwright file attributes must cover ALL requested
+specs/no extra/missing; unsupported version if exact mapping unprovable.
+Each spec>=1 executed case; all-skipped/no-test error.
+
+Closed XML vocabulary: testsuites contains testsuite; testsuite contains
+ testcase; testcase at most one failure/error/skipped, optional system-out/
+system-err. Optional properties under testsuite contains property leaves;
+all text/property payloads bounded/discarded. Allowed attributes: testsuites/
+testsuite use name,tests,failures,errors,skipped,time,timestamp,file,hostname,
+id,package; testcase name,classname,file,time; failure/error message,type;
+skipped message; property name,value. Other elements/attributes/entities
+refuse. Numeric counts integer0..10000/time finite decimal0..600; each
+text/attribute<=4096 UTF-8 bytes. Spec mapping requires canonical file
+attribute or qualification-proven exact suite-name-to-requested-path mapping,
+never label resemblance. Unsupported shape refuses, no grammar relaxation.
+
+Normalized result exactly {adapterVersion,specs,totals,complete}, specs sorted
+{path,total,passed,failed,skipped}, totals={total,passed,failed,skipped},
+integers0..10000/sums consistent/complete=true/exact target paths.
+No report/provider status trusted. Broker checks proposal binding/process/
+structural consistency; forged same-account report remains R-3.
+
+PASSED: proven Node launch/normal manager exit0/complete exact spec result,
+failed0/passed>0 each spec/empty/durable cleanup.
+TEST_FAILED: complete actual failed>0/qualified normal framework exit1/exact
+specs/empty/durable cleanup. Other nonzero/signal/cancel/no report/selection/
+start/controller errors EXECUTION_ERROR. Timeout requires §6 exact manager
+deadline/empty proof, overrides late report PASS. Stream truncation cannot
+substitute complete report; report truncation never PASS/TEST_FAILED.
+
+| Outcome/category | Exit |
 |---|---:|
 | PASSED | 0 |
 | TEST_FAILED | 10 |
-| TIMED_OUT with durable timeout/termination/cleanup proof | 8 |
-| EXECUTION_ERROR / ORPHANED discovered synchronously / post-submission QUARANTINED | 7 |
-| Authority/eligibility/replay/pre-existing quarantine before new start | 5 |
+| Proven TIMED_OUT | 8 |
+| EXECUTION_ERROR / synchronous orphan / post-submit quarantine | 7 |
+| Pre-start authority/eligibility/replay/pre-existing quarantine | 5 |
 | Input/applied binding | 4 |
 | Config | 3 |
 | Usage | 2 |
-| Internal product bug before authorized submission | 1 |
+| Internal bug before submission | 1 |
 
-After possibly accepted submission, internal errors cannot skip recovery as
-exit 1. Existing provider exit 6 outside execute remains unchanged. No new
-orphan/quarantine exit. Reserved execute remains 5.
+Possibly accepted start requires recovery/error7, never harmless1.
+Existing provider6 unchanged/reserved execute5 everywhere/no new exit.
 
 ## 10. TSB-F02 — completed current and proposed consumer analysis
 
@@ -660,7 +816,9 @@ execute handler
        -> exact decisions/applied/live checks (section 8.1)
        -> frozen data descriptor, never public approval verdict
   -> execution-state/store -> consumed attempts/locks/reconciliation
-  -> systemd adapter -> closed descriptor/lifecycle observations
+  -> private broker client -> closed request/lifecycle observations
+       -> root-owned host broker -> fixed systemd request
+            -> non-root workload mode -> qualified Node/framework
   -> qualified framework-result adapter -> bounded structural facts
   -> execution-record builder -> closed durable evidence
 ```
@@ -688,230 +846,265 @@ not missing runtime code or controller privilege qualification.
 | DC-F02-5 apply retains independent binding | Holds | Holds; apply/#23F unchanged; execute cannot reapply |
 
 **PROPOSED EXECUTE TSB-F02 TRIGGER = FALSE** for this explicit consumer graph.
-The former INDETERMINATE consumer-design blocker is resolved. The independent
-section 4 authority STOP remains. Finding stays **OPEN / LOW / CONDITIONAL**;
+The former INDETERMINATE consumer-design blocker is resolved. Section 4 resolves the OP-06-03 authority design blocker; broker adds no gate consumer. Finding stays **OPEN / LOW / CONDITIONAL**;
 no closure/re-rating/remediation. Future import/call/authority changes require
 re-evaluation, with STOP if TRUE or INDETERMINATE. Design FALSE is not runtime
 certification or permission to bypass future tests.
 
-## 11. Remaining design work, implementation boundary and security impact
+## 11. Closed schemas and Stage 5 boundary
 
-Closed execution-record schema is **NOT FINALIZED at this security STOP**;
-field inventories are not a schema. Proposed new identity:
-AutomationExecutionRecord schemaVersion 2, separate from legacy v1. Bind
-executionId; run/package/apply/review IDs/digests; project/canonical root/
-principal; framework/runtime/native identities; exact target paths/operations/
-content; runner/OS/boot; unit/invocation/controller contract/version; reserve/
-start/end/cleanup UTC and monotonic duration; closed state/result/reason;
-exit/signal/timeout proof; bounded structural refs/hashes; product version.
-No command text, raw output, secrets/handles or provider material. Exact keys,
-types/bounds/nullability/digest domains/cross-field rules and separate attempt
-journal must be finalized with enforceable authority, not left to implementers.
+### 11.1 Canonical encoding and shared records
 
-| Required mission item | Disposition |
+All new objects recursively closed/every key required. Canonical encoding
+uses existing CRS-1 encodeValue data algorithm: ASCII JSON/sorted ASCII keys/
+escaped UTF-16/dense arrays/safe integers/no -0/accessor/exotic values.
+Native broker implements only data specification, imports no npm JS.
+H = SHA-256 of ASCII domain prefix +canonical bytes excluding own digest
+field/no newline. Existing Stage 4 domains/bytes unchanged. H §4,
+ID32 lower hex/N nonnegative safe integer/UTC valid canonical
+YYYY-MM-DDTHH:mm:ss.sssZ/bootId lowercase canonical UUID/null explicit.
+No environment value hash persisted.
+
+binding exactly {projectId,runId,packageOrdinal,product,root,principal,
+reviewRecordId,applyRecordId,reviewRecordDigest,packageDigest,changeSetDigest,
+automationPlanDigest,repositoryContextDigest,projectionDigest,appliedRecordSha256,
+targets,framework,timeoutMs,fingerprintDigest,profileDigest,bindingDigest}.
+Existing generation ID/product/root/principal grammars/validators; principal
+exact Stage 4 OS-local envelope/review+apply IDs ID/digests H/targets §4.
+ALL changes bound by applied/package chain.
+bindingDigest domain "qa-ai-agent:execution-binding:v1:"; broker independently
+reconstructs launch/security data from fixed Stage 4 evidence, compares digest.
+Fingerprint domain "qa-ai-agent:execution-fingerprint:v1:"; profileDigest
+domain "qa-ai-agent:execution-profile:v1:" over qualification.
+propertiesDigest domain "qa-ai-agent:execution-properties:v1:" hashes
+fixed semantic payload, FD values replaced by fixed role names, no secret
+envelope content.
+
+controller exactly {contractVersion,brokerSha256,bootId,managerId,unitName,
+invocationId,cgroupPath,cgroupDev,cgroupIno,propertiesDigest}; literal version/
+H hashes/ID invocation/authenticated manager local-bus unique owner<=256
+ASCII/manager-derived cgroupPath<=4096/dev+ino decimals. Its initial slash
+is interpreted strictly beneath the authenticated cgroup-v2 mount, never as
+an arbitrary filesystem absolute path. No caller PID/
+D-Bus object authority.
+cleanup exactly {admissionClosed,managerTerminal,noPendingJobs,emptyBy,
+confirmedAt}, booleans true/UTC/emptyBy enum populated-zero/manager-removal/
+boot-change/not-submitted. Last variant only protected NOT_SENT plus no
+send/no unit/clean namespace proof; never uncertain SUBMITTING shortcut.
+
+### 11.2 Protected journal/transaction/proposal
+
+QaAgentExecutionAttempt v1 exact keys:
+kind="QaAgentExecutionAttempt", schemaVersion=1, executionId, sequence,
+state, binding, controller, submission, timeline, observation, cleanup,
+outcomeDigest, previousDigest, journalDigest.
+sequence N starts0/increments1/state §7/controller null until known;
+submission NOT_SENT/MAY_HAVE_BEEN_SENT/BOUND.
+timeline={reservedAt,submittedAt,startedAt,endedAt,monotonicStartUs,
+monotonicEndUs}; reservedAt UTC/subsequent UTC|null/N|null by facts;
+monotonic same boot/ordered/never fabricated.
+observation={managerResult,exitCode,signal,timeoutObserved,stdoutBytes,
+stderrBytes,stdoutTruncated,stderrTruncated}, managerResult null or
+success/exit-code/signal/timeout/other, exitCode null|integer0..255,
+signal null|integer1..64, counters N saturated MAX_SAFE_INTEGER/flags boolean.
+cleanup null until proof/outcomeDigest H|null until terminal;
+previousDigest null seq0 then H prior immutable entry;
+journalDigest domain "qa-ai-agent:execution-attempt:v1:".
+
+Immutable attempts/<ID>/<8-digit-sequence>.json/sequence<=99999999/
+<=1024 entries per attempt; overflow terminates/error/quarantine.
+Current pointer exactly {executionId,sequence,journalDigest}, atomic/fsynced.
+Bounded contiguous chain verified on recovery; ambiguous/missing/temp/
+unknown files quarantine. Root ownership, not hash alone, establishes trust.
+
+Claim/tombstone exactly {schemaVersion:1,key:H,executionId,bindingDigest:H}.
+RootKey domain "qa-ai-agent:execution-root:v1:" over root identity.
+Consumed keys in fixed order: "qa-ai-agent:execution-consumed-run:v1:"
+over [rootDigest,runId,ordinal]; "qa-ai-agent:execution-consumed-package:v1:"
+over [rootDigest,packageDigest,applyRecordId].
+Transaction {schemaVersion:1,executionId,rootKey,consumedKeys,bindingDigest,
+phase}, phase INTENT/COMMITTED, consumedKeys exactly two H. Fixed protected
+paths/only validated IDs/hashes as leaves; missing history cannot be rebuilt
+from target files.
+
+Result proposal: second request frame<=65536, exactly {schemaVersion:1,
+executionId,invocationId,bindingDigest,result}; normalized §9 result or null.
+Once after BOUND within same lifecycle budget. No caller status/exit/
+timeout/cleanup/property assertions; broker determines facts. Reconcile
+has no proposal; missing/malformed yields error after cleanup.
+
+Incident exactly {kind:"QaAgentExecutionIncident",schemaVersion:1,executionId,
+rootDigest,reason,createdAt,resolvedAt,cleanup,incidentDigest}, UTC/
+resolvedAt+cleanup null until operator recovery/§11.3 reason;
+domain "qa-ai-agent:execution-incident:v1:".
+Resolution appends immutable revision, never execution rewrite/retry.
+
+### 11.3 Execution-record v2 and response
+
+AutomationExecutionRecord v2 exact keys:
+kind="AutomationExecutionRecord", schemaVersion=2, executionId, binding,
+controller, timeline, status, reason, process, result, capture, cleanup,
+recordDigest. No silent legacy v1 migration/reuse.
+Shared records above; controller null only no proven binding;
+status PASSED/TEST_FAILED/TIMED_OUT/EXECUTION_ERROR/QUARANTINED;
+result §9|null/complete required PASS+TEST_FAILED; cleanup null only
+QUARANTINED. No-send errors use emptyBy=not-submitted and proof above;
+uncertain send must prove actual subtree empty or quarantine.
+process={exitCode,signal,managerResult,timeoutObserved}, §11.2 types.
+capture={stdoutBytes,stderrBytes,stdoutTruncated,stderrTruncated,reportCount,
+reportBytes}, counters N/reportCount<=8/reportBytes<=8388608.
+recordDigest domain "qa-ai-agent:automation-execution-record:v2:".
+
+Reasons: SUCCESS, ASSERTION_FAILURE, HARD_TIMEOUT, CANCELLED, CLIENT_LOST,
+START_FAILURE, OBSERVATION_EXPIRED, RESULT_INVALID, CONTROLLER_FAILURE,
+MISSING_UNIT_PROOF, CLEANUP_UNPROVEN, STATE_INCONSISTENT.
+SUCCESS iff PASSED/ASSERTION_FAILURE iff TEST_FAILED/HARD_TIMEOUT iff
+TIMED_OUT. QUARANTINED only CONTROLLER_FAILURE/MISSING_UNIT_PROOF/
+CLEANUP_UNPROVEN/STATE_INCONSISTENT+claims retained. Other reasons error
+with cleanup. exit/signal mutually exclusive/PASS0+manager success+
+failed0/TEST_FAILED1+failed>0/HARD_TIMEOUT exact manager/deadline facts.
+Quarantine may retain preliminary facts, never normal success.
+Terminal record/journal fsync before live claim release/tombstones retained.
+
+Response exactly {schemaVersion:1,contractVersion,operation,executionId,
+disposition,reason,attemptDigest,record}, JSON<=262144.
+operation create/reconcile/disposition REFUSED/BOUND/TERMINAL/QUARANTINED,
+attemptDigest H|null/record v2|null/reason result enum|null or SCHEMA_INVALID/
+CALLER_REFUSED/INELIGIBLE/REPLAY/INPUT_MISMATCH.
+Pre-reservation refusal null attemptDigest/record; consumed error terminal/
+quarantine, not reset REFUSED. BOUND attemptDigest/null record+reason;
+terminal full matching record+reason. Malformed intake allows operation/
+executionId=null only/fixed SCHEMA_INVALID/no echo. Oversize malformed
+response cannot truncate into PASS; error/recovery.
+
+### 11.4 Implementation interfaces and retained governance
+
+Future private modules: execute.js/execution-applied-binding.js/
+execution-store+state/broker-client/framework-launch+result/
+execution-record-v2. verifyApplied -> frozen binding;
+create(closed request) -> bounded frames/record; reconcile(ID) -> record;
+normalizeResult -> proposal; validateRecord -> structural read-only evidence.
+Broker alone reserves/owns protected consumption, no direct systemd/legacy
+#23G retry path. No implementation authorized.
+
+Stage 5 separate authority; preserve Stage 4 record/manifest/review/apply/
+TAP-2/CRS-1/PPI-1/#23F/both gates/FUTURE/API/bin/exports/legacy exclusion.
+Root state outside target. Future client copies <output.dir>/execution/<ID>.json,
+outside Stage 4 runs/<runId> inventories, no silent migration/export/dependency.
+
+| Mission item group | Closed design / later required evidence |
 |---|---|
-| 1 eligibility | Mandatory checks fixed; baseline/authority qualification BLOCKED |
-| 2 provisioning | Operator install/drain/revoke duties fixed; safe grant recipe BLOCKED |
-| 3 privilege | Analyzed; OP-06-03 security/deployment STOP |
-| 4 service | Semantics fixed; enforced property/API qualification BLOCKED |
-| 5 identity | Closed grammar/collision/non-reuse/lookup fixed |
-| 6 bounded orphan | Adopted; no immediate client-death claim |
-| 7 reconciliation | A–H result/retry/quarantine/exit/cleanup fixed; protected protocol BLOCKED |
-| 8 state machine | Closed proposed states/transitions; serialized journal/durability BLOCKED |
-| 9 timeout | Exact proposed values; independent host enforcement BLOCKED |
-| 10 termination | Full-tree/empty/admission proof; authorized operations BLOCKED |
-| 11 executables | JS/.bin policy fixed; native/version/literal adapters BLOCKED |
-| 12 targets | Exact applied specs only, no suite fallback |
-| 13 binding | Read-only algorithm/existing-evidence compatibility fixed; fingerprint BLOCKED |
-| 14 retry | NO for any consumed state |
-| 15 concurrency | Root/package/ID exclusivity/order; protected claims/store BLOCKED |
-| 16 environment | Categories/reserved keys/SUT bounds; literal host/native/config schema BLOCKED |
-| 17 evidence | Exact caps/no raw persistence; safe transport/result adapter BLOCKED |
-| 18 record | Proposed v2 identity/obligations; exact closed schema BLOCKED |
-| 19 exits | Fixed taxonomy, no new exit values |
-| 20 TSB-F02 | Current FALSE / proposed FALSE, complete section 10 graph |
-| 21 security | Existing contracts preserved, impact only |
-| 22 deployment | No component adopted; compliant authority unresolved, OWNER DECISION REQUIRED |
-| 23 Stage 5 | Private boundaries below; implementation/activation unauthorized |
-| 24 validation | Documentation/current-surface checks; section 12; no design PASS certification |
+| 1–4 eligibility/provisioning/privilege/service | §§4–6 scoped authority/exact policy/payload; qualify host |
+| 5–10 identity/orphan/reconcile/state/timeout/termination | §§6–7 protected claims/A–H/finite budgets; real crash/kill/boot |
+| 11–13 executable/targets/binding | §8 closed adapters/fingerprint/exact specs; native/selection proof |
+| 14–18 retry/concurrency/env/evidence/record | §§7/9/11 no retry/locks/memory SUT/bounds/closed schemas |
+| 19–24 exits/TSB/security/deployment/Stage5/validation | §§9–13 fixed taxonomy/gate-free graph/impact/ordered approval |
 
-Likely future private modules: execute.js, execution-applied-binding.js,
-execution-state.js/execution-store.js, systemd adapter, Cypress/Playwright
-launch/structural-result adapters, execution-record-v2.js. Possible future
-integration: CLI args/routes/closed config, installed inventory/static-graph
-and external consumer tests. Interfaces: verifyApplied -> frozen descriptor;
-reserve -> consumed attempt; submit -> manager identity; observe/stop/reconcile
--> structural facts; normalizeResult -> qualified facts; commitOutcome ->
-durable terminal evidence. Exact interfaces/schemas/storage require completed
-design before Stage 5, not implementation discretion.
+No owner-level design blocker remains in approved scope. Future implementation/
+qualification is not current support/release proof. Unprovable selected
+enforcement or broader invocation/component/distribution/API ->STOP owner.
+TSB-F02 current FALSE/proposed FALSE subject to independent review;
+OPEN / LOW / CONDITIONAL/no remediation/refactor/closure. R-1..R-5 accepted
+only existing OD-04 scope/AT-07/TB-01 RESIDUAL/FUTURE guards OPEN.
 
-Forbidden now: all source/test/workflow/package/config edits. Future Stage 5
-must preserve Stage 4 records/manifest/approval/apply semantics, TAP-2/CRS-1/
-PPI-1, #23F, both gate implementations, FUTURE guards, public barrel/exports/
-bin and legacy module exclusion. Execution storage must be outside Stage 4
-run-root inventory (which rejects unknown directories), with an exact future
-approved layout. No silent migration/dependency/export expansion.
-
-Sequence: finish authority/design -> design exact-head CI -> Architecture ->
-Security -> PO OD-06 -> separately authorized Stage 5 -> Linux/native/
-adversarial/installed-package qualification -> separate release activation.
-Design approval never flips RELEASE_CAPABILITIES.execute. Target opt-in alone
-cannot enable it. Installed behavior must work in an external target from npm,
-without source checkout, global framework or .bin shim.
-
-Future adversarial requirements: direct D-Bus same-name property/auxiliary
-abuse; User/ExecStart/deadline/kill-mode mutation; manager/workload account
-control; migration/fork/setsid descendants; client SIGKILL around submit/start;
-manager restart/reboot; stale/missing/recreated units; uninterruptible tasks/
-cleanup failures; durable handoff/claim corruption; Node/framework/native/shim
-substitution/downloads; exact-spec versus suite selection; content/helper/root/
-product/record/decision tampering; TOCTOU; replay/concurrency; secrets in env/
-journal/output; stream/report/persistence overflow; forged zero-exit/PASS and
-unknown/signal outcomes. Cooperative test success cannot certify this matrix.
-
-TAP-2/CRS-1/PPI-1 unchanged; R-1..R-5 ACCEPTED only in existing OD-04 scope;
-AT-07/TB-01 RESIDUAL; every FUTURE guard OPEN. No closure/re-rating/new
-residual acceptance.
-
-| Existing residual | Execute impact only |
+| Residual | Execute impact only |
 |---|---|
-| R-1 | Same-principal automation remains; no human proof |
-| R-2 | Account attribution is not human identity/runner qualification |
-| R-3 | Writable evidence forgery/deletion; hashes are not origin/protected history |
-| R-4 | Fresh path/content is not immutable transitive code or TOCTOU elimination |
-| R-5 | Harmful approved code keeps account filesystem/network permissions |
-| AT-07/TB-01 | Rebuilt bindings refuse inconsistency; forged self-consistent local evidence remains residual |
+| R-1 / R-2 | Same-principal automation/account attribution, no human proof |
+| R-3 | Writable evidence/result forgery; root history prevents consumption deletion, not approval-origin forgery |
+| R-4 | Fresh bytes/fingerprint not same-account/dynamic-code freeze |
+| R-5 | Harmful tests retain account filesystem/network/SUT authority |
+| AT-07/TB-01 | Consistent reconstructed digests not origin authentication |
 
-Management escalation in section 4 is not absorbed into accepted residuals.
-Host/network/SUT-secret/dependency/output/resource exposures still require
-OD-06 disposition. Containment remains lifecycle only.
+Root escalation/property freedom forbidden, not absorbed as residual.
+Host/network/SUT/dependency/output/resource exposures require independent
+Security/owner OD-06; no new residual acceptance.
 
-## 12. Validation and delivery boundary
+## 12. Validation, delivery and review boundary
 
-Exact allowlist: this document only. No source/test/workflow/package diff;
-API/bin/exports/package surface and disabled execute preserved.
+Exact changed-file allowlist: this document only. Sections1–2 preserved
+after line-ending normalization; all STOP commits remain ancestry. No
+source/test/workflow/package/API/ROADMAP edits. Existing tests run unchanged
+for current-surface regression, no broker/controller/framework provisioning
+or new tests. Windows Node24 checks not Linux Node22 qualification.
 
-Checks: Markdown structure/fences/whitespace, relative-link destinations and
-regression against starting HEAD, stale active statuses versus historical
-sections 1–2, completed graph, state/exit/timeout consistency, existing DC-F02
-static graph and CLI package suites, git diff --check, direct commit parent/
-preserved ancestry, final clean tree. Report observed results in final response;
-do not reuse the prior commit's 35-test pass. No controller/framework/system
-provisioning execution. Windows Node 24 checks are not Linux Node 22 proof.
+Checks: diff --check/Markdown sections+fences+links+whitespace/historical
+preservation/no stale active authority STOP/schema+property+state+exit+timeout/
+17 owner directives and24 mission items/static DC-F02 and CLI package suite/
+native reserved exit5/direct-child+ancestry+clean tree.
+Actual results/final HEAD/tree/PR/check identity reported externally;
+source commit cannot contain own SHA.
 
-Observed pre-commit validation on Windows / Node v24.21.0:
+Authorized: one direct-child commit, fast-forward push existing design branch,
+main PR classified HEAVY (security contract), exact-head CI existing workflows.
+Cumulative diff includes three preserved STOP/design commits. Synthetic
+pull_request merge allowed only when event head SHA and merge parent/source
+checkout bind exact PR source HEAD; no stale CI substituted as proof.
 
-- `node --test test/security/controlled-v1/dc-f02-static-graph.test.js test/installation/controlled-v1-cli-package.test.js`:
-  **35 tests, 35 pass, 0 fail/skip**; real npm pack dry-run inventory, API,
-  export/bin and current gate closure checks included.
-- Read-only documentation checks: 13 numbered sections, balanced fences,
-  no trailing whitespace, all 23 relative-link occurrences resolve, no removed
-  baseline relative destination, historical sections 1–2 unchanged, active
-  stale-status scan passes, all eight cases/all 24 mission items accounted for.
-- Direct subprocess proof: `qa-agent execute --json` returns native exit 5
-  and CAPABILITY_NOT_ENABLED_IN_RELEASE; no framework started.
-- Proposed existing dependency closure: 38 files, no missing/problem/gate
-  edges or #23F/legacy execute reachability. Future code remains untested.
+**STOP after delivery/CI before independent HEAVY Architecture review.**
+Author does not independently approve/merge/close. Then Architecture exact
+HEAD ->if APPROVED Security same HEAD ->if both APPROVED PO OD-06 ->
+separately authorized Stage5 ->Linux/native/adversarial/installed-package
+qualification ->separate activation/release. No merge authority here;
+RELEASE_CAPABILITIES.execute disabled.
 
-One new local commit above supplied HEAD. Push/PR/exact-head CI **NOT
-PERFORMED**: mission permits that path only after complete design PASS with
-no STOP. Reviews NOT STARTED; merge/implementation/activation NOT AUTHORIZED.
-
-On later PASS: push branch, open main design PR, obtain exact-head CI, stop
-before review. HEAVY Architecture exact-head -> if APPROVED HEAVY Security
-same HEAD -> if both APPROVED PO OD-06. No merge without separate authority.
+Future negative qualification: UID/sudo metadata/argv/env/cwd spoof;
+broker/config/ancestor/library writable substitution; direct D-Bus property/
+aux abuse denied; User/ExecStart/deadline/kill/restart/delegation mutation;
+workload broker reentry/escalation; subgroup/fork/setsid/migration;
+client/broker SIGKILL around reserve/send/start/proposal/cleanup;
+manager restart/reboot/missing/recreated units/uninterruptible tasks;
+torn journal/history deletion/replay/upgrades/quarantine; Node/framework/
+native/shim substitution/download; exact-spec/suite/config additions;
+applied/helper/root/product/review/record tamper/TOCTOU; secrets in
+transient/sudo/core/journal/logs; stream/report/persistence/capacity overflow;
+forged zero-exit/PASS/signals. Cooperative tests not full qualification.
 
 ## 13. Mandatory handoff / final-report schema
 
-```text
+~~~text
 MISSION RESULT:
-STOP — OWNER SECURITY/DEPLOYMENT DECISION REQUIRED (OP-06-03)
+DESIGN COMPLETE — report actual delivery/exact-head CI externally.
+STOP BEFORE INDEPENDENT HEAVY ARCHITECTURE REVIEW.
 
-C1 OWNER DECISION:
-APPLIED
+C1 / OP-06-02 / OP-06-03:
+APPLIED / APPLIED / APPLIED; only helper prohibition superseded.
 
-OP-06-02 OWNER DECISION:
-APPLIED
+PRIOR STOP / DESIGN COMMITS:
+PRESERVED — full identities section 3.
 
-STOP COMMIT PRESERVED:
-YES — 76c1ce8bbafe5f0aed36507fbbc924c3a973ebb7
+CONTROLLER / PRIVILEGE / DEPLOYMENT:
+Host systemd / transient .service / cgroup v2.
+One root-owned operator-installed one-shot broker, no daemon.
+Runner no direct manage-units/generic sudo/systemctl/systemd-run.
+Target code non-root; normal product npm; opt-in/removable provisioning.
 
-SECOND DESIGN COMMIT PRESERVED:
-YES — 0cc24cfb8cf77200eccc8d556822f1349a805eda
+BROKER / PROPERTY / VALIDATION:
+Versioned closed create/reconcile/unknown fields REFUSE.
+Independent validation/broker-built fixed payload/identity/deadline.
+No caller arbitrary executable/argv/env/cwd/user/slice/kill/restart.
+SUT only closed policy/memory FD/same binary non-root workload mode.
 
-SYSTEMD CONTROLLER / TRUSTED CONTROLLER MODEL:
-SELECTED — host system manager, transient .service, cgroup v2
-
-INITIAL RUNNER:
-PROVISIONED SELF-HOSTED LINUX (candidate; authority qualification blocked)
-
-PRIVILEGE MODEL:
-Scoped creation unproven; stock name/verb polkit does not validate service
-properties/auxiliary units. No root/broad grant/helper/daemon adopted.
-
-PROVISIONING CONTRACT:
-Operator host/account/framework/namespace/recovery/qualification and drain/
-revocation duties fixed; safe grant/install protocol blocked.
-
-SYSTEMD TRANSIENT SERVICE CONTRACT:
-One exact service, literal executable/argv, cwd/projected env, non-root,
-control-group kill, finite bounds, restart/delegation off, no arbitrary
-properties/shell/auxiliary units; authority enforcement blocked.
-
-UNIT IDENTITY:
-qa-agent-exec-v1-<32 lowercase hex executionId>.service; OS-random 128-bit
-ID; boot/invocation binding; collision fails; no reuse; durable lookup.
-
-CGROUP V2 CONTRACT / WHOLE-TREE TERMINATION PROOF:
-Protected domain subtree before code; admission closed; controller tree
-stop/SIGKILL; populated=0 and no start/restart; removal proof; 30000 ms
-confirmation; failure QUARANTINED / 7. Authorized API proof blocked.
-
-CONTROLLER LIFECYCLE INDEPENDENCE / BOUNDED ORPHAN MODEL:
-Selected manager outlives client; finite deadline; incomplete attempt
-reconciles, never PASS; no immediate client-death termination claim.
-
-PARENT-DEATH RECOVERY:
-Bounded orphan/deadline plus later reconciliation, not immediate detection.
-
-RECONCILIATION:
-A–H section 7; no retries; unknown -> error; failed cleanup -> quarantine;
-timeout 8 only with durable exact deadline and empty/cleanup proof.
-
-TIMEOUT:
-Proposed T default 600000 ms, min 1000/max 600000 integer; target config
-only; RuntimeMaxSec=T/1000; 30000 ms start/stop/confirmation budgets;
-observation <=T+90000 from request; host qualification blocked.
-
-RUNNER ELIGIBILITY:
-Provisioned self-hosted Linux initial candidate; Windows REFUSED;
-macOS/generic Linux/GitHub-hosted/containerized/generic VM DEFERRED;
-failed mandatory checks -> 5 before spawn, no degraded mode.
-
-DEPLOYMENT IMPACT / DEPLOYMENT MODEL IMPACT:
-OWNER DECISION REQUIRED — npm + host systemd remain selected goal;
-NO new QA Agent service/helper adopted; NO Docker/OCI/Kubernetes.
-
-CURRENT SUPPORTED SURFACE TSB-F02 TRIGGER:
-FALSE
-
-PROPOSED EXECUTE TSB-F02 TRIGGER:
-FALSE — completed gate-free applied-binding consumer graph.
+LIFECYCLE / RECOVERY:
+Exact namespace + protected ownership + boot/invocation/cgroup.
+Consumed tombstones/no retry/finite manager deadline/A–H reconcile/
+whole-tree kill/empty/durable cleanup; ambiguity quarantine7.
+No PID/group fallback/immediate death-kill promise.
 
 DESIGN COMPLETENESS:
-STOP artifact complete; implementable contract incomplete. Safe authority,
-host/native qualification, fingerprint, claims/store, closed record/journal/
-config/result schemas and exact controller APIs remain blocked.
+Closed schemas/adapters/properties/journal/provisioning contract.
+No broker implementation/qualified Linux tuple claimed.
 
-IMPLEMENTATION / EXECUTE ACTIVATION:
-NOT AUTHORIZED / NOT PERFORMED
+TSB-F02 / SECURITY / GOVERNANCE:
+Current FALSE/proposed FALSE subject to independent review.
+OPEN / LOW / CONDITIONAL; TAP-2/CRS-1/PPI-1/R-1..R-5/AT-07/TB-01 unchanged.
+FUTURE OPEN; Controlled Release NOT APPROVED.
 
-PUSH / PR / EXACT-HEAD CI:
-NOT PERFORMED — local security STOP artifact only
+SOURCE / PACKAGE / EXPORTS / EXECUTE / STAGE5:
+UNCHANGED / UNCHANGED / UNCHANGED / DISABLED / NOT AUTHORIZED.
 
-INDEPENDENT REVIEWS / MERGE:
-NOT STARTED / NOT PERFORMED
-```
+DELIVERY:
+Actual HEAD/TREE/parent/scope/PR/checks; no premature CI success.
 
-Report new local HEAD/tree, observed validation and unchanged API/source scope
-in delivery response, not self-referential hashes in this document.
+INDEPENDENT REVIEWS / MERGE / RELEASE:
+NOT STARTED / NOT AUTHORIZED / NOT APPROVED.
+~~~
