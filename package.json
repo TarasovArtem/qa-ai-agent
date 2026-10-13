@@ -100,8 +100,8 @@
   },
   "homepage": "https://github.com/TarasovArtem/qa-ai-agent#readme",
   "devDependencies": {
-    "@playwright/test": "^1.63.0",
-    "cypress": "^15.21.1",
-    "mochawesome": "^8.0.1"
+    "@playwright/test": "^1.64.0",
+    "cypress": "^16.1.1",
+    "mochawesome": "^8.1.1"
   }
 }
