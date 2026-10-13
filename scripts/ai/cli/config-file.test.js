@@ -121,7 +121,7 @@ test("config v1: a fully populated config validates every embedded contract", ()
   assert.equal(config.knowledge.projectKnowledgeUnitsDir, "qa/knowledge");
   assert.deepEqual({ ...config.requirements }, { source: "file", path: "qa/requirements.json" });
   assert.equal(config.capabilities.triage, true);
-  assert.equal(config.capabilities.apply, true, "a known-but-release-disabled capability is schema-valid");
+  assert.equal(config.capabilities.apply, true, "a known capability opt-in is schema-valid");
   assert.deepEqual([...config.providers.allow], ["mock", "groq"]);
   assert.equal(config.output.dir, "out/qa-agent");
 });

@@ -29,15 +29,15 @@ const GENERATIVE_PROVIDERS = Object.freeze(["groq", "gemini"]);
 const GENERATIVE_CAPABILITIES = Object.freeze(["design", "plan", "generate"]);
 
 // Release enablement is a property of this installed build. Stage 3 (OD-02)
-// adds design/plan/generate; approval recording, apply and execute stay
-// reserved behind their owner decisions.
+// adds design/plan/generate; Stage 4B enables approval recording and apply
+// under OD-CONTROLLED-V1-STAGE-4B-ACTIVATION. Execute remains behind OD-06.
 const RELEASE_CAPABILITIES = Object.freeze({
   triage: Object.freeze({ enabled: true, reason: null }),
   design: Object.freeze({ enabled: true, reason: null }),
   plan: Object.freeze({ enabled: true, reason: null }),
   generate: Object.freeze({ enabled: true, reason: null }),
-  reviewRecord: Object.freeze({ enabled: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE", ownerDecision: "OD-04" }),
-  apply: Object.freeze({ enabled: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE", ownerDecision: "OD-04" }),
+  reviewRecord: Object.freeze({ enabled: true, reason: null, ownerDecision: "OD-CONTROLLED-V1-STAGE-4B-ACTIVATION" }),
+  apply: Object.freeze({ enabled: true, reason: null, ownerDecision: "OD-CONTROLLED-V1-STAGE-4B-ACTIVATION" }),
   execute: Object.freeze({ enabled: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE", ownerDecision: "OD-06" }),
 });
 

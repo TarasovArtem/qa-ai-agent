@@ -223,14 +223,14 @@ test("§10.4.5: at runtime, info, a refused design and a design whose child fail
   assert.ok(out.loaded.includes("scripts/ai/cli/cli.js"));
 });
 
-test("Reserved commands stay reserved and no CLI module imports an approval, application, execution or regeneration module", () => {
+test("Only execute stays reserved; baseline CLI modules remain free of approval/application authority", () => {
   const { COMMANDS } = require(path.join(REPO_ROOT, "scripts", "ai", "cli", "args.js"));
   assert.deepEqual(
     Object.entries(COMMANDS)
       .filter(([, s]) => s.kind === "reserved")
       .map(([n, s]) => `${n}:${s.ownerDecision}`)
       .sort(),
-    ["apply:OD-04", "execute:OD-06", "review record:OD-04"]
+    ["execute:OD-06"]
   );
   for (const file of inv.CLI_FILES) {
     const scan = inv.scanModule(fs.readFileSync(path.join(REPO_ROOT, ...file.split("/")), "utf8"));

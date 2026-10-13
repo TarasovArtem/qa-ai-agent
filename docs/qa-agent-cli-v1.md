@@ -1,12 +1,13 @@
-# `qa-agent` CLI v1 — Controlled-v1 Stages 1–3
+# `qa-agent` CLI v1 — Controlled-v1 through Stage 4B
 
-Status: Stages 1–2 complete on `main`; **Stage 3 implemented on branch
-`feature/controlled-v1-productization-stage-3`** (authority
-`OD-CONTROLLED-V1-STAGE-3-IMPLEMENTATION`, upstream `OD-CONTROLLED-V1-OD-02`).
+Status: Stages 1–3 and Stage 4A are complete on `main`. Stage 4B activation is
+implemented on `feature/controlled-v1-stage4b-activation`, under
+`OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`; **NOT MERGED**. Exact-head
+CI is recorded in the implementation PR. See [activation evidence](controlled-v1-stage4b-activation.md).
 Governing design: [`controlled-v1-productization-contract-v1.md`](controlled-v1-productization-contract-v1.md).
 This document describes the implemented surface only. It does not change
-`ROADMAP.md` lifecycle state and does not authorize `review record`, `apply`,
-`execute`, release or publication.
+`ROADMAP.md` lifecycle state and does not authorize `execute`, merge, release
+or publication.
 
 ## 1. Package surface
 
@@ -15,9 +16,10 @@ This document describes the implemented surface only. It does not change
 | `exports` | **unchanged** — the same five keys and targets; 19 root names |
 | `bin` | **added**: `qa-agent` → `scripts/ai/cli/qa-agent.js` (not exported; requiring it is unsupported) |
 | Supported entrypoints | `exports ∪ bin` (package-surface minimality is computed over this union) |
-| Tarball | 47 baseline files + 19 `scripts/ai/cli/*.js` modules + 23 Stage 3 private runtime files = 89 files (closed list, tested; [`package-surface-v4.md`](package-surface-v4.md)) |
+| Tarball | unchanged 103-file Stage 4A inventory (closed list, tested; [`package-surface-v5.md`](package-surface-v5.md)) |
 | Shipped private (Stage 3, OD-02) | the minimal `#22`/`#23`/`generation` closure of `design`/`plan`/`generate`/`review show` — not exported, unsupported for import |
-| Not shipped | approval gates and review records, `apply`/`execute`/regeneration modules, tests, fixtures, evaluation |
+| Shipped private (Stage 4A) | review/apply runtime and canonical #23F/#23E closure; `SHIPPED_PRIVATE_RUNTIME_DEPENDENCY`, never exported |
+| Not shipped | test-design approval gate, execute/regeneration modules, tests, fixtures, evaluation |
 
 Install and run from a target repository (no global install, no checkout):
 
@@ -43,20 +45,29 @@ npx qa-agent --version
 | `plan --run <id>` | `capabilities.plan` | **generative** | **refused (5)** | plan artifacts in the run |
 | `generate --run <id>` | `capabilities.generate` | **generative** | **refused (5)** | GeneratedChangeSet + review package in the run (proposal only) |
 | `review show --run <id>` | `capabilities.generate` | none | valid | nothing (read-only, non-authoritative) |
-| `review record`, `apply` | reserved (OD-04) | — | — | none — fixed refusal, exit 5 |
+| `review record --run <id> --package <NNNN>` | `capabilities.reviewRecord` | none | valid | durable whole-package decision and manifest ledger, after TAP-2 |
+| `apply --run <id> --package <NNNN>` | `capabilities.apply` | none | valid | one canonical #23F attempt and durable outcome, after same-principal approval and confirmation |
 | `execute` | reserved (OD-06) | — | — | none — fixed refusal, exit 5 |
 
 Reserved commands return `CAPABILITY_NOT_ENABLED_IN_RELEASE` without reading
 the root, the config or any other input, and load no review-gate, `#22`/`#23`
 or approval module. There is no `commit`, `push`, `pr`, `merge`, `publish`,
 `release`, `regenerate`, `init`, `review verify`/`status` command and no
-`--provider` flag. The CLI never prompts.
+`--provider` flag. Only `review record` and `apply` prompt, through the existing
+Stage 4A interaction. Both require explicit validated target config opt-in;
+missing/false returns `CAPABILITY_NOT_REQUESTED`. CI refuses both commands
+(`APPROVAL_CI_FORBIDDEN` / `APPLY_CI_FORBIDDEN`). No target opt-in is added by
+the product.
 
 Global options: `--root <dir>` (default: cwd; never searched upward),
 `--config <path>` (must resolve inside the root), `--offline`, `--json`;
-`--run <id>` for `plan`/`generate`/`review show` (closed grammar
+`--run <id>` for `plan`/`generate`/`review show`/`review record`/`apply` (closed grammar
 `yyyymmddThhmmssZ-<16 hex>`; missing → `USAGE_MISSING_RUN`, malformed →
 `USAGE_INVALID_RUN_ID`, both exit 2).
+`--package <NNNN>` is mandatory for `review record`/`apply` only (four ASCII
+digits, excluding `0000`; missing/invalid → `USAGE_MISSING_PACKAGE` /
+`USAGE_INVALID_PACKAGE`, exit 2). These commands refuse `--json` and accept
+no automated decision or confirmation flags.
 
 ## 3. Configuration — `qa-agent.config.json` v1
 
@@ -133,9 +144,13 @@ Steps 7–10 apply to `triage analyze`, `triage run`, `design`, `plan` and
 `generate`. For the generative commands step 9 is the generative fit: `mock`
 or `--offline` → exit 5 `CAPABILITY_REQUIRES_GENERATIVE_PROVIDER`. Step 6 is
 enforced for `requirements check`, `triage *`, the generative commands and
-`review show`; `info` and `config validate` report it. For the generative
+`review show`, `review record` and `apply`; `info` and `config validate` report it. For the generative
 commands, every run/artifact input check (exit 4) and the run-directory write
 authorization (exit 5) also complete before step 13.
+Stage 4 retains its product-owned release gate before config access, then
+config/containment, offline contradiction and opt-in enforcement, followed by
+the unchanged Stage 4A CI, terminal, principal, run, approval and durability
+checks. Its stdout belongs to TAP-2 rather than the result-envelope formatter.
 
 ## 5. Exit codes and output
 
@@ -260,13 +275,16 @@ matches the context (`CURRENT` / `CHANGED_SINCE_GENERATE` / `UNAVAILABLE`).
 
 **DC-F02 / TSB-F02.** No Stage 3 entrypoint reaches
 `validateApprovedGeneratedChangeSetReview`, `validateApprovedTestDesignReview`
-or the #23F apply consumer; neither gate ships or is exported; there is no
+or the #23F apply consumer. The change-set gate ships privately for Stage 4,
+only #23F consumes it and independently rechecks per-target APPROVE binding;
+the test-design gate remains unshipped. Neither gate is exported; there is no
 `review verify`/`status` command. Enforced by a static import graph over the
 shipped files (`test/security/controlled-v1/dc-f02-static-graph.test.js`).
 `TSB-F02` remains `OPEN / LOW / CONDITIONAL`, trigger `FALSE`.
 
-## 10. Not in Stages 1–3
+## 10. Outside the activated CLI surface
 
-`review record`/`apply` and approval authenticity (OD-04), `execute` and any
+Cryptographic approval authenticity, physical-human proof, externally
+authenticated reviewer identity, `execute` and any
 OS support statement (OD-06), release/publication, a programmatic generative
 API (OD-07).

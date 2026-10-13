@@ -19,7 +19,7 @@
  *
  * Config schema validity is separate from runtime capability authorization:
  * a known capability that the installed release does not enable (e.g.
- * `apply`) is schema-valid here and refused only when invoked (policy.js).
+ * `execute`) is schema-valid here and refused only when invoked (policy.js).
  */
 
 "use strict";

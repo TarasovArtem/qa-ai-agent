@@ -8,6 +8,11 @@ private implementation shipping while preserving the supported release
 surface and keeping `reviewRecord` and `apply` disabled. It does not authorize
 Stage 4B activation, merge, or guard closure.
 
+The disabled-capability statements below describe the certified Stage 4A
+baseline. Stage 4B changes only CLI support and retains this exact physical
+inventory and export contract; see [Stage 4B activation evidence](controlled-v1-stage4b-activation.md)
+for the branch implementation and current installed-command proofs.
+
 ## Public surface
 
 The five `exports` entries, their targets, the 19-name root API, package

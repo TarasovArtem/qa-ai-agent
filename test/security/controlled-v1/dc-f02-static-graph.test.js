@@ -195,7 +195,7 @@ test("DC-F02-5 / TSB-F02: the production importers of each gate module are exact
   assert.equal(trigger, false, "TSB-F02 TRIGGER = FALSE");
 });
 
-test("C1 bin routing: release-disabled review/apply refuse before loading any authority implementation", () => {
+test("Stage 4B bin routing: config opt-in refuses before loading any authority implementation", () => {
   const { spawnSync } = require("node:child_process");
   const probe = `
     const Module = require('node:module'), load = Module._load;
@@ -203,21 +203,25 @@ test("C1 bin routing: release-disabled review/apply refuse before loading any au
       if (/^(?:\\.\\/)?(?:apply|review-record)$/.test(spec)) throw new Error('authority loaded before release gate');
       return load.call(this, spec, ...args);
     };
+    const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stage4b-config-gate-'));
+    fs.writeFileSync(path.join(root, 'qa-agent.config.json'), JSON.stringify({schemaVersion:1,projectProfile:{id:'gate-probe',displayName:'Gate probe',knownProjectConstraints:['Synthetic gate probe.']},framework:'cypress'}));
     const { run } = require('./scripts/ai/cli/cli');
     (async () => {
       const results=[];
       for (const argv of [['review','record'],['apply']]) {
         let output='', error='';
-        const code = await run({ argv, cwd: '/nonexistent-c1-root', env: { QA_AGENT_ENABLE_APPLY:'true', AI_PROVIDER:'mock', CI:'false' }, stdout:{write:t=>output+=t}, stderr:{write:t=>error+=t} });
+        const code = await run({ argv:[...argv,'--run','20261012T120000Z-0123456789abcdef','--package','0001'], cwd: root, env: { QA_AGENT_ENABLE_APPLY:'true', AI_PROVIDER:'mock', CI:'false' }, stdout:{write:t=>output+=t}, stderr:{write:t=>error+=t} });
         results.push({code,output,error});
       }
-      process.stdout.write(JSON.stringify(results));
+      fs.rmSync(root,{recursive:true,force:true}); process.stdout.write(JSON.stringify(results));
     })().catch(e=>{process.stderr.write(e.message);process.exitCode=1});`;
   const r = spawnSync(process.execPath, ["-e", probe], { cwd: REPO_ROOT, encoding: "utf8", timeout: 10000 });
   assert.equal(r.status, 0, r.stderr);
-  for (const result of JSON.parse(r.stdout)) { assert.equal(result.code, 5); assert.equal(result.output, ""); assert.match(result.error, /CAPABILITY_NOT_ENABLED_IN_RELEASE/); }
+  for (const result of JSON.parse(r.stdout)) { assert.equal(result.code, 5, result.error); assert.equal(result.output, ""); assert.match(result.error, /CAPABILITY_NOT_REQUESTED/); }
   const release = require("../../../scripts/ai/cli/policy").RELEASE_CAPABILITIES;
-  for (const key of ["reviewRecord", "apply"]) { assert.equal(release[key].enabled, false); assert.ok(Object.isFrozen(release[key])); }
+  for (const key of ["reviewRecord", "apply"]) { assert.equal(release[key].enabled, true); assert.ok(Object.isFrozen(release[key])); }
+  assert.equal(release.execute.enabled, false);
   assert.ok(Object.isFrozen(release));
 });
 
@@ -228,11 +232,18 @@ test("C1 bin graph non-vacuity: a direct gate edge is distinct from the permitte
   assert.ok(c.edges.some(([from, to]) => from !== CANONICAL_APPLY_CONSUMER && GATE_MODULES.includes(to)), "an injected bypass triggers F02");
 });
 
-test("DC-F02-2: no command reports an approval verdict - no review verify / review status / approve command exists", () => {
+test("DC-F02-2: no gate-verdict command exists; review/apply route only to existing Stage 4 implementations", () => {
   const { COMMANDS } = require(path.join(REPO_ROOT, "scripts", "ai", "cli", "args.js"));
   for (const name of Object.keys(COMMANDS)) assert.doesNotMatch(name, /verify|status|approve|verdict/, name);
-  assert.equal(COMMANDS["review record"].kind, "reserved");
-  assert.equal(COMMANDS.apply.kind, "reserved");
+  assert.equal(COMMANDS["review record"].kind, "stage4");
+  assert.equal(COMMANDS.apply.kind, "stage4");
+  assert.equal(COMMANDS.execute.kind, "reserved");
+  for (const file of ["scripts/ai/cli/args.js", "scripts/ai/cli/policy.js", "scripts/ai/cli/cli.js"]) {
+    const code = inv.stripComments(source(file));
+    assert.doesNotMatch(code, /\b(?:validateApprovedGeneratedChangeSetReview|validateApprovedTestDesignReview|executeAppliedChangeSet|writeFileSync|writeFile|appendFile|appendFileSync)\b/, file);
+  }
+  const apply = inv.staticClosure({ baseDir: REPO_ROOT, available: shipped, entries: ["scripts/ai/cli/apply.js"] });
+  assert.equal(apply.reached.has("scripts/ai/test-automation/controlled-execution.js"), false);
 });
 
 test("DC-F02 analyzer non-vacuity: it finds the real authorized path from #23F to the change-set gate", () => {
