@@ -1,19 +1,39 @@
 # Controlled-v1 Stage 4B — narrow CLI activation
 
 Authority: `OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`.
-Implementation branch: `feature/controlled-v1-stage4b-activation`.
-Status: **IMPLEMENTED / NOT MERGED**. The implementation PR records exact-head
-CI. This document records implementation scope, not canonical lifecycle closure.
-After exact-head CI the next action is independent HEAVY Architecture / Software
-Engineering review. Architecture review and Security review are not started;
-Security review requires Architecture approval of that exact HEAD. Merge and
-Controlled Release are not authorized; OD-06 is not entered.
+Historical implementation branch: `feature/controlled-v1-stage4b-activation`.
+Status: **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**.
 
+Stage 4B implementation [PR #249](https://github.com/TarasovArtem/qa-ai-agent/pull/249)
+is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**: reviewed HEAD
+`5a0b0ccc9d58b4a0ac3e2e54ef3e78b1bc46a226`, reviewed / merge TREE
+`9ec9967b9ac4ba71154544afb5a3f586c86cd354`; merge SHA
+`2c666e1261df747eb8ca4ce8d33870c8d47404f4`, topology `STANDARD_TWO_PARENT`.
+Parents: `e7e1f63541dfa938bf88f15f70fcf1c136ef1d9f` and
+`5a0b0ccc9d58b4a0ac3e2e54ef3e78b1bc46a226`.
+Fresh post-merge [push CI 38397805024](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38397805024):
+`event=push`, `branch=main`, `head_sha=2c666e1261df747eb8ca4ce8d33870c8d47404f4`,
+**completed / success**. This is post-merge certification, separate from PR-head CI.
+
+`RELEASE_CAPABILITIES.reviewRecord = enabled`;
+`RELEASE_CAPABILITIES.apply = enabled`;
+`RELEASE_CAPABILITIES.execute = disabled`.
+Review recording and application still require their own target-owned validated
+config opt-in and all existing interaction, principal, binding and durability gates.
+
+Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
+The implementation's pre-merge review/merge handoff is superseded by the merged,
+post-merge-certified state above. This documentation-only closure requires a
+separate independent exact-head **LIGHT** review; that review is **NOT STARTED**.
+This closure's merge is **NOT AUTHORIZED**. Controlled Release remains
+**NOT APPROVED**; OD-06 remains **NOT ENTERED**.
+
+Historical implementation preflight (before PR #249):
 Certified base main: `e7e1f63541dfa938bf88f15f70fcf1c136ef1d9f`.
 Certified base tree: `d8db9fa0c6e8712d52e9cd091f9a9424d3b4275a`.
 Fresh baseline CI `38376277924`: push / main / that exact SHA / completed-success.
 Preflight found a clean working tree, no later main commit and no competing
-implementation lifecycle; this mission is the sole implementation WIP.
+implementation lifecycle; Stage 4B was the sole implementation WIP at that preflight.
 
 ## Activation inventory and minimal change
 

@@ -1,11 +1,12 @@
 # Controlled-v1 Approval and Apply Security Contract v1
 
-Stage 4B branch implementation: `OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`
-enables only review/apply in the implementation branch, **NOT MERGED**.
+Stage 4B: **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** under
+`OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`.
 See [Stage 4B activation evidence](controlled-v1-stage4b-activation.md).
-The lifecycle and disabled-capability statements below record the certified
-Stage 4A main baseline and design history; normative security semantics remain
-unchanged. This implementation does not perform canonical lifecycle closure.
+Current lifecycle annotations are synchronized below. Original design-era
+inventories and pre-OD-04 capability-status annotations are historical;
+normative security/design requirements remain unchanged. Current reviewRecord/apply
+release enablement requires validated target-owned config opt-in; execute is disabled.
 
 Lifecycle: **Controlled-v1 Productization Stage 4 / OD-04 — human approval +
 apply security contract**
@@ -27,9 +28,9 @@ DESIGN: **APPROVED / MERGED / POST-MERGE CERTIFIED**
 
 STAGE 4A IMPLEMENTATION: **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**
 
-STAGE 4B ACTIVATION: **ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED**
+STAGE 4B ACTIVATION: **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**
 
-Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4A-CANONICAL-CLOSURE — APPROVED`.
+Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
 Implementation PR [#247](https://github.com/TarasovArtem/qa-ai-agent/pull/247):
 reviewed HEAD `bf340941d09b25a89090d82f8de04d6a34a99874`, reviewed TREE
 `6b56c7796c0475422186f0ff1fdf95d4499f58bf`; merge SHA
@@ -41,9 +42,23 @@ Fresh post-merge main/push CI:
 [38369860791](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38369860791)
 and [38369861016](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38369861016),
 both **completed / SUCCESS** on that exact merge SHA.
-`RELEASE_CAPABILITIES.reviewRecord = disabled`;
-`RELEASE_CAPABILITIES.apply = disabled`. Stage 4A completion grants no Stage 4B
-activation, guard closure, OD-06 entry or Controlled Release approval.
+Stage 4B implementation [PR #249](https://github.com/TarasovArtem/qa-ai-agent/pull/249)
+is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**: reviewed HEAD
+`5a0b0ccc9d58b4a0ac3e2e54ef3e78b1bc46a226`, reviewed / merge TREE
+`9ec9967b9ac4ba71154544afb5a3f586c86cd354`; merge SHA
+`2c666e1261df747eb8ca4ce8d33870c8d47404f4`, topology `STANDARD_TWO_PARENT`.
+Parents: `e7e1f63541dfa938bf88f15f70fcf1c136ef1d9f` and
+`5a0b0ccc9d58b4a0ac3e2e54ef3e78b1bc46a226`.
+Fresh post-merge [push CI 38397805024](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38397805024):
+`event=push`, `branch=main`, `head_sha=2c666e1261df747eb8ca4ce8d33870c8d47404f4`,
+**completed / success**. This is post-merge certification, separate from PR-head CI.
+
+`RELEASE_CAPABILITIES.reviewRecord = enabled`;
+`RELEASE_CAPABILITIES.apply = enabled`;
+`RELEASE_CAPABILITIES.execute = disabled`.
+Review recording and application still require their own target-owned validated
+config opt-in and all existing interaction, principal, binding and durability gates.
+Stage 4B completion grants no guard closure, OD-06 entry or Controlled Release approval.
 `TSB-F02 = OPEN / LOW / CONDITIONAL`; `TSB-F02 TRIGGER = FALSE`.
 R-1..R-5 remain **ACCEPTED**; `AT-07/TB-01 = RESIDUAL`.
 All three FUTURE review guards remain **OPEN**. OD-06 is **NOT ENTERED**;
@@ -67,15 +82,15 @@ Document type: **security + software architecture design.** This document
 changes no runtime code, test, workflow, package manifest, export, capability
 flag or CLI behavior. The approved design is merged; this lifecycle sync
 authorizes no implementation, capability enablement or further merge.
-`qa-agent review record` and `qa-agent apply`
-remain **fixed refusals** (exit 5, `CAPABILITY_NOT_ENABLED_IN_RELEASE`).
+`qa-agent review record` and `qa-agent apply` are enabled on certified main,
+subject to validated target-owned config opt-in and all existing gates.
 
-Date: 2026-10-13 (Stage 4A canonical closure sync; design history preserved)
+Date: 2026-10-13 (Stage 4B canonical closure sync; design history preserved)
 
 Normative language: **MUST / MUST NOT / SHOULD / MAY** are used in the RFC 2119
 sense. Every MUST in §8–§24 is an implementation acceptance condition.
 Stage 4A is complete as recorded above; these normative
-requirements remain binding for any separately authorized Stage 4B activation.
+requirements remain binding for the certified Stage 4B activation.
 
 ---
 
@@ -97,7 +112,7 @@ requirements remain binding for any separately authorized Stage 4B activation.
 | Apply path | **Canonical #23F `applyApprovedGeneratedChangeSet` only**, preceded by refusal-only Stage 4 checks; #23F authority semantics unchanged (§22) |
 | Replay | **Single-use per apply attempt.** Immediately before consumption, apply re-derives the authority state and requires the selected approval to still be the active one; the approval is then consumed atomically before #23F is invoked, whatever the outcome (§20, §21 A14) |
 | CI | `review record` and `apply` **refuse** under `GITHUB_ACTIONS=true` or a truthy `CI` (exit 5). This is a **product-supported policy refusal, not a security isolation boundary** (§23) |
-| Offline | Accepted design: `review record` and `apply` **both permitted under `--offline`** (no network or provider is needed) — owner clauses 8–9 **ACCEPTED** (§30.5); Stage 4A implementation complete, installed release capabilities still disabled |
+| Offline | Accepted design: `review record` and `apply` **both permitted under `--offline`** (no network or provider is needed) — owner clauses 8–9 **ACCEPTED** (§30.5); Stage 4B certified on main; validated target-owned config opt-in still required |
 | `TSB-F02` | `OPEN / LOW / CONDITIONAL`; **`TSB-F02 TRIGGER = FALSE`** (§26) |
 | `SEC-S3-m01` | **DESIGN RESOLVED** (§12) |
 | `SEC-S3-m02` | **DESIGN RESOLVED** (§13) |
@@ -178,8 +193,9 @@ Repository evidence read for this design (all exist at the baseline):
 ## 5. Historical Stage 3 authority state (design-authoring baseline)
 
 This section records the Stage 3 baseline used to author the design. Current
-Stage 4A implementation and disabled release authority are recorded above;
-the historical inventory below is not a claim that Stage 4A remains unimplemented.
+Stage 4A implementation and certified Stage 4B activation are recorded above;
+the historical inventory below describes neither the current implementation
+nor current installed release capability state.
 
 Facts at the baseline (read from source, not assumed):
 
@@ -281,8 +297,8 @@ Current disposition: `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED` on HEAD
 `78d8bfda920b3de6489b777149668709b2ec464d`, after Architecture C5
 **APPROVED** and Security C5 **APPROVED**. Owner clauses 1–23 and R-1..R-5
 are **ACCEPTED**. This decision approved the design. Stage 4A subsequently
-completed through separately authorized PR #247; Stage 4B remains
-**NOT ACTIVATED / NOT AUTHORIZED**. The original recommendation follows.
+completed through separately authorized PR #247; Stage 4B is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #249). The original recommendation follows.
 
 ```text
 OD-04 RECOMMENDATION = APPROVE
@@ -372,7 +388,7 @@ Normative rules:
 
 ## 9. Trusted approval interaction
 
-### 9.1 Command surface (Stage 4A internal implementation; installed CLI reserved)
+### 9.1 Command surface (Stage 4A implementation; Stage 4B installed CLI enabled)
 
 ```text
 qa-agent review record --run <runId> --package <NNNN> [--root <dir>] [--config <path>] [--offline]
@@ -2949,6 +2965,10 @@ are unchanged. C5 design review alone granted no owner acceptance.
 
 ### 30.4 Canonical lifecycle synchronization
 
+Historical Stage 4 design-closure record follows unchanged. Its fixed-refusal
+state predates Stage 4A implementation and certified Stage 4B activation; the
+current lifecycle and capability state are recorded at the top of this contract.
+
 - This authorized four-file sync records the approved, merged and certified
   Stage 4 design and current stage sequence in `ROADMAP.md`, `SECURITY.md`
   and both Controlled-v1 contracts. It changes no technical design.
@@ -3459,6 +3479,6 @@ SEC-S3-m01 = DESIGN RESOLVED
 
 `DESIGN APPROVED / MERGED / POST-MERGE CERTIFIED` ·
 `STAGE 4A COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` ·
-`STAGE 4B ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED` · `FURTHER MERGE NOT AUTHORIZED` ·
+`STAGE 4B COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` · `FURTHER MERGE NOT AUTHORIZED` ·
 `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD OPEN` · `AT-07/TB-01 RESIDUAL` ·
 `OWNER CLAUSES 1–23 ACCEPTED` · `R-1..R-5 ACCEPTED`

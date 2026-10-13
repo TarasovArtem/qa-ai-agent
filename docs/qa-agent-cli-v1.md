@@ -1,9 +1,14 @@
 # `qa-agent` CLI v1 — Controlled-v1 through Stage 4B
 
-Status: Stages 1–3 and Stage 4A are complete on `main`. Stage 4B activation is
-implemented on `feature/controlled-v1-stage4b-activation`, under
-`OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`; **NOT MERGED**. Exact-head
-CI is recorded in the implementation PR. See [activation evidence](controlled-v1-stage4b-activation.md).
+Status: Stages 1–3 and Stage 4A are complete on `main`.
+Stage 4B **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, implementation
+[PR #249](https://github.com/TarasovArtem/qa-ai-agent/pull/249), under
+`OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`.
+See [activation evidence](controlled-v1-stage4b-activation.md) for the exact
+reviewed HEAD, merge SHA/TREE, parents and fresh post-merge main/push CI.
+Release state: `reviewRecord = enabled`, `apply = enabled`, `execute = disabled`.
+Review recording/application require target-owned validated config opt-in.
+OD-06 remains **NOT ENTERED**; Controlled Release remains **NOT APPROVED**.
 Governing design: [`controlled-v1-productization-contract-v1.md`](controlled-v1-productization-contract-v1.md).
 This document describes the implemented surface only. It does not change
 `ROADMAP.md` lifecycle state and does not authorize `execute`, merge, release
@@ -115,7 +120,7 @@ differ on a symlinked `requirements.path` leaf:
   symlink swapped in after `design`. This narrowing is deliberate; replace
   the link with the file it points to.
 
-A known capability that the release does not enable (e.g. `"apply": true`) is
+A known capability that the release does not enable (e.g. `"execute": true`) is
 schema-valid: `config validate` exits 0 and reports
 `requested: true, available: false` with the reason; invoking it exits 5.
 
