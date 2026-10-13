@@ -1,5 +1,12 @@
 # Controlled-v1 Approval and Apply Security Contract v1
 
+Stage 4B branch implementation: `OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`
+enables only review/apply in the implementation branch, **NOT MERGED**.
+See [Stage 4B activation evidence](controlled-v1-stage4b-activation.md).
+The lifecycle and disabled-capability statements below record the certified
+Stage 4A main baseline and design history; normative security semantics remain
+unchanged. This implementation does not perform canonical lifecycle closure.
+
 Lifecycle: **Controlled-v1 Productization Stage 4 / OD-04 — human approval +
 apply security contract**
 

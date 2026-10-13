@@ -379,7 +379,7 @@ test("Stage 3 policy: info/config validate report generative capability availabi
   const groq = await runCli(["info", "--root", root, "--json"], { env: fx.generativeEnv() });
   assert.deepEqual(groq.json.capabilities.design, { requested: true, available: true });
   assert.equal(groq.json.provider.generativeCapable, true);
-  assert.deepEqual(groq.json.capabilities.apply, { requested: false, available: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE" });
+  assert.deepEqual(groq.json.capabilities.apply, { requested: false, available: false, reason: "CAPABILITY_NOT_REQUESTED" });
   const offline = await runCli(["info", "--root", root, "--offline", "--json"], { env: hermeticEnv() });
   assert.equal(offline.json.provider.generativeCapable, false);
 });
@@ -413,17 +413,17 @@ test("Stage 3 config: generative commands and review show need a requirements se
 
 // --- reserved commands remain fixed refusals (mandatory 5-7) ----------------------------
 
-test("Stage 3 reserved: review record / apply / execute stay fixed refusals even with a full generated run and requested capabilities", async () => {
+test("Stage 3/4B: review/apply still need an interactive terminal; execute stays disabled with a generated run", async () => {
   const { root, runId } = await fullChain(fx.makeStage3Root(fx.stage3Config({ capabilities: { design: true, plan: true, generate: true, reviewRecord: true, apply: true, execute: true } })));
   const before = fx.snapshotTree(root, { exclude: [] });
   for (const argv of [["review", "record"], ["apply"], ["execute"]]) {
     const rec = spawnRecorder();
-    const r = await runCli([...argv, "--run", runId, "--root", root, "--json"], { env: fx.generativeEnv(), spawnImpl: rec.impl });
+    const r = await runCli([...argv, "--run", runId, "--package", "0001", "--root", root], { env: fx.generativeEnv(), spawnImpl: rec.impl });
     assert.equal(r.code, 5, argv.join(" "));
-    assert.equal(r.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
+    assert.ok(r.stderr.includes(argv[0] === "execute" ? "CAPABILITY_NOT_ENABLED_IN_RELEASE" : "INTERACTIVE_TERMINAL_REQUIRED"), r.stderr);
     noSpawn(rec.calls);
   }
-  assert.deepEqual(fx.snapshotTree(root, { exclude: [] }), before, "no refusal reads or writes anything");
+  assert.deepEqual(fx.snapshotTree(root, { exclude: [] }), before, "refusals make no target or run mutation");
 });
 
 // --- run binding / cross-run (mandatory 8-10) ------------------------------------------

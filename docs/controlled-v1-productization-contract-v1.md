@@ -1,5 +1,12 @@
 # Controlled-v1 Productization Contract v1
 
+Stage 4B branch implementation: `OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`
+enables only review/apply in the implementation branch, **NOT MERGED**.
+See [Stage 4B activation evidence](controlled-v1-stage4b-activation.md).
+The main lifecycle and disabled-capability statements below describe the
+certified Stage 4A baseline; normative design constraints remain unchanged.
+This implementation does not perform canonical lifecycle closure.
+
 Lifecycle: **Controlled-v1 supported package/API/CLI/productization boundary**
 
 Authority: `OD-CONTROLLED-V1-PRODUCTIZATION-DESIGN — APPROVED`

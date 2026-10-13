@@ -11,6 +11,8 @@
  * Stage 3 (OD-02): `design`, `plan`, `generate` and `review show` are
  * supported. `--run <id>` names an existing run directory; its grammar is
  * closed (RUN_ID_PATTERN) because the value becomes a path segment.
+ * Stage 4B: review record/apply require --run and --package, accept --offline
+ * and refuse --json. Execute remains reserved behind OD-06.
  */
 
 "use strict";
@@ -19,8 +21,9 @@ const { usageError } = require("./errors");
 
 const COMMON_FLAGS = Object.freeze(["json", "offline", "root", "config", "help"]);
 const RUN_FLAGS = Object.freeze([...COMMON_FLAGS, "run"]);
-const VALUE_FLAGS = Object.freeze(["root", "config", "run"]);
-const KNOWN_FLAGS = Object.freeze(["json", "offline", "root", "config", "help", "version", "history", "run"]);
+const STAGE4_FLAGS = Object.freeze([...RUN_FLAGS.filter(f => f !== "json"), "package"]);
+const VALUE_FLAGS = Object.freeze(["root", "config", "run", "package"]);
+const KNOWN_FLAGS = Object.freeze(["json", "offline", "root", "config", "help", "version", "history", "run", "package"]);
 
 // <UTC yyyymmddThhmmssZ>-<64 random bits as 16 lower-case hex digits>
 // (contract §10.5). Created by `design`; required by every later command.
@@ -74,8 +77,8 @@ const COMMANDS = Object.freeze({
     flags: RUN_FLAGS,
     summary: "Read-only, non-authoritative view of the review packages of --run <id> (records no approval).",
   }),
-  "review record": Object.freeze({ kind: "reserved", ownerDecision: "OD-04", summary: "Reserved (human review recording)." }),
-  apply: Object.freeze({ kind: "reserved", ownerDecision: "OD-04", summary: "Reserved (apply approved change set)." }),
+  "review record": Object.freeze({ kind: "stage4", capability: "reviewRecord", requiresRun: true, requiresPackage: true, flags: STAGE4_FLAGS, summary: "Record a whole-package decision through the interactive TAP-2 review session." }),
+  apply: Object.freeze({ kind: "stage4", capability: "apply", requiresRun: true, requiresPackage: true, flags: STAGE4_FLAGS, summary: "Apply an approved package once, under the same OS principal (interactive confirmation)." }),
   execute: Object.freeze({ kind: "reserved", ownerDecision: "OD-06", summary: "Reserved (controlled execution)." }),
 });
 
@@ -104,11 +107,11 @@ function resolveCommand(words) {
 
 /**
  * @returns {{ command: string|null, spec: object|null, flags: object }}
- *   flags: { json, offline, root, config, help, version, history }
+ *   flags: { json, offline, root, config, help, version, history, run, package }
  */
 function parseArgs(argv) {
   if (!Array.isArray(argv)) throw usageError("USAGE_INVALID", "arguments must be an array.");
-  const flags = { json: false, offline: false, root: undefined, config: undefined, help: false, version: false, history: false, run: undefined };
+  const flags = { json: false, offline: false, root: undefined, config: undefined, help: false, version: false, history: false, run: undefined, package: undefined };
   const seen = new Set();
   const words = [];
   let reserved = null;
@@ -179,6 +182,10 @@ function parseArgs(argv) {
   if (spec.requiresRun && !flags.help) {
     if (flags.run === undefined) throw usageError("USAGE_MISSING_RUN", `"${name}" requires --run <id> (the run id printed by "qa-agent design").`);
     if (!RUN_ID_PATTERN.test(flags.run)) throw usageError("USAGE_INVALID_RUN_ID", "--run must be a run id of the form yyyymmddThhmmssZ-<16 hex digits>.");
+  }
+  if (spec.requiresPackage && !flags.help) {
+    if (flags.package === undefined) throw usageError("USAGE_MISSING_PACKAGE", `"${name}" requires --package <NNNN>.`);
+    if (!/^[0-9]{4}$/.test(flags.package) || flags.package === "0000") throw usageError("USAGE_INVALID_PACKAGE", "--package must be a four-digit ordinal starting at 0001.");
   }
   return Object.freeze({ command: name, spec, flags: Object.freeze(flags) });
 }

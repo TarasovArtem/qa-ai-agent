@@ -101,8 +101,8 @@ test("CLI --help lists supported commands, marks reserved ones, and offers no --
   }
   assert.match(r.stdout, /Reserved/);
   const reserved = r.stdout.slice(r.stdout.indexOf("Reserved"));
-  for (const cmd of ["review record", "apply", "execute"]) assert.ok(reserved.includes(cmd), `${cmd} is listed as reserved`);
-  for (const cmd of ["design", "plan", "generate", "review show"]) assert.equal(reserved.slice(0, reserved.indexOf("Options:")).includes(`  ${cmd} `), false, `${cmd} is not reserved`);
+  assert.ok(reserved.includes("execute"), "execute is listed as reserved");
+  for (const cmd of ["design", "plan", "generate", "review show", "review record", "apply"]) assert.equal(reserved.slice(0, reserved.indexOf("Options:")).includes(`  ${cmd} `), false, `${cmd} is not reserved`);
   assert.doesNotMatch(r.stdout, /--provider/);
   const sub = await runCli(["triage", "run", "--help"]);
   assert.equal(sub.code, 0);
@@ -111,9 +111,8 @@ test("CLI --help lists supported commands, marks reserved ones, and offers no --
 
 // --- reserved commands ------------------------------------------------------------
 
-// Stage 3 (OD-02) enabled design/plan/generate/review show; these three stay
-// fixed refusals until OD-04 / OD-06.
-const RESERVED = [["review", "record"], ["apply"], ["execute"]];
+// Stage 4B enables review/apply; execute remains a fixed OD-06 refusal.
+const RESERVED = [["execute"]];
 
 test("CLI reserved: every reserved command is a fixed refusal (exit 5, CAPABILITY_NOT_ENABLED_IN_RELEASE), machine-readable with --json", async () => {
   for (const argv of RESERVED) {
@@ -145,9 +144,9 @@ test("CLI reserved: a config that requests apply/execute cannot make the command
 });
 
 test("CLI reserved: --help describes a reserved command without running it", async () => {
-  const r = await runCli(["apply", "--help"]);
+  const r = await runCli(["execute", "--help"]);
   assert.equal(r.code, 0);
-  assert.match(r.stdout, /OD-04/);
+  assert.match(r.stdout, /OD-06/);
 });
 
 // --- root / config steps (2-5) ----------------------------------------------------
@@ -174,11 +173,12 @@ test("CLI root: the root defaults to cwd and is never discovered upward", async 
 });
 
 test("CLI config validate: valid config exits 0; a requested-but-release-disabled capability is reported, not rejected", async () => {
-  const root = makeRoot(baseConfig({ capabilities: { triage: true, apply: true } }));
+  const root = makeRoot(baseConfig({ capabilities: { triage: true, apply: true, execute: true } }));
   const r = await runCli(["config", "validate", "--root", root, "--json"]);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.ok, true);
-  assert.deepEqual(r.json.capabilities.apply, { requested: true, available: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE" });
+  assert.deepEqual(r.json.capabilities.apply, { requested: true, available: true });
+  assert.deepEqual(r.json.capabilities.execute, { requested: true, available: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE" });
   assert.deepEqual(r.json.capabilities.triage, { requested: true, available: true });
   assert.ok(r.json.warnings.some((w) => w.code === "CAPABILITY_NOT_ENABLED_IN_RELEASE"));
 });

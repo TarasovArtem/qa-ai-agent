@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * `qa-agent` package binary (package.json `bin`). Not in `exports`:
- * requiring this file is unsupported. Non-interactive: it never reads stdin
- * and never prompts.
+ * requiring this file is unsupported. Stage 4B review/apply use the existing
+ * interactive stdin and TAP-2 session; other commands remain non-interactive.
  */
 
 "use strict";

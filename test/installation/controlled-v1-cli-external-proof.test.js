@@ -169,7 +169,7 @@ test("external CLI: triage run --offline completes collect -> analyze in isolate
 });
 
 test("external CLI: a reserved command is refused with exit 5 from the installed package", () => {
-  const r = npx("apply --json");
+  const r = npx("execute --json");
   assert.equal(r.code, 5);
   assert.equal(r.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
 });

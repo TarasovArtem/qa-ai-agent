@@ -1,7 +1,8 @@
 /**
  * Controlled-v1 `qa-agent` CLI (Stages 1-2: CLI shell, configuration,
  * baseline commands, supported triage integration; Stage 3 / OD-02:
- * design, plan, generate and the read-only review show).
+ * design, plan, generate and the read-only review show; Stage 4B:
+ * interactive review record and apply).
  *
  * NORMATIVE VALIDATION ORDER (resolves ARCH-PROD-C1-m01). Each command runs
  * the steps that apply to it, strictly in this order; the first failing step
@@ -31,11 +32,13 @@
  * CAPABILITY_REQUIRES_GENERATIVE_PROVIDER, before any child, provider or
  * network exists (policy.enforceGenerativeProvider). Step 6 is enforced for
  * every command that does work (requirements check, triage *, design, plan,
- * generate, review show); `info` and `config validate` report it.
+ * generate, review show, review record, apply); `info` and `config validate`
+ * report it. Stage 4 commands then enforce their existing CI/terminal,
+ * principal, run/approval and durability gates without a provider.
  *
  * stdout carries only the result (with --json: exactly one JSON object);
  * stderr carries bounded diagnostics - never secrets, raw provider payloads,
- * prompts or stack traces. The CLI never prompts.
+ * prompts or stack traces. Only Stage 4 commands prompt, using TAP-2.
  *
  * Parent-process module graph: this file never loads scripts/ai/config.js,
  * a provider module, or a triage stage module - those are loaded only inside
@@ -75,7 +78,7 @@ function helpText(command) {
     }
     const options = spec.flags
       .filter((f) => f !== "help")
-      .map((f) => (f === "root" || f === "config" ? `--${f} <path>` : f === "run" ? "--run <id>" : `--${f}`))
+      .map((f) => (f === "root" || f === "config" ? `--${f} <path>` : f === "run" ? "--run <id>" : f === "package" ? "--package <NNNN>" : `--${f}`))
       .join(" ");
     return `qa-agent ${command} [${options}]\n\n  ${spec.summary}\n`;
   }
@@ -98,7 +101,8 @@ function helpText(command) {
     "  --offline          network-disabled mode (only the mock provider; no History API; no AI generation)",
     "  --json             print exactly one JSON object on stdout",
     "  --history          (triage run) include the GitHub History stage",
-    "  --run <id>         (plan, generate, review show) the run created by design",
+    "  --run <id>         (plan, generate, review show, review record, apply) the run created by design",
+    "  --package <NNNN>   (review record, apply) select a package ordinal; --json is refused",
     "  --help, --version",
     "",
     "Provider: AI_PROVIDER (default mock), AI_MODEL, AI_API_KEY - environment only; never in config.",
@@ -359,6 +363,8 @@ async function commandStage4(ctx) {
   const root = resolveRoot(ctx.flags, ctx.cwd);
   const { config, configRelPath } = loadValidatedConfig(root, ctx.flags);
   checkContainment(root, config, configRelPath);
+  const provider = policy.resolveProvider({ env: ctx.env, platform: ctx.platform, offline: ctx.flags.offline, allow: config.providers.allow });
+  policy.enforceOffline(provider);
   policy.enforceCapability(config, capability);
   const options = { ...ctx, stdin: process.stdin, root, config, product: PRODUCT, runId: ctx.flags.run, packageOrdinal: ctx.flags.package,
     protectedPaths: outputProtectedPaths(config, configRelPath) };
@@ -404,10 +410,6 @@ async function run({ argv, env = {}, cwd = process.cwd(), stdout, stderr, platfo
         stdout.write(helpText(command));
         return EXIT_CODES.OK;
       }
-      if (command === "apply" || command === "review record") {
-        await commandStage4({ command, flags, env, cwd, stdout, stderr, platform });
-        return EXIT_CODES.OK;
-      }
       throw authorityRefused("CAPABILITY_NOT_ENABLED_IN_RELEASE", `"${command}" is reserved and not enabled in this release (pending ${spec.ownerDecision}).`);
     }
     if (flags.version) {
@@ -416,6 +418,11 @@ async function run({ argv, env = {}, cwd = process.cwd(), stdout, stderr, platfo
     }
     if (flags.help) {
       stdout.write(helpText(command));
+      return EXIT_CODES.OK;
+    }
+
+    if (spec.kind === "stage4") {
+      await commandStage4({ command, spec, flags, env, cwd, stdout, stderr, platform });
       return EXIT_CODES.OK;
     }
 

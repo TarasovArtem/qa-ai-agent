@@ -134,6 +134,8 @@ before(() => {
   fs.writeFileSync(path.join(external, "qa", "requirements.json"), JSON.stringify(fx.REQUIREMENTS, null, 2));
   fs.writeFileSync(path.join(external, "cypress.config.js"), "module.exports = { e2e: {} };\n");
   fs.mkdirSync(path.join(external, "cypress", "e2e"), { recursive: true });
+  // #23F CREATE requires an existing parent; the proposal never creates it.
+  fs.mkdirSync(path.dirname(path.join(external, fx.GENERATED_SPEC)), { recursive: true });
   fs.writeFileSync(path.join(external, fx.EXISTING_SPEC), "describe('existing', () => {});\n");
 
   fs.mkdirSync(harnessDir);
@@ -169,7 +171,7 @@ test("Stage 3/4A external: installed exports/bin reach every shipped implementat
   assert.deepEqual([...available].filter(f => f.endsWith(".js") && !c.reached.has(f)), []);
 });
 
-test("Stage 4A external: private runtime files ship but remain unexported and release-disabled", () => {
+test("Stage 4B external: activated private runtime files ship but remain unexported", () => {
   for (const f of inv.STAGE4_PRIVATE_RUNTIME) assert.ok(fs.existsSync(path.join(installed, f)), `${f} installed`);
   const available = new Set(inv.listFiles(installed));
   for (const entry of ["scripts/ai/cli/review-record.js", "scripts/ai/cli/apply.js"]) {
@@ -193,7 +195,7 @@ test("Stage 3 external: no runtime dependency is installed with the package", ()
   assert.deepEqual(Object.keys(lock.packages).filter((k) => k !== "").sort(), ["node_modules/qa-ai-agent"]);
 });
 
-test("Stage 3/4A external: the real bin shim keeps Stage 4 release-disabled under flags, env and provider changes", () => {
+test("Stage 3/4B external: the real bin shim requires config opt-in and leaves execute release-disabled", () => {
   const help = npx("--help");
   assert.equal(help.code, 0, help.stderr);
   for (const cmd of ["design", "plan", "generate", "review show"]) assert.ok(help.stdout.includes(cmd), cmd);
@@ -203,21 +205,45 @@ test("Stage 3/4A external: the real bin shim keeps Stage 4 release-disabled unde
   const offline = npx("design --offline --json");
   assert.equal(offline.code, 5);
   assert.equal(offline.json.errors[0].code, "CAPABILITY_REQUIRES_GENERATIVE_PROVIDER");
-  for (const cmd of ["review record", "apply", "execute"]) {
-    const r = npx(`${cmd} --json`);
-    assert.equal(r.code, 5, cmd);
-    assert.equal(r.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
-  }
+  const execute = npx("execute --json");
+  assert.equal(execute.code, 5);
+  assert.equal(execute.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
   for (const [cmd, extra] of [["review record", "--offline"], ["apply", "--offline"], ["review record", "--root ."], ["apply", "--root ."]]) {
-    const r = npx(`${cmd} ${extra} --json`, minimalEnv({ QA_AGENT_ENABLE_STAGE4: "true", AI_PROVIDER: "groq", AI_MODEL: "test", AI_API_KEY: "unused" }));
+    const r = npx(`${cmd} --run 20261012T120000Z-0123456789abcdef --package 0001 ${extra}`, minimalEnv({ QA_AGENT_ENABLE_STAGE4: "true" }));
     assert.equal(r.code, 5, `${cmd} ${extra}`);
-    assert.equal(r.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
+    assert.match(r.stderr, /CAPABILITY_NOT_REQUESTED/);
   }
   const info = npx("info --json");
   assert.equal(info.code, 0);
-  assert.equal(info.json.capabilities.reviewRecord.reason, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
-  assert.equal(info.json.capabilities.apply.reason, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
+  assert.equal(info.json.capabilities.reviewRecord.reason, "CAPABILITY_NOT_REQUESTED");
+  assert.equal(info.json.capabilities.apply.reason, "CAPABILITY_NOT_REQUESTED");
   assert.equal(fs.existsSync(path.join(external, "reports")), false, "no refusal wrote anything");
+});
+
+test("Stage 4B external: real installed commands reach Stage 4A gates with explicit opt-in, including CI/offline", () => {
+  const configPath = path.join(external, "qa-agent.config.json");
+  const original = fs.readFileSync(configPath);
+  try {
+    for (const [cmd, key, ciCode] of [["review record", "reviewRecord", "APPROVAL_CI_FORBIDDEN"], ["apply", "apply", "APPLY_CI_FORBIDDEN"]]) {
+      for (const requested of [false, true]) {
+        const config = JSON.parse(original);
+        config.capabilities[key] = requested;
+        fs.writeFileSync(configPath, JSON.stringify(config));
+        for (const flag of ["", "--offline"]) {
+          const r = npx(`${cmd} --run 20261012T120000Z-0123456789abcdef --package 0001 ${flag}`);
+          assert.equal(r.code, 5, r.stderr);
+          assert.ok(r.stderr.includes(requested ? "INTERACTIVE_TERMINAL_REQUIRED" : "CAPABILITY_NOT_REQUESTED"), r.stderr);
+        }
+        if (requested) for (const extra of [{ CI: "true" }, { GITHUB_ACTIONS: "true" }]) {
+          const r = npx(`${cmd} --run 20261012T120000Z-0123456789abcdef --package 0001 --offline`, minimalEnv(extra));
+          assert.equal(r.code, 5, r.stderr);
+          assert.ok(r.stderr.includes(ciCode), r.stderr);
+        }
+      }
+    }
+    assert.equal(fs.existsSync(path.join(external, "reports")), false, "refused before run access/write");
+    assert.deepEqual(hashTree(installed), installedHashBefore, "installed product stays unmodified");
+  } finally { fs.writeFileSync(configPath, original); }
 });
 
 test("Stage 3 external: design -> plan -> generate -> review show succeed from the installed package and load only packaged private files", () => {
@@ -304,4 +330,58 @@ test("Stage 3 external negative: removing a required private runtime file fails 
   const brokenBin = path.join(scratch, "broken-limits", installedPkg.bin["qa-agent"]);
   const r = spawnSync(process.execPath, [brokenBin, "--version"], { cwd: external, env: minimalEnv(), encoding: "utf8", shell: false });
   assert.notEqual(r.status, 0, "a package missing a required Stage 3 runtime file cannot run");
+});
+
+test("Stage 4B installed CLI: offline review/apply use real principal, storage, #23F and single-use outcome", () => {
+  // Synthetic target and scripted terminal only. No product module, identity,
+  // storage, approval validator or application routine is replaced. Linux CI
+  // exercises the complete supported path; Windows must keep refusing it.
+  const configPath = path.join(external, "qa-agent.config.json"), original = fs.readFileSync(configPath);
+  const terminal = path.join(harnessDir, "stage4-terminal.js");
+  fs.writeFileSync(terminal, `"use strict";
+    const {PassThrough}=require('node:stream'); const input=new PassThrough(); input.isTTY=true;
+    Object.defineProperty(process,'stdin',{value:input});
+    process.stdout.isTTY=true; process.stdout.columns=100; process.stdout.rows=24; process.stderr.isTTY=true;
+    const write=process.stdout.write.bind(process.stdout); let output='';
+    process.stdout.write=function(chunk,...rest) {
+      const text=String(chunk); output+=text; const result=write(chunk,...rest); let answer;
+      if(text.startsWith('@Q2:P ')||text.startsWith('@Q2:E ')||text.startsWith('@Q2:M ')) answer='';
+      else if(text.startsWith('@Q2:I ')) answer='APPROVE '+/type:  APPROVE ([0-9A-Z]{8})/.exec(output)[1];
+      else if(text.startsWith('@Q2:S To apply')) answer='APPLY '+/APPLY ([0-9A-Z]{8})/.exec(text)[1];
+      if(answer!==undefined) setImmediate(()=>input.write(answer+'\\n')); return result;
+    };`);
+  const invoke = command => spawnSync(process.execPath, ["--require", terminal, path.join(installed, installedPkg.bin["qa-agent"]), ...command,
+    "--run", runId, "--package", "0001", "--offline"], { cwd: external, env: minimalEnv(), encoding: "utf8", timeout: 30000 });
+  try {
+    const config = JSON.parse(original); config.capabilities.reviewRecord = true; config.capabilities.apply = true;
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const review = invoke(["review", "record"]);
+    if (process.platform !== "linux") {
+      assert.equal(review.status, 5, review.stderr);
+      assert.match(review.stderr, /REVIEWER_IDENTITY_UNAVAILABLE/);
+      assert.equal(fs.existsSync(path.join(external, fx.GENERATED_SPEC)), false);
+      return;
+    }
+    assert.equal(review.status, 0, review.stderr);
+    assert.match(review.stdout, /decision recorded: APPROVE/);
+    const apply = invoke(["apply"]);
+    assert.equal(apply.status, 0, apply.stderr);
+    assert.match(apply.stdout, /apply completed: APPLIED/);
+    assert.equal(fs.readFileSync(path.join(external, fx.GENERATED_SPEC), "utf8"), fx.GENERATED_CONTENT);
+    const replay = invoke(["apply"]);
+    assert.equal(replay.status, 5, replay.stderr);
+    assert.match(replay.stderr, /PACKAGE_ALREADY_APPLIED/);
+    const runRoot = path.join(external, "reports", "qa-agent", "runs", runId);
+    const manifest = JSON.parse(fs.readFileSync(path.join(runRoot, "manifest.json")));
+    assert.equal(manifest.schemaVersion, 2);
+    assert.equal(manifest.reviews.length, 1);
+    const record = JSON.parse(fs.readFileSync(path.join(runRoot, manifest.reviews[0].recordPath)));
+    assert.equal(record.reviewer.method, "os-local-account-v1");
+    assert.equal(record.reviewer.uid, os.userInfo().uid);
+    const applyFiles = fs.readdirSync(path.join(runRoot, "apply"));
+    for (const prefix of ["attempt-", "applied-", "outcome-"]) assert.equal(applyFiles.filter(f => f.startsWith(prefix)).length, 1);
+    const outcome = JSON.parse(fs.readFileSync(path.join(runRoot, "apply", applyFiles.find(f => f.startsWith("outcome-")))));
+    assert.equal(outcome.result, "APPLIED");
+    assert.deepEqual(hashTree(installed), installedHashBefore);
+  } finally { fs.writeFileSync(configPath, original); }
 });
