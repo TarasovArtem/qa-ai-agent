@@ -11,7 +11,8 @@ Stage 4B activation, merge, or guard closure.
 The disabled-capability statements below describe the certified Stage 4A
 baseline. Stage 4B changes only CLI support and retains this exact physical
 inventory and export contract; see [Stage 4B activation evidence](controlled-v1-stage4b-activation.md)
-for the branch implementation and current installed-command proofs.
+for Stage 4B **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #249) and the
+installed-command proofs.
 
 ## Public surface
 

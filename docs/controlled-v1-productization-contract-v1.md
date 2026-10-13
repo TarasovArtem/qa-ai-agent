@@ -1,11 +1,12 @@
 # Controlled-v1 Productization Contract v1
 
-Stage 4B branch implementation: `OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`
-enables only review/apply in the implementation branch, **NOT MERGED**.
+Stage 4B: **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** under
+`OD-CONTROLLED-V1-STAGE-4B-ACTIVATION — APPROVED`.
 See [Stage 4B activation evidence](controlled-v1-stage4b-activation.md).
-The main lifecycle and disabled-capability statements below describe the
-certified Stage 4A baseline; normative design constraints remain unchanged.
-This implementation does not perform canonical lifecycle closure.
+Current lifecycle annotations are synchronized below. Original design-era
+inventories and pre-OD-04 capability-status annotations are historical;
+normative security/design requirements remain unchanged. Current reviewRecord/apply
+release enablement requires validated target-owned config opt-in; execute is disabled.
 
 Lifecycle: **Controlled-v1 supported package/API/CLI/productization boundary**
 
@@ -23,7 +24,7 @@ Stage 3 merge/certified baseline:            45ed5b87d7a8de56e80f4bd53e8cd50f9d9
 Stage 4 — human approval + apply:
   design:                                   APPROVED / MERGED / POST-MERGE CERTIFIED
   Stage 4A implementation:                   COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
-  Stage 4B activation:                       ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED
+  Stage 4B activation:                       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
 qa-agent-demo external E2E validation:        NOT_STARTED
 Controlled Release:                         NOT APPROVED
 OD-06:                                      NOT ENTERED
@@ -48,12 +49,26 @@ Fresh post-merge main/push CI
 [38369860791](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38369860791)
 and [38369861016](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38369861016)
 both **completed / SUCCESS** on that exact merge SHA.
-`RELEASE_CAPABILITIES.reviewRecord = disabled`;
-`RELEASE_CAPABILITIES.apply = disabled`.
+Stage 4B implementation [PR #249](https://github.com/TarasovArtem/qa-ai-agent/pull/249)
+is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**: reviewed HEAD
+`5a0b0ccc9d58b4a0ac3e2e54ef3e78b1bc46a226`, reviewed / merge TREE
+`9ec9967b9ac4ba71154544afb5a3f586c86cd354`; merge SHA
+`2c666e1261df747eb8ca4ce8d33870c8d47404f4`, topology `STANDARD_TWO_PARENT`.
+Parents: `e7e1f63541dfa938bf88f15f70fcf1c136ef1d9f` and
+`5a0b0ccc9d58b4a0ac3e2e54ef3e78b1bc46a226`.
+Fresh post-merge [push CI 38397805024](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38397805024):
+`event=push`, `branch=main`, `head_sha=2c666e1261df747eb8ca4ce8d33870c8d47404f4`,
+**completed / success**. This is post-merge certification, separate from PR-head CI.
+
+`RELEASE_CAPABILITIES.reviewRecord = enabled`;
+`RELEASE_CAPABILITIES.apply = enabled`;
+`RELEASE_CAPABILITIES.execute = disabled`.
+Review recording and application still require their own target-owned validated
+config opt-in and all existing interaction, principal, binding and durability gates.
 
 The approved Stage 4 design is
 [controlled-v1-approval-apply-contract-v1.md](controlled-v1-approval-apply-contract-v1.md).
-`review record` and `apply` remain disabled / fixed refusals. Later stages
+`review record` and `apply` are enabled with validated target-owned config opt-in. Later stages
 remain separately governed in the unchanged §21.1 order; this sync grants
 no implementation or release authority. `AT-07/TB-01 = RESIDUAL`; all three
 FUTURE review guards remain **OPEN**; `TSB-F02 = OPEN / LOW / CONDITIONAL`,
@@ -63,13 +78,14 @@ Document type: **architecture / contract design + repository discovery.** This
 document changes no runtime code, test, workflow, package manifest, export, CLI
 or version. Stages 1–3 have completed through separate implementation
 lifecycles. Stage 4A implementation is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**;
-Stage 4B is the next eligible step, **NOT ACTIVATED / NOT AUTHORIZED**.
-Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4A-CANONICAL-CLOSURE — APPROVED`.
+Stage 4B is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**. The subsequent
+lifecycle requires a separate owner decision; no next engineering stage is authorized.
+Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
 This canonical-sync PR requires independent exact-head **LIGHT** review and
 separate PO merge authorization; this sync authorizes no further merge.
 Controlled Release is **NOT APPROVED**.
 
-Date: 2026-10-13 (Stage 4A canonical closure sync; design history preserved)
+Date: 2026-10-13 (Stage 4B canonical closure sync; design history preserved)
 
 Revision: **C1 design corrective** (resolves Architecture review `ARCH-PROD-M01`
 and `ARCH-PROD-m01..m07` against rejected head `1c6376f3`; see §26).
@@ -510,6 +526,12 @@ serves local and GitHub Actions usage.
 
 ### 10.2 Command hierarchy (closed set)
 
+Historical design-era command table: the reserved review/apply status below
+predates the approved OD-04 contract and certified Stage 4B activation. Current
+installed grammar and behavior are in [qa-agent-cli-v1.md](qa-agent-cli-v1.md);
+reviewRecord/apply are release-enabled with validated target-owned config opt-in,
+and execute remains disabled. The original design requirements are preserved.
+
 | Command | Purpose | RC | Authority class | Provider requirement | `--offline` | Side effects |
 |---|---|---|---|---|---|---|
 | `qa-agent --version` | print product version | RC-12 | **baseline** (always available) | none | valid | none |
@@ -641,7 +663,7 @@ Two separate questions, answered separately:
 
 - Every gated capability defaults to **false**.
 - Config **may** request a known-but-release-disabled capability (e.g.
-  `"apply": true`). That config remains **schema-valid**: `config validate`
+  `"execute": true`). That config remains **schema-valid**: `config validate`
   exits 0 and reports the capability as `requested: true, available: false`
   with its reason (stdout/`--json` warning). Invocation of that capability
   returns the authority refusal. Rationale: a release later enabling the
@@ -862,7 +884,7 @@ Codes and reason codes are a stable contract within a CLI major version.
 | `frameworkRuntime` | no | existing `assertValidFrameworkRuntimeConfig` |
 | `knowledge` | no | existing `assertValidProjectKnowledgeConfig` |
 | `requirements` | required for `requirements`/`design` commands | `source` closed to `"file"` in v1; `path` repository-relative, canonical containment inside root; file validated by `loadRequirementsFromFile` |
-| `capabilities` | no (every capability defaults to **false**) | closed known key set, boolean values. Requesting a known-but-release-disabled capability (`reviewRecord`/`apply`/`execute` today) is **schema-valid**; invocation is refused at runtime (§10.4.4). `requirements check` and other baseline commands have no capability key |
+| `capabilities` | no (every capability defaults to **false**) | closed known key set, boolean values. Requesting a known-but-release-disabled capability (`execute` in the current release) is **schema-valid**; invocation is refused at runtime (§10.4.4). `requirements check` and other baseline commands have no capability key |
 | `providers.allow` | no (default `["mock"]`) | closed vocabulary of shipped providers; a ceiling only — it never selects a provider (§10.4.2) |
 | `output.dir` | no (default `reports/qa-agent`) | repository-relative; canonical containment; must not equal or contain a framework source prefix (`cypress/`, `playwright/`), `.git`, `node_modules` or the config file |
 
@@ -1146,6 +1168,11 @@ Preserved invariants (unchanged by productization):
 - **Surface vs isolation** — `exports` denial and capability gating are
   supported-surface controls, not security isolation boundaries (§1).
 
+Historical design-era per-surface inventory follows; its reserved review/apply
+annotations predate OD-04 and certified Stage 4B activation. Current authority
+still requires validated target-owned config opt-in and every existing gate;
+execute remains disabled. Normative boundary requirements below are unchanged.
+
 Per surface:
 
 | Surface | Trusted inputs | Untrusted inputs | Runtime validation boundary | Authorization boundary | Side effects |
@@ -1381,7 +1408,7 @@ Likely later changes, each requiring separate authorization and HEAVY review:
 Current status: stages 1–3 are **COMPLETE_ON_MAIN**. Stage 4 design is
 **APPROVED / MERGED / POST-MERGE CERTIFIED**; Stage 4A implementation is
 **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #247). Stage 4B activation is
-next eligible, **NOT ACTIVATED / NOT AUTHORIZED**. Stages 5–6 retain their separate decisions
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #249). Stages 5–6 retain their separate decisions
 and prerequisites. The original phase order follows unchanged.
 
 1. CLI shell + config + `info` / `config validate` / `requirements check`; no
@@ -1401,20 +1428,21 @@ review; this list authorizes none of them.
 
 Current lifecycle overlay: OD-02's separately governed Stage 3 implementation
 is **COMPLETE_ON_MAIN**; its decisions and private-shipping contract are
-preserved. OD-04 design is **APPROVED**, as recorded below; no approval or
-apply capability is enabled. OD-06 remains **NOT ENTERED**. Original
+preserved. OD-04 design is **APPROVED**, as recorded below; Stage 4B enables
+reviewRecord/apply subject to validated target-owned config opt-in and all
+existing gates. Execute is disabled. OD-06 remains **NOT ENTERED**. Original
 design-era descriptions of unresolved inputs and commands "before" or
 "until OD-04" in §§10–20 record that prerequisite; the approved Stage 4
-contract now defines those inputs. Stage 4A implementation is complete;
-separate Stage 4B activation and all remaining release prerequisites are
-still required. RC-01..RC-12 are unchanged.
+contract now defines those inputs. Stage 4A implementation and Stage 4B
+activation are complete; all remaining release prerequisites are still required.
+RC-01..RC-12 are unchanged.
 
 | ID | Decision | Owner | Recommendation |
 |---|---|---|---|
 | OD-01 | Distribution channel: npm public registry vs GitHub Release tarball vs GitHub Packages | Product Owner (`ID-3`) | **pre-release decision.** Recommendation: versioned GitHub Release tarball for Controlled-v1; registry later |
 | OD-02 | Physical distribution change: ship the `#22`/`#23`/`generation` subsets as private runtime dependencies | Product Owner + Architecture | **APPROVED / IMPLEMENTED THROUGH CONTROLLED-V1 STAGE 3 / COMPLETE_ON_MAIN.** Previously a required owner decision, now approved under `OD-CONTROLLED-V1-OD-02 — APPROVED / DISPOSITIONED` ([package-surface-v4.md](package-surface-v4.md)). Its governed implementation completed through Stage 3, PR #244, merged at `45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee`; the private runtime dependency/shipping contract is implemented on main. The shipped subsets remain private, not exported, and unsupported for consumer import. No new OD-02 decision is currently pending. **Historical design-era recommendation (evidence only):** `OWNER DECISION REQUIRED` before implementation to reverse A-1's physical exclusion (`PRIVATE_GENERATIVE_SURFACE`); this design itself neither implemented nor dispositioned it |
 | OD-03 | Package/binary names (`qa-ai-agent` / `qa-agent`); registry name availability | Product Owner | **resolve before publication**; provisional names may be used in implementation and tests |
-| OD-04 | Approval-recording mechanism and reviewer authenticity | `ODR-02` owner | **APPROVED** under `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`; approved design: [controlled-v1-approval-apply-contract-v1.md](controlled-v1-approval-apply-contract-v1.md), PR #245 merged/post-merge certified. Stage 4A implementation **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #247); Stage 4B **ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED**. `review record`/`apply` remain reserved fixed refusals; RC-07 enablement requires separate activation authorization and remaining release prerequisites |
+| OD-04 | Approval-recording mechanism and reviewer authenticity | `ODR-02` owner | **APPROVED** under `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`; approved design: [controlled-v1-approval-apply-contract-v1.md](controlled-v1-approval-apply-contract-v1.md), PR #245 merged/post-merge certified. Stage 4A implementation **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #247); Stage 4B **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**. `review record`/`apply` are release-enabled with validated target-owned config opt-in and existing gates; remaining release prerequisites still apply |
 | OD-05 | First productized version number | Product Owner | **pre-release decision.** The current manifest `1.0.0` is **not** a release claim. Recommendation: reserve `1.0.0` for the Controlled Release; pre-release identifiers before it |
 | OD-06 | **Platform / runner matrix** (extended in C1): (a) OS support for non-execute CLI commands; (b) OS support for controlled `execute`; (c) which CI runner classes count as the supported execution environment (local Linux, GitHub-hosted Linux, self-hosted isolated, others) | Product Owner, informed by the separate execution-environment assessment | **blocks `execute` enablement; platform matrix decision required.** Repository-proven constraints only: authoritative CI is Linux (`ubuntu-latest`); controlled execution on Windows resolves a `.cmd` shim under `shell:false` and is known to fail (`EINVAL`); **no** explicit CLI/platform guard exists today. Before OD-06 disposition `execute` is disabled on every OS. Support or non-support of other platforms is **not** decided here |
 | OD-07 | Whether a high-level programmatic API for the chain is ever offered | Product Owner + Architecture | not in Controlled-v1 |
@@ -1481,7 +1509,7 @@ The original design made `NO ROADMAP CHANGE`. This canonical lifecycle sync
 records stages 1–3 **COMPLETE_ON_MAIN**, Stage 4 design
 **APPROVED / MERGED / POST-MERGE CERTIFIED**, Stage 4A implementation
 **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, and Stage 4B activation
-**ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED**. Later phases remain separately governed;
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**. Later phases remain separately governed;
 `qa-agent-demo = NOT_STARTED`; Controlled Release **NOT APPROVED**.
 
 ### 25.3 Future STOP triggers (for the implementation lifecycle)
@@ -1540,5 +1568,5 @@ commit/push/PR/merge/release authority.
 
 `STAGES 1–3 COMPLETE_ON_MAIN` · `STAGE 4 DESIGN APPROVED / MERGED / POST-MERGE CERTIFIED` ·
 `STAGE 4A COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` ·
-`STAGE 4B ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED` · `FURTHER MERGE NOT AUTHORIZED` · Controlled Release
+`STAGE 4B COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` · `FURTHER MERGE NOT AUTHORIZED` · Controlled Release
 `NOT APPROVED`.
