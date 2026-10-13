@@ -49,7 +49,21 @@
     "scripts/ai/test-automation/generate-change-set.js",
     "scripts/ai/test-automation/generated-change-set-review-canonical.js",
     "scripts/ai/test-automation/generated-change-set-review-package.js",
-    "scripts/ai/test-automation/generated-change-set.js"
+    "scripts/ai/test-automation/generated-change-set.js",
+    "scripts/ai/cli/apply.js",
+    "scripts/ai/cli/canonical-review-serialization.js",
+    "scripts/ai/cli/path-identity.js",
+    "scripts/ai/cli/review-record-v2.js",
+    "scripts/ai/cli/review-record.js",
+    "scripts/ai/cli/stage4-durability.js",
+    "scripts/ai/cli/stage4-principal.js",
+    "scripts/ai/cli/stage4-run.js",
+    "scripts/ai/cli/stage4-state.js",
+    "scripts/ai/cli/terminal-session.js",
+    "scripts/ai/test-automation/applied-change-set-record.js",
+    "scripts/ai/test-automation/change-set-application.js",
+    "scripts/ai/test-automation/generated-change-set-review-record.js",
+    "scripts/ai/test-automation/generated-change-set-review-record-builder.js"
   ],
   "scripts": {
     "cypress:open": "cypress open",

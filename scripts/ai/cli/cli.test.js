@@ -262,7 +262,7 @@ test("CLI info --json: version, contracts, capabilities, provider, invocation an
   assert.deepEqual(out.capabilities.triage, { requested: true, available: true });
   assert.deepEqual(out.capabilities.execute, { requested: true, available: false, reason: "CAPABILITY_NOT_ENABLED_IN_RELEASE" });
   assert.deepEqual(out.capabilities.design, { requested: false, available: false, reason: "CAPABILITY_NOT_REQUESTED" });
-  assert.equal(out.contracts.runManifest, 1);
+  assert.equal(out.contracts.runManifest, 2);
   assert.equal(out.provider.effective, "mock");
   assert.equal(out.provider.generativeCapable, false);
   assert.equal(out.invocation.mode, "local-v1-orchestrated");

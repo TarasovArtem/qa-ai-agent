@@ -52,6 +52,7 @@ function minimalEnv(extra = {}) {
     if (typeof process.env[key] === "string") env[key] = process.env[key];
   }
   env.npm_config_offline = "true";
+  env.npm_config_engine_strict = "false";
   env.npm_config_update_notifier = "false";
   env.npm_config_fund = "false";
   env.npm_config_audit = "false";
@@ -124,7 +125,7 @@ before(() => {
   const packed = JSON.parse(execSync(`npm pack --json --pack-destination "${packDir}"`, { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }))[0];
   fs.mkdirSync(external);
   fs.writeFileSync(path.join(external, "package.json"), JSON.stringify({ name: "stage3-external-target", version: "1.0.0", private: true, scripts: { "test:e2e": "cypress run" } }, null, 2));
-  execSync(`npm install --no-audit --no-fund --save-dev "${path.join(packDir, packed.filename)}"`, { cwd: external, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  execSync(`npm install --no-audit --no-fund --save-dev "${path.join(packDir, packed.filename)}"`, { cwd: external, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, npm_config_engine_strict: "false" } });
   installed = path.join(external, "node_modules", "qa-ai-agent");
   installedPkg = JSON.parse(fs.readFileSync(path.join(installed, "package.json"), "utf8"));
 
@@ -159,12 +160,29 @@ test("Stage 3 external: the installed package is a real copy outside the checkou
   assert.deepEqual(installedPkg.bin, inv.EXPECTED_BIN);
 });
 
-test("Stage 3 external: the static closure over the INSTALLED files is complete and reaches exactly the Stage 3 private closure", () => {
+test("Stage 3/4A external: installed exports/bin reach every shipped implementation without exceptions", () => {
   const available = new Set(inv.listFiles(installed));
   const c = inv.staticClosure({ baseDir: installed, available, entries: inv.supportedEntrypoints(installedPkg) });
   assert.deepEqual(c.missing, []);
   assert.deepEqual(c.problems, []);
-  assert.deepEqual([...c.reached].filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))).sort(), [...inv.STAGE3_PRIVATE_RUNTIME]);
+  assert.deepEqual([...c.reached].filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))).sort(), [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t)))].sort());
+  assert.deepEqual([...available].filter(f => f.endsWith(".js") && !c.reached.has(f)), []);
+});
+
+test("Stage 4A external: private runtime files ship but remain unexported and release-disabled", () => {
+  for (const f of inv.STAGE4_PRIVATE_RUNTIME) assert.ok(fs.existsSync(path.join(installed, f)), `${f} installed`);
+  const available = new Set(inv.listFiles(installed));
+  for (const entry of ["scripts/ai/cli/review-record.js", "scripts/ai/cli/apply.js"]) {
+    const c = inv.staticClosure({ baseDir: installed, available, entries: [entry] });
+    assert.deepEqual(c.missing, [], entry); assert.deepEqual(c.problems, [], entry);
+    assert.equal(c.reached.has("scripts/ai/test-automation/change-set-application.js"), entry.endsWith("apply.js"), entry);
+  }
+  const probe = path.join(external, "probe-stage4a-private.js");
+  fs.writeFileSync(probe, `const out={}; for(const f of ${JSON.stringify(inv.STAGE4_PRIVATE_RUNTIME)}) { try { require("qa-ai-agent/"+f); out[f]="loaded"; } catch(e) { out[f]=e.code; } } process.stdout.write(JSON.stringify(out));`);
+  const r = spawnSync(process.execPath, [probe], { cwd: external, env: minimalEnv(), encoding: "utf8", shell: false });
+  assert.equal(r.status, 0, r.stderr);
+  for (const code of Object.values(JSON.parse(r.stdout))) assert.equal(code, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+  fs.rmSync(probe, { force: true });
 });
 
 test("Stage 3 external: no runtime dependency is installed with the package", () => {
@@ -175,7 +193,7 @@ test("Stage 3 external: no runtime dependency is installed with the package", ()
   assert.deepEqual(Object.keys(lock.packages).filter((k) => k !== "").sort(), ["node_modules/qa-ai-agent"]);
 });
 
-test("Stage 3 external: through the real bin shim, mock / --offline generation and the reserved commands are refused (exit 5)", () => {
+test("Stage 3/4A external: the real bin shim keeps Stage 4 release-disabled under flags, env and provider changes", () => {
   const help = npx("--help");
   assert.equal(help.code, 0, help.stderr);
   for (const cmd of ["design", "plan", "generate", "review show"]) assert.ok(help.stdout.includes(cmd), cmd);
@@ -190,6 +208,15 @@ test("Stage 3 external: through the real bin shim, mock / --offline generation a
     assert.equal(r.code, 5, cmd);
     assert.equal(r.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
   }
+  for (const [cmd, extra] of [["review record", "--offline"], ["apply", "--offline"], ["review record", "--root ."], ["apply", "--root ."]]) {
+    const r = npx(`${cmd} ${extra} --json`, minimalEnv({ QA_AGENT_ENABLE_STAGE4: "true", AI_PROVIDER: "groq", AI_MODEL: "test", AI_API_KEY: "unused" }));
+    assert.equal(r.code, 5, `${cmd} ${extra}`);
+    assert.equal(r.json.errors[0].code, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
+  }
+  const info = npx("info --json");
+  assert.equal(info.code, 0);
+  assert.equal(info.json.capabilities.reviewRecord.reason, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
+  assert.equal(info.json.capabilities.apply.reason, "CAPABILITY_NOT_ENABLED_IN_RELEASE");
   assert.equal(fs.existsSync(path.join(external, "reports")), false, "no refusal wrote anything");
 });
 

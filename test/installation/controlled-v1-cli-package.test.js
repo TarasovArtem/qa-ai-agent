@@ -66,18 +66,18 @@ test("Controlled-v1 package: no publication automation or lifecycle hook was int
   assert.equal(pkg.publishConfig, undefined);
 });
 
-test("OD-02 package.json: the private trees stay excluded as directories and only the exact Stage 3 closure files are re-included", () => {
+test("package.json: private trees stay excluded and only the approved Stage 3 and Stage 4A closure files are re-included", () => {
   for (const tree of ["!scripts/ai/generation", "!scripts/ai/generative-test-design", "!scripts/ai/test-automation"]) assert.ok(pkg.files.includes(tree), tree);
   const reincluded = pkg.files.filter((f) => !f.startsWith("!") && inv.PRIVATE_TREES.some((t) => f.startsWith(t)));
-  assert.deepEqual([...reincluded].sort(), [...inv.STAGE3_PRIVATE_RUNTIME].sort());
+  assert.deepEqual([...reincluded].sort(), [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t)))].sort());
   assert.equal(pkg.files.some((f) => /[*?]/.test(f) && inv.PRIVATE_TREES.some((t) => f.replace(/^!/, "").startsWith(t))), false, "no glob re-include");
 });
 
 // --- tarball inventory -------------------------------------------------------------
 
-test("Controlled-v1 tarball: the inventory is exactly the closed expected list (47 baseline + 19 CLI + 23 Stage 3 private runtime)", () => {
+test("Controlled-v1 tarball: the inventory is exactly the closed expected list", () => {
   assert.deepEqual(manifest, [...inv.EXPECTED_INVENTORY]);
-  assert.equal(manifest.length, 89);
+  assert.equal(manifest.length, 89 + inv.STAGE4_PRIVATE_RUNTIME.length);
 });
 
 test("Controlled-v1 tarball: no test, fixture, env/secret-like, evaluation, governance or excluded private file ships", () => {
@@ -88,15 +88,15 @@ test("Controlled-v1 tarball: no test, fixture, env/secret-like, evaluation, gove
   for (const file of inv.EXCLUDED_PRIVATE) assert.equal(manifestSet.has(file), false, `${file} must not ship`);
   assert.deepEqual(
     manifest.filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))),
-    [...inv.STAGE3_PRIVATE_RUNTIME],
-    "the private trees contribute exactly the Stage 3 closure"
+    [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t)))].sort(),
+    "the private trees contribute exactly the Stage 3 and Stage 4A closures"
   );
   assert.deepEqual(manifest.filter((f) => f.startsWith("test/") || f.startsWith("scripts/targets/") || f.startsWith("scripts/governance/") || f.startsWith("scripts/diagnostics/")), []);
 });
 
 test("Controlled-v1 tarball: every non-shipped file of the private trees is a test or an EXCLUDED_PRIVATE module (nothing unclassified)", () => {
   const repoPrivate = inv.listFiles(REPO_ROOT).filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t)) && !f.endsWith(".test.js"));
-  assert.deepEqual(repoPrivate, [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.EXCLUDED_PRIVATE].sort());
+  assert.deepEqual(repoPrivate, [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t))), ...inv.EXCLUDED_PRIVATE].sort());
 });
 
 // --- closure / minimality over exports ∪ bin ----------------------------------------
@@ -111,16 +111,23 @@ test("§9.1 closure: every require of every reachable file resolves to a shipped
   assert.deepEqual(c.problems, []);
 });
 
-test("§9.1 minimality: every shipped .js file is reachable from exports ∪ bin; the private trees reach exactly the Stage 3 closure", () => {
+test("§9.1 minimality: every shipped implementation is reachable from exports/bin without exceptions", () => {
   const c = closureOver(manifestSet);
   const unreachable = manifest.filter((f) => f.endsWith(".js") && !c.reached.has(f));
   assert.deepEqual(unreachable, []);
   const reachedPrivate = [...c.reached].filter((f) => inv.PRIVATE_TREES.some((t) => f.startsWith(t))).sort();
-  assert.deepEqual(reachedPrivate, [...inv.STAGE3_PRIVATE_RUNTIME]);
+  assert.deepEqual(reachedPrivate, [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME.filter(f => inv.PRIVATE_TREES.some(t => f.startsWith(t)))].sort());
+  const bin = inv.staticClosure({ baseDir: REPO_ROOT, available: manifestSet, entries: [pkg.bin["qa-agent"]] });
+  for (const file of inv.STAGE4_PRIVATE_RUNTIME) assert.ok(bin.reached.has(file), `${file} reachable from production bin`);
+  for (const entry of ["scripts/ai/cli/review-record.js", "scripts/ai/cli/apply.js"]) {
+    const stage4 = inv.staticClosure({ baseDir: REPO_ROOT, available: manifestSet, entries: [entry] });
+    assert.deepEqual(stage4.missing, [], entry); assert.deepEqual(stage4.problems, [], entry);
+    assert.ok(stage4.reached.has("scripts/ai/test-automation/change-set-application.js") === (entry.endsWith("apply.js")), entry);
+  }
 });
 
 test("§9.1 negative proof: removing any required Stage 3 private runtime file (or new CLI module) makes the closure proof fail", () => {
-  for (const removed of [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE3_CLI_FILES]) {
+  for (const removed of [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE3_CLI_FILES, ...inv.STAGE4_PRIVATE_RUNTIME]) {
     const available = new Set(manifest.filter((f) => f !== removed));
     const c = closureOver(available);
     assert.ok(c.missing.length > 0, `removing ${removed} must be detected`);
@@ -130,7 +137,7 @@ test("§9.1 negative proof: removing any required Stage 3 private runtime file (
 // --- deep-import denial (package specifier) ----------------------------------------
 
 test("Controlled-v1 surface: every CLI module and every private (shipped or not) module is denied through the package specifier", () => {
-  for (const file of [...inv.CLI_FILES, ...inv.STAGE3_PRIVATE_RUNTIME, ...inv.EXCLUDED_PRIVATE]) {
+  for (const file of [...inv.CLI_FILES, ...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME, ...inv.EXCLUDED_PRIVATE]) {
     for (const spec of [`${pkg.name}/${file}`, `${pkg.name}/${file.replace(/\.js$/, "")}`]) {
       let code = null;
       try {
@@ -151,7 +158,7 @@ test("Controlled-v1 surface: the root barrel still exports exactly the 19 approv
     if (typeof v === "function") exported.add(v);
     else if (v && typeof v === "object") for (const inner of Object.values(v)) if (typeof inner === "function") exported.add(inner);
   }
-  for (const file of [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE3_CLI_FILES.filter((f) => !f.endsWith("generative-runner.js"))]) {
+  for (const file of [...inv.STAGE3_PRIVATE_RUNTIME, ...inv.STAGE4_PRIVATE_RUNTIME, ...inv.STAGE3_CLI_FILES.filter((f) => !f.endsWith("generative-runner.js"))]) {
     for (const fn of Object.values(require(path.join(REPO_ROOT, ...file.split("/"))))) {
       if (typeof fn === "function") assert.equal(exported.has(fn), false, `${file} function exported`);
     }
@@ -229,7 +236,7 @@ test("Reserved commands stay reserved and no CLI module imports an approval, app
     const scan = inv.scanModule(fs.readFileSync(path.join(REPO_ROOT, ...file.split("/")), "utf8"));
     assert.deepEqual(scan.problems, [], file);
     for (const spec of scan.relative) {
-      assert.doesNotMatch(spec, /review-record|change-set-application|controlled-execution|applied-change-set-record|automation-execution-record|regenerate-change-set|test-design-review/, `${file} requires ${spec}`);
+      assert.doesNotMatch(spec, /generated-change-set-review-record|change-set-application|controlled-execution|applied-change-set-record|automation-execution-record|regenerate-change-set|test-design-review/, `${file} requires ${spec}`);
     }
     const src = inv.stripComments(fs.readFileSync(path.join(REPO_ROOT, ...file.split("/")), "utf8"));
     assert.doesNotMatch(src, /validateApproved|applyApproved|verifyApprovedChangeBinding|executeAppliedChangeSet|buildGeneratedChangeSetReviewRecord|buildTestDesignReviewRecord/, file);

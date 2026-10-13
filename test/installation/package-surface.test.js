@@ -13,14 +13,12 @@
  * not in the installed package at all) are asserted as TWO separate proofs:
  * before A-1 only the first held.
  *
- * Controlled-v1 Stage 3 (OD-02, docs/package-surface-v4.md): A-1's physical
- * exclusion is narrowed, not dropped. The private trees ship ONLY the
- * minimal private runtime closure of design/plan/generate/review show
- * (SHIPPED PRIVATE / NOT EXPORTED); every other private module - approval
- * gates, review records, application, execution, regeneration - stays
- * physically absent. Proof A (deep-import denial) now covers shipped and
- * unshipped private files alike; proof B (physical absence) covers the
- * still-excluded ones.
+ * Controlled-v1 Stage 3 and Stage 4A: A-1's physical exclusion is narrowed,
+ * not dropped. The private trees ship exactly the Stage 3 read-only closure
+ * and the approved Stage 4A review/apply implementation closure. Stage 4A
+ * stays unexported and release-disabled. Proof A (deep-import denial) covers
+ * shipped and unshipped private files alike; proof B covers the still-excluded
+ * modules.
  *
  * Offline and deterministic: the tarball and the Git source are local, and
  * no test needs credentials, a provider, or a live SUT.
@@ -60,7 +58,7 @@ const EXPECTED_ROOT_EXPORTS = [
 
 const EXPECTED_EXPORT_MAP_KEYS = [".", "./destinations/azure-devops", "./package.json", "./providers/azure-devops", "./providers/jira"];
 
-const { PRIVATE_TREES, STAGE3_PRIVATE_RUNTIME, EXCLUDED_PRIVATE } = require("../helpers/package-inventory");
+const { PRIVATE_TREES, STAGE3_PRIVATE_RUNTIME, STAGE4_PRIVATE_RUNTIME, EXCLUDED_PRIVATE } = require("../helpers/package-inventory");
 
 // ACG-D2: the private #22 directory was renamed away from the name it shared
 // with the deterministic RTI module scripts/ai/test-design.js. The old
@@ -126,11 +124,11 @@ test("D-2 repository namespace: test-design.js is a file, the old test-design/ d
   assert.equal(require.resolve("../../scripts/ai/test-design"), path.join(REPO_ROOT, "scripts/ai/test-design.js"), "require(\"./test-design\") must resolve to the RTI file");
 });
 
-test("A-1 / OD-02 manifest: the private #22/#23 trees ship exactly the Stage 3 runtime closure and nothing else", () => {
+test("A-1 / OD-02 manifest: private trees ship the exact Stage 3 and Stage 4A runtime closures", () => {
   assert.deepEqual(
-    manifest.filter((f) => PRIVATE_TREES.some((tree) => f.startsWith(tree))),
-    [...STAGE3_PRIVATE_RUNTIME],
-    "only the minimal private runtime closure of the Stage 3 commands ships"
+    manifest.filter((f) => PRIVATE_TREES.some((tree) => f.startsWith(tree)) || STAGE4_PRIVATE_RUNTIME.includes(f)),
+    [...STAGE3_PRIVATE_RUNTIME, ...STAGE4_PRIVATE_RUNTIME].sort(),
+    "only the exact approved Stage 3 and Stage 4A private closures ship"
   );
   for (const file of EXCLUDED_PRIVATE) assert.equal(manifestSet.has(file), false, `${file} must not be in the tarball`);
   assert.deepEqual(manifest.filter((f) => f.startsWith(OLD_PRIVATE_DIRECTORY)), [], "the old private path must not appear in the tarball");
@@ -215,11 +213,9 @@ test("A-1 closure: every local require of every shipped .js file resolves to a s
 });
 
 // The reverse direction of the closure test (ACG-A1-R01): nothing EXTRA ships.
-// Every shipped .js file must be reachable by `require` from a supported
-// entrypoint, and every shipped non-JS file must be package metadata or
-// documented runtime-discovered knowledge data. Controlled-v1 §9.1: supported
-// entrypoints = `exports` targets ∪ `bin` targets.
-test("A-1 minimality: every shipped .js file is reachable from a supported entrypoint (exports ∪ bin); every other file is metadata or documented data", () => {
+// Every shipped implementation participates in the production graph, even
+// while its capability is release-disabled. No private-runtime exemption.
+test("A-1 minimality: shipped JS is reachable from exports/bin", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   const reachable = new Set();
   const queue = [...Object.values(pkg.exports), ...Object.values(pkg.bin || {})]
@@ -238,7 +234,7 @@ test("A-1 minimality: every shipped .js file is reachable from a supported entry
   const extra = [];
   for (const file of manifest) {
     if (file.endsWith(".js")) {
-      if (!reachable.has(file)) extra.push(`${file}: shipped .js not reachable from any supported entrypoint`);
+      if (!reachable.has(file)) extra.push(`${file}: shipped .js not reachable from exports/bin`);
     } else if (!reachable.has(file)) {
       const isMetadata = PACKAGE_METADATA_FILES.includes(file) || /^LICENSE/i.test(file);
       const isKnowledgeData = /^scripts\/ai\/knowledge\/units\/[^/]+\.json$/.test(file);
@@ -389,7 +385,7 @@ for (const kind of ["tarball", "git"]) {
     for (const tree of PRIVATE_TREES) {
       const dir = path.join(consumers[kind].installed, tree);
       const present = fs.existsSync(dir) ? fs.readdirSync(dir).map((f) => `${tree}${f}`).sort() : [];
-      assert.deepEqual(present, STAGE3_PRIVATE_RUNTIME.filter((f) => f.startsWith(tree)), `${tree} holds exactly its Stage 3 closure files`);
+      assert.deepEqual(present, [...STAGE3_PRIVATE_RUNTIME, ...STAGE4_PRIVATE_RUNTIME].filter((f) => f.startsWith(tree)).sort(), `${tree} holds exactly its Stage 3 and Stage 4A closure files`);
     }
     assert.equal(fs.existsSync(path.join(consumers[kind].installed, "scripts/ai/test-design.js")), true, "the RTI module must be installed");
   });

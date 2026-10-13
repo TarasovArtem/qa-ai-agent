@@ -1846,6 +1846,8 @@ changed here.
 | `D-REPLACE(runDir, manifestBytes, LLLL)` | 1. `D-CREATE(runDir, "manifest.next-<LLLL>.json", manifestBytes)` (steps 1–4; exclusive create, never truncating an existing file); 2. atomically rename `manifest.next-<LLLL>.json` over the manifest file (`rename(2)` on POSIX; on `win32` a replace-existing rename through `fs.renameSync`, `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`); 3. `fsync` the directory `runDir`. Success only when every step returned successfully | the manifest v2 commit in S13c |
 | `D-DIR(parent, name)` | create directory `review/` or `apply/` (first use), then `fsync` `parent` | directory creation before first `D-CREATE` in it |
 
+**Approved D-REPLACE commit-point disposition (`OD-CONTROLLED-V1-STAGE-4-DREPLACE-COMMIT-POINT — APPROVED`).** The successful atomic rename of `manifest.next-<LLLL>.json` over the canonical manifest is the filesystem-visible replacement commit point. Failure before successful rename leaves the old canonical manifest intact; the resulting authority state is derived only from actual surviving evidence through `derivePackageState`. Failure of the directory flush after successful rename does not roll the rename back: the section is `ORPHANED`, durability is unconfirmed, and authority is derived exclusively from actual on-disk evidence through `derivePackageState`. If the new manifest survives it is interpreted with the claim, record, and all other evidence; if power loss restores the old manifest, the claim beyond the visible ledger quarantines the run. No rollback, manifest rewrite, claim deletion/reuse, automatic recovery, or durability retry is permitted.
+
 The manifest is **never** written in place: the current `run-store` manifest
 write (`O_WRONLY|O_CREAT|O_TRUNC`, truncate-then-write) can leave an empty or
 torn manifest after power loss and MUST NOT be used for any Stage 4 manifest
@@ -2701,8 +2703,15 @@ segment, 301-character path; case-fold duplicate pair in one package; live
   flush; `apply` performs attempt `D-CREATE` (file + directory flush) before
   `applyApprovedGeneratedChangeSet` is called, and outcome `D-CREATE` last;
 - no Stage 4 code path writes the manifest with `O_TRUNC` or in place (static
-  and dynamic); a failure at any `D-REPLACE` step leaves the old manifest bytes
-  intact;
+  and dynamic); every pre-rename `D-REPLACE` failure leaves the old canonical
+  manifest intact, while post-rename directory-fsync failure leaves rename
+  visible, reports `ORPHANED`, performs no rollback, and derives state only
+  from the surviving on-disk evidence;
+- distinct `D-REPLACE` fault injections for temp create/open, temp write,
+  temp-file fsync, temp close, rename and post-rename directory fsync prove
+  old-manifest preservation before rename, no rollback after rename, visible
+  new-manifest derivation through `derivePackageState`, and quarantine when
+  simulated rename loss exposes a claim beyond the ledger;
 - an injected failure of the attempt's write/`fsync`/close/directory flush →
   #23F not entered, attempt consumed, outcome `NOT_ENTERED` or rule 2;
 - power-loss simulation (dropping every write not covered by a completed

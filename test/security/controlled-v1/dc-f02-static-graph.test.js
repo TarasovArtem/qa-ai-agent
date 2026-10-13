@@ -57,10 +57,9 @@ const ALLOWED_PROCESS_LAUNCHERS = Object.freeze(["scripts/ai/cli/stage-process.j
 // catches a path built for spawn/fork/readFile/require from literal pieces.
 const FORBIDDEN_MODULE_STEMS = Object.freeze(inv.EXCLUDED_PRIVATE.map((f) => path.posix.basename(f, ".js")));
 
-// Every authorized Stage 3 entrypoint: the bin (all commands), each command's
-// orchestration module, and the spawned generative child.
+// Stage 3 command entrypoints remain gate-free. The aggregate bin now also
+// contains separately release-gated Stage 4 routes, proved below.
 const STAGE3_ENTRYPOINTS = Object.freeze({
-  bin: inv.EXPECTED_BIN["qa-agent"],
   "design/plan/generate (parent)": "scripts/ai/cli/generative.js",
   "design/plan/generate (child)": "scripts/ai/cli/generative-runner.js",
   "review show": "scripts/ai/cli/review-show.js",
@@ -154,12 +153,25 @@ for (const [label, entry] of Object.entries(STAGE3_ENTRYPOINTS)) {
   });
 }
 
-test("DC-F02-4: no exported entrypoint reaches either gate, and neither gate module ships", () => {
+test("DC-F02-4: no exported entrypoint reaches either gate; Stage 4 gate access is private and unexported", () => {
   for (const target of Object.values(pkg.exports).filter((t) => t.endsWith(".js"))) {
     assert.deepEqual(gateReachability({ available: shipped, entry: target.replace(/^\.\//, "") }), [], target);
   }
-  for (const gate of GATE_MODULES) assert.equal(shipped.has(gate), false, `${gate} must not ship`);
-  assert.equal(shipped.has(CANONICAL_APPLY_CONSUMER), false, "the #23F apply consumer must not ship before OD-04");
+  assert.equal(shipped.has("scripts/ai/test-automation/generated-change-set-review-record.js"), true, "change-set gate ships in the private Stage 4A closure");
+  assert.equal(shipped.has("scripts/ai/generative-test-design/test-design-review-record.js"), false, "test-design gate remains unshipped");
+  assert.equal(shipped.has(CANONICAL_APPLY_CONSUMER), true, "Stage 4A ships the canonical #23F apply consumer privately");
+});
+
+test("Stage 4A graph: review cannot reach the gate; apply reaches it only through #23F", () => {
+  const review = inv.staticClosure({ baseDir: REPO_ROOT, available: shipped, entries: ["scripts/ai/cli/review-record.js"] });
+  assert.deepEqual(review.missing, []); assert.deepEqual(review.problems, []);
+  assert.equal(review.reached.has(CANONICAL_APPLY_CONSUMER), false);
+  for (const gate of GATE_MODULES) assert.equal(review.reached.has(gate), false, gate);
+  const apply = inv.staticClosure({ baseDir: REPO_ROOT, available: shipped, entries: ["scripts/ai/cli/apply.js"] });
+  assert.deepEqual(apply.missing, []); assert.deepEqual(apply.problems, []);
+  assert.equal(apply.reached.has(CANONICAL_APPLY_CONSUMER), true);
+  const importers = apply.edges.filter(([, to]) => GATE_MODULES.includes(to)).map(([from]) => from);
+  assert.deepEqual(importers, [CANONICAL_APPLY_CONSUMER]);
 });
 
 test("DC-F02-5 / TSB-F02: the production importers of each gate module are exactly the pre-existing set (trigger FALSE)", () => {
@@ -170,11 +182,50 @@ test("DC-F02-5 / TSB-F02: the production importers of each gate module are exact
       .sort();
   assert.deepEqual(importers("scripts/ai/test-automation/generated-change-set-review-record.js"), [CANONICAL_APPLY_CONSUMER], "only #23F consumes the change-set gate");
   assert.deepEqual(importers("scripts/ai/generative-test-design/test-design-review-record.js"), [], "the test-design gate has no production consumer");
-  assert.deepEqual(importers(CANONICAL_APPLY_CONSUMER), ["scripts/ai/test-automation/controlled-execution.js"], "pre-existing, unshipped, reserved (OD-06)");
+  assert.deepEqual(importers(CANONICAL_APPLY_CONSUMER), ["scripts/ai/cli/apply.js", "scripts/ai/test-automation/controlled-execution.js"], "Stage 4A private apply plus pre-existing reserved OD-06 consumer");
   const applySource = inv.stripComments(source(CANONICAL_APPLY_CONSUMER));
   assert.match(applySource, /verifyApprovedChangeBinding\(/, "#23F still re-requires per-decision binding (DC-F02-5)");
-  const trigger = gateReachability({ available: shipped, entry: inv.EXPECTED_BIN["qa-agent"] }).length > 0;
+  const bin = inv.staticClosure({ baseDir: REPO_ROOT, available: shipped, entries: [inv.EXPECTED_BIN["qa-agent"]] });
+  assert.deepEqual(bin.missing, []); assert.deepEqual(bin.problems, []);
+  const gateEdges = bin.edges.filter(([, to]) => GATE_MODULES.includes(to));
+  assert.deepEqual(gateEdges, [[CANONICAL_APPLY_CONSUMER, "scripts/ai/test-automation/generated-change-set-review-record.js"]]);
+  // Canonical §18 trigger: a consumer OTHER than #23F, or bypass of its
+  // independent per-decision checks. Static reachability is not activation.
+  const trigger = gateEdges.some(([from]) => from !== CANONICAL_APPLY_CONSUMER) || !/verifyApprovedChangeBinding\(/.test(applySource);
   assert.equal(trigger, false, "TSB-F02 TRIGGER = FALSE");
+});
+
+test("C1 bin routing: release-disabled review/apply refuse before loading any authority implementation", () => {
+  const { spawnSync } = require("node:child_process");
+  const probe = `
+    const Module = require('node:module'), load = Module._load;
+    Module._load = function(spec, ...args) {
+      if (/^(?:\\.\\/)?(?:apply|review-record)$/.test(spec)) throw new Error('authority loaded before release gate');
+      return load.call(this, spec, ...args);
+    };
+    const { run } = require('./scripts/ai/cli/cli');
+    (async () => {
+      const results=[];
+      for (const argv of [['review','record'],['apply']]) {
+        let output='', error='';
+        const code = await run({ argv, cwd: '/nonexistent-c1-root', env: { QA_AGENT_ENABLE_APPLY:'true', AI_PROVIDER:'mock', CI:'false' }, stdout:{write:t=>output+=t}, stderr:{write:t=>error+=t} });
+        results.push({code,output,error});
+      }
+      process.stdout.write(JSON.stringify(results));
+    })().catch(e=>{process.stderr.write(e.message);process.exitCode=1});`;
+  const r = spawnSync(process.execPath, ["-e", probe], { cwd: REPO_ROOT, encoding: "utf8", timeout: 10000 });
+  assert.equal(r.status, 0, r.stderr);
+  for (const result of JSON.parse(r.stdout)) { assert.equal(result.code, 5); assert.equal(result.output, ""); assert.match(result.error, /CAPABILITY_NOT_ENABLED_IN_RELEASE/); }
+  const release = require("../../../scripts/ai/cli/policy").RELEASE_CAPABILITIES;
+  for (const key of ["reviewRecord", "apply"]) { assert.equal(release[key].enabled, false); assert.ok(Object.isFrozen(release[key])); }
+  assert.ok(Object.isFrozen(release));
+});
+
+test("C1 bin graph non-vacuity: a direct gate edge is distinct from the permitted #23F edge", () => {
+  const entry = "scripts/ai/cli/cli.js";
+  const overlay = { [entry]: source(entry) + '\nrequire("../test-automation/generated-change-set-review-record");\n' };
+  const c = inv.staticClosure({ baseDir: REPO_ROOT, available: shipped, entries: [inv.EXPECTED_BIN["qa-agent"]], readSource: rel => source(rel, overlay) });
+  assert.ok(c.edges.some(([from, to]) => from !== CANONICAL_APPLY_CONSUMER && GATE_MODULES.includes(to)), "an injected bypass triggers F02");
 });
 
 test("DC-F02-2: no command reports an approval verdict - no review verify / review status / approve command exists", () => {
@@ -184,7 +235,7 @@ test("DC-F02-2: no command reports an approval verdict - no review verify / revi
   assert.equal(COMMANDS.apply.kind, "reserved");
 });
 
-test("DC-F02 analyzer non-vacuity: it finds the real authorized path from the #23F consumer to the change-set gate", () => {
+test("DC-F02 analyzer non-vacuity: it finds the real authorized path from #23F to the change-set gate", () => {
   const violations = gateReachability({ available: repoProduction, entry: CANONICAL_APPLY_CONSUMER });
   assert.ok(violations.some((v) => v.startsWith("reaches gate module:") && v.includes("generated-change-set-review-record.js")), JSON.stringify(violations));
   assert.ok(violations.some((v) => v.startsWith("references validateApprovedGeneratedChangeSetReview")));

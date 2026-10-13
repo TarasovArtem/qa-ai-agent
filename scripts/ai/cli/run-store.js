@@ -50,7 +50,7 @@ const { parseStrictJson } = require("./strict-json");
 const { RUN_ID_PATTERN } = require("./args");
 
 const MANIFEST_KIND = "QaAgentRunManifest";
-const MANIFEST_SCHEMA_VERSION = 1;
+const MANIFEST_SCHEMA_VERSION = 2;
 const MANIFEST_FILE_NAME = "manifest.json";
 const PROJECTION_VERSION = 1;
 const RUNS_DIRECTORY = "runs";
@@ -82,6 +82,11 @@ const STAGE_KINDS = Object.freeze({
 const ARTIFACT_PATH_PATTERN = /^(design|plan|generate)\/[a-z][a-z-]{0,62}(-[0-9]{4})?\.json$/;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
+const REVIEW_ORDINAL_PATTERN = /^(?!0000)[0-9]{4}$/;
+
+function validLedgerTimestamp(value) {
+  return typeof value === "string" && TIMESTAMP_PATTERN.test(value) && Number.isFinite(Date.parse(value)) && new Date(Date.parse(value)).toISOString() === value;
+}
 const MODEL_PATTERN = /^[A-Za-z0-9._:/@+-]{1,128}$/;
 const PROVIDER_NAMES = Object.freeze(["groq", "gemini"]);
 
@@ -259,6 +264,7 @@ function openRunDirectory(root, runDirRel, protectedPaths) {
 }
 
 function writeRunFile(root, runDirRel, relName, text, protectedPaths) {
+  if (relName === MANIFEST_FILE_NAME) assertManifestSize(Buffer.from(text, "utf8"));
   const authorized = authorizeRunDirectory(root, runDirRel, protectedPaths);
   const intended = path.join(root.realRoot, ...runDirRel.split("/"), ...relName.split("/"));
   let target;
@@ -289,6 +295,18 @@ function writeRunFile(root, runDirRel, relName, text, protectedPaths) {
 
 function serialize(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+// Reader and every manifest writer share this byte bound. Check the bytes
+// that will actually be persisted, including UTF-8 and the trailing newline.
+function assertManifestSize(bytes) {
+  if (bytes.length > MAX_MANIFEST_BYTES) throw inputRefused("RUN_STATE_INCONSISTENT", "the proposed manifest exceeds the run's manifest byte capacity.");
+}
+function serializeManifest(manifest) {
+  validateManifestShape(manifest);
+  const bytes = Buffer.from(serialize(manifest), "utf8");
+  assertManifestSize(bytes);
+  return bytes;
 }
 
 // --- manifest -------------------------------------------------------------------------
@@ -330,8 +348,11 @@ function validateStageEntry(entry, index) {
 
 // Structural (closed schema) validation of a parsed manifest.
 function validateManifestShape(manifest) {
-  if (!closedKeys(manifest, ["kind", "schemaVersion", "runId", "createdAt", "product", "projection", "contracts", "stages"])) throw manifestInvalid("top-level shape");
-  if (manifest.kind !== MANIFEST_KIND || manifest.schemaVersion !== MANIFEST_SCHEMA_VERSION) throw manifestInvalid("kind/schemaVersion");
+  const v2 = manifest && manifest.schemaVersion === 2;
+  if (!closedKeys(manifest, ["kind", "schemaVersion", "runId", "createdAt", "product", "projection", "contracts", "stages", ...(v2 ? ["reviews"] : [])])) throw manifestInvalid("top-level shape");
+  // Historical Stage 3 v1 can still be read by Stage 3. Stage 4 refuses v1
+  // explicitly and never migrates it or falls back from malformed v2.
+  if (manifest.kind !== MANIFEST_KIND || ![1, 2].includes(manifest.schemaVersion)) throw manifestInvalid("kind/schemaVersion");
   if (typeof manifest.runId !== "string" || !RUN_ID_PATTERN.test(manifest.runId)) throw manifestInvalid("runId");
   if (typeof manifest.createdAt !== "string" || !TIMESTAMP_PATTERN.test(manifest.createdAt)) throw manifestInvalid("createdAt");
   if (!closedKeys(manifest.product, ["name", "version"]) || typeof manifest.product.name !== "string" || typeof manifest.product.version !== "string") {
@@ -343,6 +364,14 @@ function validateManifestShape(manifest) {
   if (!isPlainObject(manifest.contracts)) throw manifestInvalid("contracts");
   if (!Array.isArray(manifest.stages) || manifest.stages.length === 0 || manifest.stages.length > STAGE_ORDER.length) throw manifestInvalid("stages");
   manifest.stages.forEach(validateStageEntry);
+  if (v2) {
+    if (!Array.isArray(manifest.reviews) || manifest.reviews.length > 9999 || manifest.reviews.length && manifest.stages.length !== 3) throw manifestInvalid("decision ledger");
+    const recordIds = new Set();
+    manifest.reviews.forEach((e, i) => {
+      if (!closedKeys(e, ["ledgerIndex", "packageOrdinal", "recordPath", "recordSha256", "recordId", "decision", "decidedAt"]) || e.ledgerIndex !== i + 1 || !REVIEW_ORDINAL_PATTERN.test(e.packageOrdinal) || typeof e.recordId !== "string" || !/^[0-9a-f]{32}$/.test(e.recordId) || recordIds.has(e.recordId) || e.recordPath !== `review/record-${e.packageOrdinal}-${e.recordId}.json` || !DIGEST_PATTERN.test(e.recordSha256) || !["APPROVE", "REJECT"].includes(e.decision) || !validLedgerTimestamp(e.decidedAt)) throw manifestInvalid("ledger entry");
+      recordIds.add(e.recordId);
+    });
+  }
   return manifest;
 }
 
@@ -412,6 +441,7 @@ function newManifest({ runId, product, projection, createdAt }) {
     projection: { projectionVersion: projection.projectionVersion, digest: projection.digest },
     contracts: { ...ARTIFACT_CONTRACTS },
     stages: [],
+    reviews: [],
   };
 }
 
@@ -433,8 +463,8 @@ function commitStage(root, runDirRel, protectedPaths, { manifest, previousDigest
     }
   }
   const next = { ...manifest, stages: [...manifest.stages, stageRecord(stage, { provider, model, completedAt: now.toISOString(), artifacts })] };
-  validateManifestShape(JSON.parse(JSON.stringify(next)));
-  writeRunFile(root, runDirRel, MANIFEST_FILE_NAME, serialize(next), protectedPaths);
+  const nextBytes = serializeManifest(next);
+  writeRunFile(root, runDirRel, MANIFEST_FILE_NAME, nextBytes, protectedPaths);
   return next;
 }
 
@@ -468,4 +498,10 @@ module.exports = {
   loadStageArtifacts,
   newManifest,
   commitStage,
+  readBoundedFile,
+  decodeJson,
+  serialize,
+  serializeManifest,
+  assertManifestSize,
+  MAX_MANIFEST_BYTES,
 };

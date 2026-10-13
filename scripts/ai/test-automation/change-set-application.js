@@ -277,8 +277,11 @@ function inspectApplicationTarget(realRoot, relPath) {
   const ancestorIdentities = [];
   for (let i = 0; i < segments.length - 1; i += 1) {
     cumulative = path.join(cumulative, segments[i]);
+    let names;
+    try { names = fs.readdirSync(path.dirname(cumulative)); } catch { return { ok: false, reason: "ANCESTOR_NAME_MISMATCH" }; }
     const lst = safeLstat(cumulative);
-    if (lst === null) return { ok: false, reason: "PARENT_MISSING" };
+    if (lst === null) return { ok: false, reason: names.some(n => n.toLowerCase() === segments[i].toLowerCase()) ? "ANCESTOR_NAME_MISMATCH" : "PARENT_MISSING" };
+    if (!names.includes(segments[i])) return { ok: false, reason: "ANCESTOR_NAME_MISMATCH" };
     if (lst.isSymbolicLink()) return { ok: false, reason: "PARENT_SYMLINK" };
     if (!lst.isDirectory()) return { ok: false, reason: "PARENT_NOT_DIRECTORY" };
     ancestorIdentities.push({ dev: lst.dev, ino: lst.ino });
@@ -404,6 +407,10 @@ function revalidateCreateTarget(realRoot, relPath) {
 function revalidateModifyTarget(realRoot, relPath, expectedBaseDigest) {
   const inspected = inspectApplicationTarget(realRoot, relPath);
   if (!inspected.ok) return { ok: false, reason: inspected.reason };
+  let names;
+  try { names = fs.readdirSync(inspected.parentAbs); } catch { return { ok: false, reason: "TARGET_NAME_MISMATCH" }; }
+  if (inspected.targetLstat !== null && !names.includes(path.basename(relPath))) return { ok: false, reason: "TARGET_NAME_MISMATCH" };
+  if (inspected.targetLstat === null && names.some(n => n.toLowerCase() === path.basename(relPath).toLowerCase())) return { ok: false, reason: "TARGET_NAME_MISMATCH" };
   const modifyCheck = inspectModifyTarget(inspected.targetAbs, inspected.targetLstat, expectedBaseDigest);
   if (!modifyCheck.ok) return { ok: false, reason: modifyCheck.reason };
   return {
