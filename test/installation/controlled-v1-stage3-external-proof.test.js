@@ -134,6 +134,8 @@ before(() => {
   fs.writeFileSync(path.join(external, "qa", "requirements.json"), JSON.stringify(fx.REQUIREMENTS, null, 2));
   fs.writeFileSync(path.join(external, "cypress.config.js"), "module.exports = { e2e: {} };\n");
   fs.mkdirSync(path.join(external, "cypress", "e2e"), { recursive: true });
+  // #23F CREATE requires an existing parent; the proposal never creates it.
+  fs.mkdirSync(path.dirname(path.join(external, fx.GENERATED_SPEC)), { recursive: true });
   fs.writeFileSync(path.join(external, fx.EXISTING_SPEC), "describe('existing', () => {});\n");
 
   fs.mkdirSync(harnessDir);
