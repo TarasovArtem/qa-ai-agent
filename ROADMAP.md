@@ -38,12 +38,20 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified main baseline (Stage 4 design, not implementation):
+Latest certified main / Controlled-v1 implementation baseline (Stage 4A):
+  main: c3fd4434d4ab55b3f9f5169df23cc2f9424fb700
+  TREE: 6b56c7796c0475422186f0ff1fdf95d4499f58bf
+  implementation PR #247; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  reviewed HEAD: bf340941d09b25a89090d82f8de04d6a34a99874
+  STANDARD_TWO_PARENT; fresh push CI 38369860791 / 38369861016 / SUCCESS
+  Stage 4B: ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED
+
+Historical certification anchor (Stage 4 design):
   main: f8036ad95e9e8acd655d01950060550d71595d81
   TREE: 78d8bfda920b3de6489b777149668709b2ec464d
   design PR #245; STANDARD_TWO_PARENT; post-merge #650 / 38165314497 / push / SUCCESS
 
-Latest certified Controlled-v1 implementation baseline (Stage 3):
+Historical certification anchor (Stage 3 implementation):
   main: 45ed5b87d7a8de56e80f4bd53e8cd50f9d94c6ee
   TREE: 34d0fa47765d12602ee6a285d197480d087de1ed
 
@@ -124,8 +132,9 @@ and README's own RTI section for the full RTI evidence chain.
 
 `ID-3` formal release planning remains **planning-complete**. Controlled-v1
 productization stages 1–3 are **COMPLETE_ON_MAIN**; Stage 4 design is
-**APPROVED / MERGED / POST-MERGE CERTIFIED**, while its implementation is
-**NOT_STARTED / NOT_AUTHORIZED** — see [§12](#12-productization). Architectural
+**APPROVED / MERGED / POST-MERGE CERTIFIED**; Stage 4A implementation is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, and Stage 4B is
+**ELIGIBLE / NOT ACTIVATED / NOT AUTHORIZED** — see [§12](#12-productization). Architectural
 independence and formal release maturity are deliberately different axes and
 are never conflated in this project's own documentation.
 
@@ -1350,7 +1359,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (Controlled-v1 Stage 4 / OD-04 canonical state sync).** Per
+**Current sequence (Controlled-v1 Stage 4A canonical closure sync).** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
