@@ -7,21 +7,25 @@ Continuation: OD-CONTROLLED-V1-OD-06-C1-RUNNER-CONTAINMENT — APPROVED.
 Controller: OD-CONTROLLED-V1-OD-06-OP-06-02-SYSTEMD-CONTROLLER — APPROVED.
 Broker: OD-CONTROLLED-V1-OD-06-OP-06-03-SCOPED-CONTROLLER-BROKER — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C1 — APPROVED.
+Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C2 — APPROVED.
 
 Mission result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
 INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent
 approval, runner certification, PO OD-06 acceptance or release approval.
 Independent HEAVY Architecture review of 61aeb27236ce346f93a9dfb1cfe4aed4518f1693
 returned CHANGES REQUIRED (3 MAJOR / 3 MINOR); section 14 records the C1
-corrective. C1 corrective changes are completed and ready for independent
-re-review; that prior exact-head review does not cover the C1 HEAD.
+corrective. Independent HEAVY Architecture re-review of the C1 HEAD
+12c6a589d3d456914e28be09d7c032fc44e8c6c4 returned CHANGES REQUIRED
+(0 MAJOR / 3 MINOR); section 15 records the C2 corrective. C2 corrective
+changes are completed and ready for independent re-review; no prior
+exact-head review covers the C2 HEAD.
 
 OP-06-03 is APPLIED. Host systemd, transient .service and cgroup v2 remain
 selected. Sole privileged mediation boundary: root-owned, operator-installed,
 one-shot execution controller broker. Runner gets no direct manage-units,
 generic sudo, systemctl or systemd-run authority. Only OP-06-02's privileged
 helper prohibition is superseded; custom daemon prohibition remains.
-Sections 1–2 preserve historical discovery; sections 3–14 govern this proposal.
+Sections 1–2 preserve historical discovery; sections 3–15 govern this proposal.
 
 **DESIGN ONLY**: no broker/source/test/workflow/package/export implementation,
 execute activation, Stage 5, release or merge. Normal product remains npm.
@@ -315,9 +319,11 @@ Before privileged action broker independently checks:
    data locations; no wildcard ancestor/home or caller evidence pathname.
    Root must be a runner-owned repository below a literal operator workspace,
    never /, a system directory or an ancestor of controller artifacts. The
-   workspace anchor is root-protected; enrolling root/home itself is forbidden.
+   workspace anchor is the single root-protected enrollment workspace (§5.2);
+   enrolling root/home itself is forbidden. Every root is reached from the
+   anchor without crossing a mount and is not itself a mount root (§5.5).
    Enrolled roots are pairwise non-overlapping (§5.5); any persisted overlap
-   makes the runner ineligible for every create.
+   or mount violation makes the runner ineligible for every create.
 3. Enrolled config/bounded Stage 4 data, request successful apply outcome/
    record/chain identities/framework, approved afterDigest of ALL changes/
    fresh canonical bytes and exact specs. Client still performs §8.1 full
@@ -390,9 +396,15 @@ fails qualification; a different mechanism needs owner decision.
 
 Runner-controlled/replaced broker/config invalid. Enrollment strict JSON
 <=1048576 bytes exact keys {schemaVersion,enabled,compatibilityDigest,caller,
-roots,qualification}; version1/boolean/H digest of the §5.4 record.
+workspace,roots,qualification}; version1/boolean/H digest of the §5.4 record.
 caller={uid,gid,account}, IDs integer1..4294967294, account<=64 ASCII
-[A-Za-z0-9_-]+. roots<=64 exact {root,projectId,outputDir,framework,sutNames,
+[A-Za-z0-9_-]+. workspace={path,dev,ino}: exactly one operator anchor per
+runner, canonical absolute path<=4096 bytes (§4.2 path rules), never "/",
+a system directory, a home directory or an ancestor of controller
+artifacts; root:root, not group/other-writable, protected ancestors; dev/ino
+decimal strings (§4.2) of the anchor directory. It is the trusted base of the
+§5.5 mount rule; no caller or target value selects it.
+roots<=64 exact {root,projectId,outputDir,framework,sutNames,
 fingerprint}, §4 root/existing project ID grammar/configured canonical
 relative outputDir<=300 bytes safe segments/no '..'/framework literal/
 <=32 SUT names/§8 fingerprint.
@@ -500,32 +512,71 @@ attempts uses the stored binding (§7) and is not blocked by a pair change.
 Canonical root identity = enrolled canonical absolute path after all §4.2/
 §4.3 normalization (descriptor walk from "/", no symlink component, no '.'/
 '..'/empty segment, no trailing slash) plus dev/ino of the root and of each
-ancestor directory. Roots A and B overlap iff any holds:
+ancestor directory.
+
+Mount invariant (W = enrollment workspace anchor, §5.2). Mount ID below is
+the live statx(2) STATX_MNT_ID of the object as reached through the walk;
+STATX_ATTR_MOUNT_ROOT marks a mount root. Mount IDs are never persisted,
+because they are not stable across remounts or boots; each check compares
+live values taken in the same broker invocation. For every enrolled root R:
+
+M1. W's live path, dev and ino equal enrollment workspace; W is root-owned
+    and not group/other-writable.
+M2. R's canonical path is W + "/" + one or more segments; R != W.
+M3. A descriptor walk from W to R, one segment at a time with no-follow and
+    no-cross-mount resolution (openat2 RESOLVE_NO_SYMLINKS|RESOLVE_NO_XDEV
+    or a qualified equivalent), succeeds. Every directory on the walk,
+    including R, has the same mount ID as W; R does not carry
+    STATX_ATTR_MOUNT_ROOT.
+M4. R's live dev/ino equal its enrolled dev/ino, and R's dev equals W's dev.
+
+Qualification requires the kernel to supply STATX_MNT_ID and
+STATX_ATTR_MOUNT_ROOT plus no-cross-mount resolution. A host lacking any of
+them is ineligible; there is no path-only or dev-only fallback.
+
+Consequence: all enrolled roots of one runner are ordinary directories
+inside the single mount that contains W. Within one mount, a directory has
+exactly one path relative to the mount (Linux forbids directory hardlinks),
+and any alias of a directory (bind mount, FUSE/bindfs, overlay or other
+mount, including a mount placed on R itself) is a different mount and fails
+M3. So two roots whose W-relative paths are not prefix-related denote
+disjoint physical directory trees. Roots that need another filesystem need
+a separately enrolled runner (with its own anchor); they never get a second
+anchor here.
+
+Roots A and B overlap iff any holds:
 
 1. same canonical path bytes;
 2. A + "/" is a byte prefix of B (A ancestor of B), or the converse;
 3. A dev/ino equals B dev/ino or any ancestor dev/ino of B, or the converse
-   (bind-mount/alias of the same directory).
+   (exact alias of the same directory; under M1–M4 this is redundant
+   defence in depth).
 
-Two enrolled roots MUST NOT overlap. Enrollment/requalification compares the
-candidate against every existing enrolled root; overlap REFUSES the
-candidate, no coexistence or priority rule. Every broker invocation
-re-validates the whole persisted roots[] pairwise (<=64 roots, <=2016 pairs)
-and re-verifies each root's live identity. Persisted overlap (or a live
-identity no longer matching enrollment) makes runner qualification fail
-closed: every create REFUSED/INELIGIBLE exit 5, no root silently selected;
-operator remediation edits enrollment and requalifies. Reconcile of existing
-attempts remains permitted under their stored binding (§7).
+Canonical comparison procedure, run at enrollment/requalification for the
+candidate against every existing root, and run by every broker invocation
+over the whole persisted roots[] (<=64 roots, <=2016 pairs) before any
+eligibility decision: (a) M1 once; (b) M2–M4 for each root, live; (c)
+overlap rules 1–3 pairwise on canonical path bytes and live dev/ino. Any
+failure is a violation. Two enrolled roots MUST NOT overlap or violate
+M1–M4. A violating candidate is REFUSED at enrollment, with no coexistence
+or priority rule. A persisted violation (overlap, mount alias, mount-root
+root, changed anchor, or a live identity no longer matching enrollment) makes
+runner qualification fail closed: every create REFUSED/INELIGIBLE exit 5,
+nothing reserved, no root silently selected. Operator remediation edits
+enrollment and requalifies. Reconcile of existing attempts remains permitted
+under their stored binding (§7); it never creates authority.
 
 Target identity = (rootDigest, canonical PPI-1 relative path) plus live
 dev/ino. Execution opens beneath the root with no symlink and no mount
 crossing (§4.3 item 2), and targets/fingerprint files require regular files
-with link count 1 (§8.1 item 6), so a mount alias or hardlink cannot expose
-one physical file under two roots. PPI-1 canonical form admits one spelling
-per path. With disjoint roots, root claims (one active attempt per root) and
+with link count 1 (§8.1 item 6). So a mount placed inside a root after
+enrollment and a hardlink both refuse, and neither can expose one physical
+file under two roots. PPI-1 canonical form admits one spelling per path.
+With M1–M4 and disjoint roots, root claims (one active attempt per root) and
 consumed keys (§11.2, both over rootDigest) refer to disjoint physical
-subtrees: one physical spec cannot be independently executed through two
-enrolled root identities.
+subtrees. One physical spec therefore cannot obtain two independent
+execution/root claims or two consumption identities through two enrolled
+roots.
 
 ## 6. Fixed service, identity and finite lifecycle
 
@@ -634,6 +685,7 @@ phase has its own origin and finite bound; none is borrowed from another.
 |---|---|---|---|
 | P0 intake | Broker process start | <=5000 ms request frame read/validate (§4.2) | REFUSED/SCHEMA_INVALID, nothing reserved |
 | P1 recovery/admission | Broker monotonic immediately after P0 succeeds, before any pre-create recovery | A=120000 ms global hard deadline, broker | Before reservation commit: REFUSED/RECOVERY_BUDGET_EXHAUSTED exit 5, no reservation/spawn |
+| P1S pre-submit | Broker monotonic immediately after the reservation transaction COMMITTED marker is fsynced (durable PREPARED, submission NOT_SENT) | S=30000 ms global hard deadline, broker; checked before each step and immediately before the SUBMITTING write | Consumed: PREPARED -> EXECUTION_ERROR PRESUBMIT_FAILURE exit 7, emptyBy=not-submitted, nothing sent |
 | P2 start | Durable SUBMITTING | TimeoutStartUSec 30000 ms (manager) + readback to durable STARTED | START_FAILURE error7 after P4 |
 | P3 execution | Manager ActiveEnterTimestampMonotonic of this invocation | T via RuntimeMaxUSec (manager) | HARD_TIMEOUT path (§6.3), then P4 |
 | P4 termination/empty | Deadline, natural deactivation, or stop decision | <=30000 ms stop/SIGKILL + <=30000 ms empty confirmation | QUARANTINED7 if empty unproven |
@@ -652,8 +704,35 @@ Remaining-A is checked immediately before the reservation commit; past it,
 REFUSED and no claim/tombstone is written, so the unconsumed request may be
 retried later.
 
-Synchronous create observation is P0+P1+P2+P3+P4+P5+P6:
-<=5000+120000+30000+T+60000+60000 ms plus commit/release I/O. Kernel
+P1S is the only interval between P1 and P2; P1 ends and P1S begins at the
+same durable reservation commit, and P1S ends exactly when SUBMITTING is
+fsynced (P2 origin), so every instant from reservation through submission
+is inside a bounded phase. During all of P1S the durable state is PREPARED
+with submission NOT_SENT; no D-Bus call is made. P1S covers, in order: the
+ACCEPTED frame write (§7.2), the client-liveness check, descriptor-anchored
+creation of the attempt leaf and its home/tmp/reports directories (§9.1),
+launch-envelope construction and sealing, the mandatory post-reservation
+recheck (§4.3 item 4, §8.1 item 7: root/apply/framework binding, exact
+target bytes, fingerprint fresh bytes, qualified Node/native/profile, §5.4
+compatibility and §5.5 root/mount rule, launch-size bounds), the
+propertiesDigest computation, and the SUBMITTING write.
+
+Outcome inside P1S: the reservation is already durable, so pre-reservation
+REFUSED semantics never apply and the attempt is consumed (tombstones
+retained, no retry, no reset). Recheck failure, any step failure or S
+exhaustion: the broker writes terminal EXECUTION_ERROR reason
+PRESUBMIT_FAILURE with cleanup emptyBy=not-submitted (protected NOT_SENT
+plus no-send/no-unit/clean-namespace proof, §11.1), fsyncs it and sends
+TERMINAL; synchronous exit 7. If that no-send proof fails, the outcome is
+QUARANTINED 7. Client loss in P1S is CLIENT_LOST 7 with the same cleanup
+(§7.4 S1). Broker crash in P1S leaves PREPARED/NOT_SENT; the next P1 or
+reconcile applies Case E: protected NOT_SENT plus no-unit/clean-namespace
+proof -> EXECUTION_ERROR PRESUBMIT_FAILURE 7, otherwise QUARANTINED 7. A
+crash after the SUBMITTING write is P2/S2 (§7.4), never P1S. PRESUBMIT_FAILURE
+cannot reach OBSERVED, PASSED or TEST_FAILED.
+
+Synchronous create observation is P0+P1+P1S+P2+P3+P4+P5+P6:
+<=5000+120000+30000+30000+T+60000+60000 ms plus commit/release I/O. Kernel
 storage stalls (fsync) are not abortable; a host whose storage stalls fails
 qualification, and no hard real-time bound is claimed for them. Client
 pre-broker §8.1 verification is bounded by input/size limits, not timed,
@@ -722,7 +801,7 @@ governs even if enrollment disabled, config cannot widen old authority.
 | B incomplete FAILED | Error7/proven timeout8; FAILED insufficient; drain/finalize/no retry; ambiguity H |
 | C incomplete INACTIVE | Unknown error7; exact timeout permits8; inspect jobs/population/finalize/no retry; failure H |
 | D incomplete missing | Removal/reboot proof ->error7, never PASS/missing-unit timeout; otherwise H/no retry |
-| E crash before framework | No-send/no-unit proof error7; SUBMITTING uncertainty A–D; consumed without launch/no retry |
+| E crash before framework | PREPARED/NOT_SENT (P1S, §6.4): no-send/no-unit proof -> error7 PRESUBMIT_FAILURE, else H; SUBMITTING uncertainty A–D; consumed without launch/no retry |
 | F crash after framework | Manager independent deadline/later A–D; no immediate death-kill/report PASS/no retry |
 | G timeout during absence | Retained exact deadline/timeout+empty/durable ->8; otherwise error/H/no retry |
 | H stop/cleanup/identity fails | QUARANTINED7/root claims; runner quarantine if ambiguous ownership; operator exact drain/no retry |
@@ -862,7 +941,7 @@ R-3/R-4.
 | Stage (last durable) | Client crashes / EOF | Broker crashes | Workload exits | Controller state disappears | Proposal never arrives | Terminal commit fails |
 |---|---|---|---|---|---|---|
 | S0 P0/P1, nothing reserved | Broker aborts; nothing reserved | Partial INTENT recovered by next P1; client got no REFUSED: exit 7, never assumes unreserved | Not applicable | Stale attempts per Cases A–H | Not applicable | Not applicable (REFUSED not durable) |
-| S1 PREPARED (ACCEPTED) | Liveness checked before SUBMITTING: CLIENT_LOST error 7, emptyBy=not-submitted, consumed | Reconcile Case E: no-send proof error 7 | Not applicable | Not applicable | Not applicable | Stays PREPARED; reconcile error 7 or H |
+| S1 PREPARED (ACCEPTED, P1S) | Liveness checked before SUBMITTING: CLIENT_LOST error 7, emptyBy=not-submitted, consumed | Reconcile Case E: no-send proof PRESUBMIT_FAILURE error 7, else QUARANTINED | Not applicable | Not applicable | Not applicable | Stays PREPARED; reconcile PRESUBMIT_FAILURE error 7 or H |
 | S2 SUBMITTING/BOUND | Broker stops unit: CLIENT_LOST error 7 | Manager deadline; reconcile A–E: error 7 or proven timeout 8 | Before launch proof: START_FAILURE 7 even on exit 0 | MISSING_UNIT_PROOF: removal/boot proof error 7, else QUARANTINED | Not applicable | Stays incomplete; reconcile error 7 or H |
 | S3 STARTED | Stop: CLIENT_LOST 7 (proven earlier deadline: 8) | Case F: manager deadline; reconcile error 7 or proven timeout 8 | Normal path to S4 | As S2 | Not applicable | As S2 |
 | S4 OBSERVED (EXITED sent) | Immediate CLIENT_LOST 7 (observed timeout: 8) | Reconcile from OBSERVED: error 7 or proven timeout 8 | Already exited | Empty proof durable; only release affected | After R: OBSERVATION_EXPIRED 7 (observed timeout: 8) | Stays OBSERVED; client exit 7; reconcile error 7/8 |
@@ -918,7 +997,11 @@ apply.js or #23F. Import/call closure: section 10.
    no historical identity and change no Stage 4 schema.
 7. Framework agrees across config/plan/package. Freeze verified data-only
    descriptor, revalidate after reservation and immediately before submission.
-   Post-apply mutation refuses before spawn, exit 4.
+   Post-apply mutation detected by the client or by the broker before the
+   reservation commit refuses before spawn: REFUSED/INPUT_MISMATCH exit 4,
+   nothing consumed. The same mismatch detected by the broker's mandatory
+   post-reservation recheck (P1S, §6.4) is never REFUSED: the attempt is
+   consumed and ends EXECUTION_ERROR PRESUBMIT_FAILURE exit 7, nothing sent.
 
 Only exact applied Cypress/Playwright specs from that package execute.
 Helper/config-only packages refuse; no suite fallback, arbitrary target,
@@ -1036,10 +1119,11 @@ Target disk/network/report output is account activity, not product quota.
 Exact enrolled-version JUnit profiles; non-root parser, DTD/external entities/
 network expansion forbidden, depth<=32/testcases<=10000. Closed
 testsuites/testsuite/testcase envelope and bounded totals agree with complete
-enumeration. Transient labels/file attributes map canonical requested specs.
-Cypress per-spec output/Playwright file attributes must cover ALL requested
-specs/no extra/missing (§9.4); unsupported version if exact mapping
-unprovable.
+enumeration. Each framework has exactly one authoritative report-to-spec
+mapping rule, defined in §9.4 (Cypress: per-report testsuite file attribute;
+Playwright: file-level testsuite name attribute). Mappings must cover ALL
+requested specs with no extra or missing spec; a version for which the
+exact rule is unprovable is unsupported.
 Each spec>=1 executed case; all-skipped/no-test error.
 
 Closed XML vocabulary: testsuites contains testsuite; testsuite contains
@@ -1050,9 +1134,10 @@ testsuite use name,tests,failures,errors,skipped,time,timestamp,file,hostname,
 id,package; testcase name,classname,file,time; failure/error message,type;
 skipped message; property name,value. Other elements/attributes/entities
 refuse. Numeric counts integer0..10000/time finite decimal0..600; each
-text/attribute<=4096 UTF-8 bytes. Spec mapping requires canonical file
-attribute or qualification-proven exact suite-name-to-requested-path mapping,
-never label resemblance. Unsupported shape refuses, no grammar relaxation.
+text/attribute<=4096 UTF-8 bytes. Spec mapping uses only the single
+framework rule of §9.4 (byte equality with a requested canonical path),
+never label resemblance, another attribute, or a second rule as fallback.
+Unsupported shape refuses, no grammar relaxation.
 
 Normalized result exactly {adapterVersion,specs,totals,complete}, specs sorted
 {path,total,passed,failed,skipped}, totals={total,passed,failed,skipped},
@@ -1119,7 +1204,7 @@ the workload, report content, streams or frames is ever opened.
 | Framework | Exact report count | Filename grammar (whole string) | File to spec mapping |
 |---|---|---|---|
 | Cypress | Number of targets, 1..100, one per executed spec | ^cypress-[0-9a-f]{32}\.xml$ | Exactly one testsuite carries a file attribute, byte-equal to exactly one requested canonical root-relative path |
-| Playwright | 1 | ^playwright\.xml$ | testcase/testsuite file attributes (§9.3) cover every target and nothing else |
+| Playwright | 1 | ^playwright\.xml$ | Each file-level testsuite name attribute is byte-equal to exactly one requested canonical root-relative path; testsuites and targets in bijection; no file attribute anywhere |
 
 Cypress [hash] is the junit reporter's lowercase hex MD5 of the complete
 written file content. Qualification proves, for the exact Cypress/reporter
@@ -1127,6 +1212,33 @@ build, that the name is computed from exactly the written bytes and that the
 spec-path file attribute is present in root-relative form; otherwise the
 build is unsupported. Client and broker recompute the MD5 and require name
 equality (a write-completeness consistency check, not authentication).
+
+Playwright mapping (single authoritative rule, C2). The trusted identity of
+each admitted spec is its canonical PPI-1 root-relative path in the
+broker-validated targets[] (§4.2/§4.3); nothing in the report or target
+config defines which specs were admitted. The report side of the mapping is
+the name attribute of each file-level testsuite. Normalization base: the
+Playwright config directory, which the fixed adapter argv pins to the
+enrolled canonical root (--config=root+"/playwright.config.js", §8.2). The
+target config's testDir/testMatch/rootDir values are never read, joined or
+trusted for mapping. Expected value: the testsuite name is byte-equal to the
+canonical root-relative target path. There is no repair, case folding,
+separator rewrite, "./" or "/" trimming, prefix stripping or testDir join.
+Absolute, "..", empty-segment or backslash names are extra. Qualification
+proves, for the exact @playwright/test and playwright-core packageVersion
+and adapter od06-playwright-v1, that with the fixed argv and one project
+(chromium):
+(a) exactly one file-level testsuite per executed spec, as a direct child of
+testsuites;
+(b) its name is the spec path relative to the config directory, with "/"
+separators, independent of a testDir that differs from the root, nested
+spec directories and testMatch;
+(c) every testcase of that spec is a direct child of that testsuite;
+(d) no file attribute is emitted.
+A build failing any of (a)–(d) is unsupported: the profile fails
+qualification and Playwright execute is unavailable on that runner. The
+contract has no fallback to classname, testcase name, file attributes,
+hostname, testDir joining or label resemblance.
 
 Limits: <=100 reports; each 1..4194304 bytes; aggregate<=16777216 bytes;
 <=10000 testcases in total; §9.3 depth/attribute/text bounds. Reports are
@@ -1149,7 +1261,13 @@ Completeness (§7.3 step 5): Cypress files and targets must be in exact
 bijection. Two files mapping to one spec: duplicate, refuse. A target with
 no file: missing, refuse. A file with zero or several file attributes, or
 mapping to a non-target: extra, refuse. Count != number of targets: refuse.
-Playwright: exactly one file covering all targets and no other path.
+Playwright: exactly one report file; the file-level testsuites and targets
+must be in exact bijection under the rule above. Two testsuites whose names
+equal one target: duplicate (ambiguous), refuse. A target with no testsuite:
+missing, refuse. A testsuite name that is not byte-equal to a target, or any
+file attribute present: extra/unsupported shape, refuse. Testsuite count !=
+number of targets: refuse. A testsuite with zero testcases is a no-test spec
+(§9.3, RESULT_INVALID).
 
 Aggregation (§7.3 step 6): per file §9.3 parse; per spec total = testcases,
 failed = testcases with failure or error, skipped = testcases with skipped,
@@ -1245,7 +1363,11 @@ certification or permission to bypass future tests. C1 revalidation: the
 §7 frames, §9.4 report contract, §5.4 compatibility read and §5.5 root rule
 add only broker-protocol, data-read and broker-side checks; no import/call
 edge to either gate, #23F, apply.js or legacy execution. Proposed remains
-FALSE.
+FALSE. C2 revalidation: the §5.5 mount invariant, the §6.4 P1S phase with
+PRESUBMIT_FAILURE and the §9.4 Playwright mapping rule are broker-side
+filesystem checks, a broker lifecycle state and a client data-parsing rule;
+they add no import/call edge to either gate, #23F, apply.js or legacy
+execution. Proposed remains FALSE.
 
 ## 11. Closed schemas and Stage 5 boundary
 
@@ -1357,8 +1479,11 @@ reportBytes,reportOverflow}, counters N/reportCount 0..101/reportBytes
 recordDigest domain "qa-ai-agent:automation-execution-record:v2:".
 
 Reasons: SUCCESS, ASSERTION_FAILURE, HARD_TIMEOUT, CANCELLED, CLIENT_LOST,
-START_FAILURE, OBSERVATION_EXPIRED, RESULT_INVALID, CONTROLLER_FAILURE,
-MISSING_UNIT_PROOF, CLEANUP_UNPROVEN, STATE_INCONSISTENT.
+PRESUBMIT_FAILURE, START_FAILURE, OBSERVATION_EXPIRED, RESULT_INVALID,
+CONTROLLER_FAILURE, MISSING_UNIT_PROOF, CLEANUP_UNPROVEN, STATE_INCONSISTENT.
+PRESUBMIT_FAILURE (C2) only EXECUTION_ERROR from PREPARED/NOT_SENT with
+emptyBy=not-submitted, controller null, process exitCode/signal/managerResult
+null with timeoutObserved false, and result null (§6.4 P1S).
 SUCCESS iff PASSED/ASSERTION_FAILURE iff TEST_FAILED/HARD_TIMEOUT iff
 TIMED_OUT. QUARANTINED only CONTROLLER_FAILURE/MISSING_UNIT_PROOF/
 CLEANUP_UNPROVEN/STATE_INCONSISTENT+claims retained. Other reasons error
@@ -1474,6 +1599,14 @@ Required future Stage 5 vectors added by C1 (none implemented here):
 | Budgets (§6.4) | Recovery/admission global budget exhaustion with up to 256 stale attempts -> REFUSED/RECOVERY_BUDGET_EXHAUSTED before spawn, nothing consumed, durable partial progress resumes |
 | Compatibility (§5.4) | Stale npm/broker pair (both directions); broker contractVersion mismatch; broker digest mismatch; qualification profile mismatch/stale live builds; downgrade of npm or broker; client check bypassed still refused by broker |
 
+Required future Stage 5 vectors added by C2 (none implemented here):
+
+| Area | Vectors |
+|---|---|
+| Mount aliases (§5.5) | Bind mount of a descendant of root A enrolled as root B (and the converse order); FUSE/bindfs mount exposing a descendant of A enrolled as B; overlay or other mount alias; root that is itself a mount point (STATX_ATTR_MOUNT_ROOT); root reached through a mount crossing below the anchor; mount placed on an enrolled root or inside it after enrollment; changed anchor dev/ino; persisted invalid alias makes every create REFUSED/INELIGIBLE before reservation while reconcile still finalizes existing attempts; kernel without STATX_MNT_ID/no-cross-mount resolution ineligible |
+| Post-reservation (§6.4 P1S) | Spec, helper, fingerprint, framework metadata or Node/native mutation between reservation and SUBMITTING -> consumed EXECUTION_ERROR PRESUBMIT_FAILURE/7, never REFUSED/4, retry refused as REPLAY; S exhaustion (slow fingerprint read) -> PRESUBMIT_FAILURE; leaf/envelope creation failure; client loss in P1S -> CLIENT_LOST; broker SIGKILL at each P1S step -> reconcile Case E PRESUBMIT_FAILURE or QUARANTINED; no D-Bus call observed during P1S; same mismatch before reservation -> REFUSED/INPUT_MISMATCH/4 with nothing consumed |
+| Playwright mapping (§9.4) | 1, 2 and 100 specs; testDir different from root and nested spec directories; testsuite name with "./", backslash, absolute or testDir-relative form; duplicate testsuite name; missing spec; extra non-target testsuite; file attribute present; testsuite with zero testcases; build whose naming depends on testDir fails qualification with no fallback |
+
 ## 13. Mandatory handoff / final-report schema
 
 ~~~text
@@ -1562,3 +1695,39 @@ The prior Architecture review applied only to the reviewed HEAD above and is
 invalidated by the C1 commit; a new full independent HEAVY Architecture
 exact-head re-review is required. Security review not started. Merge not
 authorized. This section does not mark any review APPROVED.
+
+## 15. Architecture corrective C2
+
+Authority: OD-CONTROLLED-V1-OD-06-ARCH-C2 — APPROVED. One documentation-only
+delta corrective of PR #254 for exactly the three MINOR findings of the
+independent HEAVY Architecture re-review (CHANGES REQUIRED, 0 MAJOR /
+3 MINOR) of the C1 HEAD below. C1 resolutions, OP-06-C1/OP-06-02/OP-06-03,
+the broker/systemd/cgroup model, runner dispositions and all owner decisions
+are unchanged. INFO observations of that review are out of scope.
+
+| Fact | Value |
+|---|---|
+| Reviewed HEAD / tree | 12c6a589d3d456914e28be09d7c032fc44e8c6c4 / 9b9d8663ae1214d64ac833765c0a45aff4fed197 |
+| Base | 126d105841cf404c92752ae54bb616ed710d7f53 |
+| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
+| Commit policy | Exactly one direct child of the reviewed HEAD; no amend/squash/rebase/reset/force-push |
+
+| Finding | Corrected sections |
+|---|---|
+| C2-m1 descendant mount alias | §4.3 item 2 (anchor, mount rule), §5.2 enrollment workspace key, §5.5 mount invariant M1–M4/comparison procedure/persisted violation/claims consequence, §12 C2 vectors |
+| C2-m2 post-reservation recheck window | §6.4 P1S phase row/coverage/outcome text and synchronous sum, §7 Case E, §7.4 S1 row, §8.1 item 7 (exit 4 only pre-reservation), §11.3 PRESUBMIT_FAILURE reason, §12 C2 vectors |
+| C2-m3 Playwright report-to-spec mapping | §9.3 single-rule mapping text, §9.4 Playwright row/qualification (a)–(d)/normalization/completeness, §12 C2 vectors |
+
+New closed values: enrollment key workspace; phase P1S with bound S=30000 ms;
+reason PRESUBMIT_FAILURE (EXECUTION_ERROR, exit 7). No new exit code,
+refusal enum, frame, state, export, owner decision or implementation.
+Governance unchanged: RELEASE_CAPABILITIES.execute disabled; TSB-F02 OPEN /
+LOW / CONDITIONAL, current FALSE, proposed FALSE (§10 C2 revalidation);
+TAP-2/CRS-1/PPI-1, R-1..R-5, AT-07/TB-01 and FUTURE guards unchanged;
+Controlled Release NOT APPROVED.
+
+C2 corrective changes are completed and ready for independent re-review.
+The C1 re-review applied only to the reviewed HEAD above and is invalidated
+by the C2 commit; a new full independent HEAVY Architecture exact-head
+re-review is required. Security review not started. Merge not authorized.
+This section does not mark any review APPROVED.
