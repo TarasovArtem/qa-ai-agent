@@ -10,6 +10,7 @@ Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C1 — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C2 — APPROVED.
 Security corrective: OD-CONTROLLED-V1-OD-06-SEC-C3 — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C4 — APPROVED.
+Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C5 — APPROVED.
 
 Mission result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
 INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent
@@ -24,16 +25,19 @@ returned APPROVED; independent HEAVY Security review of the same HEAD returned
 CHANGES REQUIRED (3 MEDIUM); section 16 records the C3 Security corrective.
 Independent HEAVY Architecture re-review of the C3 HEAD
 987b99cee788b31005ca217a6b05d18099203278 returned CHANGES REQUIRED
-(0 MAJOR / 1 MINOR); section 17 records the C4 corrective. C4 corrective
+(0 MAJOR / 1 MINOR); section 17 records the C4 corrective. Independent
+HEAVY Architecture re-review of the C4 HEAD
+91943036d885e94760762e277120e174c397e9b5 returned CHANGES REQUIRED
+(0 MAJOR / 1 MINOR); section 18 records the C5 corrective. C5 corrective
 changes are completed and ready for independent re-review; no prior
-exact-head review covers the C4 HEAD.
+exact-head review covers the C5 HEAD.
 
 OP-06-03 is APPLIED. Host systemd, transient .service and cgroup v2 remain
 selected. Sole privileged mediation boundary: root-owned, operator-installed,
 one-shot execution controller broker. Runner gets no direct manage-units,
 generic sudo, systemctl or systemd-run authority. Only OP-06-02's privileged
 helper prohibition is superseded; custom daemon prohibition remains.
-Sections 1–2 preserve historical discovery; sections 3–17 govern this proposal.
+Sections 1–2 preserve historical discovery; sections 3–18 govern this proposal.
 
 **DESIGN ONLY**: no broker/source/test/workflow/package/export implementation,
 execute activation, Stage 5, release or merge. Normal product remains npm.
@@ -322,6 +326,12 @@ Before privileged action broker independently checks:
    zero argv and authenticated enrolled caller UID/GID/account. No identity
    from request/ordinary caller environment. Exact §5.4 compatibility record
    match; request values are compared, never used to select a pair.
+   Order (§5.6.4): everything in this item except the §5.4 match and
+   protected-state integrity is the C1a gate, first in P1 immediately after
+   P0 and before any enrollment- or caller-dependent operation; RECONCILE
+   runs it as R1a before any caller ownership or protected attempt lookup.
+   Protected-state integrity is F2 (C3/R3) plus transaction recovery
+   (C5/R4); the §5.4 match runs only at CREATE C7 and never gates RECONCILE.
 2. Literal operator-enrolled canonical root/dev/inode/digest/account and live
    storage trust (§5.6.2; no enrolled or requested storage claim);
    descriptor-relative no-follow/beneath/no-mount-crossing opens of fixed
@@ -354,7 +364,7 @@ Before privileged action broker independently checks:
    filesystem types and the bounded workload-storage mount (§5.6), in the
    normative order of §5.6.4. For CREATE: the descriptor-independent checks
    (N1–N6, F2, W1, W2, W4, the W3 size bound and the W5 structural part)
-   MUST run first in P1,
+   MUST run in P1 immediately after the item-1 gate (C1a),
    before items 2–7 and any protected-store write, §5.5 walk, manager call
    or cgroup read; F1 MUST run on the workspace/root descriptors produced by
    the item-2 §5.5 M1/M3 walk, before any protected-store write and before
@@ -504,7 +514,9 @@ compatibilityDigest, as part of install/upgrade/requalification (§5.3).
 Npm never writes either. Lookup key: none; the single record is read from
 the fixed path and is the only candidate.
 
-Broker validation (authoritative, before reservation): canonical record bytes
+Broker validation (authoritative, before reservation, at §5.6.4 step C7,
+after the C1a integrity/authentication gate has established enrollment and
+artifact integrity): canonical record bytes
 match enrollment compatibilityDigest; record contractVersion equals the
 compiled literal; brokerSha256 equals the digest the broker computes over
 its own fixed installed artifact (descriptor-opened, no-follow, §5.2 owner
@@ -592,7 +604,8 @@ descriptor dR produced by its M3 walk, then F1(R) on dR; (c) overlap rules
 1–3 pairwise on canonical path bytes and live dev/ino. Any failure is a
 violation. dW and every dR are retained for the rest of the invocation;
 all later workspace/root access is openat-relative to them, with no path
-re-resolution. RECONCILE does not run this procedure (§5.6.4). Two enrolled roots MUST NOT overlap or violate
+re-resolution; the P1S M1–M4 re-walk (§5.6.4) is a check-only comparison,
+never access. RECONCILE does not run this procedure (§5.6.4). Two enrolled roots MUST NOT overlap or violate
 M1–M4. A violating candidate is REFUSED at enrollment, with no coexistence
 or priority rule. A persisted violation (overlap, mount alias, mount-root
 root, changed anchor, or a live identity no longer matching enrollment) makes
@@ -621,7 +634,10 @@ Terminology: elsewhere in §§4–7 "namespace" means the systemd unit-name
 namespace qa-agent-exec-v1-*; this section concerns Linux kernel namespaces.
 Every check here is a live broker-side check. No request field, enrollment
 claim, caller environment or client result supplies or relaxes it, and none
-has a fallback. Order and applicability are normative in §5.6.4. For
+has a fallback. Order and applicability are normative in §5.6.4. Every
+check here runs after the §4.3 item 1 integrity/authentication gate (C1a
+for CREATE, R1a for RECONCILE); W2 depends on the integrity-checked
+enrollment fsType. For
 CREATE, all of N1–N6, F1–F4 and W1–W6 MUST pass before the reservation
 commit, in this order: the descriptor-independent checks (N1–N6, F2, W1,
 W2, W4, the W3 size bound and the W5 structural part) precede any
@@ -709,7 +725,9 @@ F3. Timing: at enrollment/requalification; in P1 of every CREATE (F2 at
     before reservation or any journal write; and again in the CREATE P1S
     recheck together with §5.5. Each check uses the same descriptor as the
     subsequent openat-relative use (dW/dR for F1, the protected-store
-    descriptor for F2), with no path re-resolution between check and use.
+    descriptor for F2), with no path re-resolution between check and use;
+    the P1S §5.5 re-walk is check-only substitution detection (§5.6.4) and
+    its descriptors are never used.
 F4. No caller-controlled trust: enrollment carries no filesystem-type claim
     for W or the state location, the request carries none, and §4.3 item 2
     "storage" denotes F1–F2. A live W or root type outside L (F1) makes
@@ -802,18 +820,31 @@ design-granted workload storage.
 
 #### 5.6.4 CREATE and RECONCILE check order (C4, normative)
 
-This subsection is the single normative order for §4.3 item 8, §5.5, §5.6
-and §6.4; other sections refer to it and MUST NOT be read as reordering it.
+This subsection is the single normative order for §4.3 items 1 and 8,
+§5.4 broker validation, §5.5, §5.6 and §6.4; other sections refer to it and
+MUST NOT be read as reordering it.
 
 CREATE (P1, then P1S):
 
 C1. P0 intake succeeds (§6.4).
+C1a. §4.3 item 1 integrity/authentication gate, first step of P1 and
+    before any enrollment-dependent or caller-dependent operation: broker
+    artifact integrity, enrollment and compatibility.json integrity
+    (descriptor-opened, no-follow, §5.2 owners/modes, strict enrollment
+    schema), effective root, zero argv and the authenticated caller from
+    the qualified sudo context (§5.1) equal to enrollment caller
+    {uid,gid,account}. It is read-only: no protected-store read or write, §5.5 walk,
+    manager call or cgroup read. Nothing from enrollment (caller,
+    workspace, roots, qualification, workloadStorage, profileDigest) and no
+    caller ownership is trusted before C1a passes. The protected-state
+    integrity part of item 1 is F2 (C3) plus transaction recovery (C5); the
+    §5.4 compatibility/pair part of item 1 is C7.
 C2. N1–N6 (§5.6.1).
 C3. Descriptor-independent storage checks: F2 on the protected-store
     descriptor before any protected-store read is trusted; W1, W2, W4, the
     W3 size bound and the W5 structural part on the B descriptor.
 C4. §5.5 comparison procedure over workspace and roots[] of the
-    integrity-checked enrollment (§4.3 item 1, §5.2): M1 produces dW, then
+    enrollment integrity-checked at C1a (§4.3 item 1, §5.2): M1 produces dW, then
     F1(W) on dW; M2–M4 for each root, M3 producing dR, then F1(R) on dR;
     overlap rules 1–3. dW and every dR are retained; all later
     workspace/root access (§4.3 item 2,
@@ -823,14 +854,25 @@ C5. Protected-store transaction recovery, the §7 pre-create reconciliations
     (each with the RECONCILE semantics R4–R7 below) and the unit-namespace
     scan.
 C6. W3 free-space part and W5 binding part.
-C7. Locks/claims, the remaining §4.3 items 1 and 3–6 checks, §5.4
-    compatibility, qualification, launch-size checks, remaining-A check and
-    the reservation commit (item 7 belongs to P2).
+C7. Locks/claims, only the §5.4 compatibility/pair part of §4.3 item 1
+    (record bytes vs enrollment compatibilityDigest, compiled contract
+    literal, broker self-digest, recomputed profileDigest, request
+    contractVersion/product; C1a is not repeated here), §4.3 items 3–6,
+    qualification, launch-size checks, remaining-A check and the
+    reservation commit (item 7 belongs to P2).
 P1S. N1–N5, F2, W1–W5; the §5.5 M1–M4 re-walk, whose results MUST equal the
     retained dW/dR by dev/ino and mount ID; F1 on the retained dW/dR; then
-    the remaining §6.4 P1S steps. Target access keeps using the retained
-    dW/dR, never the re-walk results.
+    the remaining §6.4 P1S steps. The re-walk is an intentional check-only
+    path re-resolution that detects workspace/root substitution since C4;
+    its descriptors are used only for that comparison and then closed.
+    The no-path-re-resolution rule of C4/§5.5/F3 governs authoritative
+    use: target, fingerprint and every other workspace/root access keeps
+    using the retained dW/dR, never the re-walk results.
 
+Any failure in C1a is REFUSED before reservation with the existing
+pre-start outcome for that check (§5.2 authority exit 5/input 4/config 3;
+§5.1 absent/ambiguous/direct-root context refuses), with no protected-store
+read or write, manager call or cgroup read.
 Any failure in C2–C4 is REFUSED/INELIGIBLE exit 5 with no protected-store
 write: no recovery, reconciliation, journal entry, claim or tombstone, and
 nothing reserved, spawned or consumed. Failure in C5–C7 is REFUSED before
@@ -841,11 +883,21 @@ RECONCILE (separate invocation, rule (a)): reconcile is recovery and
 finalization of an existing attempt, never new execution authorization.
 
 R1. P0 intake succeeds.
+R1a. The C1a §4.3 item 1 integrity/authentication gate, without the §5.4
+    compatibility/pair part and without the enrollment enabled flag (§5.4,
+    §7: a pair change or disabled enrollment never blocks reconcile):
+    broker artifact, enrollment and compatibility.json integrity, effective
+    root, zero argv and the authenticated caller equal to enrollment caller
+    {uid,gid,account}. Read-only; failure is REFUSED as in C1a with no
+    protected-store read or write, journal write or manager action,
+    leaving the attempt for a later reconcile. No caller identity, caller
+    ownership, attempt ownership, enrollment identity or protected attempt
+    lookup is used before R1a passes.
 R2. N1–N6. Failure: REFUSED/INELIGIBLE, no journal write, no manager action.
 R3. F2 on the protected-store descriptor. Failure: as R2.
 R4. Protected-store transaction recovery; the attempt for the requested
-    executionId is read from the protected journal; the caller must own it
-    (§7). The immutable stored attempt and controller binding (rootDigest,
+    executionId is read from the protected journal; the caller authenticated
+    at R1a must own it (§7). The immutable stored attempt and controller binding (rootDigest,
     unit name, invocation, boot, cgroup identity, leaf executionId) is the
     only source of identity. No current enrollment workspace/root value is
     consulted to identify, select or widen it.
@@ -866,6 +918,8 @@ facts only, so current workspace/root validity cannot change it.
 
 | Current condition | CREATE | RECONCILE of an existing attempt |
 |---|---|---|
+| §4.3 item 1 gate fails (artifact/enrollment/compatibility.json integrity, effective root, argv, caller authentication) | REFUSED at C1a before reservation; no protected-store read or write | REFUSED at R1a; no protected-store read or write, journal write or manager action; attempt left for a later reconcile |
+| §5.4 compatibility/pair mismatch | REFUSED/INCOMPATIBLE or INELIGIBLE exit 5 at C7, before reservation | Not evaluated |
 | F1 fails, or §5.5 M1–M4/overlap violation | REFUSED/INELIGIBLE exit 5 at C4; no protected-store write; nothing reserved/consumed | Permitted; deterministic Cases A–H under the stored binding, same outcome as with valid roots |
 | N1–N6 or F2 fails | REFUSED/INELIGIBLE exit 5 | REFUSED/INELIGIBLE; no journal write or manager action; attempt left for a later reconcile |
 | W1, W2 or W4 fails | REFUSED/INELIGIBLE exit 5 at C3 (P1S: PRESUBMIT_FAILURE 7) | Finalized without accessing or removing the leaf |
@@ -987,16 +1041,20 @@ phase has its own origin and finite bound; none is borrowed from another.
 | P5 result | EXITED frame written (§7.2) | R=60000 ms for proposal receipt; broker validation bounded by §9.4 byte limits | OBSERVATION_EXPIRED error7 |
 | P6 commit/release | Terminal decision | Bounded fsync + RefUnit/ResetFailedUnit/UnrefUnit + leaf removal | Commit failure: §7.4; release failure: claims retained, next P1 |
 
-P1 covers, in the CREATE order of §5.6.4: first the descriptor-independent
+P1 covers, in the CREATE order of §5.6.4: first the §4.3 item 1
+integrity/authentication gate (C1a: artifact/enrollment/compatibility.json
+integrity, effective root, zero argv, authenticated enrolled caller);
+then the descriptor-independent
 §5.6 checks (N1–N6, F2, W1, W2, W4, W3 size bound, W5 structural part);
 then the §5.5 comparison procedure with F1 on its retained dW/dR; then
 protected-store transaction recovery, all prior incomplete-root
 reconciliations and the runner unit-namespace scan (§7); then the W3
-free-space and W5 binding checks; then locks/claims, remaining integrity/
-§5.4 compatibility/qualification checks (root access only through the
+free-space and W5 binding checks; then locks/claims, the §5.4
+compatibility/pair part of item 1, qualification checks (root access only through the
 retained dW/dR), controller eligibility, launch-size checks and the
 reservation commit. A separate RECONCILE invocation follows only the
-§5.6.4 reconcile order within its §6.3 bound and never reaches a
+§5.6.4 reconcile order (R1a authentication before any caller/attempt
+ownership) within its §6.3 bound and never reaches a
 reservation commit. Up to 256 reconciliations
 share A: each manager wait is bounded by min(its §6.3 allowance, remaining A);
 no per-item timeout is multiplied by the item count. Each reconciled attempt
@@ -1013,7 +1071,8 @@ is inside a bounded phase. During all of P1S the durable state is PREPARED
 with submission NOT_SENT; no D-Bus call is made. P1S covers, in order: the
 ACCEPTED frame write (§7.2), the client-liveness check, the §5.6 recheck
 (N1–N5, F2, W1–W5, and F1 on the retained dW/dR with the §5.5 re-walk
-identity comparison of §5.6.4), descriptor-anchored creation of the attempt leaf and
+identity comparison of §5.6.4; the re-walk is check-only substitution
+detection, its descriptors are never used for target access), descriptor-anchored creation of the attempt leaf and
 its home/tmp/reports directories on the bounded workload mount (§5.6.3, §9.1),
 launch-envelope construction and sealing, the mandatory post-reservation
 recheck (§4.3 item 4, §8.1 item 7: root/apply/framework binding, exact
@@ -1097,7 +1156,8 @@ Tombstones/history never silently pruned. Before create <=256 fixed-ID
 reconciliations, all inside the single global P1 budget A (§6.4), never a
 per-item timeout multiplied by count; no daemon/recovery promise while no caller/
 operator returns. Systemd runtime independent. Lost/corrupt history runner
-quarantine. Recovery caller must own protected attempt; stored binding
+quarantine. Recovery caller, authenticated by the §4.3 item 1 gate before
+any attempt lookup (§5.6.4 C1a/R1a), must own protected attempt; stored binding
 governs even if enrollment disabled or current workspace/root eligibility
 fails (§5.6.4), config cannot widen old authority.
 
@@ -1682,6 +1742,10 @@ either gate, #23F, apply.js or legacy execution. Proposed remains FALSE.
 C4 revalidation: the §5.6.4 check order and reconcile scope reorder and
 narrow existing broker-side checks; they add no import/call edge to either
 gate, #23F, apply.js or legacy execution. Proposed remains FALSE.
+C5 revalidation: placing the existing §4.3 item 1 broker-side integrity/
+authentication checks at C1a/R1a and clarifying the check-only P1S re-walk
+add no import/call edge to either gate, #23F, apply.js or legacy execution.
+Proposed remains FALSE.
 
 ## 11. Closed schemas and Stage 5 boundary
 
@@ -1934,8 +1998,15 @@ Required future Stage 5 vectors added by C4 (none implemented here):
 
 | Area | Vectors |
 |---|---|
-| Check order (§5.6.4) | No protected-store write, §5.5 walk, manager call or cgroup read observed before N1–N6, F2, W1, W2, W4, W3 size bound and W5 structural part; F1 observed only on the dW/dR produced by M1/M3, after the walk and before any protected-store write; W3 free space and W5 binding observed after pre-create reconciliation and before reservation; workspace/root opened by path after C4 -> test failure; P1S re-walk dev/ino or mount-ID mismatch with retained dW/dR -> PRESUBMIT_FAILURE/7 |
+| Check order (§5.6.4) | No protected-store write, §5.5 walk, manager call or cgroup read observed before N1–N6, F2, W1, W2, W4, W3 size bound and W5 structural part; F1 observed only on the dW/dR produced by M1/M3, after the walk and before any protected-store write; W3 free space and W5 binding observed after pre-create reconciliation and before reservation; workspace/root opened by path for authoritative use after C4 -> test failure (the P1S check-only M1–M4 re-walk excepted, C5); P1S re-walk dev/ino or mount-ID mismatch with retained dW/dR -> PRESUBMIT_FAILURE/7 |
 | Reconcile scope (§5.6.4) | Workspace or root moved to a type outside L, persisted overlap, mount alias or changed anchor -> CREATE REFUSED/INELIGIBLE exit 5 with no protected-store write, while RECONCILE of an existing attempt yields the same Cases A–H outcome as with valid roots; RECONCILE opens no workspace/root descriptor; RECONCILE never writes reservation/claim/PREPARED/SUBMITTING or calls StartTransientUnit; F2 or N1–N6 failure -> RECONCILE REFUSED with no journal write or manager action; W1/W2/W4 failure -> RECONCILE finalizes without touching the leaf |
+
+Required future Stage 5 vectors added by C5 (none implemented here):
+
+| Area | Vectors |
+|---|---|
+| Item-1 gate (§5.6.4 C1a/R1a) | No enrollment field (caller, workspace, roots, qualification, workloadStorage), profileDigest or caller ownership consumed and no N1–N6, F2, W1–W5, §5.5 walk, protected-store read/write, manager call or cgroup read observed before broker artifact, enrollment and compatibility.json integrity, effective root, zero argv and caller authentication pass; runner-writable or replaced enrollment/compatibility.json/broker, non-root effective UID, any argv, spoofed SUDO_*, absent/ambiguous/direct-root context or caller != enrollment caller -> CREATE REFUSED at C1a with no protected-store read or write; the same on RECONCILE -> REFUSED at R1a before any protected attempt lookup, no journal write or manager action; non-owner caller of an existing attempt refused at R4 only after R1a authentication; RECONCILE under a changed §5.4 pair or disabled enrollment still passes R1a; §5.4 mismatch observed only at C7 and never on RECONCILE |
+| P1S re-walk (§5.6.4) | Workspace or root replaced, renamed or mounted over between C4 and P1S -> re-walk identity mismatch -> PRESUBMIT_FAILURE/7; re-walk descriptors never used for target, fingerprint or report access (all such access via retained dW/dR); substitution after the P1S re-walk still cannot redirect access because retained dW/dR are used |
 
 ## 13. Mandatory handoff / final-report schema
 
@@ -2151,5 +2222,57 @@ AT-07/TB-01 and FUTURE guards unchanged; Controlled Release NOT APPROVED.
 C4 corrective changes are completed and ready for independent re-review.
 The Architecture re-review of the reviewed HEAD above is invalidated by the
 C4 commit. Next: independent HEAVY Architecture exact-head re-review, then,
+only if APPROVED, independent HEAVY Security exact-head re-review. Merge not
+authorized. This section does not mark any review APPROVED.
+
+## 18. Architecture corrective C5
+
+Authority: OD-CONTROLLED-V1-OD-06-ARCH-C5 — APPROVED. One documentation-only
+delta corrective of PR #254 for exactly the one MINOR finding ARCH-C4-m01
+(§4.3 item 1 placement in the single normative order) of the independent
+HEAVY Architecture re-review (CHANGES REQUIRED, 0 MAJOR / 1 MINOR) of the C4
+HEAD below, plus the clarification-only INFO I-1 (P1S re-walk). C4 F1
+ordering and reconcile rule (a), C3-M01/C3-M02/C3-M03 security resolutions,
+all C1/C2 closures, the state/P1S model, OP-06-C1/OP-06-02/OP-06-03, the
+broker/systemd/cgroup model and runner dispositions are unchanged. Other
+INFO observations of that review are out of scope and preserved.
+
+| Fact | Value |
+|---|---|
+| Reviewed HEAD / tree | 91943036d885e94760762e277120e174c397e9b5 / a1014b77bc25b9e97a1bbb3794dc988cf97f32ac |
+| Base | 126d105841cf404c92752ae54bb616ed710d7f53 |
+| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
+| Commit policy | Exactly one direct child of the reviewed HEAD; no amend/squash/rebase/reset/force-push |
+
+| Finding part | Corrected sections |
+|---|---|
+| CREATE item-1 placement | §4.3 items 1 and 8, §5.4 broker validation, §5.6 preamble, §5.6.4 new step C1a, C4 enrollment reference, C7 narrowed to the §5.4 compatibility/pair part, failure sentence and outcome table, §6.4 P1, §12 C5 vectors |
+| RECONCILE item-1 placement | §4.3 item 1, §5.6.4 new step R1a, R4 ownership after R1a, outcome table, §6.4 P1, §7 recovery caller, §12 C5 vectors |
+| INFO I-1 re-walk clarification | §5.5 retained-descriptor sentence, §5.6.2 F3, §5.6.4 P1S, §6.4 P1S, §12 C4 vector wording and C5 vectors |
+
+Result: the §4.3 item 1 integrity/authentication gate (broker artifact,
+enrollment and compatibility.json integrity, effective root, zero argv,
+authenticated enrolled caller) runs read-only at C1a immediately after P0,
+before N1–N6 and any enrollment-, qualification-, workloadStorage-,
+profile- or caller-dependent operation; protected-state integrity remains
+F2 plus transaction recovery, and the §5.4 compatibility/pair part runs
+only at C7. RECONCILE runs the same gate at R1a, without the §5.4 part or
+the enrollment enabled flag, before any caller, attempt or enrollment
+identity use or protected attempt lookup; R4 ownership uses only the
+R1a-authenticated caller. RECONCILE remains recovery/finalization only with
+no reservation/start authority. The P1S M1–M4 re-walk is intentional
+check-only path re-resolution for substitution detection; the
+no-re-resolution invariant governs authoritative use of the retained dW/dR.
+
+No new closed value, exit code, refusal enum, frame, state, reason, export,
+owner decision or implementation. No new residual-risk acceptance.
+Governance unchanged: RELEASE_CAPABILITIES.execute disabled; public
+API/exports unchanged; TSB-F02 OPEN / LOW / CONDITIONAL, current FALSE,
+proposed FALSE (§10 C5 revalidation); TAP-2/CRS-1/PPI-1, R-1..R-5,
+AT-07/TB-01 and FUTURE guards unchanged; Controlled Release NOT APPROVED.
+
+C5 corrective changes are completed and ready for independent re-review.
+The Architecture re-review of the reviewed HEAD above is invalidated by the
+C5 commit. Next: independent HEAVY Architecture exact-head re-review, then,
 only if APPROVED, independent HEAVY Security exact-head re-review. Merge not
 authorized. This section does not mark any review APPROVED.
