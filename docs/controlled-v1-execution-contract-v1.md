@@ -2313,14 +2313,34 @@ implementation.
 | Controlled Release | NOT APPROVED |
 | TSB-F02 | OPEN / LOW / CONDITIONAL; current trigger FALSE; proposed execute trigger FALSE (§10) |
 
-The 7 LOW + 5 INFO final Security findings are Stage 5 implementation,
-qualification and adversarial-test inputs. The LOW items cover: pre-parse
-process checks with a memory-safe/fuzzed frame parser; explicit CREATE
-refusal unless the enrollment is enabled; P0 kept grammar-only; same-UID
-ptrace/agent reach (requires Yama ptrace_scope >= 1 or equivalent); thick,
-non-CoW backing for workload mount B; a free-inode floor in W3; and a
-cap on concurrent root broker processes. The INFO items are carried as
-recorded in that review.
+### 19.1 Carried Security review debt (canonical record)
+
+Authority: OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C2 — APPROVED
+(corrective for LIGHT-OD06-B01). This subsection is the durable canonical
+source for all 12 final Security findings carried from the independent
+HEAVY Security review of the C5 HEAD. It records them only: it does not
+close, waive, re-rate, promote or reinterpret any item and adds no
+requirement beyond the recorded finding. Each item is a Stage 5
+implementation, qualification or adversarial-test input.
+
+| ID | Severity | Finding (as carried) | Disposition |
+|---|---|---|---|
+| L1 | LOW | Root P0 parser hardening: process-level prechecks where appropriate; memory-safe frame parser or fuzz qualification. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| L2 | LOW | CREATE with enrollment `enabled=false`: explicit REFUSED / INELIGIBLE, exit 5. RECONCILE continues to ignore the flag as already designed. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| L3 | LOW | P0 boundary: P0 remains grammar/structural only; enrollment-relative comparisons occur only after C1a at their normative steps. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| L4 | LOW | Same-account authority: Stage 5 qualification requires Yama `ptrace_scope >= 1` or equivalent and absence of same-account command agents capable of recovering broker authority. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| L5 | LOW | Workload-storage backing: thick, non-overcommitted, non-CoW backing qualification. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| L6 | LOW | Workload-storage inode resource: free-inode / `f_favail` floor. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| L7 | LOW | Broker resource bound: global concurrent root-broker invocation cap with fail-closed refusal beyond the bound. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| I1 | INFO | C1a refusal-reason tabulation / operability. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| I2 | INFO | Optional stronger initial-namespace defence-in-depth. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| I3 | INFO | WorkingDirectory / Node argv post-P1S substitution remains within accepted R-4 (linked: R-4). | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| I4 | INFO | Qualify sudo `use_pty` / relay behaviour and exact pipe plus EOF/EPIPE client-loss semantics. | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+| I5 | INFO | Account-writable `/tmp`, `/dev/shm` and repository remain accepted R-5 territory (linked: R-5). | OPEN / PRESERVED / CARRIED TO STAGE 5 |
+
+Totals: 7 LOW (L1–L7) + 5 INFO (I1–I5) = 12, all OPEN / PRESERVED /
+CARRIED TO STAGE 5. Security verdict, severity counts and R-4/R-5
+ACCEPTED classifications are unchanged.
 
 Security boundary: OD-06 provides **process-lifecycle containment only**
 (scoped controller broker, transient systemd service, cgroup v2 lifecycle,
