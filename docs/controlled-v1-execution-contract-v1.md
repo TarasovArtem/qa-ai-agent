@@ -11,8 +11,17 @@ Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C2 — APPROVED.
 Security corrective: OD-CONTROLLED-V1-OD-06-SEC-C3 — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C4 — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C5 — APPROVED.
+Canonical closure: OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED;
+OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED.
 
-Mission result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
+Current lifecycle overlay (2026-10-14): OD-06 **COMPLETE_ON_MAIN / POST-MERGE
+CERTIFIED** (PR #254, merge 22ceb0682f9b56c2fbefdbad35273b7c21225d89; §19).
+Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**; Controlled Release
+**NOT APPROVED**. Process-lifecycle containment only (§19). The authoring
+paragraphs below are the historical PR #254 review chronology; sections 3–18
+remain the approved normative design, unchanged.
+
+Historical authoring result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
 INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent
 approval, runner certification, PO OD-06 acceptance or release approval.
 Independent HEAVY Architecture review of 61aeb27236ce346f93a9dfb1cfe4aed4518f1693
@@ -30,7 +39,9 @@ HEAVY Architecture re-review of the C4 HEAD
 91943036d885e94760762e277120e174c397e9b5 returned CHANGES REQUIRED
 (0 MAJOR / 1 MINOR); section 18 records the C5 corrective. C5 corrective
 changes are completed and ready for independent re-review; no prior
-exact-head review covers the C5 HEAD.
+exact-head review covers the C5 HEAD. Subsequently, independent HEAVY
+Architecture and Security re-reviews of the C5 HEAD both returned APPROVED,
+and PR #254 merged and was post-merge certified (§19).
 
 OP-06-03 is APPLIED. Host systemd, transient .service and cgroup v2 remain
 selected. Sole privileged mediation boundary: root-owned, operator-installed,
@@ -49,7 +60,7 @@ Execute stays reserved (exit 5), RELEASE_CAPABILITIES.execute disabled.
 Stage 4B COMPLETE_ON_MAIN / POST-MERGE CERTIFIED; reviewRecord/apply semantics
 and target opt-ins unchanged. TSB-F02 OPEN / LOW / CONDITIONAL; TAP-2/CRS-1/
 PPI-1, R-1..R-5, AT-07/TB-01 unchanged; FUTURE guards OPEN.
-Controlled Release NOT APPROVED. No canonical ROADMAP closure.
+Controlled Release NOT APPROVED. Canonical closure state: §19.
 
 ## 1. Certified baseline and original preflight (historical)
 
@@ -2276,3 +2287,53 @@ The Architecture re-review of the reviewed HEAD above is invalidated by the
 C5 commit. Next: independent HEAVY Architecture exact-head re-review, then,
 only if APPROVED, independent HEAVY Security exact-head re-review. Merge not
 authorized. This section does not mark any review APPROVED.
+
+## 19. Final certification record (current lifecycle overlay)
+
+Authority: OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED;
+OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED.
+Documentation/governance record only. Sections 3–18 are unchanged and
+remain the approved normative OD-06 design. This section adds no closed
+value, exit code, frame, state, reason, export, owner decision or
+implementation.
+
+| Fact | Value |
+|---|---|
+| Design PR | #254 |
+| Reviewed HEAD / TREE | d6fb535639b004e661c2b5aa2576476a12d9baa7 / 4d7daaa2fbdcb29466f780683d85c1761965c101 |
+| Merge SHA / TREE | 22ceb0682f9b56c2fbefdbad35273b7c21225d89 / 4d7daaa2fbdcb29466f780683d85c1761965c101 (equals reviewed TREE) |
+| Topology / parents | STANDARD_TWO_PARENT; 126d105841cf404c92752ae54bb616ed710d7f53, d6fb535639b004e661c2b5aa2576476a12d9baa7 |
+| Post-merge CI | run 38592925997; event push; head SHA 22ceb0682f9b56c2fbefdbad35273b7c21225d89; completed / success; 7/7 jobs |
+| Architecture (independent HEAVY, C5 HEAD) | APPROVED — 0 MAJOR / 0 MINOR |
+| Security (independent HEAVY, C5 HEAD) | APPROVED — 0 CRITICAL / 0 HIGH / 0 MEDIUM |
+| Carried Security debt | 7 LOW + 5 INFO — OPEN / PRESERVED; not closed, waived or re-rated |
+| OD-06 | COMPLETE_ON_MAIN / POST-MERGE CERTIFIED |
+| Stage 5 | READY / NOT AUTHORIZED |
+| Execute | DISABLED (RELEASE_CAPABILITIES.execute disabled; reserved fixed refusal, exit 5) |
+| Controlled Release | NOT APPROVED |
+| TSB-F02 | OPEN / LOW / CONDITIONAL; current trigger FALSE; proposed execute trigger FALSE (§10) |
+
+The 7 LOW + 5 INFO final Security findings are Stage 5 implementation,
+qualification and adversarial-test inputs. The LOW items cover: pre-parse
+process checks with a memory-safe/fuzzed frame parser; explicit CREATE
+refusal unless the enrollment is enabled; P0 kept grammar-only; same-UID
+ptrace/agent reach (requires Yama ptrace_scope >= 1 or equivalent); thick,
+non-CoW backing for workload mount B; a free-inode floor in W3; and a
+cap on concurrent root broker processes. The INFO items are carried as
+recorded in that review.
+
+Security boundary: OD-06 provides **process-lifecycle containment only**
+(scoped controller broker, transient systemd service, cgroup v2 lifecycle,
+bounded reconciliation). It does **not** provide filesystem sandboxing,
+network isolation, secret isolation, same-account isolation, or
+hostile/malicious-test sandbox isolation beyond that explicitly defined
+containment. R-5 (harmful tests retain account filesystem/network/SUT
+authority) is unchanged.
+
+Unchanged: TAP-2/CRS-1/PPI-1, R-1..R-5 ACCEPTED, AT-07/TB-01 RESIDUAL,
+FUTURE guards OPEN, public API/exports, CLI grammar and exit codes.
+Design certification is not runner certification, Linux/native/installed-
+package qualification or activation; each still requires the separately
+authorized Stage 5 lifecycle (§12). This canonical-closure sync itself
+requires independent exact-head LIGHT review and separate PO merge
+authorization; its merge is NOT AUTHORIZED.

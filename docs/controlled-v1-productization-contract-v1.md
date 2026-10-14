@@ -27,8 +27,23 @@ Stage 4 — human approval + apply:
   Stage 4B activation:                       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
 qa-agent-demo external E2E validation:        NOT_STARTED
 Controlled Release:                         NOT APPROVED
-OD-06:                                      NOT ENTERED
+OD-06:                                      COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+Stage 5 — execute:                          READY / NOT AUTHORIZED
+RELEASE_CAPABILITIES.execute:               disabled
 ```
+
+OD-06 (current): the certified execution contract is
+[controlled-v1-execution-contract-v1.md](controlled-v1-execution-contract-v1.md)
+(design PR [#254](https://github.com/TarasovArtem/qa-ai-agent/pull/254), reviewed
+HEAD `d6fb535639b004e661c2b5aa2576476a12d9baa7`, reviewed / merge TREE
+`4d7daaa2fbdcb29466f780683d85c1761965c101`, merge
+`22ceb0682f9b56c2fbefdbad35273b7c21225d89`, `STANDARD_TWO_PARENT`, post-merge
+push CI 38592925997 completed / success). Architecture **APPROVED**
+(0 MAJOR / 0 MINOR); Security **APPROVED** (0 CRITICAL / 0 HIGH / 0 MEDIUM) with
+**7 LOW + 5 INFO** carried as Stage 5 inputs. OD-06 provides process-lifecycle
+containment only, not a filesystem, network, secret, same-account or
+hostile-test sandbox. Design certification activates nothing; `execute`
+remains a fixed refusal until Stage 5 is separately authorized and completed.
 
 Stage 4 design authority: `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`;
 Architecture C5 and Security C5 **APPROVED**; owner clauses 1–23 and R-1..R-5
@@ -78,14 +93,18 @@ Document type: **architecture / contract design + repository discovery.** This
 document changes no runtime code, test, workflow, package manifest, export, CLI
 or version. Stages 1–3 have completed through separate implementation
 lifecycles. Stage 4A implementation is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**;
-Stage 4B is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**. The subsequent
-lifecycle requires a separate owner decision; no next engineering stage is authorized.
-Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
+Stage 4B is **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**. OD-06 is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**; Stage 5 is **READY / NOT AUTHORIZED**,
+and no next engineering stage is authorized.
+Canonical closure authority: `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED`
+and `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED`
+(the earlier Stage 4B closure authority is historical).
 This canonical-sync PR requires independent exact-head **LIGHT** review and
 separate PO merge authorization; this sync authorizes no further merge.
 Controlled Release is **NOT APPROVED**.
 
-Date: 2026-10-13 (Stage 4B canonical closure sync; design history preserved)
+Date: 2026-10-13 (Stage 4B canonical closure sync; design history preserved);
+lifecycle overlay updated 2026-10-14 (OD-06 canonical closure sync)
 
 Revision: **C1 design corrective** (resolves Architecture review `ARCH-PROD-M01`
 and `ARCH-PROD-m01..m07` against rejected head `1c6376f3`; see §26).
@@ -1408,8 +1427,11 @@ Likely later changes, each requiring separate authorization and HEAVY review:
 Current status: stages 1–3 are **COMPLETE_ON_MAIN**. Stage 4 design is
 **APPROVED / MERGED / POST-MERGE CERTIFIED**; Stage 4A implementation is
 **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #247). Stage 4B activation is
-**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #249). Stages 5–6 retain their separate decisions
-and prerequisites. The original phase order follows unchanged.
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #249). OD-06 is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #254), so Stage 5 is
+**READY / NOT AUTHORIZED**; it still needs its own authorization, implementation,
+qualification and activation. Stage 6 retains its separate decisions and
+prerequisites. The original phase order follows unchanged.
 
 1. CLI shell + config + `info` / `config validate` / `requirements check`; no
    private generative shipping.
@@ -1430,7 +1452,14 @@ Current lifecycle overlay: OD-02's separately governed Stage 3 implementation
 is **COMPLETE_ON_MAIN**; its decisions and private-shipping contract are
 preserved. OD-04 design is **APPROVED**, as recorded below; Stage 4B enables
 reviewRecord/apply subject to validated target-owned config opt-in and all
-existing gates. Execute is disabled. OD-06 remains **NOT ENTERED**. Original
+existing gates. Execute is disabled. OD-06 is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** under
+[controlled-v1-execution-contract-v1.md](controlled-v1-execution-contract-v1.md);
+Stage 5 is **READY / NOT AUTHORIZED**. Original design-era descriptions of
+commands "before" or "until OD-06" and of a pending OD-06 platform decision in
+§§10–23 (including the `info` `PENDING_OD_06` example, which is still the
+unchanged installed output) record that prerequisite; `execute` stays
+release-disabled until Stage 5 is separately authorized and completed. Original
 design-era descriptions of unresolved inputs and commands "before" or
 "until OD-04" in §§10–20 record that prerequisite; the approved Stage 4
 contract now defines those inputs. Stage 4A implementation and Stage 4B
@@ -1444,7 +1473,7 @@ RC-01..RC-12 are unchanged.
 | OD-03 | Package/binary names (`qa-ai-agent` / `qa-agent`); registry name availability | Product Owner | **resolve before publication**; provisional names may be used in implementation and tests |
 | OD-04 | Approval-recording mechanism and reviewer authenticity | `ODR-02` owner | **APPROVED** under `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`; approved design: [controlled-v1-approval-apply-contract-v1.md](controlled-v1-approval-apply-contract-v1.md), PR #245 merged/post-merge certified. Stage 4A implementation **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #247); Stage 4B **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**. `review record`/`apply` are release-enabled with validated target-owned config opt-in and existing gates; remaining release prerequisites still apply |
 | OD-05 | First productized version number | Product Owner | **pre-release decision.** The current manifest `1.0.0` is **not** a release claim. Recommendation: reserve `1.0.0` for the Controlled Release; pre-release identifiers before it |
-| OD-06 | **Platform / runner matrix** (extended in C1): (a) OS support for non-execute CLI commands; (b) OS support for controlled `execute`; (c) which CI runner classes count as the supported execution environment (local Linux, GitHub-hosted Linux, self-hosted isolated, others) | Product Owner, informed by the separate execution-environment assessment | **blocks `execute` enablement; platform matrix decision required.** Repository-proven constraints only: authoritative CI is Linux (`ubuntu-latest`); controlled execution on Windows resolves a `.cmd` shim under `shell:false` and is known to fail (`EINVAL`); **no** explicit CLI/platform guard exists today. Before OD-06 disposition `execute` is disabled on every OS. Support or non-support of other platforms is **not** decided here |
+| OD-06 | **Platform / runner matrix** (extended in C1): (a) OS support for non-execute CLI commands; (b) OS support for controlled `execute`; (c) which CI runner classes count as the supported execution environment (local Linux, GitHub-hosted Linux, self-hosted isolated, others) | Product Owner, informed by the separate execution-environment assessment | **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (design PR #254, merge `22ceb0682f9b56c2fbefdbad35273b7c21225d89`); certified contract: [controlled-v1-execution-contract-v1.md](controlled-v1-execution-contract-v1.md). Stage 5 **READY / NOT AUTHORIZED**; `execute` remains release-disabled until Stage 5 implementation, qualification and activation are separately authorized and completed. **Historical design-era recommendation (evidence only):** blocks `execute` enablement; platform matrix decision required. Repository-proven constraints only: authoritative CI is Linux (`ubuntu-latest`); controlled execution on Windows resolves a `.cmd` shim under `shell:false` and is known to fail (`EINVAL`); **no** explicit CLI/platform guard exists today. Before OD-06 disposition `execute` is disabled on every OS. Support or non-support of other platforms is **not** decided here |
 | OD-07 | Whether a high-level programmatic API for the chain is ever offered | Product Owner + Architecture | not in Controlled-v1 |
 | OD-08 | `qa-agent init` convenience command | Product Owner | not in v1 |
 | OD-09 | Requirements sources in the CLI beyond `file` (Jira/Azure DevOps) | Product Owner | API-only in v1 |
@@ -1568,5 +1597,7 @@ commit/push/PR/merge/release authority.
 
 `STAGES 1–3 COMPLETE_ON_MAIN` · `STAGE 4 DESIGN APPROVED / MERGED / POST-MERGE CERTIFIED` ·
 `STAGE 4A COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` ·
-`STAGE 4B COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` · `FURTHER MERGE NOT AUTHORIZED` · Controlled Release
+`STAGE 4B COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` ·
+`OD-06 COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` · `STAGE 5 READY / NOT AUTHORIZED` ·
+`EXECUTE DISABLED` · `FURTHER MERGE NOT AUTHORIZED` · Controlled Release
 `NOT APPROVED`.

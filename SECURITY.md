@@ -385,7 +385,7 @@ This is the canonical list of open (unresolved) forward-looking guards reference
 
 **Controlled-v1 Stage 3 status (OD-02).** `qa-agent generate` builds #23E review packages and `qa-agent review show` renders them, so the second R-5 return trigger has occurred. This records the trigger; it does not implement or satisfy Option A and does not close or weaken this guard. `review show` re-derives each package with `buildGeneratedChangeSetReviewPackage()` from the run's validated plan, context and change set, requires it to equal the persisted package, and prints it as an explicitly **non-authoritative** presentation: it records, reads, infers and reports no approval, no review record exists in a Stage 3 baseline run, and neither approval gate is reachable from any Stage 3 entrypoint (static proof in `test/security/controlled-v1/dc-f02-static-graph.test.js`). Under R-2 and R-3 its output is never approval evidence. That fixed-refusal state described Stage 3 and the Stage 4A release baseline. Stage 4B now activates the installed reviewRecord/apply CLI under its separate authority, with validated target-owned config opt-in and existing gates. R-4 remains binding; the separately approved OD-04 / Option A controls are recorded below. Stage 4B does not close AT-07/TB-01 or any FUTURE review guard; accepted residual risks remain accepted residuals.
 
-**Controlled-v1 Stage 4B activation status: COMPLETE_ON_MAIN / POST-MERGE CERTIFIED.** [docs/controlled-v1-approval-apply-contract-v1.md](docs/controlled-v1-approval-apply-contract-v1.md) remains the governing Option A design. Product Owner decisions `OD-CONTROLLED-V1-STAGE-4-IMPLEMENTATION — APPROVED` and `OD-CONTROLLED-V1-STAGE-4-ENABLEMENT-SEQUENCING — APPROVED` authorize implementation followed by independent heavy Architecture / Software Engineering review, independent heavy Security review, and separate merge authorization. Stage 4A implementation completed through PR #247 on certified main `c3fd4434d4ab55b3f9f5169df23cc2f9424fb700`; Stage 4B activation subsequently completed through PR #249 on certified main `2c666e1261df747eb8ca4ce8d33870c8d47404f4`. `RELEASE_CAPABILITIES.reviewRecord` and `.apply` are enabled with validated target-owned config opt-in and every existing gate; `.execute` remains disabled. OD-06 remains **NOT ENTERED**; Controlled Release remains **NOT APPROVED**. The `TAP-2` trusted approval presentation, `CRS-1` serialization, `PPI-1` path identity, and `GeneratedChangeSetReviewRecord v2` are implementation controls, not proof of a physical human or cryptographic authenticity. R-1..R-5 remain **ACCEPTED** and `AT-07/TB-01 = RESIDUAL`. `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD`, `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD` and `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD` remain **OPEN** pending their separately authorized lifecycle. `TSB-F02 = OPEN / LOW / CONDITIONAL`; its trigger remains **FALSE** because the generated-change-set approval gate is reached only through #23F, which independently rechecks each approved change.
+**Controlled-v1 Stage 4B activation status: COMPLETE_ON_MAIN / POST-MERGE CERTIFIED.** [docs/controlled-v1-approval-apply-contract-v1.md](docs/controlled-v1-approval-apply-contract-v1.md) remains the governing Option A design. Product Owner decisions `OD-CONTROLLED-V1-STAGE-4-IMPLEMENTATION — APPROVED` and `OD-CONTROLLED-V1-STAGE-4-ENABLEMENT-SEQUENCING — APPROVED` authorize implementation followed by independent heavy Architecture / Software Engineering review, independent heavy Security review, and separate merge authorization. Stage 4A implementation completed through PR #247 on certified main `c3fd4434d4ab55b3f9f5169df23cc2f9424fb700`; Stage 4B activation subsequently completed through PR #249 on certified main `2c666e1261df747eb8ca4ce8d33870c8d47404f4`. `RELEASE_CAPABILITIES.reviewRecord` and `.apply` are enabled with validated target-owned config opt-in and every existing gate; `.execute` remains disabled. At Stage 4B certification OD-06 had not yet been entered (historical); its current state is recorded in the OD-06 overlay below. Controlled Release remains **NOT APPROVED**. The `TAP-2` trusted approval presentation, `CRS-1` serialization, `PPI-1` path identity, and `GeneratedChangeSetReviewRecord v2` are implementation controls, not proof of a physical human or cryptographic authenticity. R-1..R-5 remain **ACCEPTED** and `AT-07/TB-01 = RESIDUAL`. `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD`, `FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD` and `FUTURE_HUMAN_DECISION_PROVENANCE_GUARD` remain **OPEN** pending their separately authorized lifecycle. `TSB-F02 = OPEN / LOW / CONDITIONAL`; its trigger remains **FALSE** because the generated-change-set approval gate is reached only through #23F, which independently rechecks each approved change.
 
 Stage 4A exact closure evidence: implementation
 [PR #247](https://github.com/TarasovArtem/qa-ai-agent/pull/247), reviewed HEAD
@@ -419,10 +419,35 @@ CI refusal is product policy, not security isolation. Integrity/binding is not
 cryptographic authenticity; terminal interaction is not physical-human proof;
 OS-local-account attribution is not externally authenticated personal identity.
 Accepted residual risks remain accepted residuals.
-Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
-This documentation/governance-only sync changes no finding rating or closure,
-capability, package or public API. Its PR requires independent exact-head
-**LIGHT** review and separate PO merge authorization; merge is **NOT AUTHORIZED**.
+Stage 4B canonical closure authority (historical): `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
+
+**Controlled-v1 OD-06 execution design status: COMPLETE_ON_MAIN / POST-MERGE CERTIFIED (current lifecycle overlay).**
+The certified OD-06 contract is [docs/controlled-v1-execution-contract-v1.md](docs/controlled-v1-execution-contract-v1.md)
+(design PR [#254](https://github.com/TarasovArtem/qa-ai-agent/pull/254); reviewed HEAD
+`d6fb535639b004e661c2b5aa2576476a12d9baa7`, reviewed / merge TREE
+`4d7daaa2fbdcb29466f780683d85c1761965c101`; merge SHA
+`22ceb0682f9b56c2fbefdbad35273b7c21225d89`, topology `STANDARD_TWO_PARENT`, parents
+`126d105841cf404c92752ae54bb616ed710d7f53` and `d6fb535639b004e661c2b5aa2576476a12d9baa7`;
+fresh post-merge [push CI 38592925997](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38592925997),
+`head_sha=22ceb0682f9b56c2fbefdbad35273b7c21225d89`, **completed / success**, 7/7 jobs).
+Final independent HEAVY Architecture review: **APPROVED** (0 MAJOR / 0 MINOR).
+Final independent HEAVY Security review: **APPROVED** (0 CRITICAL / 0 HIGH / 0 MEDIUM),
+with **7 LOW + 5 INFO** findings carried forward unchanged — not closed, waived or re-rated —
+as Stage 5 implementation / qualification / adversarial-test inputs.
+**Security boundary:** OD-06 provides **process-lifecycle containment only**. It is not
+filesystem sandboxing, network isolation, secret isolation, same-account isolation, or
+hostile/malicious-test sandbox isolation beyond that explicitly defined containment; the
+two-layer "explicitly NOT a sandbox" authority model above and residual R-5 remain in force.
+OD-06 design certification is not implementation: Stage 5 is **READY / NOT AUTHORIZED**;
+`RELEASE_CAPABILITIES.execute = disabled` and `qa-agent execute` remains a fixed refusal;
+Controlled Release remains **NOT APPROVED**. `TSB-F02 = OPEN / LOW / CONDITIONAL`; current
+trigger **FALSE**; proposed execute trigger **FALSE**. R-1..R-5 remain **ACCEPTED**,
+`AT-07/TB-01 = RESIDUAL`, the three FUTURE review guards and
+`FUTURE_WINDOWS_EXECUTION_CAPABILITY_GUARD` remain **OPEN**.
+Canonical closure authority: `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED` and
+`OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED`. This documentation/governance-only
+sync changes no finding rating or closure, capability, package or public API. Its PR requires
+independent exact-head **LIGHT** review and separate PO merge authorization; merge is **NOT AUTHORIZED**.
 
 Triggering any R-5 condition requires renewed security design and Option A before activation. Tracking: the N-21 finding ([Issue #202](https://github.com/TarasovArtem/qa-ai-agent/issues/202)) uses this Product Owner-approved restriction as its closure path. Its canonical lifecycle status is recorded by ROADMAP's `N-21 closure evidence` and becomes `CLOSED_ON_MAIN` only after the closure-sync change carrying that record is independently reviewed, merged and post-merge certified; severity remains unassigned. Finding closure does not close this `FUTURE_*` guard: it remains **open** and mandatory at every R-5 return trigger. The N-21 apply-time review-package integrity work merged through PR #203 is part of the certified finding evidence but does not implement or resolve this future guard.
 
