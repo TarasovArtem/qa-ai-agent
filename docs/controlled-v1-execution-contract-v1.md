@@ -8,6 +8,7 @@ Controller: OD-CONTROLLED-V1-OD-06-OP-06-02-SYSTEMD-CONTROLLER — APPROVED.
 Broker: OD-CONTROLLED-V1-OD-06-OP-06-03-SCOPED-CONTROLLER-BROKER — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C1 — APPROVED.
 Architecture corrective: OD-CONTROLLED-V1-OD-06-ARCH-C2 — APPROVED.
+Security corrective: OD-CONTROLLED-V1-OD-06-SEC-C3 — APPROVED.
 
 Mission result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
 INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent
@@ -16,16 +17,19 @@ Independent HEAVY Architecture review of 61aeb27236ce346f93a9dfb1cfe4aed4518f169
 returned CHANGES REQUIRED (3 MAJOR / 3 MINOR); section 14 records the C1
 corrective. Independent HEAVY Architecture re-review of the C1 HEAD
 12c6a589d3d456914e28be09d7c032fc44e8c6c4 returned CHANGES REQUIRED
-(0 MAJOR / 3 MINOR); section 15 records the C2 corrective. C2 corrective
-changes are completed and ready for independent re-review; no prior
-exact-head review covers the C2 HEAD.
+(0 MAJOR / 3 MINOR); section 15 records the C2 corrective. Independent HEAVY
+Architecture re-review of the C2 HEAD 5c1f2311786fadb060fb45af52cb5afeb86f7e8d
+returned APPROVED; independent HEAVY Security review of the same HEAD returned
+CHANGES REQUIRED (3 MEDIUM); section 16 records the C3 Security corrective.
+C3 corrective changes are completed and ready for independent re-review; no
+prior exact-head review covers the C3 HEAD.
 
 OP-06-03 is APPLIED. Host systemd, transient .service and cgroup v2 remain
 selected. Sole privileged mediation boundary: root-owned, operator-installed,
 one-shot execution controller broker. Runner gets no direct manage-units,
 generic sudo, systemctl or systemd-run authority. Only OP-06-02's privileged
 helper prohibition is superseded; custom daemon prohibition remains.
-Sections 1–2 preserve historical discovery; sections 3–15 govern this proposal.
+Sections 1–2 preserve historical discovery; sections 3–16 govern this proposal.
 
 **DESIGN ONLY**: no broker/source/test/workflow/package/export implementation,
 execute activation, Stage 5, release or merge. Normal product remains npm.
@@ -314,7 +318,8 @@ Before privileged action broker independently checks:
    zero argv and authenticated enrolled caller UID/GID/account. No identity
    from request/ordinary caller environment. Exact §5.4 compatibility record
    match; request values are compared, never used to select a pair.
-2. Literal operator-enrolled canonical root/dev/inode/digest/account/storage;
+2. Literal operator-enrolled canonical root/dev/inode/digest/account and live
+   storage trust (§5.6.2; no enrolled or requested storage claim);
    descriptor-relative no-follow/beneath/no-mount-crossing opens of fixed
    data locations; no wildcard ancestor/home or caller evidence pathname.
    Root must be a runner-owned repository below a literal operator workspace,
@@ -333,7 +338,7 @@ Before privileged action broker independently checks:
    bounded data; recheck canonical files immediately before submission.
 5. Timeout/SUT enrolled names/bounds; constructs complete launch envelope
    and systemd payload; no raw caller property/privilege semantics.
-6. Protected claims/consumption, reconciliation and namespace; collisions/
+6. Protected claims/consumption, reconciliation and unit namespace; collisions/
    unbound units; manager/boot/cgroup/property/non-root UID/nonprivileged
    group identity, absence of direct manager/sudo/delegation escape rights.
    Qualification excludes caller-accessible user managers/schedulers/agents
@@ -341,6 +346,10 @@ Before privileged action broker independently checks:
    labels or clearing DBUS_SESSION_BUS_ADDRESS cannot prove this absence.
 7. Durable SUBMITTING before D-Bus; actual property/InvocationID/cgroup
    readback and durable CONTROLLER_BOUND before returning bound observation.
+8. Host kernel mount/cgroup namespace identity with PID1, trusted local
+   filesystem types and the bounded workload-storage mount (§5.6). Evaluated
+   first in P1, before items 2–7 and any protected-store write, §5.5 walk,
+   manager call or cgroup read; repeated in the P1S recheck (§6.4).
 
 Unknown/unsupported property/default/identity REFUSE before start.
 Possible accepted start -> error/scoped recovery, no fallback. Mismatch
@@ -391,8 +400,9 @@ fails qualification; a different mechanism needs owner decision.
 | /etc/qa-agent-controller-v1 / enrollment.json | root:root 0700 / 0600, no runner-writable includes |
 | /usr/local/share/qa-agent-controller-v1 / compatibility.json | root:root 0755 / 0644, regular/non-symlink, protected ancestors; non-secret §5.4 record |
 | sudoers.d exact rule | root:root 0440, protected parent |
-| /var/lib/qa-agent-controller-v1 | root:root 0700, journal/claims/tombstones 0600, durable fsync filesystem |
-| /run/qa-agent-controller-v1 and workloads parent | root:root 0711, traversable but non-writable/non-listable by runner; descriptor-anchored workload leaf runner-owned 0700 |
+| /var/lib/qa-agent-controller-v1 | root:root 0700, journal/claims/tombstones 0600, durable fsync filesystem whose live type is in the §5.6.2 allowlist |
+| /var/lib/qa-agent-workload-v1 (mount root B, §5.6.3) | Dedicated operator-provisioned size-bounded mount; root:root 0755, not runner-writable |
+| B/workloads (leaf parent) | root:root 0711, traversable but non-writable/non-listable by runner; descriptor-anchored workload leaf runner-owned 0700 |
 
 Runner-controlled/replaced broker/config invalid. Enrollment strict JSON
 <=1048576 bytes exact keys {schemaVersion,enabled,compatibilityDigest,caller,
@@ -409,13 +419,17 @@ fingerprint}, §4 root/existing project ID grammar/configured canonical
 relative outputDir<=300 bytes safe segments/no '..'/framework literal/
 <=32 SUT names/§8 fingerprint.
 qualification={profileVersion,osBuild,kernelBuild,systemdBuild,sudoBuild,
-nodePath,nodeVersion,nodeSha256,brokerBuild,frameworkProfiles};
+nodePath,nodeVersion,nodeSha256,brokerBuild,frameworkProfiles,
+workloadStorage};
 profileVersion="od06-linux-v1", builds<=256 ASCII/no controls, nodePath
 absolute canonical<=4096, nodeVersion exact22.x.y/hash H.
 frameworkProfiles<=2 unique {framework,packageVersion,packageSha256,nativePath,
 nativeVersion,nativeSha256,browserPath,browserVersion,browserSha256,adapterVersion};
 paths<=4096 absolute/versions<=256/hashes H, adapters od06-cypress-v1/
-od06-playwright-v1. profileDigest hashes qualification (§11), no templates;
+od06-playwright-v1. workloadStorage exactly {fsType,maxBytes,minFreeBytes}:
+fsType "ext4"/"xfs"/"f2fs", maxBytes integer 1073741824..1099511627776,
+minFreeBytes integer 67108864..maxBytes (§5.6.3); no path key (the mount
+point is a compiled literal). profileDigest hashes qualification (§11), no templates;
 it is carried only inside the §5.4 compatibility record.
 
 Later product-owned release-approved compatibility manifest lists exact tested
@@ -426,7 +440,9 @@ No Linux tuple certified in Windows session. Real evidence populates future
 Stage 5 outputs, not an unresolved controller design choice.
 
 Every check before target code: exact qualified Linux/self-hosted/account/
-OS/kernel/systemd/sudo/Node/broker/storage/bus; cgroup v2 protected domain,
+OS/kernel/systemd/sudo/Node/broker/storage/bus; host mount/cgroup namespace
+identity, trusted filesystem types and bounded workload storage (§5.6);
+cgroup v2 protected domain,
 no runner migration/delegation; fixed property/FD/stop/kill support; no
 namespace aliases/drop-ins/hooks/unbound units; durable crash/boot history;
 canonical root/apply/framework/native/env/capture/result bounds. No target
@@ -578,6 +594,173 @@ subtrees. One physical spec therefore cannot obtain two independent
 execution/root claims or two consumption identities through two enrolled
 roots.
 
+### 5.6 Host namespace, filesystem and workload-storage trust (C3)
+
+Terminology: elsewhere in §§4–7 "namespace" means the systemd unit-name
+namespace qa-agent-exec-v1-*; this section concerns Linux kernel namespaces.
+Every check here is a live broker-side check. No request field, enrollment
+claim, caller environment or client result supplies or relaxes it, and none
+has a fallback. N1–N6 and F1–F4 run in P1 of every create and every
+reconcile; W1–W6 run in P1 of every create. All of them precede any
+protected-store write, §5.5 walk, manager call or cgroup read (except the
+journal-dependent W5 binding part and the W3 free-space part, §5.6.3, which
+run after recovery/reconciliation and still precede reservation),
+and all are repeated in the P1S recheck (§6.4). Failure before the reservation commit is
+REFUSED/INELIGIBLE exit 5 with nothing reserved or spawned. For reconcile it
+is REFUSED/INELIGIBLE with no journal write or manager action, leaving the
+attempt for a later reconcile. Failure inside P1S is the consumed
+EXECUTION_ERROR PRESUBMIT_FAILURE exit 7 of §6.4.
+
+#### 5.6.1 Mount and cgroup namespace identity
+
+N1. PID1 anchor. The broker opens /proc descriptor-anchored, no-follow. It
+    must be procfs (fstatfs PROC_SUPER_MAGIC) and a mount root. The
+    authenticated host manager (§4.3 item 6; owner of org.freedesktop.systemd1
+    on the system bus) must be PID 1 in the broker's PID namespace: the bus
+    connection credentials' process identity (a pidfd where the qualified bus
+    supplies one, or an equivalently qualified kernel primitive) resolves to
+    PID 1 in the broker's view, and /proc/self/ns/pid and /proc/1/ns/pid have
+    equal nsfs inode identity. A container or child-namespace init cannot
+    serve as the anchor.
+N2. Broker mount namespace == PID1 mount namespace: /proc/self/ns/mnt and
+    /proc/1/ns/mnt, both opened beneath the N1 descriptor, have equal st_dev
+    and st_ino (nsfs inode identity), or an equivalently qualified kernel
+    primitive proves the same identity.
+N3. Broker cgroup namespace == PID1 cgroup namespace: the same comparison
+    for /proc/self/ns/cgroup and /proc/1/ns/cgroup.
+N4. The broker never calls setns, unshare, chroot, pivot_root or mount, so
+    N1–N3 hold for the rest of the invocation; they are still re-run in the
+    P1S recheck.
+N5. Authenticated cgroup-v2 anchor = the cgroup2 hierarchy as seen from the
+    initial (PID1) cgroup namespace. After N2/N3 the broker opens
+    /sys/fs/cgroup once per invocation, descriptor-anchored and no-follow,
+    and requires fstatfs CGROUP2_SUPER_MAGIC, STATX_ATTR_MOUNT_ROOT,
+    root:root ownership, and /proc/1/cgroup and /proc/self/cgroup each
+    consisting of exactly one unified "0::" line (no v1 or hybrid hierarchy).
+    The manager-derived ControlGroup (§11.1 cgroupPath) is interpreted only
+    beneath this anchor descriptor. Every cgroup.events read (§6.3/§7.3) and
+    the cgroupDev/cgroupIno readback are openat2 from that one descriptor
+    with RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS|RESOLVE_NO_XDEV, so validation
+    and use share one view. Within an invocation, a later read whose live
+    dev/ino differs from the recorded controller cgroupDev/cgroupIno is an
+    identity failure (§7.3 controller failure / QUARANTINED), never empty
+    proof.
+N6. Mismatch, or a missing nsfs, pidfd-equivalent, procfs or cgroup2
+    primitive: INELIGIBLE. No path-only, PID-number-only, mountinfo-only,
+    environment or "assume host" fallback. Qualification requires these
+    primitives.
+
+Consequence: §5.5 walks, §5.6.2/§5.6.3 checks, manager calls and empty proofs
+all use the host (PID1) mount and cgroup views. A broker started inside a
+private mount or cgroup namespace is refused before reservation, so it
+cannot produce a false populated=0, mount or filesystem proof. Future Stage 5
+vectors are in §12 (C3).
+
+#### 5.6.2 Trusted local filesystem
+
+Allowlist L is the project's existing Stage 4 storage allowlist
+([stage4-principal.js](../scripts/ai/cli/stage4-principal.js)
+assertStorageEligibility), by statfs f_type: ext4 0xEF53, XFS 0x58465342,
+Btrfs 0x9123683E, F2FS 0xF2F52010. This design does not extend it. Every
+other type is ineligible, including FUSE, NFS, CIFS/SMB, 9p, overlay, tmpfs
+and any unknown or remote type.
+
+F1. Workspace anchor W: fstatfs on the descriptor obtained by the §5.5 M1
+    walk is in L. Each enrolled root R, which is on W's mount by M3, has an
+    fstatfs type equal to W's.
+F2. Controller durable state /var/lib/qa-agent-controller-v1: fstatfs on the
+    descriptor opened for the protected store is in L, in addition to the
+    existing directory-fsync durability requirement. It is checked before any
+    protected-store read is trusted or any write is made.
+F3. Timing: at enrollment/requalification; in P1 of every create and
+    reconcile before reservation or any journal write; and again in the P1S
+    recheck together with §5.5. Each check uses the same descriptor as the
+    subsequent openat-relative use, with no path re-resolution between check
+    and use.
+F4. No caller-controlled trust: enrollment carries no filesystem-type claim
+    for W or the state location, the request carries none, and §4.3 item 2
+    "storage" denotes F1–F2. A live type outside L makes the runner
+    INELIGIBLE until operator remediation and requalification. F2 failure
+    permits no protected-store write.
+
+f_type identifies the filesystem driver, not the honesty of the backing
+device; that is the same limit as Stage 4 storage eligibility (lying storage
+remains R-3), not a new acceptance.
+
+#### 5.6.3 Bounded workload storage
+
+This replaces the former workload-writable shared /run parent; there is no
+fallback to /run. Mount point B = /var/lib/qa-agent-workload-v1, a literal
+compiled into the broker and never selected by enrollment, request or
+environment. Leaf parent B/workloads; attempt leaf `B/workloads/<executionId>`.
+
+Provisioning (operator, root-owned, §5.3; npm never provisions): a dedicated
+filesystem used only for QA Agent workload storage (partition, logical volume
+or fully preallocated image), of a type in L restricted to ext4, XFS or F2FS
+(Btrfs is excluded because subvolume/pool accounting cannot prove a dedicated
+bound). It is mounted at B read-write with nosuid,nodev. B is root:root 0755;
+B/workloads is root:root 0711; B contains no entries other than workloads and,
+for ext4 only, a root-owned 0700 lost+found. The operator records
+qualification.workloadStorage (§5.2), which profileDigest and the §5.4
+record cover; any change requires requalification.
+
+Live qualification proof, run by the broker at enrollment, in P1 before
+reservation and again in P1S before leaf creation:
+
+W1. Identity: B opened descriptor-anchored and no-follow carries
+    STATX_ATTR_MOUNT_ROOT. The host mount table, read under §5.6.1 (equal
+    mount namespace), has exactly one mount of B's filesystem (major:minor),
+    with root "/" and mount point B: no bind/subtree alias, and not exposed at
+    another path. B's st_dev differs from that of "/", W and the controller
+    durable-state location.
+W2. Type: fstatfs f_type equals the magic of the enrolled fsType and is in L.
+W3. Size: 0 < f_blocks × f_frsize <= maxBytes (explicit finite bound), and
+    f_bavail × f_frsize >= minFreeBytes.
+W4. Options: f_flags include ST_NOSUID and ST_NODEV, and not ST_RDONLY.
+W5. Ownership and purpose: B and B/workloads owners/modes and B's entries
+    exactly as above. B/workloads holds <=512 entries, each a 32-hex
+    executionId directory bound to a protected attempt; an unknown or unbound
+    entry is INELIGIBLE and is never deleted on sight. The binding part of W5
+    needs the protected journal, and the W3 free-space part should see space
+    freed by pre-create reconciliation, so both run after F2, protected-store
+    recovery and the §7 pre-create reconciliations, still before the
+    reservation commit; all other checks of this section precede any
+    protected-store read.
+W6. Any failure, including B unmounted (an empty underlying directory):
+    INELIGIBLE before reservation (PRESUBMIT_FAILURE in P1S). There is no
+    fallback to /run, /tmp, HOME, W or any other location.
+
+Write access: the broker creates the leaf (runner-owned 0700) and its home,
+tmp and reports subdirectories (runner-owned 0700) with mkdirat/fchownat
+relative to the B/workloads descriptor, using RESOLVE_BENEATH|
+RESOLVE_NO_SYMLINKS|RESOLVE_NO_XDEV. The runner can write only inside its own
+leaf; B and B/workloads are neither writable nor listable by it. HOME, TMPDIR
+and reportsDir are leaf/home, leaf/tmp and leaf/reports. Broker-built paths
+and broker operations never leave B, and a mount below B refuses
+(RESOLVE_NO_XDEV).
+
+Cleanup and quarantine: P6 removes a leaf only after terminal commit and
+empty proof, descriptor-anchored, no-follow, never crossing out of B, with a
+bounded amount of work per invocation. Removal not finished within P6 (or
+the remaining A of a later P1) leaves the leaf for the next P1; claim rules
+are unchanged. Quarantined or unproven-empty attempts keep their leaf until
+operator incident resolution. Retained leaves can consume only B; once W3
+free space fails, every create is INELIGIBLE until operator remediation.
+Leaf count is bounded by W5 and the §7 limit of 256 incomplete attempts.
+Reconcile is not blocked by W3 or W5 (it is how space is recovered); before
+removing any leaf it requires W1, W2 and W4, and if they fail it finalizes
+the attempt without removing the leaf, which stays for operator remediation.
+Exhausting B makes the affected attempt's writes fail (EXECUTION_ERROR or
+RESULT_INVALID, never PASS); it cannot consume host /run, the root
+filesystem, W or the protected state.
+
+The §9.2/§9.4 report, path and accounting limits are unchanged; B's bound is
+an additional host-resource bound, not a product quota. The design grants no
+writable location outside B. Host locations the runner account can already
+write independently of this design (for example world-writable /tmp or
+/dev/shm) remain the account's pre-existing authority under R-5, not
+design-granted workload storage.
+
 ## 6. Fixed service, identity and finite lifecycle
 
 ### 6.1 Complete property construction
@@ -666,7 +849,8 @@ SetUnitProperties/Restart/Enable/Link/AttachProcesses.
 Stop closes admission, control-group SIGTERM, full-unit SIGKILL by30000 ms,
 empty confirmation within30000 ms. Qualified manager proves nested groups/
 forks covered; leader-only build ineligible. No raw cgroup writer/shell/
-PID/process-group fallback. Secure anchored root-owned cgroup.events read:
+PID/process-group fallback. Root-owned cgroup.events read only through the
+§5.6.1 N5 cgroup-v2 anchor (host PID1 mount/cgroup namespaces):
 populated=0 + manager terminal + no start/restart job + admission/migration
 closed. Removal needs authenticated retained terminal binding and qualified
 removal guarantee/no jobs/recreated unit; reboot requires old-boot extinction/
@@ -692,8 +876,9 @@ phase has its own origin and finite bound; none is borrowed from another.
 | P5 result | EXITED frame written (§7.2) | R=60000 ms for proposal receipt; broker validation bounded by §9.4 byte limits | OBSERVATION_EXPIRED error7 |
 | P6 commit/release | Terminal decision | Bounded fsync + RefUnit/ResetFailedUnit/UnrefUnit + leaf removal | Commit failure: §7.4; release failure: claims retained, next P1 |
 
-P1 covers protected-store transaction recovery, all prior incomplete-root
-reconciliations and the runner namespace scan (§7), locks/claims, integrity/
+P1 covers, first, the §5.6 kernel-namespace, filesystem-type and
+workload-storage checks, then protected-store transaction recovery, all prior incomplete-root
+reconciliations and the runner unit-namespace scan (§7), locks/claims, integrity/
 §5.4 compatibility/§5.5 root/qualification checks, controller eligibility,
 launch-size checks and the reservation commit. Up to 256 reconciliations
 share A: each manager wait is bounded by min(its §6.3 allowance, remaining A);
@@ -709,8 +894,9 @@ same durable reservation commit, and P1S ends exactly when SUBMITTING is
 fsynced (P2 origin), so every instant from reservation through submission
 is inside a bounded phase. During all of P1S the durable state is PREPARED
 with submission NOT_SENT; no D-Bus call is made. P1S covers, in order: the
-ACCEPTED frame write (§7.2), the client-liveness check, descriptor-anchored
-creation of the attempt leaf and its home/tmp/reports directories (§9.1),
+ACCEPTED frame write (§7.2), the client-liveness check, the §5.6 recheck
+(N1–N5, F1–F2, W1–W5), descriptor-anchored creation of the attempt leaf and
+its home/tmp/reports directories on the bounded workload mount (§5.6.3, §9.1),
 launch-envelope construction and sealing, the mandatory post-reservation
 recheck (§4.3 item 4, §8.1 item 7: root/apply/framework binding, exact
 target bytes, fingerprint fresh bytes, qualified Node/native/profile, §5.4
@@ -892,8 +1078,8 @@ equals the client binding and whose invocationId equals BOUND.
 The attached broker holds RefUnit and observes only the bound unit through
 manager PropertiesChanged signals plus bounded Properties.GetAll of closed
 fields: ActiveState, SubState, Result, ExecMainCode, ExecMainStatus,
-ActiveEnterTimestampMonotonic, InvocationID, ControlGroup, plus anchored
-cgroup.events. With ExitType=cgroup the unit leaves active only after main
+ActiveEnterTimestampMonotonic, InvocationID, ControlGroup, plus
+cgroup.events read through the §5.6.1 N5 anchor. With ExitType=cgroup the unit leaves active only after main
 exit and whole-cgroup emptiness, or a stop/deadline.
 
 | Observation | Required facts | managerResult / exitCode / signal | Class |
@@ -1070,8 +1256,10 @@ Native workload mode clears inherited env before Node and installs exactly:
 | Playwright controls | Product-only PLAYWRIGHT_BROWSERS_PATH=qualified payloads, PLAYWRIGHT_JUNIT_OUTPUT_FILE=reportsDir+"/playwright.xml" (§9.4), no other PLAYWRIGHT_* |
 
 No credential relabeling into SUT aliases. Fixed locale/tools qualified.
-Attempt paths /run/qa-agent-controller-v1/workloads/<ID>, protected ancestors,
-runner leaf only. Before SUBMITTING the broker creates, descriptor-anchored,
+Attempt paths `/var/lib/qa-agent-workload-v1/workloads/<ID>` on the dedicated
+size-bounded workload mount B (§5.6.3; no shared /run parent, no fallback),
+protected ancestors, runner leaf only; HOME, TMPDIR and reportsDir never
+leave B. Before SUBMITTING the broker creates, descriptor-anchored,
 the leaf and exactly three empty runner-owned 0700 subdirectories home, tmp
 and reports (reportsDir = leaf+"/reports"). No credential reference/handle/
 file transport or value echo/hash/persistence.
@@ -1195,8 +1383,8 @@ Existing provider6 unchanged/reserved execute5 everywhere/no new exit.
 
 Maximum admitted targets stays 100 (§4.2) and is fully supported; every
 report limit below is derived from it. reportsDir is the attempt-owned
-directory /run/qa-agent-controller-v1/workloads/ + executionId + /reports,
-created empty by the broker (§9.1). The workload never communicates report
+directory /var/lib/qa-agent-workload-v1/workloads/ + executionId + /reports
+on the bounded workload mount (§5.6.3), created empty by the broker (§9.1). The workload never communicates report
 paths: reporter destinations are broker-built argv/environment constants
 (§8.2/§9.1), and the client derives reportsDir from executionId. No path from
 the workload, report content, streams or frames is ever opened.
@@ -1367,7 +1555,10 @@ FALSE. C2 revalidation: the §5.5 mount invariant, the §6.4 P1S phase with
 PRESUBMIT_FAILURE and the §9.4 Playwright mapping rule are broker-side
 filesystem checks, a broker lifecycle state and a client data-parsing rule;
 they add no import/call edge to either gate, #23F, apply.js or legacy
-execution. Proposed remains FALSE.
+execution. Proposed remains FALSE. C3 revalidation: the §5.6 kernel-namespace,
+filesystem-type and bounded workload-storage checks are broker-side host
+checks plus a fixed workload path change; they add no import/call edge to
+either gate, #23F, apply.js or legacy execution. Proposed remains FALSE.
 
 ## 11. Closed schemas and Stage 5 boundary
 
@@ -1404,8 +1595,9 @@ controller exactly {contractVersion,brokerSha256,bootId,managerId,unitName,
 invocationId,cgroupPath,cgroupDev,cgroupIno,propertiesDigest}; literal version/
 H hashes/ID invocation/authenticated manager local-bus unique owner<=256
 ASCII/manager-derived cgroupPath<=4096/dev+ino decimals. Its initial slash
-is interpreted strictly beneath the authenticated cgroup-v2 mount, never as
-an arbitrary filesystem absolute path. No caller PID/
+is interpreted strictly beneath the authenticated cgroup-v2 anchor, defined
+as the initial/PID1 cgroup-namespace hierarchy (§5.6.1 N5), never as an
+arbitrary filesystem absolute path or another namespace's view. No caller PID/
 D-Bus object authority.
 cleanup exactly {admissionClosed,managerTerminal,noPendingJobs,emptyBy,
 confirmedAt}, booleans true/UTC/emptyBy enum populated-zero/manager-removal/
@@ -1607,6 +1799,14 @@ Required future Stage 5 vectors added by C2 (none implemented here):
 | Post-reservation (§6.4 P1S) | Spec, helper, fingerprint, framework metadata or Node/native mutation between reservation and SUBMITTING -> consumed EXECUTION_ERROR PRESUBMIT_FAILURE/7, never REFUSED/4, retry refused as REPLAY; S exhaustion (slow fingerprint read) -> PRESUBMIT_FAILURE; leaf/envelope creation failure; client loss in P1S -> CLIENT_LOST; broker SIGKILL at each P1S step -> reconcile Case E PRESUBMIT_FAILURE or QUARANTINED; no D-Bus call observed during P1S; same mismatch before reservation -> REFUSED/INPUT_MISMATCH/4 with nothing consumed |
 | Playwright mapping (§9.4) | 1, 2 and 100 specs; testDir different from root and nested spec directories; testsuite name with "./", backslash, absolute or testDir-relative form; duplicate testsuite name; missing spec; extra non-target testsuite; file attribute present; testsuite with zero testcases; build whose naming depends on testDir fails qualification with no fallback |
 
+Required future Stage 5 vectors added by C3 (none implemented here):
+
+| Area | Vectors |
+|---|---|
+| Kernel namespaces (§5.6.1) | Broker launched in a private mount namespace (unshare -m, sudo inside a mount-namespaced session) -> REFUSED/INELIGIBLE exit 5, nothing reserved or spawned; private cgroup namespace -> same; child PID namespace whose /proc/1 is a container init -> same; fake or non-procfs /proc, /proc not a mount root; /sys/fs/cgroup not cgroup2, not a mount root, or a v1/hybrid hierarchy; bus manager credentials not resolving to PID 1; reconcile under mismatch -> REFUSED, no journal write or manager action; populated=0 forged in a private cgroup view never yields empty proof; cgroup directory dev/ino changed between readbacks -> identity failure, not empty proof; kernel without the nsfs/pidfd-equivalent primitive ineligible |
+| Filesystem trust (§5.6.2) | Workspace anchor or enrolled root on FUSE, NFS, CIFS/SMB, 9p, overlay or tmpfs -> INELIGIBLE before reservation; controller durable state on such a type -> INELIGIBLE with no protected-store write; type changed between P1 and P1S -> PRESUBMIT_FAILURE/7; enrollment or request carrying a filesystem-type claim has no effect (closed schema refusal); each allowlisted type accepted |
+| Workload storage (§5.6.3) | B unmounted (empty underlying directory) -> INELIGIBLE, no /run, /tmp, HOME or W fallback; B as a bind/subtree alias or exposed at a second path; B on the root filesystem, W or the state filesystem; Btrfs or non-allowlisted type; size above maxBytes; free space below minFreeBytes; missing nosuid/nodev or read-only; wrong owner/mode or extra entry in B; unknown or unbound leaf in B/workloads; 513th leaf; runner attempts to create, list or write outside its leaf; symlink or mount placed inside a leaf not followed or crossed by the broker; workload filling B -> EXECUTION_ERROR/RESULT_INVALID never PASS, and host /run, root filesystem, W and protected state unaffected; retained quarantined leaves exhausting free space -> every create INELIGIBLE until operator remediation; leaf removal interrupted and resumed by the next P1 |
+
 ## 13. Mandatory handoff / final-report schema
 
 ~~~text
@@ -1731,3 +1931,47 @@ The C1 re-review applied only to the reviewed HEAD above and is invalidated
 by the C2 commit; a new full independent HEAVY Architecture exact-head
 re-review is required. Security review not started. Merge not authorized.
 This section does not mark any review APPROVED.
+
+## 16. Security corrective C3
+
+Authority: OD-CONTROLLED-V1-OD-06-SEC-C3 — APPROVED. One documentation-only
+delta corrective of PR #254 for exactly the three MEDIUM findings of the
+independent HEAVY Security review (CHANGES REQUIRED) of the C2 HEAD below,
+which independent HEAVY Architecture re-review had APPROVED. The
+Architecture-approved C2 design, all resolved C1/C2 findings,
+OP-06-C1/OP-06-02/OP-06-03, the broker/systemd/cgroup model and runner
+dispositions are unchanged except where these findings require correction.
+LOW/INFO observations of that review are out of scope and preserved for
+re-review/Stage 5 hardening.
+
+| Fact | Value |
+|---|---|
+| Reviewed HEAD / tree | 5c1f2311786fadb060fb45af52cb5afeb86f7e8d / b62ba0bf65b6fbcc0dce555199b31f244e16d983 |
+| Base | 126d105841cf404c92752ae54bb616ed710d7f53 |
+| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
+| Commit policy | Exactly one direct child of the reviewed HEAD; no amend/squash/rebase/reset/force-push |
+
+| Finding | Corrected sections |
+|---|---|
+| C3-M01 mount/cgroup namespace identity | §4.3 item 6 (unit namespace) and item 8, §5.2 check list, §5.6 preamble, §5.6.1 N1–N6 (PID1 anchor, mount/cgroup nsfs identity, cgroup-v2 anchor = initial/PID1 hierarchy, single-descriptor validate-and-use, no fallback), §6.3 cgroup.events read, §6.4 P1/P1S coverage, §7.3 observation, §11.1 cgroupPath, §12 C3 vectors |
+| C3-M02 trusted local filesystem | §4.3 item 2 (storage = live check), §5.2 state-location row, §5.6.2 F1–F4 (existing Stage 4 allowlist, workspace anchor/roots/durable state, P1 + P1S + enrollment timing, no caller claim), §12 C3 vectors |
+| C3-M03 bounded workload storage | §5.2 table rows and qualification.workloadStorage, §5.6.3 (dedicated root-provisioned mount B, ext4/XFS/F2FS, maxBytes/minFreeBytes, W1–W6 identity/type/size/options/purpose proof, per-attempt leaf access, cleanup/quarantine bound, no /run fallback), §6.4 P1S, §9.1 attempt paths, §9.4 reportsDir, §12 C3 vectors |
+
+New closed values: enrollment qualification key workloadStorage
+{fsType,maxBytes,minFreeBytes}; fixed mount point /var/lib/qa-agent-workload-v1.
+No new exit code, refusal enum, frame, state, reason, export, owner decision
+or implementation; failures map to existing REFUSED/INELIGIBLE exit 5
+(pre-reservation) or EXECUTION_ERROR PRESUBMIT_FAILURE exit 7 (P1S). The PO
+did not accept shared /run exhaustion as a residual; it is removed by design.
+No new residual-risk acceptance. §9.2/§9.4 report/path/accounting limits
+unchanged. Governance unchanged: RELEASE_CAPABILITIES.execute disabled;
+public API/exports unchanged; TSB-F02 OPEN / LOW / CONDITIONAL, current
+FALSE, proposed FALSE (§10 C3 revalidation); TAP-2/CRS-1/PPI-1, R-1..R-5,
+AT-07/TB-01 and FUTURE guards unchanged; Controlled Release NOT APPROVED.
+
+C3 corrective changes are completed and ready for independent re-review.
+The Architecture and Security reviews of the reviewed HEAD above are
+invalidated by the C3 commit. Next: independent HEAVY Architecture
+exact-head re-review, then, only if APPROVED, independent HEAVY Security
+exact-head re-review. Merge not authorized. This section does not mark any
+review APPROVED.
