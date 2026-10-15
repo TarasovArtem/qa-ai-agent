@@ -2423,6 +2423,8 @@ only the sentences listed here, and only as stated:
 | §20.4.2 "--execution <id> selector — Rejected", §20.4.6 "executionId ... is never a CLI input", and the §20.3.8 (C6) "no new command or flag", record-copy removal and producer-less raw §4.2 reconcile frame texts | §20.4.10 (C7, owner decision C7-02): the single recovery-only command `qa-agent reconcile --execution <executionId> [--json]`, which always sends the existing RECONCILE request, independent of local client state |
 | §20.3.8 (C6/C7) K2 "S4 names the highest entry", the S4 class row "sequence = highest n" and the §20.2.7 JR3 "highest entry n", "sequences are exactly 0..n" and "an entry above the pointer ... is INELIGIBLE" read as physical files | §20.3.8 committed view and classification order (C8): K2, JR3 and S4 validate S4 plus entries 0..n, n being the highest committed sequence named by the durable S4; one exact A-RES candidate n+1 (and its exact S5) is outside the committed view until S4 commits it; A-RES and D are disjoint; every other above-pointer object stays class D |
 | §7 "short runner admission lock" and "per-attempt operation locks" (relative order unspecified), §20.3.8 (C7) AL0–AL1 and R4 (2) (authority after the R4 (1) release unspecified) | §20.3.8 lock hierarchy H1–H7 (C8): GLOBAL → X is the only mixed order, X → GLOBAL and lock upgrade are forbidden, at most one X at a time, no X held at any GLOBAL acquisition, pre-global scans defer INTENT-era objects to the GLOBAL-protected rescan, R4 (2) and C5 (3) take their authority from the preceding GLOBAL hold scan |
+| §20.3.7 (C8) lock hierarchy vectors (1), (2) and (5), which held an X lock across a Cases A–H wait, and the §20.3.8 (C8) AL0/H3/H4 texts (X span relative to lifecycle waits and the re-read on re-acquisition unspecified) | Not a supersession of §7: the §7 rule "short per-attempt operation locks … never held across lifecycle waits" governs unchanged. §20.3.8 lock hierarchy H8 (C9) makes it exact: X is released, with its durable post-condition complete, before every lifecycle, manager or client wait; it is re-acquired before any journal/state mutation or dependent manager action; the head and mutable facts are re-read and revalidated under the re-acquired X; a pre-wait snapshot is never mutation authority; a changed state discards the earlier plan and re-runs the closed classification and Cases A–H disposition |
+| §6.2 "unknown member quarantines runner", §7 "scan runner unknown namespace before creates" and §20.3.8 (C8) H6 for the unit-namespace scan (membership of a unit whose S6 committed after the preceding GLOBAL hold scan unspecified) | §20.3.8 lock hierarchy H9 (C9): units are enumerated first; a matching unit is a known member only if a descriptor-anchored lockless read of its exact S6 finds a valid S6 with phase COMMITTED for that executionId; that read is membership proof only; INTENT, absent, malformed or mismatched S6 keeps the existing unknown-member fail-closed handling |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -4899,7 +4901,8 @@ AL1). A claim, run tombstone or package tombstone of the current INTENT
 seen by a waiting broker never yields REPLAY or a root refusal after that
 INTENT is rolled back. A stray claim or tombstone with no INTENT or
 COMMITTED transaction is class D at AL4. A long Cases A–H wait in C5
-holds no admission commit lock (another CREATE reaches AL6 meanwhile).
+holds no admission commit lock (another CREATE reaches AL6 meanwhile)
+and no X lock (C9, H8).
 
 C8 lock hierarchy vectors (§20.3.8 H1–H7). For each vector, lock-order
 instrumentation on the broker shows no instant at which a process holds
@@ -4908,20 +4911,30 @@ acquisition, no X acquisition while GLOBAL is held, and no wait-for cycle;
 a live INTENT is never classified D or touched outside GLOBAL; a dead
 INTENT is rolled back by the next GLOBAL holder; S never holds two
 INTENTs; every failure stays fail-closed with the existing outcome.
-(1) CREATE vs CREATE: A in C5 (3) holds X of a COMMITTED attempt in a
-Cases A–H wait while B runs AL1–AL7 to COMMITTED; A releases X before
-its own AL1 and, under GLOBAL, sees B's transaction COMMITTED and no
-INTENT. (2) CREATE vs RECONCILE: RECONCILE(X) at R4 (3) holds X in a long
-Cases A–H wait while CREATE blocks on the same X in C5 (3) holding no
-GLOBAL, then releases X and reaches AL1; and RECONCILE waiting at R4 (1)
-without a deadline while CREATE is in AL6 obtains GLOBAL after AL7.
+(1) CREATE vs CREATE (C9, H8): A in C5 (3) commits a durable transition
+of a COMMITTED attempt Y (for example ORPHANED) under Y's X and releases
+X before its Cases A–H wait; while A waits holding no lock, B runs
+AL1–AL7 to COMMITTED; A re-acquires Y's X, re-reads and revalidates Y's
+head before any further write, releases X with its durable
+post-condition before its own AL1 and, under GLOBAL, sees B's
+transaction COMMITTED and no INTENT. At no instant does A hold X during
+the wait. (2) CREATE vs RECONCILE (C9, H8): RECONCILE(X) at R5 commits
+ORPHANED under X and releases X before its Cases A–H wait; CREATE in C5
+(3), holding no GLOBAL, acquires X only for short spans during that
+wait, re-reads the head under each hold, and releases X before AL1;
+when both act on X, one terminal writer wins and the other, on its next
+X re-acquisition, re-reads the terminal head, discards its pre-wait plan
+and takes the committed-outcome path (R7, or A-REL in C5); and RECONCILE
+waiting at R4 (1) without a deadline while CREATE is in AL6 obtains
+GLOBAL after AL7.
 (3) RECONCILE vs RECONCILE of the same X and of different X: the second
 waits for X (holding nothing) or for GLOBAL (holding no X); neither
 waits for both. (4) Dead INTENT: a CREATE killed at each AL6 step; the
 next holder at AL2–AL3 or R4 (1) rolls it back, never a pre-global scan.
 (5) A-RES of X under X while another broker performs AL1–AL7: the
 GLOBAL holder never waits for X; the A-RES holder, when it is a CREATE,
-releases X before its own AL1. (6) Crash holding GLOBAL only (each AL6
+releases X before its own AL1 and before any Cases A–H wait of the
+A-INC that follows (H8). (6) Crash holding GLOBAL only (each AL6
 and T-rollback step): the kernel releases GLOBAL; at most one INTENT
 prefix remains for the next holder. (7) Crash holding X only (each
 transition, terminal and A-RES step): at most one P/F prefix remains
@@ -4937,6 +4950,38 @@ the writer's AL7 (COMMITTED, so not an INTENT) or death (T rollback).
 RECONCILE of an executionId whose S6 the R4 (1) hold scan did not see
 COMMITTED is REFUSED/INPUT_MISMATCH (or REFUSED/INELIGIBLE when that
 scan found class D) and never acquires its X lock.
+
+C9 short-X and namespace-membership vectors (§20.3.8 H8, H9). The lock
+instrumentation of the C8 vectors also shows that no X lock is held
+during any lifecycle, manager or client wait, and that every journal or
+state write after a wait follows an X acquisition made after that wait.
+(10) Concurrent CREATE namespace race: CREATE A completes its C5 (1)
+GLOBAL hold scan; CREATE B then runs AL1–AL7, commits S6 COMMITTED for
+Y, and its P2 publishes unit qa-agent-exec-v1-Y.service; A's
+unit-namespace scan enumerates that unit, reads S6 of Y and finds it
+COMMITTED. A does not quarantine the runner, takes no X lock of Y, writes
+nothing for Y and leaves Y's disposition to its AL2–AL4 rescan, where Y
+is COMMITTED. (11) Exact valid COMMITTED S6 of Y plus a unit named for Y:
+known member, with no other conclusion drawn. (12) S6 of Y with phase
+INTENT plus a unit named for Y (writer paused in AL6, unit injected by
+the probe): not accepted as membership; the unit is an unknown member
+and the existing runner quarantine applies; the INTENT itself is still
+not classified or touched outside GLOBAL (H6). (13) A unit named for Y
+with S6 absent, with S6 malformed (schema, phase value, a non-regular
+file, a symlink), or with S6 whose executionId differs from Y: unknown
+member, runner quarantine, nothing written. (14) S6 COMMITTED membership
+proof for Y followed by a change of Y's head (B commits a transition):
+any later action on Y by A or a RECONCILE(Y) re-reads Y's head under Y's
+X and never uses the membership read as head, controller or manager
+evidence. (15) RECONCILE(X) releases X before a Cases A–H wait; during
+the wait another broker commits X's next transition or terminal head;
+on re-acquiring X the RECONCILE re-reads S4, finds it changed, discards
+its pre-wait plan without writing anything from it, and re-runs the
+classification order and Cases A–H from the new committed view (a
+terminal head takes the R7 committed-outcome path; an A-RES prefix is
+rolled back first; class D is refused). The S4-unchanged case continues
+the plan, with the dependent manager and cgroup facts re-observed under
+X. Each failure stays fail-closed with the existing outcome.
 
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
@@ -5294,8 +5339,9 @@ only lock under which an INTENT is created, read for recovery or rolled
 back, and no T-row decision is ever taken from a scan made without it.
 
 - AL0 Without the lock: C1–C6, including the C5 A-INC, A-RES and A-REL
-  work under per-attempt operation locks with its manager waits (Cases
-  A–H), and the non-mutating C7 checks (the §5.4 compatibility/pair part,
+  work, whose writes and manager actions run under short per-attempt
+  operation lock spans and whose manager waits (Cases A–H) run with no
+  lock held (C9, lock hierarchy H8), and the non-mutating C7 checks (the §5.4 compatibility/pair part,
   §4.3 items 3–6 data checks, qualification and launch-size checks).
   Every per-execution operation lock taken in AL0 is fully released,
   with its durable post-condition complete, before AL1 (C8, lock
@@ -5382,6 +5428,11 @@ likewise reconciles and releases only executionIds whose S6 the C5 (1)
 scan saw COMMITTED. Every other object seen after the release is handled
 by lock hierarchy H6 (deferred to the GLOBAL-protected rescan). No step
 reads anything new for this; it fixes which earlier scan is authority.
+The one exception is the namespace membership read of H9 (C9), which
+reads an exact S6 only to prove that a unit is not an unknown member. The
+GLOBAL hold scan fixes only which executionIds exist and are COMMITTED;
+the head, controller and manager facts of X are always re-read under X
+(H8).
 
 Lock hierarchy (C8, normative). GLOBAL is the admission commit lock
 (flock on the S0 descriptor); X is the per-execution operation lock of
@@ -5398,9 +5449,11 @@ one executionId (flock on `attempts/<X>`).
   | Path | GLOBAL | X |
   |---|---|---|
   | CREATE C5 (1) and RECONCILE R4 (1): rescan, T rows, T rollback | Held | None |
-  | CREATE C5 (3) A-INC, A-RES, A-REL; RECONCILE R4 (3), R5–R7 | None | One COMMITTED attempt's X at a time |
+  | CREATE C5 (3) A-INC, A-RES, A-REL; RECONCILE R4 (3), R5–R7 | None | One COMMITTED attempt's X at a time, short spans only (H8) |
+  | CREATE C5 unit-namespace scan, including the H9 membership read | None | None |
+  | Any lifecycle, manager or client wait (Cases A–H, §6.4 P3–P5) | None | None (H8) |
   | CREATE C7 AL1–AL7, including the AL3 T rollback and AL6 reservation steps 1–9 | Held | None |
-  | The CREATE's own transitions, terminal commit and P6 release after AL7 | None | Its own X |
+  | The CREATE's own transitions, terminal commit and P6 release after AL7 | None | Its own X, short spans only (H8) |
 
   No closed path of layout v1 acquires an X lock while holding GLOBAL.
   AL6 and T rollback need none: GLOBAL alone excludes every writer of an
@@ -5425,7 +5478,8 @@ one executionId (flock on `attempts/<X>`).
   GLOBAL → X order or after releasing GLOBAL. No closed step of layout v1
   under X needs GLOBAL.
 - H6 Pre-global scans. A scan made without GLOBAL (CREATE C5 (3) and its
-  unit-namespace scan; RECONCILE R4 (3)) may observe INTENT-era-possible
+  unit-namespace scan, whose units are decided by H9; RECONCILE R4 (3))
+  may observe INTENT-era-possible
   objects: an S6 with phase INTENT; an S7; an S2 and its S3, S4 or S5
   whose executionId the last GLOBAL hold scan of the invocation did not
   see COMMITTED; and a claim or tombstone that scan did not prove to
@@ -5446,11 +5500,89 @@ one executionId (flock on `attempts/<X>`).
   died, before the release (AL3, AL7). If T recovery ever needed the
   INTENT's X lock it would take it only while holding GLOBAL (H1); layout
   v1 T rollback takes none (H3).
+- H8 Short X spans (C9; the §7 rule "short per-attempt operation locks
+  … never held across lifecycle waits" governs and is not superseded).
+  (a) An X span contains only protected-store I/O of X and the
+  individual manager or cgroup calls and reads that §7 serializes with
+  X's journal transitions (for example a StopUnit or KillUnit call, a
+  unit-property read, a cgroup.events read), each within its existing
+  §6.3/§6.4 allowance. It never contains a lifecycle wait: a wait for a
+  unit state, job or deactivation change, the §6.4 P3 execution
+  interval, the P4 stop/SIGKILL and empty-confirmation intervals, P5
+  proposal receipt, any client frame, any Cases A–H wait, or a wait for
+  GLOBAL or for another X. (b) Before such a wait the holder completes
+  the durable post-condition of its span (a durable transition, terminal
+  commit, A-RES rollback or release per the write orders; for example
+  ORPHANED durable before stop, §7) and then releases X. During the wait
+  it holds no X and no GLOBAL, writes no protected-store object and uses
+  no protected-store read as authority. (c) To act on the result of the
+  wait, the broker re-acquires X before any journal or state mutation and
+  before any manager action that depends on it. That acquisition is a
+  blocking acquisition with no lock held (H1, H2, H4 unchanged). In CREATE
+  it is inside P1 or the CREATE's own phase budget and is counted against
+  them, as for AL1. In RECONCILE it is inside its §6.3 bound. (d) Under the re-acquired
+  X the broker re-reads, from the protected-store descriptors, S4, the
+  committed view and every additional object of X, applies the
+  classification order and K1–K5 for X again, and re-observes the live
+  manager and cgroup facts that its next write or manager action depends
+  on. (e) A snapshot made before the latest X acquisition (the pre-wait
+  head, an earlier classification, the wait's own observations) is never
+  authority for a journal write, terminal commit, release, A-RES rollback
+  or manager action. The wait result only says when to re-check. (f) If
+  S4 is byte-equal to the value that was durable when the broker
+  released its previous X span (including any transition that span
+  committed), and no
+  additional object of X exists, the plan continues from the facts
+  re-observed under (d). Otherwise the previous plan is discarded,
+  nothing from it is written, and the broker re-runs the closed
+  classification and disposition from the new committed view: A-RES is
+  rolled back first; an incomplete head goes through Cases A–H; a
+  terminal or QUARANTINED head takes the committed-outcome path (R7, or
+  A-REL in C5) and is never rewritten; class D is refused as before. This
+  is the existing §7 rule that one terminal writer wins, others return the
+  committed record, and an attached CREATE observes the transition and
+  cannot accept a late PASS. (g) Termination: a head moves only forward
+  along the §7 successor table, with at most 1024 entries, and every
+  wait is inside an existing phase budget, so re-acquisition adds no
+  unbounded loop. A discarded plan does not reset any deadline. No
+  timeout is introduced, and no timeout serves to resolve a deadlock
+  (deadlock freedom below is structural).
+- H9 Unit-namespace membership (C9). The unit-namespace scan (§6.2, §7,
+  CREATE C5) runs with no lock held. It first enumerates the units
+  matching ^qa-agent-exec-v1-[0-9a-f]{32}\.service$. Then, for each
+  matching unit whose executionId Y the preceding GLOBAL hold scan did
+  not see COMMITTED, it makes one descriptor-anchored lockless read of
+  `transactions/<Y>.json`: openat on the `transactions` descriptor of S,
+  with O_NOFOLLOW, requiring a regular file, root:root 0600 and link
+  count 1 (the layout file rule above). The unit
+  is a known member only if that read yields exactly the S6 schema with
+  phase COMMITTED and executionId Y. An exact COMMITTED S6 is an immutable,
+  permanent transaction fact: it never reverts, is never rewritten and is
+  never rolled back (H3, K2). A unit is created only after the
+  reservation commit (§6.4 P1S, P2), so a legitimate unit observed first
+  always reads back COMMITTED. Within one scan the order unit-before-S6
+  is therefore mandatory. The read is proof authority only for "this
+  unit is not an unknown member". It is not authority for any journal or
+  protected-store mutation, T or D classification, A-RES or other
+  recovery, claim or tombstone action, terminal decision, manager action,
+  or controller-binding match, and the scan acquires no X lock for Y.
+  Every mutable head, controller and manager fact of Y stays subject to
+  H8 and Cases A–H under Y's X, and Y's transaction and companions are
+  decided by the GLOBAL-protected rescan (H6, H7). An S6 of Y with phase
+  INTENT, an absent S6, a malformed or non-regular S6, or an S6 whose
+  executionId is not Y does not make the unit legitimate. The unit is an
+  unknown member, with the existing fail-closed handling (§6.2 runner
+  quarantine, no wildcard kill, nothing written). An INTENT S6 is still
+  not classified or touched outside GLOBAL (H6). This lockless authority
+  applies to S6 for namespace membership only. It extends to no other
+  protected-store object and to no other decision.
 
 Deadlock freedom (proof). Under H1–H4 a broker waiting for GLOBAL holds
 no lock, and a broker waiting for an X lock holds no X lock and, in
 layout v1, no GLOBAL. A GLOBAL holder waits for no lock (H3), and an X
-holder waits for neither GLOBAL (H1) nor another X (H2). Every wait-for
+holder waits for neither GLOBAL (H1) nor another X (H2). By H8 no
+lifecycle, manager or client wait happens while any X is held, so an X
+span is finite, like a GLOBAL span. H9 takes no lock. Every wait-for
 chain therefore ends at a holder that waits for no lock, so no cycle
 exists; a GLOBAL holder's span is bounded protected-store I/O (AL6), and
 crash releases every kernel lock at process exit. Pre-global scans never
@@ -6071,7 +6203,10 @@ code, usage code, CLI reason code or maintenance service. C8 adds no
 closed value of any kind: the committed view, the classification order
 and the lock hierarchy H1–H7 are broker-internal rules, and OBSERVED /
 DEFERRED TO GLOBAL RESCAN is control flow, never a state, class, reason
-or output value. No public export, bin or package-file change is proposed; the
+or output value. C9 adds no closed value of any kind either. The short-X rule H8
+and the unit-namespace membership rule H9 are broker-internal locking
+and read rules. "Known member" and "unknown member" keep their existing
+§6.2 meaning and are never a state, class, reason or output value. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -6131,7 +6266,11 @@ classification order and the lock hierarchy are broker-internal storage,
 classification and locking rules; they add no import or call edge to
 either approval gate, to #23F, apply.js, gate symbols or legacy
 execution, and no code changes. Current trigger FALSE; proposed trigger
-FALSE. No closure, re-rating or remediation.
+FALSE. C9 revalidation: H8 and H9 are broker-internal locking and
+protected-store read rules; they add no import or call edge to either
+approval gate, to #23F, apply.js, gate symbols or legacy execution, and
+no code changes. Current trigger FALSE; proposed trigger FALSE. No
+closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -6168,7 +6307,9 @@ the unsolicited-D-Bus flood bounds; C7: the A-RES crash probes and their
 re-run convergence (§20.2.7 vectors), the admission commit lock vectors
 (§20.3.7) and the §20.4.10 reconcile vectors on the reference host;
 C8: the committed-view vectors (§20.2.7) and the lock hierarchy vectors
-(§20.3.7) on the reference host.
+(§20.3.7) on the reference host; C9: the short-X and namespace-membership
+vectors (10)–(15) (§20.3.7) and the C9 forms of vectors (1), (2) and
+(5) on the reference host.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -6223,7 +6364,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6, C7 and C8 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7, C8 and C9 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -6626,3 +6767,71 @@ only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh independent
 exact-head HEAVY Security re-review; then separate Product Owner design
 acceptance and merge authorization. Merge NOT AUTHORIZED; Stage 5
 implementation NOT AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.17 Architecture corrective C9 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C9 — APPROVED. Reviewed HEAD
+621899e8d2592d1b27eccb0197a11eb7004db971 (tree
+eb0365a60ce4fd4662753e32ea80f7660fbbbbe5, parent
+80a5dc54b417a8905bc68171d2195af5669e1773, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR
+/ 4 new INFO; ARCH-S5-C7-m01 and ARCH-S5-C7-m02 RESOLVED. C9 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C8 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C9 resolves exactly the two
+MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C8-m01 short X lock consistency | The §7 rule stands and is not superseded. Per-attempt X locks are short-lived and are never held across lifecycle, manager or client waits. H8: an X span contains only protected-store I/O of X and the individual manager/cgroup calls and reads that §7 serializes with its transitions. X is released, with its durable post-condition complete, before every Cases A–H, §6.4 P3–P5 or client wait. X is re-acquired, holding no other lock, before any journal/state mutation or dependent manager action. The wait for it counts against A or the CREATE phase budget, or falls inside the RECONCILE §6.3 bound. Under the re-acquired X, S4, the committed view, the additional objects and the dependent live manager/cgroup facts are re-read and revalidated. A pre-wait snapshot is never mutation authority. A changed S4 or a new additional object discards the earlier plan, and the closed classification order and Cases A–H disposition run again (A-RES first; terminal head: committed-outcome path; D refused). Termination follows from the forward-only successor table and the existing phase budgets. H1 GLOBAL → X, the X → GLOBAL prohibition, H2, H4, the no-upgrade rule H5 and the deadlock-freedom proof are preserved (the proof now states that no X span contains a wait). No timeout is introduced or used for deadlock resolution. C8 vectors (1), (2) and (5) are rewritten so that X is never held during a wait | §20.3.8 AL0, C8 authority paragraph, H3 table, H8, deadlock proof; §20.3.7 C7 sentence, C8 vectors (1), (2), (5), C9 vectors (14), (15); §20.0; §20.6; §20.7 |
+| ARCH-S5-C8-m02 concurrent unit namespace membership | H9: the unit-namespace scan holds no lock. It enumerates matching units first, then, for each unit whose executionId the preceding GLOBAL hold scan did not see COMMITTED, it makes one descriptor-anchored lockless read of that exact S6 (openat on the `transactions` descriptor, O_NOFOLLOW, regular file, root:root 0600, link count 1). An exact valid S6 with phase COMMITTED and that executionId is an immutable, permanent fact. A unit exists only after the reservation commit, so a legitimate unit observed first always reads back COMMITTED. Only then is the unit a known member. The read proves membership only. It gives no authority for journal or protected-store mutation, T/D classification, recovery, claim/tombstone action, terminal decision, manager action or binding match, and the scan takes no X lock. Mutable head, controller and manager facts stay under H8 and Cases A–H, and the transaction is decided by the GLOBAL-protected rescan (H6, H7). An INTENT, absent, malformed, non-regular or mismatched S6 keeps the existing unknown-member runner quarantine, and the INTENT itself is still untouched outside GLOBAL. The lockless authority extends to no other protected-store object | §20.3.8 C8 authority paragraph, H3 table, H6, H9, deadlock proof; §20.3.7 C9 vectors (10)–(14); §20.0; §20.6; §20.7 |
+
+The layout literal od06-journal-layout-v1 is still uncompiled and
+unqualified, so C9 refines the proposed literal itself (the §20.13,
+§20.15 and §20.16 precedent). No class, path, schema or write order
+changes.
+
+C9 adds no journal state, attempt, transaction, record or incident schema
+or version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, CLI command or flag, hash
+domain, timeout or maintenance service. Unchanged: the resolutions of
+ARCH-S5-C7-m01 (committed view, classification order, A-RES/D
+disjointness) and ARCH-S5-C7-m02 (H1–H7, as extended by H8 and H9 without
+weakening any of them); ARCH-S5-C6-m02/m03 and every earlier
+resolution; S4 as the sole durable commit marker; the P/F write orders;
+the one-INTENT invariant and proof and the AL0–AL7 span; INTENT
+rollback, never roll-forward; permanent COMMITTED transactions; exactly
+two consumed tombstones; no retry; AutomationExecutionRecord v2 with
+outcomeDigest = recordDigest; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; the Controlled-v1
+incident rule (incident resolution UNSUPPORTED_IN_CONTROLLED_V1;
+QUARANTINED claim retained); AA-NULL; JR read-only and
+non-authoritative; RECONCILE's deadline-free wait for GLOBAL.
+
+Preserved: the 4 new Architecture INFO findings of the C8 re-review
+(the re-read under X explicit only for A-RES; K1 absent from
+classification-order step (1); RECONCILE not-found linearizing at R4 (1);
+the pre-existing C5 scope covering live attempts committed by other
+CREATEs), the 6 C7 Architecture INFO findings and every carried
+Architecture INFO finding stay on the review record. None is closed,
+waived, re-rated or absorbed. H8 (d) states the re-read under X
+generally only because C8-m01 requires it; this text does not close the
+first C8 INFO, which is the reviewer's to disposition. ARCH-S5-C7-m01/m02,
+ARCH-S5-C6-m01..m04, ARCH-S5-C5-m01/m02, ARCH-S5-C4-m01,
+ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the Architecture C1
+resolutions ARCH-S5-m01..m07 stand. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C9 HEAD;
+only if APPROVED on that HEAD, fresh independent exact-head HEAVY
+Security re-review (Security STOP until then); then separate Product
+Owner design acceptance and merge authorization. Merge NOT AUTHORIZED;
+Stage 5 implementation NOT AUTHORIZED; execute activation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
