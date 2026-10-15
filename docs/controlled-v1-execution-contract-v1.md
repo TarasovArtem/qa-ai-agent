@@ -2387,6 +2387,7 @@ separate Product Owner authorization against the then-certified main.
 | Execute / Controlled Release | DISABLED / NOT APPROVED |
 | Corrective C1 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C1 — resolves ARCH-S5-m01..m07 of the HEAVY Architecture review of de37be62c16daf10413736cb489efc11abc4ff60 (§20.9); still PROPOSED |
 | Corrective C2 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C2 — resolves SEC-S5-m01 and SEC-S5-m02 and corrects Security INFO-2/3/4/6 of the HEAVY Security review of 101122bff15b0c227de76908a1b5e82c4a4269f9 (§20.10); still PROPOSED |
+| Corrective C3 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C3 — resolves ARCH-S5-C2-m01..m04 of the HEAVY Architecture re-review of 3d3809482cad9d3f1659f0be3de85b12abe2e805 (§20.11); this file only, Containerfile byte-unchanged; still PROPOSED |
 
 ### 20.0 Scope, precedence and unchanged invariants
 
@@ -2400,6 +2401,7 @@ only the sentences listed here, and only as stated:
 | §5.1 client launch "shell:false, framed stdin" | §20.2.4 exact spawn (adds new session, fixed stdio kinds, fixed sudo environment) |
 | §7.2 "exactly the two pipes" | Unchanged meaning; the two byte streams are the AF_UNIX SOCK_STREAM socketpair ends of §20.2.4 |
 | §5.6.4 C1a/R1a "authenticated caller from the qualified sudo context" | §20.2.5 sub-steps C1a.1–C1a.5 |
+| §5.6.4 C1/R1 "P0 intake succeeds" and §6.4 P0 row (non-socket fd 0 unspecified) | §20.2.5 ENOTSOCK rule (C3): a P0 recvmsg ENOTSOCK on fd 0 is REFUSED CALLER_REFUSED exit 5, the early equivalent of C1a.5; every other P0 outcome unchanged |
 | §5.6.4 C7 | §20.1.6 adds step C7-PV (public enrollment view equality) |
 | §5.6.4 R4 lookup of an absent attempt (unspecified) | §20.4.7 clarification: REFUSED/INPUT_MISMATCH |
 | §8.2 fingerprint membership "profile-enumerated" | §20.1.4 membership rule |
@@ -2806,7 +2808,8 @@ uv__process_init_stdio as uv_socketpair(SOCK_STREAM, ...)
 so the client's existing spawn API already yields client-created
 socketpairs. That is a libuv implementation property, not a Node API
 guarantee: if a client Node build supplied a real pipe, the broker refuses
-(ENOTSOCK), so availability, never identity, depends on it.
+(P0 recvmsg ENOTSOCK -> CALLER_REFUSED exit 5, §20.2.5), so availability,
+never identity, depends on it.
 
 #### 20.2.3 Exact sudoers policy (operator-owned, not installed by Stage 5 code)
 
@@ -2955,7 +2958,9 @@ flag are not part of C1a in either case):
   PID-reuse window). This structurally refuses direct root shells, su, doas,
   run0, pkexec and in-place exec elevation; it is not the identity proof.
 - C1a.5 Caller identity: fd 0 and fd 1 each have SO_DOMAIN AF_UNIX and
-  SO_TYPE SOCK_STREAM; SO_PEERCRED on both returns identical {pid, uid,
+  SO_TYPE SOCK_STREAM (a non-socket fd 0 never reaches this step: it is
+  refused at P0 with this step's outcome, CALLER_REFUSED exit 5, by the
+  ENOTSOCK rule below); SO_PEERCRED on both returns identical {pid, uid,
   gid} with pid > 0; uid != 0; uid = enrollment.caller.uid and gid =
   enrollment.caller.gid. The authenticated account is
   enrollment.caller.account, bound to that uid by the root-owned
@@ -2985,6 +2990,32 @@ existing §7.2 broker-side violation outcome applies unchanged
 (EXECUTION_ERROR RESULT_INVALID). SO_PEERCRED stays the only socket
 credential identity source; no new frame, reason or exit code.
 
+ENOTSOCK at P0 (C3, ARCH-S5-C2-m03, normative). P0 runs before C1a.5, and
+recvmsg(2) on a descriptor that is not a socket (pipe, regular file, tty,
+/dev/null or any other non-socket) fails with ENOTSOCK before any byte is
+read. The single mapping is: the first P0 recvmsg(fd 0, ...) that fails
+with ENOTSOCK ends the invocation at once as REFUSED reason CALLER_REFUSED,
+exit 5. It is the early equivalent of the later C1a.5 non-socket check
+(fd 0 SO_DOMAIN AF_UNIX / SO_TYPE SOCK_STREAM) and carries exactly that
+check's outcome, so the same caller defect has one outcome whichever step
+observes it. It happens before C1a.1–C1a.4 run and before P1: no
+reservation, no protected-store read or write, no enrollment or
+compatibility.json read, no manager call and no cgroup read. It is not a
+P0 structural or schema failure: ENOTSOCK is never SCHEMA_INVALID, never
+counts against the 5000 ms P0 bound and never produces the P0 exhaustion
+outcome. The REFUSED frame is written to fd 1 with write(2) (fd 1 may also
+be a non-socket in this case, so sendmsg is not used for it); a failed
+write does not change the exit code 5. No new reason, exit code, frame or
+taxonomy is introduced: CALLER_REFUSED/5 is the existing C1a mapping
+(§5.6.4, §20.4.5 row 6c). Every other P0 outcome is unchanged: on a socket
+fd 0, malformed bytes, a control message, MSG_CTRUNC, EOF before a complete
+frame and P0 timeout keep the existing P0 structural/schema rules
+(REFUSED/SCHEMA_INVALID, nothing reserved; L3 unchanged), and a socket fd 0
+of the wrong domain or type (for example AF_UNIX SOCK_DGRAM or AF_INET) is
+still read under those rules and refused at C1a.5. The mapping moves no
+reservation or authority boundary: P0 still reads only fd 0, and C1a.5
+still performs the full socket and SO_PEERCRED check on fd 0 and fd 1.
+
 Anti-spoofing proof sketch:
 
 | Attempt | Why refused |
@@ -2992,12 +3023,12 @@ Anti-spoofing proof sketch:
 | SUDO_UID/SUDO_USER/LOGNAME/any variable forged | The environment is never read (cleared at start) |
 | Other non-root account invokes the rule | sudo denies (the rule names only the account) |
 | Other account passes its own socket to the runner | SO_PEERCRED uid = other account != enrollment |
-| Root (direct shell, cron, su, doas, run0, pkexec) runs the broker | Parent is not the qualified sudo (C1a.4), or creator uid 0 (C1a.5), or stdin is not a socket |
-| Nested sudo (runner -> sudo -> root shell -> sudo broker) | Socket creator is root (uid 0), or stdin is not a client socket |
+| Root (direct shell, cron, su, doas, run0, pkexec) runs the broker | Parent is not the qualified sudo (C1a.4), or creator uid 0 (C1a.5), or stdin is not a socket (P0 ENOTSOCK -> CALLER_REFUSED 5) |
+| Nested sudo (runner -> sudo -> root shell -> sudo broker) | Socket creator is root (uid 0), or stdin is not a client socket (P0 ENOTSOCK -> CALLER_REFUSED 5) |
 | setuid program used to create the socket | SO_PEERCRED reports the effective UID (0 or another account) |
 | Runner in an unprivileged user namespace | Kernel maps the creator to the runner's real kuid; a broker outside the initial user namespace fails C1a.4 |
-| sudo build interposes pipes or a pty | fd 0 not a socket, or creator root -> refused |
-| Pipe-based client (non-libuv) | ENOTSOCK -> refused (availability only) |
+| sudo build interposes pipes or a pty | fd 0 not a socket (P0 ENOTSOCK -> CALLER_REFUSED 5), or fd 1 not a socket (C1a.5), or creator root (C1a.5) -> refused |
+| Pipe-based client (non-libuv) | P0 ENOTSOCK -> CALLER_REFUSED 5 (availability only) |
 
 Root itself is trusted and out of scope; C1a refuses accidental direct-root
 use, not a deliberate root operator. Same-account authority: any process
@@ -3011,7 +3042,11 @@ new acceptance.
 Negative tests: forged SUDO_UID/SUDO_GID/SUDO_USER via the command line,
 env_file, ~/.pam_environment and PAM; argv present ("" rule and C1a.1);
 direct root invocation from a root shell, cron and systemd-run; su -c,
-doas, run0, pkexec; nested sudo; stdin as pipe, file, tty and /dev/null;
+doas, run0, pkexec; nested sudo; stdin as pipe, file, tty and /dev/null
+(each: P0 recvmsg ENOTSOCK -> REFUSED CALLER_REFUSED exit 5, never
+SCHEMA_INVALID, with no reservation, protected-store read or write,
+enrollment read, manager call or cgroup read, including when fd 1 is also
+a pipe); stdin an AF_UNIX SOCK_DGRAM socket (P0 rules, then C1a.5);
 stdin and stdout from different processes (pid mismatch); socket created by
 another account, by a setuid helper and by root; runner inside unshare -U;
 sudo -b, -E, -s and -i (all denied by policy); sudo with use_pty forced,
@@ -3043,7 +3078,9 @@ means able to run code with UID 0 or with any capability in the initial
 user namespace; host-control means able to modify root-owned files or
 devices, or to start, configure or enter root-run services, containers or
 virtual machines. Both include every way to change the broker, enrollment,
-compatibility state, the protected journal or tombstones. The root operator
+compatibility state, the protected journal or tombstones, and every way to
+cause root to execute, load or be configured by state the account controls
+(C3: evaluated completely by PS-F, with kernel-effective access). The root operator
 stays trusted and outside the claim (§20.2.5, unchanged); PS-0 removes
 runner-account privilege, it does not defend against a hostile root.
 
@@ -3155,7 +3192,10 @@ PS-B account and group surface:
   recorded systemd unit, or the recorded process tree if the runner is not
   a unit), `/proc/<pid>/status` has all four Uid values equal to uid, all
   four Gid values equal to the primary gid, Groups a subset of {primary
-  gid}, and CapInh, CapPrm, CapEff and CapAmb all zero. For a unit,
+  gid}, CapInh, CapPrm, CapEff and CapAmb all zero, and `/proc/<pid>/ns/mnt`
+  and `/proc/<pid>/ns/user` with the nsfs dev/ino of PID 1's (C3: the
+  account's file access is then exactly what the PS-F F0 probe, which runs
+  in those namespaces, evaluates). For a unit,
   systemctl show records User (= account), Group (empty or the primary
   group), SupplementaryGroups (empty), DynamicUser (no) and
   AmbientCapabilities (empty).
@@ -3203,16 +3243,22 @@ PS-C alternate elevation mechanisms:
   file that is not package-verified is INELIGIBLE. Elevation through these
   files is covered by A, C1, C2 and C4; a set or digest change is a
   trigger.
-- C6 Host-control endpoints: (i) no block device node is readable or
-  writable by the account through its uid, primary gid or the other bits;
-  (ii) no character device node outside /dev/null, /dev/zero, /dev/full,
-  /dev/random, /dev/urandom, /dev/tty, /dev/ptmx, /dev/pts/*, /dev/net/tun
-  and /dev/fuse is writable by it; (iii) every listening socket (AF_UNIX
+- C6 Host-control endpoints. Access is decided only by the PS-F F0
+  effective-access probe (C3, ARCH-S5-C2-m01), never from uid, primary gid
+  or mode bits, so POSIX ACLs, read-only mounts, inode attributes and
+  ancestor search permission are all applied by the kernel: (i) for no
+  block device node does the probe report read or write access (R_OK and
+  W_OK asked separately); (ii) no character device node outside /dev/null,
+  /dev/zero, /dev/full, /dev/random, /dev/urandom, /dev/tty, /dev/ptmx,
+  /dev/pts/ptmx, /dev/net/tun and /dev/fuse is reported writable (the
+  account's own `/dev/pts/<n>` nodes are owned by it and do not exist under
+  the F1 quiescence rule); (iii) every listening socket (AF_UNIX
   path and abstract, TCP and UDP on every address, from `ss -lpn` as root)
   whose server process has euid 0 or any capability is either not
-  connectable by the account (a path socket on which it lacks write
-  permission, or with an ancestor directory on which it lacks search
-  permission; abstract sockets always count as connectable) or is served by an executable from a Debian package built
+  connectable by the account (a path socket for which the probe reports
+  W_OK denied, which is the unix(7) connect permission and includes
+  ancestor search permission; abstract sockets, TCP and UDP always count
+  as connectable) or is served by an executable from a Debian package built
   from source package systemd or dbus, or is openssh-server's sshd under
   C4; (iv) every system bus well-known name that is owned or activatable
   and whose owner or activation user is root or capability-holding belongs
@@ -3241,6 +3287,237 @@ INELIGIBLE until a new procedure literal covers the path and the host is
 requalified with it. A revision is a new literal, never an in-place
 change.
 
+PS-F filesystem access, root execution, dynamic groups and user mounts (C3,
+ARCH-S5-C2-m01). PS-A–PS-D close the elevation mechanisms; PS-F closes the
+remaining PS-0 host-control definition over the whole host: objects the
+account can write, root execution or configuration that consumes state the
+account controls, groups the account can acquire at runtime, and mounts it
+can create. It is part of od06-priv-surface-v1 (same producer, phase, root
+privilege, read-only rule and INELIGIBLE semantics) and is decided by kernel
+evidence, not by permission-bit arithmetic.
+
+F0 Effective-access probe. Every "can the account access" question in C6
+and PS-F is answered only by this probe; no requirement decides runner
+access from uid, gid, mode bits or ACL text. The procedure (root) forks the
+probe, which before its first answer calls setgroups(0, NULL), setresgid(g,
+g, g), setresuid(u, u, u) (u = enrolled uid, g = its primary gid, B1/B2) and
+prctl(PR_SET_NO_NEW_PRIVS, 1), then verifies in its own /proc/self/status
+that all four Uid values are u, all four Gid values are g, Groups is empty
+and CapInh, CapPrm, CapEff and CapAmb are zero, that /proc/self/ns/user and
+/proc/self/ns/mnt have the nsfs dev/ino of PID 1's (B4 requires the same of
+the runner), and that its LSM label (/proc/self/attr/current) is
+`unconfined` or no LSM is active. An unconfined probe has at least the
+access of a runner process under any confinement, so the probe can only
+over-report. It calls no helper, executes nothing and holds no descriptor
+from the procedure except one pipe pair. Each question is
+faccessat2(AT_FDCWD, p, m, AT_EACCESS | AT_SYMLINK_NOFOLLOW) for a canonical
+absolute path p from the walker and m = W_OK (for C6 (i) also, separately,
+m = R_OK). The
+kernel applies mode bits, POSIX ACLs (system.posix_acl_access),
+read-only mounts, immutable and append-only attributes, LSM inode hooks
+and search permission on every ancestor, for exactly these credentials.
+Result: 0 = accessible; EACCES, EPERM, EROFS or ETXTBSY = not accessible;
+ENOENT = vanished (the walker re-stats p as root: present = INELIGIBLE,
+absent = skipped); any other result, a probe that cannot be started, fails
+its self-verification, dies or answers out of order = INELIGIBLE. For an
+AF_UNIX path socket W_OK is the connect permission (unix(7)). W_OK on a
+directory is asked without X_OK, so a write-but-not-search directory is
+over-reported (conservative).
+
+F1 Writable objects.
+
+- Quiescence: F1 and F2 run with the runner service stopped and no process
+  of the account alive (no /proc entry with any Uid value u, checked before
+  and after the walk; otherwise INELIGIBLE). B4 is observed with the
+  service running before the stop and again after the restart.
+- Scope: the procedure runs in PID 1's mount and user namespaces (nsfs
+  dev/ino equality) and reads /proc/1/mountinfo. Every mount's filesystem
+  type is in exactly one closed class. W, walked: ext4, xfs, btrfs, vfat,
+  tmpfs, ramfs, devtmpfs, devpts, mqueue, hugetlbfs, sysfs, cgroup2,
+  securityfs, pstore, efivarfs, bpf, tracefs, debugfs, configfs, fusectl,
+  binfmt_misc, nsfs. P, walked with the proc rule below: proc. A, not
+  descended: autofs (statx uses AT_NO_AUTOMOUNT, the untriggered mount
+  point is checked as one object, and a triggered automount appears in the
+  table as its own mount of its own type). Any other type, including nfs,
+  nfs4, cifs, smb3, fuse, fuseblk, `fuse.*`, overlay, 9p, virtiofs, squashfs,
+  iso9660, ecryptfs, zfs and cgroup (v1), makes the host INELIGIBLE.
+- Walk: depth first from "/", each directory opened relative to its parent
+  with openat2 RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS and listed with
+  getdents64; each entry examined with statx(AT_SYMLINK_NOFOLLOW |
+  AT_NO_AUTOMOUNT) for type, mode, uid, gid and mount ID. Symlinks are
+  never followed and never probed (Linux does not use a symlink's own
+  permission bits); a symlink matters only as a path component, which the
+  F2 RC rule resolves. The walk descends into every directory, including
+  mount points of class W or P. On proc, the numeric PID directories, self
+  and thread-self are not descended: access to another process's /proc
+  entries is a ptrace access-mode check against that process's credentials,
+  not an inode permission, and a process of the account reaches only its
+  own (same uid, no capability, Yama >= 1 per L4); every other proc entry
+  (/proc/sys, /proc/sysrq-trigger, /proc/sysvipc, ...) is walked.
+  Over-mounted (shadowed) directory content is reachable by no path, for
+  the account or the walker, and is not visited; a bind-mounted subtree is
+  walked at each visible location. The walk is finite: the mount table is
+  finite and no symlink, PID directory or automount is followed.
+- Uninspectable state: the walker runs as root with CAP_DAC_READ_SEARCH.
+  ENOENT for an entry that getdents64 returned is a vanished entry and is
+  skipped; any other error of open, getdents64, statx or getxattr (EACCES,
+  EIO, ELOOP, ...) is INELIGIBLE.
+- Rule: for every visited non-symlink object whose owner is not u, the
+  probe is asked W_OK. A writable answer is permitted only for (i) a
+  directory in the exact set Σ = {/tmp, /var/tmp, /dev/shm, /run/lock,
+  /dev/mqueue, /tmp/.X11-unix, /tmp/.ICE-unix, /tmp/.XIM-unix,
+  /tmp/.font-unix} that is uid 0, gid 0 and mode exactly 01777; (ii) a
+  character device permitted by C6 (ii); (iii) an AF_UNIX path socket,
+  for which W_OK is the connect permission only (the socket inode cannot
+  be modified through it), so whether a connectable socket is permitted
+  is decided by C6 (iii) alone. Every other writable answer — any regular
+  file, directory, FIFO, block device or other character device not owned
+  by the account, whoever owns it — is INELIGIBLE. Objects owned
+  by u are runner state (R-1/R-2 territory), not violations by themselves;
+  F2 decides whether root consumes them.
+- Σ is accepted only with the kernel's sticky-directory protections in
+  force: fs.protected_symlinks = 1, fs.protected_hardlinks = 1,
+  fs.protected_regular >= 1 and fs.protected_fifos >= 1 (the systemd
+  defaults of the reference host); otherwise INELIGIBLE.
+- ACL retrieval: the walker reads system.posix_acl_access and, for
+  directories, system.posix_acl_default (getxattr without following) of
+  every visited object not owned by u. An ACL_USER entry naming u or an
+  ACL_GROUP entry naming g in either ACL is INELIGIBLE whatever the probe
+  answers (a default ACL grants future objects; a masked access entry is a
+  standing grant). The probe, not this list, decides present access.
+- Package-managed mutable state (/var/lib, /var/cache, /var/log,
+  /var/spool, /var/mail, /run) is walked under exactly the same rule; no
+  path is exempt because a package maintains it. Access the account gains
+  only through a setuid or setgid helper (for example crontab's setgid
+  write into /var/spool/cron/crontabs, or at's spool) is not direct access
+  and the probe reports it as not writable; the helper is C5 evidence, and
+  what root later executes from such a spool is decided by F2.
+
+F2 Root execution and configuration of runner-controlled state.
+
+Definitions. Package-verified is as above. Text: a file whose bytes contain
+no NUL. RC(p), "root-controlled", for an absolute path p: p is resolved from
+"/" one component at a time as root (O_NOFOLLOW, AT_NO_AUTOMOUNT); a symlink
+component is replaced by its target text (absolute from "/", relative from
+the current directory) and resolution continues, at most 40 symlinks (more
+= RC false). RC(p) is true iff every existing component c (each directory,
+symlink and the final object) has owner other than u and is not writable
+by the account per F0, and, where c is a Σ directory, c is the last
+component or the next component exists, is owned by uid 0 and is not
+writable per F0; and the first missing component, if any, has a parent
+that is neither a Σ directory nor writable per F0. RC is therefore false
+exactly when the account could create, replace, alter or redirect an object
+the path denotes.
+
+Token rule. The input path tokens of a string s are the maximal substrings
+of s that begin with "/" or "~" at the start of s or after whitespace or
+one of ; & | ( ) < > ' " ` = : , and that contain none of those characters.
+A "~" or "~name" token is expanded with the passwd home directory of that
+account (root's for a bare "~" in a root context). A token containing "*",
+"?" or "[" is a glob: RC applies to its directory prefix (up to the last "/"
+before the first glob character), which additionally must not be a Σ
+directory and must contain no entry owned by u, and to every path the glob
+matches when evaluated. A token containing "$" is cut at the first "$" and
+treated like a glob prefix; the variable's value is checked where it is
+defined (unit Environment and EnvironmentFile values, cron environment
+lines). Lines whose first non-blank character is "#" are not tokenized.
+
+Local-content closure LC. Every text file that is not package-verified and
+is (a) a regular file under /etc, /usr/local/lib/systemd,
+/usr/local/lib/udev or /usr/local/share/dbus-1, (b) one of the R-SHELL root
+files, or (c) named by a token of a file already in LC and an argument,
+script or configuration input of a root execution definition, is in LC;
+every token of every LC file must be RC. The closure is finite (the file set
+is finite; a file is scanned once). Exempt from token checking, with
+reason, exactly: /etc/passwd and /etc/passwd- (home directories are used by
+root programs only to act for that account in that account's own
+sessions); /etc/qa-agent-controller-v1/enrollment.json (the broker's own
+input, consumed only under the §5.5 descriptor-anchored rules); the runner
+unit's fragment and drop-ins (a non-root unit, whose manager-consumed
+inputs are still checked by R-SD (M)). A local file that is a root-executed
+program (argv[0] of a root execution definition, or the script operand of
+an interpreter there) and is not text is INELIGIBLE: its behaviour cannot be
+closed by tokens.
+
+Root-execution classes of the reference host. The Debian 13 reference model
+has exactly the classes below plus the elevation mechanisms of PS-A and
+PS-C. A root process or root execution definition that none of them
+accounts for is an unknown mechanism and INELIGIBLE.
+
+| Class | Enumeration source (as root) | Rule |
+|---|---|---|
+| R-SD systemd system manager | systemctl list-unit-files and list-units --all (--full, no pager); systemctl show --all per unit (effective values after all drop-ins, specifiers resolved); FragmentPath, DropInPaths, SourcePath; the systemd 257 system unit search path (/etc/systemd/system.control, /run/systemd/system.control, /run/systemd/transient, /run/systemd/generator.early, /etc/systemd/system, /etc/systemd/system.attached, /run/systemd/system, /run/systemd/system.attached, /run/systemd/generator, /usr/local/lib/systemd/system, /usr/lib/systemd/system, /run/systemd/generator.late) with every `*.d` drop-in directory; every system.conf.d and system-generators and system-environment-generators directory under /etc/systemd, /run/systemd, /usr/local/lib/systemd and /usr/lib/systemd; /etc/systemd/system.conf | Unit types service, socket, mount, swap, automount, path, timer, target, slice, scope, device only. Every generator and environment generator is a package-verified executable; /etc/rc.local does not exist; /etc/init.d contains only package-verified scripts; both system.attached directories and both system.control directories are absent or empty; /run/systemd/transient contains only .scope and .slice units; no user manager of uid 0 (user@0.service) has a unit source outside /usr/lib/systemd/user (no unit under /etc/systemd/user, /run/systemd/user, /usr/local/lib/systemd/user, /root/.config/systemd/user or /root/.local/share/systemd/user). (M) For every unit, every token of EnvironmentFiles (read by PID 1 as root), the StandardInput/StandardOutput/StandardError file:, append: and truncate: paths, TTYPath, RootDirectory, RootImage, MountImages, ExtensionImages, ExtensionDirectories, BindPaths and BindReadOnlyPaths sources, LoadCredential and LoadCredentialEncrypted sources, socket `Listen*` paths and Symlinks, mount/swap/automount What and Where, and path-unit `Path*` and DirectoryNotEmpty values is RC; PAMName names a stack under R-PAM. (R) A unit is root-executing if its effective User is empty, root or 0, if any `Exec*` setting carries a "+", "!" or "!!" prefix, if any source file sets PermissionsStartOnly=yes, or if it is a socket, mount, swap or automount unit. For a root-executing unit: its fragment and every drop-in are package-verified or generated (under a generator directory, by a package-verified generator); every token of Environment is RC; every argv element of ExecCondition, ExecStartPre, ExecStart, ExecStartPost, ExecReload, ExecStop, ExecStopPost and the socket ExecStartPre/Post and ExecStopPre/Post is tokenized and RC, WorkingDirectory is RC, and argv[0] resolves to a package-verified executable. `Condition*` and `Assert*` paths gate starting only and are not inputs |
+| R-CR cron and anacron | dpkg Provides; /etc/crontab, /etc/cron.d, /etc/cron.hourly, /etc/cron.daily, /etc/cron.weekly, /etc/cron.monthly, /etc/cron.yearly, /etc/anacrontab, /etc/cron.allow, /etc/cron.deny; /var/spool/cron/crontabs | No installed package other than cron provides the virtual package cron-daemon (cronie, bcron, fcron, systemd-cron and similar are INELIGIBLE); anacron, if installed, is the Debian anacron package. Every file in those /etc locations is recorded; every job line, environment line and run-parts entry of a job running as root is tokenized and RC, and every run-parts entry is package-verified or in LC. The crontab spool contains no file other than the account's own crontab (which runs as the account); in particular no root crontab |
+| R-AT at | /var/spool/cron/atjobs, /etc/at.allow, /etc/at.deny | If at is installed, the job spool contains no job whose owner (file uid) is not u; atd runs a job as its owner, so no root job exists |
+| R-PAM every PAM stack | /etc/pam.d (every service file and, recursively, every include) | Every module is package-verified and shipped by one of the A7 packages (A7 extended from the sudo stack to every stack); no pam_xauth.so line (it copies state from the invoking user's home as root) and no pam_namespace.so line (it creates root-made polyinstantiation directories from user-controlled paths); no pam_env.so line with user_readenv=1; every absolute token of every module argument (file=, conffile=, log=, motd_dir= and the pam_exec command and its arguments) is RC; for pam_exec.so the command operand is additionally a package-verified executable or in LC; every motd= and motd_dir= token of pam_motd.so is RC, and for each pam_motd.so line without noupdate, /etc/update-motd.d (which Debian's pam_motd runs with run-parts as root) is RC and every entry is package-verified or in LC |
+| R-UDEV udev | /etc/udev/rules.d, /run/udev/rules.d, /usr/local/lib/udev/rules.d, /usr/lib/udev/rules.d; /etc/udev/udev.conf | Every rule file is package-verified or in LC; every RUN, PROGRAM, IMPORT{program} and IMPORT{file} value is tokenized and RC; a relative program name resolves to /usr/lib/udev and must be package-verified |
+| R-DBUS bus activation | /usr/share/dbus-1/system-services, /usr/local/share/dbus-1/system-services, /lib/dbus-1/system-services | Every service file is package-verified or in LC; every Exec token is RC; C6 (iv) restricts root-activated names |
+| R-KERN kernel usermode helpers | /proc/sys/kernel/core_pattern, /proc/sys/kernel/modprobe, /proc/sys/kernel/hotplug, every /proc/sys/fs/binfmt_misc entry (the automount is triggered first) | core_pattern either does not start with the pipe character or its program and every token are RC; modprobe is RC and package-verified; hotplug is empty; every binfmt_misc interpreter is RC and package-verified (an entry with the C or O flag runs its interpreter with the binary's credentials) |
+| R-SHELL root login environment | /etc/profile, /etc/profile.d, /etc/bash.bashrc, /etc/environment, /root/.profile, /root/.bashrc, /root/.bash_profile, /root/.bash_login, /root/.bash_logout | Each present file, every entry of /etc/profile.d included, is RC and package-verified or in LC |
+| R-PKG package hooks | apt-config dump keys DPkg::Pre-Invoke, DPkg::Post-Invoke, DPkg::Pre-Install-Pkgs, APT::Update::Pre-Invoke, APT::Update::Post-Invoke, APT::Update::Post-Invoke-Success; pre-invoke and post-invoke options of /etc/dpkg/dpkg.cfg and /etc/dpkg/dpkg.cfg.d | Every value token is RC; maintainer scripts and every run-parts hook directory these packages run are package-verified or in LC |
+| R-SSH sshd (if openssh-server is installed) | sshd -T as root | authorizedkeyscommand, authorizedprincipalscommand and forcecommand are none, or their tokens are RC; every subsystem command token is RC |
+
+Root daemon closure. Every root-executing unit (R-SD (R)) either has a
+package-verified fragment shipped by a binary package built from a source
+package in N, or is generated by a package-verified systemd generator from
+/etc/fstab (F4), the kernel command line, GPT auto-discovery, the getty
+configuration or an /etc/init.d script shipped by a binary package from N.
+N is the exact set {systemd, dbus, util-linux, openssh, cron, anacron, at,
+apt, dpkg, man-db, e2fsprogs, logrotate, ifupdown, isc-dhcp, dhcpcd, kmod,
+procps, apparmor, console-setup, initramfs-tools, sudo}, whose default
+consumption of account-controllable locations is exactly the cron, at, PAM,
+systemd (M) and sshd inputs above plus the Σ directories under the
+`fs.protected_*` sysctls. Their local configuration is in LC (for example
+/etc/logrotate.d, /etc/ssh/sshd_config.d, /etc/apt/apt.conf.d,
+`/etc/network/if-*.d`), so every local path they act on is RC. A
+root-executing unit from any other source package is INELIGIBLE (§20.7
+STOP; N is never widened in place). Process attribution: every process with
+any Uid value 0 or a non-zero CapEff or CapPrm is a kernel thread, PID 1, a
+process in the cgroup of a unit accepted above, or a process of the
+procedure's own root session scope; any other is INELIGIBLE. Deliberate
+interactive root operator actions stay outside PS-0 (root is trusted,
+§20.2.5); PS-F governs configured, scheduled, event-driven and
+account-triggerable root execution. A root execution definition that
+reaches account-controlled content although every token is RC is a PS-E
+procedure defect.
+
+F3 Dynamic group acquisition. G1: every /etc/group entry has password field
+"x" and exactly one /etc/gshadow entry; every gshadow password field is
+empty or begins with "!" or "*", so no group password can verify. G2: the
+account appears in no gshadow administrator list, no gshadow member list and
+no /etc/group member list (B2, B3). G3: /usr/bin/newgrp and /usr/bin/sg are
+package-verified (C5). With G1–G2, newgrp and sg (shadow) can switch the
+account only to a group it already belongs to — its primary group — because
+a non-member is admitted only after a group-password check that a locked or
+empty field never passes; gpasswd changes membership only for a group's
+administrators, which the account is not. Any usable group password,
+membership or administrator entry for the account is INELIGIBLE.
+
+F4 User mounts. M1: no /etc/fstab entry's options contain user, users,
+owner, group or user=, which are the only util-linux grants of non-root
+mount and umount; no /run/mount/utab entry names the account. M2: the C5
+set contains no setuid or file-capability mount or umount helper other than
+/usr/bin/mount and /usr/bin/umount (util-linux) and /usr/bin/fusermount3
+(fuse3); in particular no setuid mount.nfs, mount.cifs,
+mount.ecryptfs_private, fusermount (FUSE 2) or ntfs-3g. M3: /etc/fuse.conf
+is absent or has no user_allow_other line. Then fusermount3 refuses
+allow_other and allow_root for the account, and the kernel admits only
+processes with the mounting user's fsuid to its FUSE filesystem, root
+included being refused, so root can never read, execute or traverse
+account FUSE content; a mount over a root-consumed location therefore only
+denies root access (availability) and cannot supply content. M4: mounts the
+account creates in a mount namespace of a non-initial user namespace never
+reach PID 1's namespace (such a namespace is a less-privileged copy whose
+shared mounts become slave mounts, mount_namespaces(7)), and every root
+execution class above runs in PID 1's mount namespace or in a namespace a
+root unit created. M5: udisks2 and every other mount service need polkit
+authority (absent, C2) and a root bus name (excluded, C6 (iv));
+systemd-mount and machinectl are covered by the C3 probes. Seat-based
+uaccess ACLs never name the account (it has no seat session) and are in
+any case evaluated by F0. Any user-mount grant outside M1–M4 is
+INELIGIBLE. setuid package verification alone is not relied on: M1–M4 are
+the closure.
+
 Record, encoding and digest. The output is one record, closed schema
 QaAgentControllerPrivilegeSurface v1, all keys required, each list sorted
 bytewise by its first listed key:
@@ -3252,14 +3529,21 @@ bytewise by its first listed key:
 | account | {name, uid, primaryGid, primaryGroup} (B1, B2) |
 | sudo | {package {name, version, architecture}, files [{path, sha256}], sudoConf null or {sha256}, sources [{path, uid, gid, mode, size, sha256}], includeDirs [{path, uid, gid, mode, entries}], policySha256, matchedPolicy, effectiveListing, pam [{path, sha256}], pamModules [{path, package}], groupConfSha256} (A1–A7; policySha256 over the canonical P bytes; matchedPolicy the canonical U value; effectiveListing the canonical L string) |
 | nss | {nsswitchSha256, passwd, group, shadow, gshadow, initgroups, sudoers (each the ordered module list, [] if the line is absent), userdbEntries} (A6, B5) |
-| groups | {supplementary} (B3; exactly [primaryGid]) |
+| groups | {supplementary, gshadow [{group, passwordState}]} (B3, F3; supplementary exactly [primaryGid]; one gshadow item per group, passwordState "empty" or "locked", never a hash) |
 | runner | {unit (string or null), properties (object or null), processGroups} (B4; no PIDs) |
 | elevation | {doasAbsent, polkitAbsent, probes [{command, exitStatus, unitCreated}], rootPasswordLocked, uidZeroAccounts, suPam [{path, sha256}], sshPermitRootLogin (string or null)} (C1–C4) |
 | privilegedFiles | [{path, uid, gid, mode, sha256, capabilities (string or null), package}] (C5) |
-| endpoints | {blockAccessible [], charWritable [paths], listeners [{protocol, address, serverExe, package, sourcePackage}], busNames [{name, serverExe, sourcePackage}], dbusPolicy [{path, sha256}]} (C6) |
+| endpoints | {blockAccessible [], charWritable [paths], listeners [{protocol, address, serverExe, package, sourcePackage}], busNames [{name, serverExe, sourcePackage}], dbusPolicy [{path, sha256}]} (C6; blockAccessible and charWritable are F0 probe results) |
+| filesystem | {probe {uid, gid, groups [], capabilities "0", noNewPrivs true, lsmLabel ("unconfined" or null)}, sysctls {protectedSymlinks, protectedHardlinks, protectedRegular, protectedFifos}, stickyDirs [{path, uid, gid, mode}]} (F0, F1; stickyDirs the Σ members present) |
+| rootExecution | {units [{name, rootExecuting, sources [{path, sha256 (or null), linkTarget (or null), package (or null)}]}] (every unit except transient scopes and slices), generators [{path, package}], cron {daemonProviders [names], files [{path, sha256, package (or null)}], userCrontabs [account names]}, atJobOwners [account names], pam [{path, sha256}] (every stack), udevRules [{path, sha256, package (or null)}], dbusServices [{path, sha256, user (or null)}], kernel {corePattern, modprobe, hotplug, binfmt [{name, interpreter, flags}]}, rootShell [{path, sha256, package (or null)}], packageHooks [{key, value}], sshd ({authorizedKeysCommand, authorizedPrincipalsCommand, forceCommand, subsystems [strings]} or null), rootUnitSourcePackages [names], localContent [{path, sha256 (or null)}]} (F2; localContent is LC with sha256 null only for /etc/resolv.conf, whose content changes with DHCP leases, and for the secret files /etc/shadow, /etc/shadow-, /etc/gshadow, /etc/gshadow- and every `/etc/ssh/ssh_host_*_key`, whose digests the record must not carry; all of them are still token-checked at every run, and the shadow and gshadow states are recorded by C4 and F3) |
+| mounts | {fstabSha256, fuseConfSha256 (or null), mountHelpers [paths]} (F4; mountHelpers the setuid or capability mount helpers of M2) |
 
 The record carries no time, PID, inode or boot-specific value, so equal
-host state yields equal bytes. Bytes are the CRS-1 encodeValue encoding,
+host state yields equal bytes. PS-F records configuration and evidence
+state only: a violation is never recorded (it makes the host INELIGIBLE and
+no qualified record is produced), transient scopes and slices, session
+mounts and PID entries are excluded by the F1/F2 rules, and every recorded
+list is sorted bytewise by its first listed key. Bytes are the CRS-1 encodeValue encoding,
 no BOM, no trailing newline. privilegeSurfaceDigest = "sha256:" + lowercase
 hex of SHA-256 over those bytes (the Stage 4 content-digest convention of
 §20.1.4; no new hash domain). The record and digest are retained with the
@@ -3275,13 +3559,14 @@ privilegeSurfaceDigest) and every requirement to hold. It is mandatory at
 initial qualification, immediately before every enrollment enable or
 re-enable (§5.3, §20.3.5), after every package installation, upgrade or
 removal on the host, and after every account, group, PAM, NSS, sudo,
-polkit, doas, D-Bus policy or runner-unit administration action. Like T5,
+polkit, doas, D-Bus policy or runner-unit administration action, and every
+PS-F trigger below. Like T5,
 qualification shows the record unchanged after systemctl daemon-reexec and
 a reboot. Any trigger change is made with enrollment disabled; one made
 while enabled makes the host INELIGIBLE from that moment. A mismatch or a
 failed requirement makes the host INELIGIBLE until explicit
 requalification: full procedure, review of the new record against
-PS-A–PS-E, and re-observation of T1–T5 when an input of §20.2.4a changed.
+PS-A–PS-F, and re-observation of T1–T5 when an input of §20.2.4a changed.
 
 Requalification triggers (each makes the host INELIGIBLE until
 requalified): any change of the sudo build or package; sudo.conf; the PAM
@@ -3295,7 +3580,21 @@ file; the run0/systemd-run probe results; the root password state or sshd
 root-login setting; the setuid/setgid/file-capability set or a digest in
 it; the host-control endpoint set; the D-Bus system policy; and the
 availability, presence or configuration of any remote or dynamic policy
-source (which PS-D makes INELIGIBLE outright).
+source (which PS-D makes INELIGIBLE outright). C3 (PS-F) adds: any change
+of owner, group, mode, ACL or inode attribute of a root-owned or other
+non-account object, or any new object, that could change an F0 answer;
+the mount table's filesystem types; the `fs.protected_*` sysctls or the Σ
+set; any systemd unit file, drop-in, enablement or mask symlink,
+generator, environment generator, system.conf or system.conf.d file,
+timer, /etc/init.d script or transient non-scope unit; any cron, anacron
+or at file, spool entry or cron-daemon provider; any PAM stack file or
+module argument; any udev rule, D-Bus activation file, core_pattern,
+modprobe, hotplug or binfmt_misc entry; any R-SHELL file; any apt or dpkg
+hook value or hook directory entry; the sshd command settings; any LC
+file; installation of a package that ships a root-executing unit; any
+/etc/group or /etc/gshadow change (group passwords, administrators or
+members); and any /etc/fstab, /run/mount/utab user entry, mount helper or
+/etc/fuse.conf change.
 
 Negative tests (qualification, adversarial; each must leave the qualified
 host INELIGIBLE until full requalification, never eligible): a generic
@@ -3316,8 +3615,38 @@ root-run Docker or libvirt socket connectable by the account; the sudo
 group-plugin or a command_timeout Default added; the root password
 unlocked with PermitRootLogin yes; an LDAP or SSSD identity source that is
 unreachable, stale or returns a changed group list; and the §20.2.3 rule
-byte-identical while any one of the routes above appears. Every case is
-detected by PS-A–PS-D at verification or requalification, never by C1a.
+byte-identical while any one of the routes above appears. C3 (PS-F)
+negative tests: a root-owned file in /etc made writable only through a
+POSIX ACL user entry for the account (mode bits unchanged, 0644), and
+separately through a group ACL entry for its primary group; a default ACL
+naming the account on a root-owned directory; a root-owned 0666 file under
+/var/lib and a 0777 directory under /usr/local; a world-writable FIFO under
+/run; a root-owned file reachable only through a runner-owned symlink in a
+root-consumed path; an unknown filesystem type (an NFS or overlay mount)
+and an unreadable directory (each INELIGIBLE, never skipped); a root
+service unit whose ExecStart, ExecStartPre=+, EnvironmentFile,
+WorkingDirectory or StandardOutput=append: names a path in the account's
+home or workspace; a non-root unit with StandardOutput=file: under the
+account's home; a drop-in adding ExecStartPost to a root unit; a path unit
+watching the account's home; a local generator and an executable
+/etc/rc.local; a root line in /etc/cron.d and in /etc/crontab running a
+script in the account's home, a `~account` and a /home glob token; a root
+crontab; an at job queued by root; cronie installed; pam_exec.so running a
+runner-owned script in the session stack of sshd or cron; pam_env with
+user_readenv=1; pam_xauth or pam_namespace added; an update-motd.d script
+sourcing a runner file; a udev RUN of a runner script; a D-Bus activation
+file whose Exec is runner-owned; core_pattern piping to a runner-owned
+program; a binfmt_misc entry with a runner-owned interpreter; /root/.bashrc
+sourcing a runner file; a DPkg::Post-Invoke hook and a logrotate postrotate
+script naming a runner path; an sshd AuthorizedKeysCommand owned by the
+account; a root-executing unit from a source package outside N; a root
+process not attributable to an accepted unit; a gshadow password set with
+gpasswd, the account added as a gshadow administrator or member, and an
+/etc/group password field other than "x"; an fstab entry with user, users,
+owner or group; user_allow_other in /etc/fuse.conf; a setuid mount.cifs or
+FUSE 2 fusermount; and the probe started with a supplementary group, a
+capability or a confined LSM label (self-verification FAIL). Every case is
+detected by PS-A–PS-F at verification or requalification, never by C1a.
 
 ### 20.3 DG-3 — native broker, build, distribution and Linux host
 
@@ -3473,50 +3802,219 @@ identification "rustc 1.85.0 (4d91de4e4 2025-02-17)", and
 rust-toolchain.toml to pin channel "1.85.0". Mutable mirrors
 (deb.debian.org) and tags are never trust anchors.
 
-Image build procedure (performed only under a later Stage 5
-implementation or build-qualification authorization; C2 builds and
-publishes nothing):
+Image build and publication model (C3, ARCH-S5-C2-m04; performed only under
+a later, separately authorized build-environment qualification and
+publication; C2 and C3 build, authenticate to, push and publish nothing).
+Exactly one mechanism is selected: Docker Buildx driving a BuildKit daemon
+in the docker-container driver, exporting with the BuildKit image exporter
+and pushing directly to the durable location below in the same build. There
+is no local export followed by a second push, conversion or re-serialization
+step.
 
-1. Extract the recipe blob from the source commit into an empty scratch
-   directory and verify containerfileDigest and the format rule.
-2. docker buildx build (BuildKit) with --platform linux/amd64, --no-cache,
-   --pull, --provenance=false, --sbom=false, -f the extracted recipe and an
-   empty build context directory; the output is a single-platform image
-   with an OCI image manifest (oci-mediatypes), with no index and no
-   attestation manifest. Network is permitted for this step only (signed
-   apt over the snapshot, hash-verified Rust downloads); broker builds stay
-   --network none (§20.3.4). The builder name and version are recorded.
-3. The image manifest digest D is the SHA-256 of the manifest bytes; its
-   config must state architecture amd64 and os linux.
-4. The content record of D (below) is computed and retained.
+1. Builder instance: `docker buildx create --name
+   qa-agent-controller-v1-build-env --driver docker-container --driver-opt
+   image=docker.io/moby/buildkit@sha256:<B> --bootstrap`, where B is the
+   BuildKit image manifest digest fixed by that authorization and recorded
+   in the closed builder evidence below (never a tag). No BuildKit
+   configuration file is supplied: no registry mirror, insecure registry,
+   custom CA or extra worker setting. A fresh builder instance is created
+   for each build and removed after it.
+2. Recipe: extract the recipe blob from the source commit into an empty
+   scratch directory and verify containerfileDigest and the format rule.
+   The build context is a separate empty directory.
+3. Client environment: exactly PATH, HOME, DOCKER_CONFIG (holding only the
+   registry credential of the push identity) and
+   BUILDX_NO_DEFAULT_ATTESTATIONS=1; in particular SOURCE_DATE_EPOCH,
+   `BUILDKIT_*` and `BUILDX_*` other than that one are unset (Buildx would
+   otherwise forward SOURCE_DATE_EPOCH as a build argument).
+4. Build and push, exactly:
 
-Content record. QaAgentBuildEnvContent v1, all keys required:
-{kind:"QaAgentBuildEnvContent", schemaVersion:1, image, packages, entries}.
-It is computed from the flattened root filesystem of a container created
-from D and never started (docker create, then docker export):
+        docker buildx build --builder qa-agent-controller-v1-build-env \
+          --platform linux/amd64 --file <scratch>/recipe/Containerfile \
+          --no-cache --pull --provenance=false --sbom=false \
+          --metadata-file <scratch>/buildx-metadata.json \
+          --output type=image,name=ghcr.io/tarasovartem/qa-agent-controller-v1-build-env:<tag>,push=true,oci-mediatypes=true,compression=gzip,force-compression=false \
+          <scratch>/empty-context
 
-- image = {architecture, os, env (config order), user, workingDir,
-  entrypoint, cmd} from the image config;
-- packages = every var/lib/dpkg/status stanza with Status "install ok
-  installed", as {package, version, architecture}, sorted by package;
-- entries = every export member under opt/rust, usr and etc (the three
-  roots included) except etc/hostname, etc/hosts and etc/resolv.conf, as
-  {path, type, mode, uid, gid, size, sha256, linkTarget}, sorted by path
-  bytewise. path has no leading "./" or "/" and no trailing "/", and must
-  be valid UTF-8; type is "file", "dir" or "symlink"; a tar hard-link
-  member is a "file" with its target's size and SHA-256, so member order
-  cannot matter; mode = permission and special bits as an integer; size is
-  the byte length for a file and 0 otherwise; sha256 = "sha256:" + hex for
-  a file, otherwise null; linkTarget is the symlink target, otherwise null.
-  Modification times, user and group names are excluded. Any other member
-  type, a non-UTF-8 path or a security.capability attribute under the
-  roots fails the procedure.
+   with no --build-arg, --secret, --ssh, --build-context, --allow
+   (entitlements), --cache-from, --cache-to, --label, --annotation, --target,
+   --attest, --load or other --output option. The Containerfile has no
+   `# syntax=` directive, so the frontend is the Dockerfile frontend built
+   into the recorded BuildKit image and no frontend image is pulled. RUN
+   steps use the default BuildKit network (signed apt over the snapshot,
+   hash-verified Rust downloads); broker builds stay --network none
+   (§20.3.4). `<tag>` is informational only (for example
+   `revision-1-<sourceCommit>`) and is never a trust anchor.
+5. Selected format: with one platform and provenance and SBOM disabled the
+   exporter pushes exactly one OCI image manifest
+   (application/vnd.oci.image.manifest.v1+json) referencing one OCI image
+   config (application/vnd.oci.image.config.v1+json) and only
+   application/vnd.oci.image.layer.v1.tar+gzip layers (the pinned base
+   layer is reused as gzip; force-compression=false). No image index, no
+   Docker schema2 media type, no zstd or estargz layer, no attestation
+   manifest, no subject and no referrer is part of the design. If the
+   pinned builder emits an index or any other media type for this command,
+   qualification FAILS; an index is never unwrapped to find a platform
+   manifest.
+
+Definition of D (normative). D is the SHA-256 digest ("sha256:" + 64
+lowercase hex) of the exact manifest bytes that the qualified registry
+serves for the pushed linux/amd64 image manifest when that manifest is
+addressed by digest. D is a platform image manifest digest, never an index
+digest. The registry-served bytes are authoritative: the digest Buildx
+reports (containerimage.digest in the metadata file) and any pre-push or
+local digest are not D unless equal to the hash of the served bytes; if the
+registry stores a different representation than the builder computed, D
+is still the hash of the served bytes, provided every check below passes
+on them.
+
+Post-push verification, in this order, before build-env.digest is written:
+
+1. Obtain the candidate D from the registry API (OCI distribution-spec):
+   `HEAD /v2/tarasovartem/qa-agent-controller-v1-build-env/manifests/<tag>`
+   with Accept: application/vnd.oci.image.manifest.v1+json only; take the
+   Docker-Content-Digest header. Record the Buildx-reported digest beside
+   it. The tag is used only to discover the candidate.
+2. `GET /v2/tarasovartem/qa-agent-controller-v1-build-env/manifests/<D>`
+   with the same Accept header; the response Content-Type must be
+   application/vnd.oci.image.manifest.v1+json and Docker-Content-Digest,
+   if present, must equal D.
+3. Hash the exact response body; the SHA-256 must equal D.
+4. Parse the body strictly (no duplicate keys): members exactly
+   schemaVersion (2), mediaType (the OCI image manifest type), config and
+   layers; no annotations, subject or artifactType; every descriptor has
+   exactly mediaType, digest and size; config mediaType is the OCI image
+   config type; every layer mediaType is the OCI tar+gzip type.
+5. Fetch the config and every layer blob by digest from the same
+   repository; each body's SHA-256 and length must equal its descriptor;
+   the config must state architecture amd64 and os linux; the gunzipped
+   bytes of layer i must have the SHA-256 rootfs.diff_ids[i] of the config,
+   with equal counts. Steps 2–5 are the pull by repository@D.
+6. Compute QaAgentBuildEnvContent from exactly those config and layer
+   bytes (below).
+7. Independently rebuild the same recipe blob with a fresh builder instance
+   of the same recorded builder identity, the same command except that the
+   --output is `type=oci,dest=<scratch>/rebuild.tar,oci-mediatypes=true,compression=gzip,force-compression=false`
+   (no push), and compute its content record from the single manifest of
+   that OCI layout by the same procedure.
+8. The two records must be rebuild-equivalent (below).
+9. Only then write build-env.digest = D.
+
+Content record. QaAgentBuildEnvContent v1 (C3 shape; it replaces the C2
+shape, which no qualified record ever used), all keys required, CRS-1
+canonical bytes: {kind:"QaAgentBuildEnvContent", schemaVersion:1,
+platform, config, packages, entries}. It is computed only from the image
+config and layer blobs of a verified manifest, never from a created or
+running container, so container-runtime injections (/.dockerenv,
+/etc/hostname, /etc/hosts and /etc/resolv.conf bind mounts, the /dev,
+/proc and /sys mounts, /run/.containerenv) are never inputs. The exclusion
+set is therefore closed and EMPTY: every path any layer produces, including
+etc/hostname, etc/hosts, etc/resolv.conf, dev, proc, sys, run, tmp, var,
+root, build and the top-level symlinks bin, lib, lib64 and sbin, is image
+content and recorded. C2's docker create / docker export input and its
+three-path exclusion are withdrawn.
+
+- platform = {architecture, os, variant, osVersion, osFeatures} from the
+  image config; required "amd64", "linux", null, null, null (variant,
+  os.version and os.features must be absent).
+- Image-config closure: top-level members other than architecture, os,
+  config, rootfs, created, author and history FAIL. rootfs.type must be
+  "layers". created, author and history are build metadata with no effect
+  on the filesystem or on any process started from the image and are not
+  recorded; rootfs.diff_ids is layer-serialization identity, bound in
+  verification step 5, and the applied filesystem is recorded entry by
+  entry instead.
+- config = the image config's config object over the closed member set
+  {User, Env, WorkingDir, Entrypoint, Cmd, Healthcheck, Volumes, Shell,
+  OnBuild, StopSignal, Labels, ExposedPorts, ArgsEscaped}; any other member
+  (for example Hostname, Domainname, Image, AttachStdin, Tty, OpenStdin,
+  StdinOnce, MacAddress, NetworkDisabled, StopTimeout, Memory, MemorySwap,
+  CpuShares) FAILS. Every member is recorded, an absent member as null.
+  Required values: User "10001:10001"; Env exactly the eight §20.3.4a
+  names, each once, with the §20.3.4 values, recorded in config order;
+  WorkingDir "/build/src"; Entrypoint absent, null or [] (recorded []);
+  Cmd ["/usr/bin/false"]; Healthcheck absent (any value, including
+  {"Test":["NONE"]}, FAILS, so no health check can run during build use);
+  OnBuild absent or []; Volumes absent or {} (no volume is approved);
+  Shell absent (the recipe has no SHELL; the default is recorded as null);
+  StopSignal absent; Labels absent or {}; ExposedPorts absent or {};
+  ArgsEscaped absent or false (recorded false). Absent, null and the
+  empty value of OnBuild, Volumes, Labels and ExposedPorts are recorded as
+  null.
+- packages = every var/lib/dpkg/status stanza of the applied filesystem
+  with Status "install ok installed", as {package, version, architecture},
+  sorted by package (a readable summary; the file itself is also an
+  entry).
+- entries = the applied root filesystem, by this closed algorithm:
+  1. Layers are applied in manifest order to an initially empty tree.
+     Each layer is a tar stream; accepted member types are regular ("0"
+     and NUL), hard link ("1"), symlink ("2") and directory ("5"), with
+     pax extended headers ("x": path, linkpath, size, uid, gid and
+     `SCHILY.xattr.*` are applied; mtime, atime, ctime, uname, gname and
+     comment are ignored) and GNU long names ("L", "K"). Every other type
+     — character or block device ("3", "4"), FIFO ("6"), contiguous ("7"),
+     global pax header ("g"), sparse ("S") and any vendor type — FAILS;
+     sockets cannot occur in tar.
+  2. Member paths are normalized by removing a leading "./" or "/" and a
+     trailing "/"; a path with an empty, "." or ".." component, a NUL or
+     invalid UTF-8 FAILS. The member "." or "./" sets the root directory.
+  3. Whiteouts follow the OCI image-spec layer rules: per layer, first
+     every opaque marker `.wh..wh..opq` removes all lower-layer children of
+     its directory and every `.wh.<name>` removes `<name>` and its subtree
+     from the lower layers (absent targets are no-ops); then the layer's
+     other members are applied in stream order. Whiteout members are never
+     entries.
+  4. A member whose parent is absent from the tree, or is not a directory
+     node (including a symlink), FAILS; no path is resolved through a
+     symlink. A directory member over an existing directory replaces its
+     metadata and keeps its children; any other member replaces the
+     existing node and its subtree. A hard link must name an existing
+     regular-file node, and the new path then refers to that same node.
+  5. The root directory must be set by some layer; otherwise FAIL.
+  Each path of the final tree, the root included, is one entry
+  {path, type, mode, uid, gid, size, sha256, linkTarget, hardlinkGroup,
+  xattrs}: path absolute ("/" for the root, no trailing "/"); type "file",
+  "dir" or "symlink"; mode = header mode & 0o7777 (permission, setuid,
+  setgid, sticky); uid and gid numeric (names ignored); size the byte
+  length for a file, otherwise 0; sha256 "sha256:" + hex of the content
+  for a file, otherwise null; linkTarget the symlink target text,
+  otherwise null; hardlinkGroup the bytewise-smallest path of all paths
+  referring to the same file node when there are two or more, otherwise
+  null; xattrs the node's extended attributes as [{name, value
+  (lowercase hex)}] sorted by name ([] if none), so POSIX ACL attributes
+  (system.posix_acl_access, system.posix_acl_default) are recorded. A
+  security.capability attribute anywhere FAILS. Entries are sorted
+  bytewise by the UTF-8 bytes of path. Modification times and user/group
+  names are excluded; they change neither file content, ownership nor
+  permission.
+
+Identity. Two applied filesystems that differ in any path, type, mode,
+owner, size, content, symlink target, hard-link structure or extended
+attribute produce different entries, and two image configs that differ in
+any execution-relevant member produce different config values or FAIL.
+Hence, within the linux/amd64 OCI model above, equal QaAgentBuildEnvContent
+records mean the same applied root filesystem and the same execution-relevant
+image configuration. The record does not reproduce manifest, config or
+layer bytes; D stays the separate registry identity.
 
 buildEnvContentDigest = "sha256:" + hex SHA-256 over the CRS-1
 encodeValue bytes of the record (content-digest convention; no new hash
-domain). The exclusion list is closed: a rebuild difference that would
-need another exclusion is a mismatch, and only a new recipe revision
-reviewed with this section can change the list.
+domain).
+
+Rebuild equivalence. Image builds embed wall-clock state in a few build
+logs, so an independent rebuild is compared by an exact relation, not by
+excluding paths from the record: records R1 and R2 are rebuild-equivalent
+iff they are byte-identical after, in both, the size and sha256 of the
+entries whose path is in the closed set V = {/var/log/dpkg.log,
+/var/log/alternatives.log, /var/log/apt/history.log, /var/log/apt/term.log,
+/var/log/apt/eipp.log.xz, /var/cache/ldconfig/aux-cache} are replaced by
+null. Each V path present in either record must be present in both as type
+"file" with no execute bit, and with equal mode, uid, gid, hardlinkGroup
+and xattrs. V files are logs and a loader-maintenance cache; nothing in
+the build environment or a broker build (cargo, rustc, rust-lld, cc) reads
+them. The record of D itself keeps their full content, so D's record is
+still a complete identity. Any other difference is a rebuild mismatch;
+only a new recipe revision reviewed with this section can change V.
 
 Durable location. ghcr.io/tarasovartem/qa-agent-controller-v1-build-env, a
 GitHub Container Registry package of the repository owner, linked to
@@ -3533,12 +4031,19 @@ publication approval and are NOT AUTHORIZED here. Selecting this location
 adds no product or release decision: it is the registry of the repository
 whose GitHub Release §20.3.5 already names.
 
-build-env.digest. Written only after D has been pushed to the durable
-location, pulled back by digest, and its recomputed content record found
-byte-identical to the step-4 record. Then build-env.digest contains D, the
-manifest digest the registry serves for that push, and nothing else. Every
-broker build uses exactly that digest. C2 defines this procedure; no value
-of D, build-env.digest or buildEnvContentDigest exists yet.
+build-env.digest. Written only by post-push verification step 9, after D
+has been pushed to the durable location, fetched by digest with its served
+bytes hashed to D, and its content record found rebuild-equivalent to the
+independent publication-time rebuild. Then build-env.digest contains D, as
+defined above, and nothing else. Every broker build uses exactly
+ghcr.io/tarasovartem/qa-agent-controller-v1-build-env@D; tag resolution is
+never a trust anchor. There is no circularity: containerfileDigest is a
+property of the recipe blob and does not depend on D; D exists only after
+publication; build-env.digest is a later commit's file that stores D; the
+broker build and its build record consume D. C2 and C3 define this
+procedure; no value of D, B, build-env.digest or buildEnvContentDigest
+exists yet, and none can be produced without the separately authorized
+publication, which remains implementation-time qualification evidence.
 
 Independent rebuild and verification (release qualification). An
 independent party:
@@ -3553,11 +4058,14 @@ independent party:
    the Debian signatures);
 6. lets the recipe verify the Rust component hashes (any mismatch stops the
    build);
-7. rebuilds the image with the step-2 command;
-8. computes the content record of its rebuild and of D pulled from the
-   durable location; both must be byte-identical to the qualified record
-   (manifest digests of independent rebuilds are not expected to equal D
-   and are never compared as anchors);
+7. rebuilds the image with the recorded builder identity and the
+   post-push verification step-7 command (OCI layout output, no push);
+8. performs post-push verification steps 2–6 for D at the durable
+   location; the content record of D must be byte-identical to the
+   qualified record (equal buildEnvContentDigest), and the record of its
+   own rebuild must be rebuild-equivalent to it (manifest digests of
+   independent rebuilds are not expected to equal D and are never compared
+   as anchors);
 9. runs the §20.3.4 independent broker builds in a fresh container from D
    and compares artifact digests.
 
@@ -3572,7 +4080,8 @@ containerfileDigest, baseImage {reference:"docker.io/library/debian",
 manifestDigest}, debianSnapshot {debian, debianSecurity}, environmentPackages
 [{package, version}], rustComponents [{name, sha256}],
 buildEnvImage:"ghcr.io/tarasovartem/qa-agent-controller-v1-build-env",
-buildEnvDigest, buildEnvContentDigest, cargoTomlSha256, cargoLockSha256,
+buildEnvDigest, buildEnvContentDigest, buildEnvPublication,
+buildEnvBuilder, cargoTomlSha256, cargoLockSha256,
 rustToolchainTomlSha256, rustflags, builds [{party, artifactSha256}] (at
 least the two §20.3.4 hosts and the release-qualification party),
 artifactSha256}. artifactSha256 is the raw SHA-256 of the artifact bytes
@@ -3580,11 +4089,41 @@ artifactSha256}. artifactSha256 is the raw SHA-256 of the artifact bytes
 (§5.4) is computed over the same bytes. The record is release-qualification
 evidence and is never read by the client or the broker.
 
+C3 build-environment evidence (closed; every member required):
+
+- buildEnvDigest = D (registry-served platform manifest digest).
+- buildEnvPublication = {repository:"ghcr.io/tarasovartem/qa-agent-controller-v1-build-env",
+  manifestMediaType:"application/vnd.oci.image.manifest.v1+json",
+  manifestSize, builderReportedDigest (the Buildx containerimage.digest),
+  configDigest, configSize, layers [{digest, size, diffId}] (manifest
+  order)}; every value is taken from the post-push verification of D.
+- buildEnvBuilder = {client {implementation:"docker-buildx", version},
+  engine {implementation:"docker", version}, buildkit
+  {image:"docker.io/moby/buildkit", imageDigest (B), version}, driver
+  "docker-container", builderConfig null, frontend {syntaxDirective null,
+  implementation "dockerfile.v0 built into the recorded BuildKit image"},
+  platform "linux/amd64", exporter {type "image", push true, ociMediatypes
+  true, compression "gzip", forceCompression false}, attestations
+  {provenance false, sbom false}, options {noCache true, pull true,
+  buildArgs [], secrets [], ssh [], buildContexts [], entitlements [],
+  cacheFrom [], cacheTo [], labels [], annotations [], target null},
+  clientEnvironment {buildxNoDefaultAttestations "1", sourceDateEpoch
+  null}}. Only the four version strings and B are host-observed values
+  (versions as the tools print them: `docker buildx version`, `docker
+  version --format '{{.Server.Version}}'`, buildkitd --version in the
+  builder); every other member is the fixed constant shown, and a build
+  whose observed configuration differs from a constant is not a qualified
+  build. Any change of any member is a new build-environment qualification
+  (new build, new push, new verification, new D).
+
 Requalification. A new broker build and requalification are mandatory when
 any of these changes: the recipe bytes (containerfileDigest); the base
 image digest; a Debian snapshot; the package set or a package version; a
 Rust component or toolchain hash; the image manifest digest
-(build-env.digest) or buildEnvContentDigest; Cargo.lock; the direct or
+(build-env.digest) or buildEnvContentDigest; any buildEnvBuilder member
+(builder implementation or version, BuildKit image digest or version,
+driver, frontend, exporter, media-type, compression, attestation or build
+option); the rebuild-equivalence set V; Cargo.lock; the direct or
 transitive dependency graph; RUSTFLAGS or the release profile; any
 security-relevant build-environment setting (user, paths, environment,
 network mode, linker). No image becomes qualified merely because it
@@ -3716,6 +4255,33 @@ not pushed to the durable location or not re-pulled and re-verified -> not
 qualified; two byte-identical broker artifacts from an unprovenanced image
 -> not qualified; any §20.3.4a requalification input changed without a new
 build record -> release blocked.
+
+Build-environment identity and publication (C3): an image differing from
+the qualified one only in a file, mode, owner, symlink target, hard link
+or extended attribute under /var, /root, /tmp, /build, /run, /dev or a
+top-level symlink (/bin, /lib, /lib64, /sbin) -> different content record;
+an extra setuid bit anywhere -> different record; a layer adding a device
+node, FIFO or file with security.capability -> FAIL; a whiteout or opaque
+marker removing a lower-layer file -> the applied tree, not the tar
+members, is recorded; a member under a parent that is a symlink -> FAIL;
+two rebuilds differing only in the bytes of a V file -> rebuild-equivalent;
+differing in any other byte or in a V file's mode -> mismatch; an image
+config with a Healthcheck (including NONE), OnBuild trigger, Volume,
+Shell, StopSignal, Label, ExposedPort, ArgsEscaped true, a different User,
+Env order or value, WorkingDir, Entrypoint or Cmd, or an extra config or
+top-level member -> FAIL or a different record; a push that produces an
+image index, a Docker schema2 manifest, a zstd or estargz layer, an
+attestation manifest or a subject -> FAIL (never unwrapped); D taken from
+the Buildx metadata or from tag resolution without fetching by digest and
+hashing the served bytes -> not qualified; served bytes whose SHA-256
+differs from the requested digest, a Content-Type other than the OCI image
+manifest, a blob whose digest, size or diff_id differs -> FAIL; a registry
+that serves a re-serialized manifest whose bytes still pass every check ->
+D is the served-bytes digest and builderReportedDigest records the
+difference; a changed BuildKit image digest, Buildx, BuildKit or engine
+version, driver, exporter option or attestation setting -> new
+build-environment qualification; SOURCE_DATE_EPOCH or a build argument
+present in the client environment -> not a qualified build.
 
 ### 20.4 DG-4 — execute CLI and configuration
 
@@ -4014,7 +4580,7 @@ durable terminal -> release/reconcile) crosses these boundaries:
 |---|---|---|---|---|---|
 | Caller identity | Kernel SO_PEERCRED of the client socketpair | Kernel-recorded | Broker C1a.5 | — | CALLER_REFUSED 5 |
 | Parent elevation structure | Kernel /proc + pidfd | root-readable | Broker C1a.4 | dev/ino equality | CALLER_REFUSED 5 |
-| Request frame | Client | Socket, in-kernel | Broker P0, C7 | Strict JSON §4.2 | SCHEMA_INVALID / INPUT_MISMATCH |
+| Request frame | Client | Socket, in-kernel | Broker P0, C7 | Strict JSON §4.2 | SCHEMA_INVALID / INPUT_MISMATCH; non-socket fd 0 (P0 recvmsg ENOTSOCK): CALLER_REFUSED 5 |
 | enrollment.json | Operator | root:root 0600 | Broker C1a.3 | Strict JSON §5.2 | §5.2 mapping |
 | compatibility.json | Operator (release record) | root:root 0644, PP | Client advisory; broker C1a.3 + C7 | Canonical; execution-compatibility:v1 | INCOMPATIBLE 5 |
 | enrollment-public.json | Operator | root:root 0644, PP | Client advisory; broker C7-PV byte equality | Canonical; no own digest | INELIGIBLE 5 |
@@ -4027,9 +4593,9 @@ durable terminal -> release/reconcile) crosses these boundaries:
 | Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
 | Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4 |
 | Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
-| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only) | Operator-retained, root-owned | Operator: PS-A–PS-E requirements plus byte equality at every verification (§20.2.7); never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest | Host INELIGIBLE until requalified |
+| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest | Host INELIGIBLE until requalified |
 | Build-environment recipe | This repository (versioned Containerfile) | Git history | Release qualification: containerfileDigest over the git blob | Raw SHA-256 of blob bytes | Not a qualified recipe |
-| Build-environment image and content record | Authorized build qualification; durable GHCR location | Registry, by digest only | Release qualification: re-pull by digest, content-record equality, independent rebuild (§20.3.4a) | Manifest digest; QaAgentBuildEnvContent content-digest | Release BLOCKED |
+| Build-environment image and content record | Authorized build qualification; direct Buildx push to the durable GHCR location | Registry, by digest only | Post-push verification: registry-served manifest bytes hashed to D, blobs verified, content record from the layers, rebuild equivalence with an independent rebuild (§20.3.4a) | D = SHA-256 of the served platform manifest bytes; QaAgentBuildEnvContent content-digest | Not qualified / release BLOCKED |
 | Broker build record | Release-qualification parties | Release evidence | Release qualification (§20.3.4, §20.3.4a) | CRS-1; content-digest buildRecordDigest | Release BLOCKED |
 
 No implicit trust transfer: every datum the client reads from a root-owned
@@ -4069,7 +4635,17 @@ containerfileDigest; the pinned base digest, Debian snapshot runs and
 package versions of §20.3.4a; record QaAgentBuildEnvContent v1
 (buildEnvContentDigest); the durable location
 ghcr.io/tarasovartem/qa-agent-controller-v1-build-env; record
-QaAgentControllerBuildRecord v1 (buildRecordDigest). Every new digest uses
+QaAgentControllerBuildRecord v1 (buildRecordDigest). C3 adds: requirement
+section PS-F (F0 effective-access probe, F1 writable-object rule with the
+mount-type classes and the set Σ, F2 RC predicate, token rule, LC closure,
+root-execution classes R-SD..R-SSH and source-package set N, F3 group
+rule, F4 mount rule) and the record keys filesystem, rootExecution and
+mounts plus groups.gshadow; the P0 ENOTSOCK mapping (existing
+CALLER_REFUSED/5); the selected Buildx/BuildKit publication model and
+the normative definition of D; the C3 QaAgentBuildEnvContent v1 shape
+(layer-applied full root filesystem, empty exclusion set, closed image
+config) and rebuild equivalence with set V; build-record members
+buildEnvPublication and buildEnvBuilder. Every new digest uses
 the existing raw content-digest convention over CRS-1 or file bytes. No new
 exit code, frame, journal state, record reason, refusal enum or hash
 domain. No public export, bin or package-file change is proposed; the
@@ -4095,8 +4671,14 @@ ancillary-data and zbus queue rules are broker-internal socket handling;
 the Containerfile and the build-environment provenance chain are native
 build inputs outside the package.json "files" allowlist; none adds an
 import or call edge to either approval gate, #23F, apply.js, gate symbols
-or legacy execution. Current trigger FALSE; proposed trigger FALSE. No
-closure, re-rating or remediation.
+or legacy execution. Current trigger FALSE; proposed trigger FALSE. C3
+revalidation: PS-F and the F0 probe are operator-run qualification tooling;
+the ENOTSOCK mapping is broker-internal P0 handling with an existing
+outcome; the publication model, the definition of D, the content record and
+the builder evidence are native build-environment qualification inputs; none
+adds an import or call edge to either approval gate, #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -4122,9 +4704,13 @@ a reproducible static build under §20.3.4; zbus behaviour against the
 qualified systemd; canonical-encoding equivalence; od06-q-enum-v1 output
 and its determinism for each adapter version; every §12 and §20 negative
 vector; the od06-priv-surface-v1 record, its requirements and its
-reboot/daemon-reexec stability on the exact host; the build-environment
+reboot/daemon-reexec stability on the exact host, including the PS-F walk,
+probe answers, root-execution enumeration and N attribution on the
+reference host; the build-environment
 image built from the §20.3.4a recipe, its content record, its publication
-at the durable location (separately approved) and an independent rebuild;
+at the durable location (separately approved), the registry-served D and
+the builder identity values (versions, B), and an independent rebuild with
+rebuild equivalence; the P0 ENOTSOCK outcome observed on the broker;
 the unsolicited-D-Bus flood bounds. Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -4142,12 +4728,18 @@ limit, unsupported construct or config-closure completeness failure); the
 §20.4.5 order cannot be implemented without departing from the
 productization §10.7 tie rule; the reference host cannot satisfy
 od06-priv-surface-v1 (for example a default service, socket, device node,
-setuid file or Defaults entry that fails PS-A–PS-D and cannot be removed)
+setuid file or Defaults entry that fails PS-A–PS-D, or a default writable
+object outside Σ, filesystem type outside the F1 classes, root-executing
+unit from a source package outside N or root process the F2 attribution
+cannot place, that fails PS-F and cannot be removed)
 — never answered by widening an allowlist without a new procedure literal
 and review; the §20.3.4a recipe cannot build, its pinned base digest,
-snapshot or package versions become unavailable, or an independent rebuild
-yields a different content record — never answered by an opaque or
-hand-edited image; the unsolicited-D-Bus bound cannot be met without a new
+snapshot or package versions become unavailable, an independent rebuild
+yields a content record that is not rebuild-equivalent (including a
+nondeterministic path outside V), or the pinned builder pushes an index or
+any media type other than the selected one — never answered by an opaque
+or hand-edited image, by unwrapping an index or by widening V or the
+exclusion set in place; the unsolicited-D-Bus bound cannot be met without a new
 numeric production limit; or any TSB-F02 edge would become TRUE or
 INDETERMINATE.
 
@@ -4155,7 +4747,8 @@ INDETERMINATE.
 
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
-(no broker source, no Cargo file, nothing built or published). No source,
+(no broker source, no Cargo file, nothing built or published; C3 leaves it
+byte-unchanged and changes this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -4234,5 +4827,49 @@ review/apply semantics; TAP-2; CRS-1; PPI-1; #23F; both approval gates. No
 new exit code, broker frame, journal state, record reason, refusal enum or
 hash domain. Next: fresh independent exact-head HEAVY Architecture
 re-review of the C2 HEAD; only if APPROVED on that HEAD, fresh independent
+exact-head HEAVY Security re-review; then separate Product Owner design
+acceptance. Merge NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED.
+
+### 20.11 Architecture corrective C3 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C3 — APPROVED. Reviewed HEAD
+3d3809482cad9d3f1659f0be3de85b12abe2e805 (tree
+eb77cbcfdee63cd0c13ea975b34ce733cf47cf1e, parent
+101122bff15b0c227de76908a1b5e82c4a4269f9, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 4 MINOR /
+10 INFO; the core design was found valid. C3 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical to
+C2 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C3 resolves exactly
+the four MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C2-m01 PS-0 completeness | PS-0 states the root-execution half explicitly. New PS-F: F0 kernel effective-access probe (exact uid/gid, no supplementary groups, no capabilities, no_new_privs, PID 1 namespaces, unconfined, no helper; refusal or inability = INELIGIBLE); F1 closed whole-host walk (mount-type classes, proc and automount rules, symlinks never followed, shadowed and bind-mounted content, uninspectable = INELIGIBLE), writable-object rule with the exact sticky set Σ under `fs.protected_*`, ACL retrieval with runner-naming entries INELIGIBLE, package-managed mutable state walked without exemption; F2 RC predicate, token rule and LC closure over the closed Debian 13 root-execution classes (systemd incl. drop-ins, generators, timers and manager-consumed inputs; cron, anacron, at; every PAM stack incl. pam_exec, pam_env, pam_xauth, pam_namespace, pam_motd; udev; D-Bus activation; kernel usermode helpers; root shell files; apt/dpkg hooks; sshd commands), source-package set N and root process attribution (unknown mechanism = INELIGIBLE); F3 gshadow/newgrp/sg rule; F4 fstab, setuid mount helpers, fuse.conf/fusermount3 proof, user-namespace propagation and mount services. C6 (i)–(iii) and B4 use the probe. Record keys filesystem, rootExecution, mounts and groups.gshadow; PS-F requalification triggers and negative tests. Qualification-only evidence; SO_PEERCRED unchanged | §20.2.7, §20.5, §20.6, §20.7 |
+| ARCH-S5-C2-m02 content record completeness | QaAgentBuildEnvContent v1 is computed from the verified config and layer blobs by a closed layer-application algorithm over the entire root filesystem (whiteouts, hard links, symlinks, member types, pax/GNU headers, xattrs incl. ACLs, unsupported types FAIL), with an exact and empty exclusion set because no container is created; the full execution-relevant image config is closed (Healthcheck, OnBuild, Volumes, Shell, StopSignal, Labels, ExposedPorts, ArgsEscaped required absent or fixed; unknown members FAIL); identity statement; rebuild equivalence over the exact set V instead of path exclusion | §20.3.4a, §20.3.7 |
+| ARCH-S5-C2-m03 recvmsg ENOTSOCK | A P0 recvmsg ENOTSOCK on fd 0 is REFUSED CALLER_REFUSED exit 5, the early equivalent of C1a.5, with no reservation, protected-store access, enrollment read, manager call or cgroup read; never SCHEMA_INVALID; no new reason, exit or frame; all other P0 semantics unchanged; anti-spoofing table, negative tests, supersession table and data map aligned. No approved exit-precedence rule conflicts: the broker's own fixed order selects its single refusal (§20.4.5 row 6c) | §20.0, §20.2.1, §20.2.5, §20.2.6, §20.5 |
+| ARCH-S5-C2-m04 OCI exporter and D | One model: Buildx with a docker-container BuildKit builder pinned by image digest, image exporter pushing directly to GHCR with oci-mediatypes, gzip, provenance and SBOM off, every security-relevant option fixed; one OCI image manifest, never an index (an index FAILS); D normatively the SHA-256 of the registry-served platform manifest bytes, with nine-step post-push verification (registry discovery, fetch by digest, hash, strict manifest, blob and diff_id checks, content record, independent OCI-layout rebuild, equivalence, then build-env.digest); tag informational; closed builder evidence; build record binds D, buildEnvPublication and buildEnvBuilder; no circularity; publication still NOT AUTHORIZED | §20.3.4a, §20.3.7, §20.5, §20.6, §20.7 |
+
+No publication, registry authentication, push, package or release occurred;
+no value of D or B exists, and producing one remains implementation-time
+qualification under a separate authorization.
+
+Preserved: the 10 Architecture INFO findings of the C2 re-review stay on
+the review record and are not closed, waived, re-rated or absorbed; no
+INFO-driven clarification was made beyond what m01..m04 strictly required.
+The Architecture C1 resolutions ARCH-S5-m01..m07 are unchanged. The
+Security C2 direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are
+preserved (INFO-3 with only the m03 ENOTSOCK correction); Security INFO-1,
+INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING (the ENOTSOCK rule
+changes only the non-socket outcome and does not answer INFO-1). DG-1..DG-4
+are not reopened. Unchanged: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5;
+process-lifecycle containment only; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; both approval gates; Stage 4 review/apply
+authority; the existing public API; execute reserved in production code. No
+new exit code, broker frame, journal state, record reason, refusal enum or
+hash domain. Next: fresh independent exact-head HEAVY Architecture
+re-review of the C3 HEAD; only if APPROVED on that HEAD, fresh independent
 exact-head HEAVY Security re-review; then separate Product Owner design
 acceptance. Merge NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED.
