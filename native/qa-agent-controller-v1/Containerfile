@@ -1,0 +1,126 @@
+# qa-agent-controller-v1 build-environment recipe, revision 1
+#
+# Versioned build-provenance artifact of docs/controlled-v1-execution-contract-v1.md
+# sections 20.3.4 and 20.3.4a. It defines the broker BUILD ENVIRONMENT only:
+# it contains no broker source, compiles nothing of the broker and is not a
+# release artifact. Building, qualifying or publishing an image from this
+# recipe requires the separately authorized Stage 5 lifecycle.
+#
+# containerfileDigest = "sha256:" + lowercase hex SHA-256 of this file's git
+# blob bytes at the source commit (20.3.4a). Every input is a literal below;
+# changing any byte of this file is a new recipe and a new broker build.
+#
+# Pinned inputs (verified 2026-10-15):
+#   Base image   docker.io/library/debian:trixie-20260918, linux/amd64 image
+#                manifest sha256:d5ce19d4736f0ebbacd686d1040271a5aeb0cc920f5990c1bfae1717627f0674
+#                (index sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c;
+#                debuerreotype 0.17, epoch @1789689600 = 2026-09-18T00:00:00Z)
+#   Debian       http://snapshot.debian.org/archive/debian/20260917T202223Z
+#                  suites trixie (Debian 13.7), trixie-updates; component main
+#                http://snapshot.debian.org/archive/debian-security/20260917T225432Z
+#                  suite trixie-security; component main
+#                Release signatures verified by apt against the base image's
+#                /usr/share/keyrings/debian-archive-keyring.pgp.
+#   Packages     ca-certificates=20250419 gcc=4:14.2.0-1 gcc-14=14.2.0-19
+#                libc6-dev=2.41-12+deb13u4 (environment stage);
+#                curl=8.14.1-2+deb13u5 xz-utils=5.8.1-1+deb13u1 (fetch stage only)
+#   Rust         1.85.0 from channel-rust-1.85.0.toml (2025-02-20); component
+#                xz SHA-256 values in the fetch stage, equal to 20.3.4.
+#
+# No rustup is installed: the only toolchain is the pinned one, so nothing can
+# resolve, download or select another toolchain.
+
+FROM --platform=linux/amd64 docker.io/library/debian:trixie-20260918@sha256:d5ce19d4736f0ebbacd686d1040271a5aeb0cc920f5990c1bfae1717627f0674 AS snapshot-base
+
+RUN set -eu; \
+    printf '%s\n' \
+      'Types: deb' \
+      'URIs: http://snapshot.debian.org/archive/debian/20260917T202223Z' \
+      'Suites: trixie trixie-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' \
+      'Check-Valid-Until: no' \
+      '' \
+      'Types: deb' \
+      'URIs: http://snapshot.debian.org/archive/debian-security/20260917T225432Z' \
+      'Suites: trixie-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' \
+      'Check-Valid-Until: no' \
+      > /etc/apt/sources.list.d/debian.sources; \
+    test ! -e /etc/apt/sources.list
+
+FROM snapshot-base AS fetch
+
+RUN set -eu; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates=20250419 \
+      curl=8.14.1-2+deb13u5 \
+      xz-utils=5.8.1-1+deb13u1; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eu; \
+    dist='https://static.rust-lang.org/dist/2025-02-20'; \
+    prefix='/opt/rust/rustup/toolchains/1.85.0-x86_64-unknown-linux-gnu'; \
+    components='rustc-1.85.0-x86_64-unknown-linux-gnu cargo-1.85.0-x86_64-unknown-linux-gnu rust-std-1.85.0-x86_64-unknown-linux-gnu rust-std-1.85.0-x86_64-unknown-linux-musl'; \
+    mkdir /tmp/rust; \
+    cd /tmp/rust; \
+    for c in $components; do \
+      curl --proto '=https' --tlsv1.2 -fsSL -o "$c.tar.xz" "$dist/$c.tar.xz"; \
+    done; \
+    printf '%s  %s\n' \
+      7436f13797475082cd87aa65547449e01659d6a810b4cd5f8aedc48bb9f89dfb rustc-1.85.0-x86_64-unknown-linux-gnu.tar.xz \
+      0aff33b57b0e0b102d762a2b53042846c1ca346cff4b7bd96b5c03c9e8e51d81 cargo-1.85.0-x86_64-unknown-linux-gnu.tar.xz \
+      285e105d25ebdf501341238d4c0594ecdda50ec9078f45095f793a736b1f1ac2 rust-std-1.85.0-x86_64-unknown-linux-gnu.tar.xz \
+      27cebed8bafcb07c1c61a3dfc548efc3c032720d953375391896b664f8fe06f5 rust-std-1.85.0-x86_64-unknown-linux-musl.tar.xz \
+      > SHA256SUMS; \
+    sha256sum --strict --check SHA256SUMS; \
+    for c in $components; do \
+      tar -xJf "$c.tar.xz"; \
+      "./$c/install.sh" --prefix="$prefix" --disable-ldconfig; \
+    done; \
+    mkdir -p /opt/rust/cargo/bin; \
+    ln -s "$prefix/bin/cargo" /opt/rust/cargo/bin/cargo; \
+    ln -s "$prefix/bin/rustc" /opt/rust/cargo/bin/rustc; \
+    test "$("$prefix/bin/rustc" --version)" = 'rustc 1.85.0 (4d91de4e4 2025-02-17)'; \
+    case "$("$prefix/bin/cargo" --version)" in 'cargo 1.85.0 '*) ;; *) exit 1 ;; esac; \
+    test -x "$prefix/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld"; \
+    test -f "$prefix/lib/rustlib/x86_64-unknown-linux-musl/lib/self-contained/rcrt1.o"; \
+    test -f "$prefix/lib/rustlib/x86_64-unknown-linux-musl/lib/self-contained/libc.a"; \
+    cd /; \
+    rm -rf /tmp/rust
+
+FROM snapshot-base
+
+RUN set -eu; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates=20250419 \
+      gcc=4:14.2.0-1 \
+      gcc-14=14.2.0-19 \
+      libc6-dev=2.41-12+deb13u4; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*; \
+    test -x /usr/bin/cc
+
+COPY --from=fetch /opt/rust /opt/rust
+
+RUN set -eu; \
+    mkdir -p /opt/rust/cargo/registry /build/src /build/target; \
+    chown 10001:10001 /opt/rust/cargo/registry /build/target; \
+    chmod 0755 /opt/rust/cargo/registry /build/src /build/target
+
+ENV PATH=/opt/rust/cargo/bin:/usr/bin:/bin \
+    RUSTUP_HOME=/opt/rust/rustup \
+    CARGO_HOME=/opt/rust/cargo \
+    CARGO_TARGET_DIR=/build/target \
+    CARGO_INCREMENTAL=0 \
+    LANG=C \
+    LC_ALL=C \
+    TZ=UTC
+
+USER 10001:10001
+WORKDIR /build/src
+ENTRYPOINT []
+CMD ["/usr/bin/false"]

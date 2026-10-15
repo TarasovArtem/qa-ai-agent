@@ -2382,10 +2382,11 @@ separate Product Owner authorization against the then-certified main.
 |---|---|
 | Base main / TREE | 52e23acf0f7e5d2f7fce2b406a27de51ae1af68c / 176960ba98b1e7babfee553729200c49d748d7ca |
 | Trigger | Stage 5 implementation preflight (2026-10-15) STOPPED before code; no Stage 5 commit exists |
-| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
+| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md; from C2 also native/qa-agent-controller-v1/Containerfile (versioned build-provenance design artifact, §20.3.4a; no broker source) |
 | Host of this authoring | Windows; not Linux, sudo, systemd or native evidence |
 | Execute / Controlled Release | DISABLED / NOT APPROVED |
 | Corrective C1 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C1 — resolves ARCH-S5-m01..m07 of the HEAVY Architecture review of de37be62c16daf10413736cb489efc11abc4ff60 (§20.9); still PROPOSED |
+| Corrective C2 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C2 — resolves SEC-S5-m01 and SEC-S5-m02 and corrects Security INFO-2/3/4/6 of the HEAVY Security review of 101122bff15b0c227de76908a1b5e82c4a4269f9 (§20.10); still PROPOSED |
 
 ### 20.0 Scope, precedence and unchanged invariants
 
@@ -2553,11 +2554,24 @@ Hashing, with no normalization of any value:
 
 Producer and time. The operator runs od06-q-enum-v1 as part of Stage 5
 qualification tooling (never shipped in the npm package, never invoked by
-the client or the broker, needing no root), on the qualified host, against
-the exact enrolled root, after the target's dependencies are installed and
-before enrollment.json is written. Its output is data that the operator
-reviews and writes as root; it is not a runtime authority source, and the
-broker trusts only the root-owned enrollment that results.
+the client or the broker), on the qualified host, against the exact
+enrolled root, after the target's dependencies are installed and before
+enrollment.json is written. Its output is data that the operator reviews
+and writes as root; it is not a runtime authority source, and the broker
+trusts only the root-owned enrollment that results.
+
+Privilege (C2, normative). od06-q-enum-v1 MUST NOT RUN AS ROOT. It runs as
+an unprivileged qualification user (the enrolled runner account, or a
+dedicated non-root account) whose only required access is read access to
+the enrolled root's target inputs that the procedure opens. At start it
+requires getresuid() and getresgid() to contain no 0 and its permitted,
+effective and ambient capability sets to be empty, and otherwise refuses
+to run. It is not started through sudo, doas, run0, pkexec, a setuid or
+file-capability helper, or any other elevation. A member, directory or
+specifier that the user cannot open or read is a procedure failure
+(qualification FAIL for that root), never a reason to grant the procedure
+root, CAP_DAC_READ_SEARCH, ACL exceptions or any other privileged
+filesystem access.
 
 Fixed parameters. N = the exact qualified Node version of the profile
 (qualification.nodeVersion); resolution and module-format rules are those
@@ -2809,14 +2823,14 @@ preloading into the command; no I/O logging keeps sudo from interposing
 pipes. log_exit_status is a forcing input for the §20.2.4a topology (it
 keeps the sudoers policy close hook installed); it logs only the exit
 status through the existing sudo log, adds no relay and is not relied on as
-proof. Effective-policy qualification (as root, on the host):
-`sudo -l -U <account>` lists exactly this one command and no other rule; no
-command_timeout, runchroot, runcwd, SELinux role/type or AppArmor profile
-applies to it; sudo.conf loads only the upstream sudoers policy/I/O/audit
-plugins and no other I/O, audit or approval plugin; the account has no
-other elevation path (no doas, run0, pkexec or Polkit rule, no su
-credential, no membership in a group granting elevation, raw-device or
-container-runtime access such as sudo, wheel, disk, docker or lxd).
+proof. Effective-policy qualification is the closed procedure
+od06-priv-surface-v1 (§20.2.7, C2): this rule is the runner account's only
+authorized privilege-elevation path, and the host is INELIGIBLE if the
+account has any other root-equivalent or host-control path. That procedure
+replaces the informal list that stood here in C1 (sudo -l, no
+command_timeout/runchroot/runcwd/SELinux/AppArmor, upstream plugins only, no
+doas/run0/pkexec/Polkit rule, no su credential, no elevating group) and is a
+strict superset of it.
 
 #### 20.2.4 Exact invocation chain and stdio
 
@@ -2953,6 +2967,24 @@ or cgroup read; on RECONCILE the attempt is left for a later reconcile. The
 SO_PEERCRED pid is never authority, so PID reuse cannot affect identity; the
 pidfd recheck covers the only PID-based structural check.
 
+Socket options and ancillary data (C2, normative). The protocol carries no
+ancillary data in either direction. The broker MUST NOT enable SO_PASSCRED,
+SO_PASSPIDFD or SO_PASSSEC on fd 0 or fd 1 (the kernel therefore never
+attaches credentials to data the broker receives), never sends ancillary
+data, and MUST NOT accept file descriptors from the caller. Every read from
+fd 0 (P0 intake, the stdin liveness watch and the RESULT_PROPOSAL read) is a
+recvmsg(2) with MSG_CMSG_CLOEXEC and a control buffer of exactly
+CMSG_SPACE(sizeof(int)) bytes; the kernel closes any passed descriptor that
+does not fit. If a call returns any control message or sets MSG_CTRUNC, the
+broker closes every descriptor received in an SCM_RIGHTS message at once,
+never uses or passes it, discards the bytes of that call, and treats the
+event as a malformed frame under the existing closed semantics: before the
+reservation commit it is REFUSED/SCHEMA_INVALID with nothing reserved (in
+P0 a structural check, L3 unchanged); after the reservation commit the
+existing §7.2 broker-side violation outcome applies unchanged
+(EXECUTION_ERROR RESULT_INVALID). SO_PEERCRED stays the only socket
+credential identity source; no new frame, reason or exit code.
+
 Anti-spoofing proof sketch:
 
 | Attempt | Why refused |
@@ -3001,6 +3033,291 @@ effective policy listing, the T1–T5 observation record (process tree with
 client, sudo and broker PIDs; broker parent exe dev/ino; socket inodes of
 fds 0/1 on both sides), no pty allocated, the observed signal-relay table
 for the exact build, Yama ptrace_scope >= 1.
+
+#### 20.2.7 Runner privilege-surface qualification od06-priv-surface-v1 (C2, closed)
+
+Invariant PS-0. The §20.2.3 broker rule is the runner account's only
+authorized privilege-elevation path. A host on which the account has any
+other root-equivalent or host-control path is INELIGIBLE. Root-equivalent
+means able to run code with UID 0 or with any capability in the initial
+user namespace; host-control means able to modify root-owned files or
+devices, or to start, configure or enter root-run services, containers or
+virtual machines. Both include every way to change the broker, enrollment,
+compatibility state, the protected journal or tombstones. The root operator
+stays trusted and outside the claim (§20.2.5, unchanged); PS-0 removes
+runner-account privilege, it does not defend against a hostile root.
+
+Runtime C1a does not and cannot detect a runner that already holds root:
+such a runner can rewrite the broker, enrollment and every check. PS-0 is
+therefore a host-eligibility property established and kept by this
+procedure, never by C1a.4 or any runtime topology check.
+
+Producer, privilege and phase. The operator runs od06-priv-surface-v1 as
+part of Stage 5 qualification tooling (not shipped in the npm package,
+never invoked by the client or the broker). It runs as root because its
+inputs (sudoers 0440, shadow, other processes' /proc entries) are
+root-readable only, and it is read-only: it writes nothing but its output
+record into the operator's qualification evidence. It runs on the
+qualified host after the §20.2.3 file, the runner account, its groups and
+the runner service are final, and before enrollment is enabled (§20.3.5
+"qualify"; §5.3). Every probe that executes as the runner account (PS-C3)
+runs from a non-tty session of that account, never through the broker.
+
+Closed requirement sections. Every item is checked; any item that fails,
+cannot be evaluated or cannot be evaluated completely makes the host
+INELIGIBLE. "Package-verified" means shipped by an installed Debian binary
+package of the qualified host whose dpkg --verify reports no difference
+for that file.
+
+PS-A sudo sources and effective policy:
+
+- A1 Package: exactly the Debian binary package sudo is installed (not
+  sudo-ldap), at the recorded version and architecture; every regular file
+  of dpkg -L sudo is recorded with its SHA-256 and is package-verified.
+  This covers /usr/bin/sudo, visudo, cvtsudoers and every plugin object
+  under /usr/libexec/sudo.
+- A2 sudo.conf: /etc/sudo.conf is absent, or every line that is not blank
+  and not a comment is exactly one of `Plugin sudoers_policy sudoers.so`,
+  `Plugin sudoers_io sudoers.so`, `Plugin sudoers_audit sudoers.so`. Any
+  other Plugin, plugin argument, Path, Set or Debug line is INELIGIBLE.
+- A3 Local source set S: /etc/sudoers plus, recursively, every file named by
+  @include or #include and every file that sudoers(5) selects from a
+  directory named by @includedir or #includedir. Recorded per file: path,
+  uid, gid, mode, size, SHA-256; per include directory: path, uid, gid,
+  mode and the complete bytewise-sorted list of entry names, including the
+  names sudo skips (ending in "~" or containing "."), so a later rename is
+  a change. Every file and directory is root-owned with (mode & 0o022) == 0
+  and satisfies the §20.1.3 predicate PP. visudo -c (as root) passes. An
+  include path containing a sudoers escape (for example %h), a missing
+  include target or an unreadable entry is INELIGIBLE.
+- A4 Parsed policy, using sudo's own parser from A1:
+  `cvtsudoers -c /dev/null -i sudoers -f json -e /etc/sudoers` (LC_ALL=C,
+  root; includes inlined, aliases expanded) is the full policy P;
+  `cvtsudoers -c /dev/null -i sudoers -f json -e -M -p -m user=<account>
+  /etc/sudoers` is the matched policy U (local password and group data,
+  the account's groups added, every host kept). Each output must be strict
+  JSON whose numbers are safe integers; its canonical form is the CRS-1
+  encodeValue encoding (§11.1). Requirements: (i) no user list in P and
+  no Defaults binding in P contains ALL as a user, a netgroup (+name) or a
+  non-Unix group (%:name); (ii) U contains exactly one user rule, equal to
+  the §20.2.3 rule (Runas root:root; tags NOPASSWD, NOSETENV, NOLOG_INPUT,
+  NOLOG_OUTPUT, NOINTERCEPT; command the broker path with the empty
+  argument list; host ALL; no option or restriction beyond those tags);
+  (iii) P contains no Defaults entry bound to a command or Runas list
+  that includes the broker path or ALL; (iv) every user-bound Defaults
+  entry in P that matches the account (by name, #uid, %group or %#gid of
+  its groups) is exactly the §20.2.3 Defaults line.
+- A5 Effective listing L: `sudo -n -l -U <account>` run as root with
+  LC_ALL=C, an environment of only PATH=/usr/sbin:/usr/bin:/sbin:/bin, no
+  controlling terminal and stdout a pipe (so sudo does not wrap lines).
+  Canonicalization, in order: split at LF; remove a trailing CR and
+  trailing spaces and tabs from each line; replace the host name in the
+  `Matching Defaults entries for <account> on <host>:` and
+  `User <account> may run the following commands on <host>:` header lines
+  with the literal `<HOST>`; drop empty lines; join with LF and end with one LF. L is
+  compared only as these bytes; sudo -l is evidence of the effective result
+  for the A1 build, never the authority, which is S plus P. Requirements:
+  the command section has exactly one entry and it denotes the §20.2.3
+  rule; every option named in the "Matching Defaults entries" and "Runas
+  and Command-specific defaults" sections is one of env_reset, setenv,
+  requiretty, use_pty, log_input, log_output, intercept, log_subcmds,
+  log_exit_status (each finally set as in §20.2.3), mail_badpass or
+  secure_path. Any other option (for example command_timeout, runchroot,
+  runcwd, role, type, apparmor_profile, closefrom_override, group_plugin,
+  log_servers, iolog_*, env_keep, env_file, restricted_env_file) is
+  INELIGIBLE.
+- A6 sudoers NSS: the sudoers line of /etc/nsswitch.conf is absent or
+  exactly `sudoers: files`.
+- A7 PAM: /etc/pam.d/sudo and, recursively, every file it includes are
+  recorded (path, SHA-256); every module they reference is package-verified
+  and shipped by one of libpam-modules, libpam-modules-bin, libpam-runtime
+  or libpam-systemd. /etc/security/group.conf has no line that is not blank
+  and not a comment (pam_group grants no group).
+
+PS-B account and group surface:
+
+- B1 Account: one passwd entry with the enrolled name, uid != 0, and no
+  other passwd entry with that uid; exactly one passwd entry has uid 0 and
+  it is root.
+- B2 Primary group: the account's private group: group name equal to the
+  account name, gid != 0, an empty member list, and no other passwd entry
+  using that gid as primary group.
+- B3 Supplementary groups: getgrouplist(account, primary gid) through NSS
+  equals exactly {primary gid}. The account therefore has no
+  supplementary group at all. This closed rule, not a list of dangerous
+  names, is the requirement; it excludes in particular root, sudo, wheel,
+  admin, adm, docker, podman, lxd, incus, incus-admin, libvirt,
+  libvirt-qemu, kvm, disk, shadow, systemd-journal and every group named
+  in a sudoers, doas, polkit or D-Bus policy. A host that needs a
+  supplementary group for the runner is INELIGIBLE (an owner decision may
+  later define an allowlist; this design defines none).
+- B4 Observed credentials: for every process of the runner service (the
+  recorded systemd unit, or the recorded process tree if the runner is not
+  a unit), `/proc/<pid>/status` has all four Uid values equal to uid, all
+  four Gid values equal to the primary gid, Groups a subset of {primary
+  gid}, and CapInh, CapPrm, CapEff and CapAmb all zero. For a unit,
+  systemctl show records User (= account), Group (empty or the primary
+  group), SupplementaryGroups (empty), DynamicUser (no) and
+  AmbientCapabilities (empty).
+- B5 NSS identity sources: the passwd, group, shadow, gshadow and
+  initgroups lines of /etc/nsswitch.conf name only the modules files and
+  systemd. When systemd is named: the userdb drop-in directories
+  /etc/userdb, /run/userdb, /run/host/userdb, /usr/local/lib/userdb and
+  /usr/lib/userdb contain no user, group or membership record naming the
+  account, its uid or its primary group, and /run/systemd/userdb contains
+  no entry other than io.systemd.DynamicUser, io.systemd.Multiplexer and
+  io.systemd.NameServiceSwitch. The netgroup line is not restricted
+  because no privilege policy may reference a netgroup (A4(i); PS-C).
+
+PS-C alternate elevation mechanisms:
+
+- C1 doas: absence required. No opendoas or doas package is installed and
+  none of /usr/bin/doas, /usr/local/bin/doas, /etc/doas.conf and
+  /usr/local/etc/doas.conf exists.
+- C2 polkit and pkexec: absence required. The polkitd and pkexec packages
+  are not installed, /usr/bin/pkexec does not exist, no system bus service
+  file declares org.freedesktop.PolicyKit1, and on the system bus that name
+  has no owner and is not in ListActivatableNames. No polkit rule or .pkla
+  file can then apply, and no polkit-authorized operation is available to
+  the account.
+- C3 run0, systemd-run and other systemd-mediated elevation: run0 ships
+  with systemd and cannot be absent, so the evidence is C2 plus probes run
+  as the account: `run0 --no-ask-password /usr/bin/true` and
+  `systemd-run --system --no-ask-password --wait /usr/bin/true` each exit
+  non-zero with an access-denied result and create no unit (the system
+  manager's unit list is unchanged). A probe that succeeds, prompts or
+  creates a unit is INELIGIBLE.
+- C4 su and root credentials: the root password field in /etc/shadow is
+  locked (starts with "!" or "*"); /etc/pam.d/su and its includes are
+  recorded and satisfy the A7 module rule, with no pam_wheel trust,
+  pam_permit or pam_succeed_if line in the auth stack; /root has
+  (mode & 0o077) == 0; if openssh-server is installed, sshd -T reports
+  permitrootlogin no. The operator records that no credential of root or
+  of any account holding a privilege grant is readable by or available to
+  the runner account.
+- C5 setuid, setgid and file-capability executables: every regular file on
+  every local filesystem of the host with the setuid or setgid bit or a
+  security.capability attribute is recorded (path, uid, gid, mode, SHA-256,
+  capabilities, owning package). Each must be package-verified, writable
+  only by root and in a directory tree writable only by root. Any such
+  file that is not package-verified is INELIGIBLE. Elevation through these
+  files is covered by A, C1, C2 and C4; a set or digest change is a
+  trigger.
+- C6 Host-control endpoints: (i) no block device node is readable or
+  writable by the account through its uid, primary gid or the other bits;
+  (ii) no character device node outside /dev/null, /dev/zero, /dev/full,
+  /dev/random, /dev/urandom, /dev/tty, /dev/ptmx, /dev/pts/*, /dev/net/tun
+  and /dev/fuse is writable by it; (iii) every listening socket (AF_UNIX
+  path and abstract, TCP and UDP on every address, from `ss -lpn` as root)
+  whose server process has euid 0 or any capability is either not
+  connectable by the account (a path socket on which it lacks write
+  permission, or with an ancestor directory on which it lacks search
+  permission; abstract sockets always count as connectable) or is served by an executable from a Debian package built
+  from source package systemd or dbus, or is openssh-server's sshd under
+  C4; (iv) every system bus well-known name that is owned or activatable
+  and whose owner or activation user is root or capability-holding belongs
+  to an executable from source package systemd or dbus; (v) the D-Bus
+  system policy files (system.conf, system-local.conf and every file in
+  system.d under /usr/share/dbus-1 and /etc/dbus-1) are recorded and
+  contain no policy element naming the account, its uid or its primary
+  group. Container engines, VM managers and any other root-run control
+  service reachable by the account therefore fail (iii) or (iv).
+
+PS-D remote and dynamic policy. Only local, root-owned files qualify as
+privilege-policy or identity sources. If sudoers, passwd, group, shadow,
+gshadow or initgroups resolution names any NSS module other than files
+(or systemd under B5), if a PAM module outside the A7 packages appears in a
+recorded stack, or if any polkit authority exists (C2), the effective
+policy cannot be captured deterministically and revalidated, and the host
+is INELIGIBLE. No freshness window, cache or "last known" state is
+defined, because none is admitted: an unreachable, stale or changed remote
+source is never treated as unchanged, and LDAP, SSSD, winbind, FreeIPA,
+Active Directory and remote sudoers are not supported.
+
+PS-E procedure completeness. A root-equivalent or host-control path for
+the runner account that this procedure revision does not detect is a
+procedure defect: every host qualified under the revision becomes
+INELIGIBLE until a new procedure literal covers the path and the host is
+requalified with it. A revision is a new literal, never an in-place
+change.
+
+Record, encoding and digest. The output is one record, closed schema
+QaAgentControllerPrivilegeSurface v1, all keys required, each list sorted
+bytewise by its first listed key:
+
+| Key | Value |
+|---|---|
+| kind / schemaVersion / procedure | "QaAgentControllerPrivilegeSurface" / 1 / "od06-priv-surface-v1" |
+| contractVersion | "qa-agent-controller-v1" |
+| account | {name, uid, primaryGid, primaryGroup} (B1, B2) |
+| sudo | {package {name, version, architecture}, files [{path, sha256}], sudoConf null or {sha256}, sources [{path, uid, gid, mode, size, sha256}], includeDirs [{path, uid, gid, mode, entries}], policySha256, matchedPolicy, effectiveListing, pam [{path, sha256}], pamModules [{path, package}], groupConfSha256} (A1–A7; policySha256 over the canonical P bytes; matchedPolicy the canonical U value; effectiveListing the canonical L string) |
+| nss | {nsswitchSha256, passwd, group, shadow, gshadow, initgroups, sudoers (each the ordered module list, [] if the line is absent), userdbEntries} (A6, B5) |
+| groups | {supplementary} (B3; exactly [primaryGid]) |
+| runner | {unit (string or null), properties (object or null), processGroups} (B4; no PIDs) |
+| elevation | {doasAbsent, polkitAbsent, probes [{command, exitStatus, unitCreated}], rootPasswordLocked, uidZeroAccounts, suPam [{path, sha256}], sshPermitRootLogin (string or null)} (C1–C4) |
+| privilegedFiles | [{path, uid, gid, mode, sha256, capabilities (string or null), package}] (C5) |
+| endpoints | {blockAccessible [], charWritable [paths], listeners [{protocol, address, serverExe, package, sourcePackage}], busNames [{name, serverExe, sourcePackage}], dbusPolicy [{path, sha256}]} (C6) |
+
+The record carries no time, PID, inode or boot-specific value, so equal
+host state yields equal bytes. Bytes are the CRS-1 encodeValue encoding,
+no BOM, no trailing newline. privilegeSurfaceDigest = "sha256:" + lowercase
+hex of SHA-256 over those bytes (the Stage 4 content-digest convention of
+§20.1.4; no new hash domain). The record and digest are retained with the
+qualification evidence (operator-retained, root-owned, with the T1–T5 and
+od06-q-enum-v1 evidence). They are host-eligibility evidence, not caller
+identity and not authority: the broker never reads them, no runtime
+decision is taken from the digest, enrollment does not change, and
+SO_PEERCRED stays the only runtime caller identity source (§20.2.5).
+
+Verification and lifecycle. Verification reruns the procedure and requires
+the new record to be byte-identical to the qualified record (equal
+privilegeSurfaceDigest) and every requirement to hold. It is mandatory at
+initial qualification, immediately before every enrollment enable or
+re-enable (§5.3, §20.3.5), after every package installation, upgrade or
+removal on the host, and after every account, group, PAM, NSS, sudo,
+polkit, doas, D-Bus policy or runner-unit administration action. Like T5,
+qualification shows the record unchanged after systemctl daemon-reexec and
+a reboot. Any trigger change is made with enrollment disabled; one made
+while enabled makes the host INELIGIBLE from that moment. A mismatch or a
+failed requirement makes the host INELIGIBLE until explicit
+requalification: full procedure, review of the new record against
+PS-A–PS-E, and re-observation of T1–T5 when an input of §20.2.4a changed.
+
+Requalification triggers (each makes the host INELIGIBLE until
+requalified): any change of the sudo build or package; sudo.conf; the PAM
+stack of sudo or su, or any module in it; the loaded sudo plugins; the
+§20.2.3 file; any other sudoers source, include directory or its entry
+list; the NSS or sudoers-source configuration; the parsed or effective sudo
+policy (P, U or L); the account's uid, primary group or supplementary
+groups, or the runner unit's identity properties; installation or
+configuration of doas; installation of polkit or any polkit rule or .pkla
+file; the run0/systemd-run probe results; the root password state or sshd
+root-login setting; the setuid/setgid/file-capability set or a digest in
+it; the host-control endpoint set; the D-Bus system policy; and the
+availability, presence or configuration of any remote or dynamic policy
+source (which PS-D makes INELIGIBLE outright).
+
+Negative tests (qualification, adversarial; each must leave the qualified
+host INELIGIBLE until full requalification, never eligible): a generic
+`<account> ALL=(ALL) ALL` rule in another /etc/sudoers.d file;
+`Defaults!/usr/local/libexec/qa-agent-controller-v1 use_pty`,
+`Defaults!ALL log_output` and `Defaults:<account> env_keep+=X` in another
+file; a new @include and a new @includedir source; a file renamed into or
+out of an include directory; sudoers via LDAP (`sudoers: files ldap`,
+sudo-ldap installed) and via SSSD (`sudoers: files sss`); the account
+added to sudo, wheel, docker, disk and libvirt; any other supplementary
+group added or removed; SupplementaryGroups= or AmbientCapabilities= set on
+the runner unit; a pam_group grant in /etc/security/group.conf; a userdb
+membership record in /run/userdb; a doas rule (opendoas installed); polkitd
+installed with a rule granting the account
+org.freedesktop.systemd1.manage-units (run0 then succeeds); a setuid copy
+of a shell or a file-capability binary that is not package-verified; a
+root-run Docker or libvirt socket connectable by the account; the sudo
+group-plugin or a command_timeout Default added; the root password
+unlocked with PermitRootLogin yes; an LDAP or SSSD identity source that is
+unreachable, stale or returns a changed group list; and the §20.2.3 rule
+byte-identical while any one of the routes above appears. Every case is
+detected by PS-A–PS-D at verification or requalification, never by C1a.
 
 ### 20.3 DG-3 — native broker, build, distribution and Linux host
 
@@ -3065,18 +3382,42 @@ FDs (signature h) are passed as owned descriptors. No object server is
 registered. zbus's internal executor thread is permitted; the broker sets
 signal dispositions before creating the connection.
 
+Unsolicited traffic (C2, Security INFO-4; linked to L1 and L7, which stay
+OPEN). Any account may send unicast signals to the broker's unique name,
+and the bus driver stamps the sender, so a non-manager sender cannot
+present itself as the manager. Such traffic cannot become trusted: it is
+dropped by the sender filter above before any use and changes no state.
+It cannot grow broker memory without bound: zbus 5.13.2 keeps each incoming
+queue bounded (64 messages by default; "When the queue is full, no more
+messages can be received until room is created", src/connection/mod.rs of
+the published crate), and the broker MUST NOT raise max_queued or create an
+unbounded MessageIterator or MessageStream. Each message is bounded by the
+system bus max_message_size of the qualified host, recorded as
+qualification evidence. In-process buffering is therefore at most the
+fixed number of zbus queues the broker opens times 64 times that size,
+derived from the pinned crate and the recorded bus configuration, with no
+new production limit. It cannot extend execution: a full queue only delays
+or blocks receipt of manager messages, and every manager wait is already
+bounded by its §6.4 phase deadline (A, S, TimeoutStartUSec, RuntimeMaxUSec,
+P4, R); an expiry ends in the existing CONTROLLER_FAILURE, TIMED_OUT,
+OBSERVATION_EXPIRED or QUARANTINED outcomes. It cannot produce PASS: PASSED
+needs a durable OBSERVED backed by the authenticated manager's properties
+(§7.3) and a validated proposal, and no message from another sender is
+ever read as manager evidence. It does not bypass L7: the traffic creates
+no broker process, so the open L7 concurrency question is unchanged.
+
 #### 20.3.4 Dependencies, toolchain, build and linkage
 
 | Item | Normative value |
 |---|---|
-| Source location | native/qa-agent-controller-v1/ in this repository (Cargo workspace: Cargo.toml, Cargo.lock, rust-toolchain.toml, build-env.digest); outside the package.json "files" allowlist, so never in the npm tarball |
+| Source location | native/qa-agent-controller-v1/ in this repository (Cargo workspace: Cargo.toml, Cargo.lock, rust-toolchain.toml, build-env.digest, and the build-environment recipe Containerfile of §20.3.4a, which C2 adds as the only file there before Stage 5 implementation); outside the package.json "files" allowlist, so never in the npm tarball |
 | Direct dependencies (closed allowlist) | zbus "=5.13.2" (features above), rustix 1, libc 0.2 (only in one sys module), sha2 0.10, md-5 0.10 (§9.4 Cypress name check). No other direct dependency: in particular no direct serde_json, tokio, logging, tracing-subscriber or CLI crate; JSON is an in-repository strict parser in safe Rust. Adding a direct dependency is a §20.7 STOP |
 | Transitive closure (distinct from the direct allowlist) | Exactly the Cargo.lock graph resolved for the direct set; it is not claimed to be free of any crate category. For zbus 5.13.2 it includes, among others, tracing (a mandatory zbus dependency; the broker installs no subscriber and no log backend, so events are discarded), serde/serde_repr, winnow, uuid, enumflags2, the zvariant/zbus_names/zbus_macros family and their proc-macro dependencies, and the async-io feature set (async-io, async-executor, async-lock, async-task, blocking, async-process and its async-signal/signal-hook-registry). zbus 5.13.2 uses rustix and libc on Linux; nix and xdg-home were dependencies of earlier zbus 5 releases and are absent unless Cargo.lock shows them |
 | Transitive controls | Cargo.lock committed and used with --locked; every package from crates.io with its registry checksum verified by cargo; no git, path (outside the workspace) or alternative-registry source; cargo deny check on the exact lock (advisories with no unignored RUSTSEC entry, an explicit license allowlist, sources restricted to crates.io, bans on duplicate majors only where listed); an unsafe-code inventory per locked crate (cargo geiger output or an equivalent per-crate count) with an audit note for each crate containing unsafe code; an inventory of crates that install signal handlers, spawn processes or start threads, each shown unreachable from or compatible with the broker's paths (the unix:path address never selects the unixexec transport, so async-process is not reached; the broker's dispositions are set before the connection); build scripts in the graph must not compile C or call pkg-config. Any lock change is a new broker build requalified against the new exact graph |
 | Unsafe policy | #![forbid(unsafe_code)] in every broker crate except one sys module with an enumerated list of libc calls (getresuid, getresgid, close_range, execve and any primitive rustix lacks), each wrapped and reviewed |
 | Toolchain | Exactly Rust 1.85.0 (rustc 1.85.0 (4d91de4e4 2025-02-17), Cargo 1.85.0 = cargo 0.86.0), edition 2024, pinned in rust-toolchain.toml (channel "1.85.0", targets ["x86_64-unknown-linux-musl"], profile minimal) and installed only from the official channel manifest channel-rust-1.85.0.toml (2025-02-20) with these component xz SHA-256 values verified: rustc x86_64-unknown-linux-gnu 7436f13797475082cd87aa65547449e01659d6a810b4cd5f8aedc48bb9f89dfb; cargo x86_64-unknown-linux-gnu 0aff33b57b0e0b102d762a2b53042846c1ca346cff4b7bd96b5c03c9e8e51d81; rust-std x86_64-unknown-linux-gnu 285e105d25ebdf501341238d4c0594ecdda50ec9078f45095f793a736b1f1ac2; rust-std x86_64-unknown-linux-musl 27cebed8bafcb07c1c61a3dfc548efc3c032720d953375391896b664f8fe06f5. Changing any of them is a new broker build |
 | Target and linker | Target x86_64-unknown-linux-musl. Linker for the target is exactly rust-lld from the pinned rustc component (lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld, covered by the rustc hash above), flavor ld.lld, with the self-contained musl crt objects and libc from the pinned musl rust-std. No host cc, gcc, binutils ld or system libc participates in linking the broker. Host-target build scripts and proc macros are linked by the build environment's cc; their outputs are not part of the artifact |
-| Build environment | Exactly one OCI image, x86-64, referenced only by its immutable manifest digest stored in native/qa-agent-controller-v1/build-env.digest (one line "sha256:" + 64 lowercase hex), created once at Stage 5 implementation from Debian 13 with the pinned toolchain preinstalled under /opt/rust (RUSTUP_HOME=/opt/rust/rustup, CARGO_HOME=/opt/rust/cargo) and reviewed with that implementation; changing the digest is a new broker build. Builds run in a fresh container from that digest with --network none, source bind-mounted read-only at /build/src, CARGO_TARGET_DIR=/build/target, the prepared registry volume at /opt/rust/cargo/registry, an unprivileged numeric build user, umask 022 |
+| Build environment | Exactly one OCI image, x86-64, referenced only by its immutable manifest digest stored in native/qa-agent-controller-v1/build-env.digest (one line "sha256:" + 64 lowercase hex). The image is built only from the versioned recipe native/qa-agent-controller-v1/Containerfile by the closed §20.3.4a procedure (immutable Debian 13 base digest, fixed Debian snapshot and package versions, the pinned toolchain hash-verified and installed under /opt/rust: toolchain at /opt/rust/rustup/toolchains/1.85.0-x86_64-unknown-linux-gnu, cargo and rustc linked from /opt/rust/cargo/bin, no rustup; RUSTUP_HOME=/opt/rust/rustup, CARGO_HOME=/opt/rust/cargo); build-env.digest is written only by that procedure, never by hand, and an image without that provenance is never qualified however reproducible its output; changing the digest is a new broker build. Builds run in a fresh container from that digest with --network none, source bind-mounted read-only at /build/src, CARGO_TARGET_DIR=/build/target, the prepared registry volume at /opt/rust/cargo/registry, an unprivileged numeric build user, umask 022 |
 | Build environment variables | The container starts from an empty environment plus exactly: PATH=/opt/rust/cargo/bin:/usr/bin:/bin, RUSTUP_HOME, CARGO_HOME, CARGO_TARGET_DIR (values above), LANG=C, LC_ALL=C, TZ=UTC, SOURCE_DATE_EPOCH = the committer timestamp of the source commit (for any build script that reads it; the broker embeds no time), CARGO_INCREMENTAL=0, QA_BROKER_SOURCE_COMMIT = 40-hex commit (read by env! for brokerBuild), RUSTFLAGS below. No other variable, no ~/.cargo/config.toml and no .cargo/config.toml outside the source tree |
 | Build command | Preparation: cargo fetch --locked in a container from the same digest, with network, into a fresh build volume mounted at /opt/rust/cargo/registry (cargo verifies every registry checksum against Cargo.lock). Build: cargo build --release --frozen --target x86_64-unknown-linux-musl (--frozen = --locked plus --offline) with --network none |
 | RUSTFLAGS (exact, in this order) | -C linker=rust-lld -C linker-flavor=ld.lld -C link-self-contained=yes -C target-feature=+crt-static -C link-arg=--build-id=none --remap-path-prefix=/build/src=/qa-agent-controller-v1 --remap-path-prefix=/opt/rust/cargo/registry/src=/cargo-registry --remap-path-prefix=/opt/rust/cargo/git/checkouts=/cargo-git --remap-path-prefix=/opt/rust/rustup=/rustup --remap-path-prefix=/build/target=/target |
@@ -3085,7 +3426,7 @@ signal dispositions before creating the connection.
 | Linkage | Static-pie ELF64 x86-64: no PT_INTERP, no DT_NEEDED, no RPATH/RUNPATH; musl from the pinned Rust target. No shared library, so no dynamic-loader or library-substitution class applies to the broker, and brokerSha256 covers all broker code |
 | CPU baseline | x86-64 baseline (no target-cpu override). aarch64: DEFERRED |
 | Panic / OOM | Process abort = broker crash, handled only by §7.4 |
-| Reproducibility verification | Two builds from the same commit, Cargo.lock and build-env.digest, on two different physical or virtual x86-64 hosts (different kernels, hostnames, users and host checkout paths outside the container), each in a fresh container per the rows above, give byte-identical artifacts (equal SHA-256); a third build by the release-qualification party repeats the check. A difference, or a build that needs any input not listed here, is non-reproducible: release qualification is BLOCKED. The build record (commit, build-env.digest, toolchain hashes, Cargo.lock SHA-256, RUSTFLAGS, artifact SHA-256 of each build) is release-qualification evidence |
+| Reproducibility verification | Two builds from the same commit, Cargo.lock and build-env.digest, on two different physical or virtual x86-64 hosts (different kernels, hostnames, users and host checkout paths outside the container), each in a fresh container per the rows above, give byte-identical artifacts (equal SHA-256); a third build by the release-qualification party repeats the check. A difference, or a build that needs any input not listed here, is non-reproducible: release qualification is BLOCKED. Matching artifacts are necessary, not sufficient: the build environment must also pass the §20.3.4a provenance and rebuild checks. The build record is QaAgentControllerBuildRecord v1 (§20.3.4a: commit, recipe and image provenance, toolchain hashes, Cargo.lock SHA-256, RUSTFLAGS, artifact SHA-256 of each build) and is release-qualification evidence |
 
 brokerBuild (enrollment qualification, <=256 ASCII) is exactly
 "qa-agent-controller-v1/" + brokerVersion + "+" + 40-hex source commit +
@@ -3095,6 +3436,159 @@ qualification.brokerBuild. brokerVersion is semver, independent of the npm
 version. contractVersion stays "qa-agent-controller-v1"; an incompatible
 contract is a new literal, new fixed paths and a new artifact, never an
 in-place change.
+
+#### 20.3.4a Build-environment provenance (C2, closed)
+
+Reproducibility alone does not make a build image trustworthy: an opaque
+image can reproduce its own output. The closed chain is
+
+    versioned recipe -> OCI build -> immutable image manifest digest
+      -> build-env.digest -> broker build record
+
+and no step may be skipped or replaced by an image of unknown origin.
+
+Recipe. native/qa-agent-controller-v1/Containerfile in this repository,
+recipe revision 1. It builds the build environment only: no broker source,
+no broker compilation, no Cargo file. containerfileDigest = "sha256:" +
+lowercase hex SHA-256 over the git blob bytes of that path at the source
+commit (`git cat-file blob <commit>:native/qa-agent-controller-v1/Containerfile`),
+never over a working-tree checkout, so line-ending conversion cannot change
+it. The blob must be ASCII, LF line endings, one final LF, no BOM; a blob
+that is not is not a qualified recipe. Every input is a literal in the
+recipe, so containerfileDigest binds all of them:
+
+| Input | Pinned value (verified 2026-10-15) |
+|---|---|
+| Base image | docker.io/library/debian:trixie-20260918, linux/amd64 image manifest sha256:d5ce19d4736f0ebbacd686d1040271a5aeb0cc920f5990c1bfae1717627f0674 (from index sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c; one layer sha256:6eefb2f5d3e91a6cfc577476bbec26bb63f0d0fc31f904493f400833783aa2c2; config architecture amd64, os linux; debuerreotype 0.17, epoch @1789689600 = 2026-09-18T00:00:00Z). The tag is informational; FROM uses the digest |
+| Debian snapshot | http://snapshot.debian.org/archive/debian/20260917T202223Z (suites trixie = Debian 13.7, trixie-updates) and http://snapshot.debian.org/archive/debian-security/20260917T225432Z (trixie-security); component main; the exact runs to which the base image's own 20260918T000000Z snapshot resolves. Release files are verified by apt against the base image's /usr/share/keyrings/debian-archive-keyring.pgp; Check-Valid-Until is off because snapshot Release files have expired, signature checking is not |
+| Packages, environment stage | ca-certificates=20250419, gcc=4:14.2.0-1, gcc-14=14.2.0-19, libc6-dev=2.41-12+deb13u4 (equal to the base image's libc6), --no-install-recommends; their dependencies are fixed by the snapshot |
+| Packages, fetch stage only | ca-certificates=20250419, curl=8.14.1-2+deb13u5, xz-utils=5.8.1-1+deb13u1; not in the final image |
+| Rust | The four §20.3.4 component tarballs from https://static.rust-lang.org/dist/2025-02-20/, each checked with sha256sum --strict against the §20.3.4 values before extraction (equal to channel-rust-1.85.0.toml, whose published SHA-256 is 009e8b5ff43f12bf644b5e5b9fd89f96453072062a450c623882f64e85405da5), installed with each component's install.sh --disable-ldconfig; rustc --version must equal "rustc 1.85.0 (4d91de4e4 2025-02-17)", and rust-lld plus the musl self-contained objects must exist |
+| Final image configuration | Env exactly PATH, RUSTUP_HOME, CARGO_HOME, CARGO_TARGET_DIR, CARGO_INCREMENTAL, LANG, LC_ALL, TZ with the §20.3.4 values; USER 10001:10001 (numeric, no passwd entry); WORKDIR /build/src; /build/target and /opt/rust/cargo/registry owned 10001:10001; ENTRYPOINT []; CMD /usr/bin/false. A broker build still supplies the full §20.3.4 environment explicitly |
+
+The image contains no rustup, so rust-toolchain.toml is not a toolchain
+resolution input inside it; the build qualification still requires
+rustc -vV in the image to report release 1.85.0 and the §20.3.4
+identification "rustc 1.85.0 (4d91de4e4 2025-02-17)", and
+rust-toolchain.toml to pin channel "1.85.0". Mutable mirrors
+(deb.debian.org) and tags are never trust anchors.
+
+Image build procedure (performed only under a later Stage 5
+implementation or build-qualification authorization; C2 builds and
+publishes nothing):
+
+1. Extract the recipe blob from the source commit into an empty scratch
+   directory and verify containerfileDigest and the format rule.
+2. docker buildx build (BuildKit) with --platform linux/amd64, --no-cache,
+   --pull, --provenance=false, --sbom=false, -f the extracted recipe and an
+   empty build context directory; the output is a single-platform image
+   with an OCI image manifest (oci-mediatypes), with no index and no
+   attestation manifest. Network is permitted for this step only (signed
+   apt over the snapshot, hash-verified Rust downloads); broker builds stay
+   --network none (§20.3.4). The builder name and version are recorded.
+3. The image manifest digest D is the SHA-256 of the manifest bytes; its
+   config must state architecture amd64 and os linux.
+4. The content record of D (below) is computed and retained.
+
+Content record. QaAgentBuildEnvContent v1, all keys required:
+{kind:"QaAgentBuildEnvContent", schemaVersion:1, image, packages, entries}.
+It is computed from the flattened root filesystem of a container created
+from D and never started (docker create, then docker export):
+
+- image = {architecture, os, env (config order), user, workingDir,
+  entrypoint, cmd} from the image config;
+- packages = every var/lib/dpkg/status stanza with Status "install ok
+  installed", as {package, version, architecture}, sorted by package;
+- entries = every export member under opt/rust, usr and etc (the three
+  roots included) except etc/hostname, etc/hosts and etc/resolv.conf, as
+  {path, type, mode, uid, gid, size, sha256, linkTarget}, sorted by path
+  bytewise. path has no leading "./" or "/" and no trailing "/", and must
+  be valid UTF-8; type is "file", "dir" or "symlink"; a tar hard-link
+  member is a "file" with its target's size and SHA-256, so member order
+  cannot matter; mode = permission and special bits as an integer; size is
+  the byte length for a file and 0 otherwise; sha256 = "sha256:" + hex for
+  a file, otherwise null; linkTarget is the symlink target, otherwise null.
+  Modification times, user and group names are excluded. Any other member
+  type, a non-UTF-8 path or a security.capability attribute under the
+  roots fails the procedure.
+
+buildEnvContentDigest = "sha256:" + hex SHA-256 over the CRS-1
+encodeValue bytes of the record (content-digest convention; no new hash
+domain). The exclusion list is closed: a rebuild difference that would
+need another exclusion is a mismatch, and only a new recipe revision
+reviewed with this section can change the list.
+
+Durable location. ghcr.io/tarasovartem/qa-agent-controller-v1-build-env, a
+GitHub Container Registry package of the repository owner, linked to
+TarasovArtem/qa-ai-agent (the registry requires the lowercase owner name).
+Consumers pull only by digest
+(ghcr.io/tarasovartem/qa-agent-controller-v1-build-env@sha256:...); tags,
+if any, are informational and never trust anchors. Retention: a manifest
+whose digest appears in a release-approved build record is never deleted
+while that record's broker artifact is release-approved, installed on any
+host, or within the release's own retention; package settings must not
+auto-delete it. The package must be readable by every release-qualification
+party; its visibility, and publication itself, are decided by the later
+publication approval and are NOT AUTHORIZED here. Selecting this location
+adds no product or release decision: it is the registry of the repository
+whose GitHub Release §20.3.5 already names.
+
+build-env.digest. Written only after D has been pushed to the durable
+location, pulled back by digest, and its recomputed content record found
+byte-identical to the step-4 record. Then build-env.digest contains D, the
+manifest digest the registry serves for that push, and nothing else. Every
+broker build uses exactly that digest. C2 defines this procedure; no value
+of D, build-env.digest or buildEnvContentDigest exists yet.
+
+Independent rebuild and verification (release qualification). An
+independent party:
+
+1. checks out the exact source commit;
+2. extracts the exact versioned recipe from it;
+3. verifies containerfileDigest;
+4. verifies that the recipe's FROM digest is the base digest of the build
+   record and that it resolves at docker.io to an amd64 linux image
+   manifest with those bytes;
+5. uses only the recipe's snapshot URLs and package versions (apt verifies
+   the Debian signatures);
+6. lets the recipe verify the Rust component hashes (any mismatch stops the
+   build);
+7. rebuilds the image with the step-2 command;
+8. computes the content record of its rebuild and of D pulled from the
+   durable location; both must be byte-identical to the qualified record
+   (manifest digests of independent rebuilds are not expected to equal D
+   and are never compared as anchors);
+9. runs the §20.3.4 independent broker builds in a fresh container from D
+   and compares artifact digests.
+
+A failure at any step BLOCKS release qualification. Two matching broker
+artifacts never qualify an image that fails steps 1–8.
+
+Build record. QaAgentControllerBuildRecord v1, all keys required, CRS-1
+canonical bytes, buildRecordDigest = "sha256:" + hex SHA-256 over them (no
+new hash domain): {kind:"QaAgentControllerBuildRecord", schemaVersion:1,
+contractVersion, brokerVersion, brokerBuild, sourceCommit,
+containerfileDigest, baseImage {reference:"docker.io/library/debian",
+manifestDigest}, debianSnapshot {debian, debianSecurity}, environmentPackages
+[{package, version}], rustComponents [{name, sha256}],
+buildEnvImage:"ghcr.io/tarasovartem/qa-agent-controller-v1-build-env",
+buildEnvDigest, buildEnvContentDigest, cargoTomlSha256, cargoLockSha256,
+rustToolchainTomlSha256, rustflags, builds [{party, artifactSha256}] (at
+least the two §20.3.4 hosts and the release-qualification party),
+artifactSha256}. artifactSha256 is the raw SHA-256 of the artifact bytes
+(the SHA256SUMS form); every builds[] value must equal it; brokerSha256
+(§5.4) is computed over the same bytes. The record is release-qualification
+evidence and is never read by the client or the broker.
+
+Requalification. A new broker build and requalification are mandatory when
+any of these changes: the recipe bytes (containerfileDigest); the base
+image digest; a Debian snapshot; the package set or a package version; a
+Rust component or toolchain hash; the image manifest digest
+(build-env.digest) or buildEnvContentDigest; Cargo.lock; the direct or
+transitive dependency graph; RUSTFLAGS or the release profile; any
+security-relevant build-environment setting (user, paths, environment,
+network mode, linker). No image becomes qualified merely because it
+produces a reproducible artifact.
 
 #### 20.3.5 Distribution, install, upgrade and removal
 
@@ -3153,7 +3647,7 @@ for an exact recorded tuple after Stage 5 qualification.
 | A. Development/build | Any x86-64 Linux, including containers, WSL2 and GitHub-hosted runners, with the pinned toolchain: unit tests, parser fuzzing, canonical vectors, unprivileged protocol tests | SUPPORTED for build and unprivileged tests only; never qualification evidence |
 | B. Integration | Disposable Debian 13 VM (KVM/QEMU/libvirt or an equivalent cloud VM) with systemd as PID 1, real sudo, a dedicated thick-provisioned virtual disk for B, root for the harness | QUALIFICATION-ONLY |
 | C. Privileged adversarial | As B, plus snapshot/revert between runs, extra local accounts (other user, same-account attacker processes), reboot, daemon-reexec, kill injection and filesystem/mount manipulation; nested virtualization neither required nor relied upon | QUALIFICATION-ONLY |
-| D. Release qualification / execute | Dedicated self-hosted runner host (bare metal, or a dedicated VM that is itself the qualified host; the hypervisor is outside the claim) running Debian 13 amd64 with the exact recorded tuple; runner account with no sudo except §20.2.3; dedicated B device; operator-held root | SUPPORTED (reference target, only after qualification) |
+| D. Release qualification / execute | Dedicated self-hosted runner host (bare metal, or a dedicated VM that is itself the qualified host; the hypervisor is outside the claim) running Debian 13 amd64 with the exact recorded tuple; runner account with no elevation path except §20.2.3, proven by od06-priv-surface-v1 (§20.2.7); dedicated B device; operator-held root | SUPPORTED (reference target, only after qualification) |
 | Ubuntu 24.04 LTS | Its dbus-daemon 1.14 series lacks ProcessFD; N1 would need an owner decision | DEFERRED |
 | Other distributions (RHEL/Alma/Rocky 10, Fedora, other Ubuntu releases, Arch, ...) | Not analysed | DEFERRED |
 | Any host whose sudo is not upstream sudo (for example sudo-rs) | §20.2 evidence is upstream-specific | REFUSED |
@@ -3170,8 +3664,18 @@ code. The current Windows host can prove none of this.
 #### 20.3.7 Negative tests and qualification evidence (DG-3)
 
 Artifact with PT_INTERP or DT_NEEDED -> release blocked; digest mismatch
-with the record -> INCOMPATIBLE; /proc/self/exe differs from the fixed path
-(copied or bind-mounted broker) -> CALLER_REFUSED at C1a.2; group-writable
+with the record -> INCOMPATIBLE; a copied or replaced broker executed from
+another path, so that /proc/self/exe differs in dev/ino from the fixed path
+-> CALLER_REFUSED at C1a.2, and a broker replaced at the fixed path -> the
+C1a.2 owner/mode/link-count checks and the C7 brokerSha256 content check
+(C2 correction, Security INFO-2: dev/ino equality alone does not detect a
+bind mount of another file onto the fixed path, because the path and
+/proc/self/exe then name the same mounted inode; creating that mount needs
+CAP_SYS_ADMIN over the mount namespace, a broker outside the initial user
+namespace fails C1a.4, so only root can do it and it is outside the
+non-root attacker claim; brokerSha256 at C7 still verifies the content of
+the file at the fixed path, which is the executed file. STATX_MNT_ID is
+not added as a broker invariant by this correction); group-writable
 /usr/local ancestor -> refused; brokerBuild mismatch -> INELIGIBLE;
 non-reproducible rebuild -> release blocked; a build linked by a host cc or
 ld instead of the pinned rust-lld, a build outside the build-env.digest
@@ -3185,6 +3689,33 @@ signals and method calls from another account during observation are
 dropped; DBUS_* in the caller environment has no effect; differential
 fuzzing of the Rust JSON parser against the product strict parser; P0 frame
 fuzzing (L1); panic paths behave as a crash per §7.4.
+
+Unsolicited D-Bus flood (C2, Security INFO-4; adversarial qualification,
+linked to L1/L7, not closing them): from the runner account and from a
+second local account, sustained unicast signals, method calls and errors
+addressed to the broker's unique name, including messages that imitate
+systemd1 interfaces, paths and member names and messages at the bus
+max_message_size, during every phase P1–P6 and during RECONCILE. Required
+observations: no such message is ever used (the sender filter drops it);
+broker resident memory stays within the §20.3.3 bound computed from the
+zbus queue count, 64 and the recorded max_message_size; no phase exceeds
+its §6.4 bound (a starved manager wait ends in the existing outcome for
+that phase); no flood yields PASSED, TEST_FAILED or a changed observation;
+the global broker invocation count is unchanged by the flood (L7 stays
+OPEN).
+
+Build provenance (C2): a recipe blob with a changed byte, CRLF line
+endings or a BOM -> containerfileDigest mismatch, not qualified; FROM by
+tag only or by another digest; an image built from deb.debian.org or
+another moving mirror; a Rust tarball with one flipped byte (sha256sum
+fails, build stops); rustup or a distribution rust package present in the
+image; an image with an extra package or a changed file under opt/rust,
+usr or etc -> content record mismatch; an independent rebuild whose content
+record differs -> release blocked; build-env.digest pointing at an image
+not pushed to the durable location or not re-pulled and re-verified -> not
+qualified; two byte-identical broker artifacts from an unprovenanced image
+-> not qualified; any §20.3.4a requalification input changed without a new
+build record -> release blocked.
 
 ### 20.4 DG-4 — execute CLI and configuration
 
@@ -3496,6 +4027,10 @@ durable terminal -> release/reconcile) crosses these boundaries:
 | Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
 | Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4 |
 | Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
+| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only) | Operator-retained, root-owned | Operator: PS-A–PS-E requirements plus byte equality at every verification (§20.2.7); never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest | Host INELIGIBLE until requalified |
+| Build-environment recipe | This repository (versioned Containerfile) | Git history | Release qualification: containerfileDigest over the git blob | Raw SHA-256 of blob bytes | Not a qualified recipe |
+| Build-environment image and content record | Authorized build qualification; durable GHCR location | Registry, by digest only | Release qualification: re-pull by digest, content-record equality, independent rebuild (§20.3.4a) | Manifest digest; QaAgentBuildEnvContent content-digest | Release BLOCKED |
+| Broker build record | Release-qualification parties | Release evidence | Release qualification (§20.3.4, §20.3.4a) | CRS-1; content-digest buildRecordDigest | Release BLOCKED |
 
 No implicit trust transfer: every datum the client reads from a root-owned
 file is advisory and is recomputed or byte-compared by the broker from its
@@ -3523,10 +4058,23 @@ EXECUTE_PLATFORM_UNSUPPORTED, EXECUTION_BINDING_MISMATCH,
 EXECUTE_INCOMPATIBLE, EXECUTE_RUNNER_NOT_ELIGIBLE,
 EXECUTION_FINGERPRINT_MISMATCH, EXECUTE_BROKER_UNAVAILABLE,
 EXECUTION_ALREADY_RECORDED, EXECUTION_IN_PROGRESS,
-EXECUTION_CLIENT_STATE_INVALID, EXECUTION_NOT_FOUND. No new exit code,
-frame, journal state, record reason, refusal enum or hash domain. No public
-export, bin or package-file change is proposed; the public CLI/config
-surface changes only as documented in §20.4, at Stage 5 implementation.
+EXECUTION_CLIENT_STATE_INVALID, EXECUTION_NOT_FOUND. C2 adds: invariant
+PS-0 and procedure literal od06-priv-surface-v1 with requirement sections
+PS-A–PS-E and record QaAgentControllerPrivilegeSurface v1
+(privilegeSurfaceDigest); the od06-q-enum-v1 non-root rule; the
+no-ancillary-data rule (no SO_PASSCRED/SO_PASSPIDFD/SO_PASSSEC, no
+SCM_RIGHTS acceptance); the zbus no-raise rule for max_queued; the recipe
+native/qa-agent-controller-v1/Containerfile (revision 1) and
+containerfileDigest; the pinned base digest, Debian snapshot runs and
+package versions of §20.3.4a; record QaAgentBuildEnvContent v1
+(buildEnvContentDigest); the durable location
+ghcr.io/tarasovartem/qa-agent-controller-v1-build-env; record
+QaAgentControllerBuildRecord v1 (buildRecordDigest). Every new digest uses
+the existing raw content-digest convention over CRS-1 or file bytes. No new
+exit code, frame, journal state, record reason, refusal enum or hash
+domain. No public export, bin or package-file change is proposed; the
+public CLI/config surface changes only as documented in §20.4, at Stage 5
+implementation.
 
 TSB-F02: **OPEN / LOW / CONDITIONAL**; current supported surface trigger
 FALSE (no code changed); proposed execute trigger FALSE. §20 revalidation:
@@ -3541,18 +4089,25 @@ the sudo topology invariant, the exact build environment and the zbus pin
 are CLI ordering, local data reads, qualification observations and native
 build inputs; none adds an import or call edge to either approval gate,
 to #23F, apply.js, gate symbols or legacy execution. Current trigger FALSE;
-proposed trigger FALSE. No closure, re-rating or remediation.
+proposed trigger FALSE. C2 revalidation: od06-priv-surface-v1 is
+operator-run qualification tooling outside the product import graph; the
+ancillary-data and zbus queue rules are broker-internal socket handling;
+the Containerfile and the build-environment provenance chain are native
+build inputs outside the package.json "files" allowlist; none adds an
+import or call edge to either approval gate, #23F, apply.js, gate symbols
+or legacy execution. Current trigger FALSE; proposed trigger FALSE. No
+closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
 
 | ID | Linkage |
 |---|---|
-| L1 | Rust, forbid(unsafe_code) outside one sys module, in-repository strict JSON parser, zbus parser; fuzzing and differential tests are qualification inputs (§20.3.7) |
+| L1 | Rust, forbid(unsafe_code) outside one sys module, in-repository strict JSON parser, zbus parser; fuzzing and differential tests are qualification inputs (§20.3.7); C2 adds the unsolicited-D-Bus flood qualification and the ancillary-data refusal (§20.2.5, §20.3.3) as inputs, not closure |
 | L2, L3, I1 | Unchanged; C1a.1–C1a.5 make the CALLER_REFUSED cases enumerable for the I1 tabulation |
 | L4 | Yama >= 1 and no same-account command agents are §20.3.6 qualification items; §20.2.5 records same-account socket creation as existing R-1/R-2 territory |
 | L5, L6 | B on a dedicated thick-provisioned, non-CoW device (classes B–D); the inode floor still has to be qualified |
-| L7 | Unchanged; the Rust one-shot process imposes no implicit cap |
+| L7 | Unchanged; the Rust one-shot process imposes no implicit cap; the C2 unsolicited-D-Bus bound (§20.3.3, §20.3.7) creates no broker process and does not answer L7 |
 | I2 | C1a.4 user-namespace equality is additional initial-namespace evidence, not closure |
 | I3, I5 | Unchanged (R-4 / R-5) |
 | I4 | §20.2.4 specifies no-relay stdio, EOF/EPIPE and signal-forwarding semantics; real-sudo observation remains open |
@@ -3566,7 +4121,11 @@ values observed at the broker; ProcessFD from the bus through zbus 5.13.2;
 a reproducible static build under §20.3.4; zbus behaviour against the
 qualified systemd; canonical-encoding equivalence; od06-q-enum-v1 output
 and its determinism for each adapter version; every §12 and §20 negative
-vector. Nothing here is runner certification.
+vector; the od06-priv-surface-v1 record, its requirements and its
+reboot/daemon-reexec stability on the exact host; the build-environment
+image built from the §20.3.4a recipe, its content record, its publication
+at the durable location (separately approved) and an independent rebuild;
+the unsolicited-D-Bus flood bounds. Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
 sudo build, PAM stack and plugin set cannot satisfy T1–T5 under §20.2.3
@@ -3581,13 +4140,24 @@ crate that fails the transitive controls, becomes necessary; Q cannot be
 enumerated for an adapter version under od06-q-enum-v1 (including any
 limit, unsupported construct or config-closure completeness failure); the
 §20.4.5 order cannot be implemented without departing from the
-productization §10.7 tie rule; or any TSB-F02 edge would become TRUE or
+productization §10.7 tie rule; the reference host cannot satisfy
+od06-priv-surface-v1 (for example a default service, socket, device node,
+setuid file or Defaults entry that fails PS-A–PS-D and cannot be removed)
+— never answered by widening an allowlist without a new procedure literal
+and review; the §20.3.4a recipe cannot build, its pinned base digest,
+snapshot or package versions become unavailable, or an independent rebuild
+yields a different content record — never answered by an opaque or
+hand-edited image; the unsolicited-D-Bus bound cannot be met without a new
+numeric production limit; or any TSB-F02 edge would become TRUE or
 INDETERMINATE.
 
 ### 20.8 Delivery boundary
 
-Documentation-only change of this file. No source, test, workflow, package,
-ROADMAP lifecycle, security disposition or activation change. Next:
+Documentation change of this file plus, from C2, the versioned
+build-provenance design artifact native/qa-agent-controller-v1/Containerfile
+(no broker source, no Cargo file, nothing built or published). No source,
+test, workflow, package, ROADMAP lifecycle, security disposition or
+activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
 independent exact-head HEAVY Security review on the same HEAD; then separate
 Product Owner acceptance and merge authorization. Merge NOT AUTHORIZED;
@@ -3626,3 +4196,43 @@ state, record reason, refusal enum or hash domain. Next: independent
 exact-head HEAVY Architecture re-review of the C1 HEAD; only if APPROVED,
 independent exact-head HEAVY Security review; then separate Product Owner
 design acceptance. Merge NOT AUTHORIZED.
+
+### 20.10 Security corrective C2 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C2 — APPROVED. Reviewed HEAD
+101122bff15b0c227de76908a1b5e82c4a4269f9 (tree
+d6045fa2722f5e0cf81963f15779bbdc2cae3a78, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Independent HEAVY Architecture
+review of that HEAD: APPROVED, 0 MAJOR / 0 MINOR / 7 INFO. Independent
+HEAVY Security review of the same HEAD: CHANGES REQUIRED, 0 CRITICAL / 0
+MAJOR / 2 MINOR / 7 INFO. C2 changes this file and adds exactly one file,
+native/qa-agent-controller-v1/Containerfile, a versioned build-provenance
+design artifact (no broker source, no Cargo file, nothing built or
+published).
+
+| Finding | Resolution | Where |
+|---|---|---|
+| SEC-S5-m01 effective privilege surface | Invariant PS-0 (the §20.2.3 rule is the only authorized elevation path); closed procedure od06-priv-surface-v1: sudo build, sudo.conf, complete include-resolved sudoers source set with integrity, sudo's own parsed policy (cvtsudoers JSON, full and runner-matched), canonicalized sudo -l evidence, sudoers NSS, PAM; account, private primary group and an empty supplementary set (closed rule, not a name list); observed process credentials; doas and polkit absence, run0/systemd-run probes, su/root credentials, setuid/setgid/capability files, host-control endpoints and D-Bus policy; remote/dynamic sources INELIGIBLE; procedure-completeness rule; closed record, CRS-1 encoding, content digest, retention, qualification-only (never read at runtime; SO_PEERCRED unchanged); verification events, requalification triggers and negative tests | §20.2.3, §20.2.7, §20.3.6, §20.5, §20.6, §20.7 |
+| SEC-S5-m02 build-environment provenance | Versioned recipe with real pinned base digest, Debian snapshot runs and package versions, hash-verified Rust 1.85.0 components, fixed environment and no rustup; containerfileDigest over the git blob; closed image build procedure; content record and digest; durable GHCR location by digest only (publication NOT AUTHORIZED); build-env.digest written only after push, re-pull and content equality; nine-step independent rebuild; closed build record; requalification inputs. No image digest is claimed | Containerfile; §20.3.4, §20.3.4a, §20.3.7, §20.5, §20.6, §20.7 |
+| INFO-2 bind-mount expectation | dev/ino no longer claimed to detect a bind mount; copied/replaced broker caught by C1a.2 and brokerSha256; bind mount needs root (outside the non-root claim); STATX_MNT_ID not added | §20.3.7 |
+| INFO-3 SO_PASSCRED / SCM_RIGHTS | No SO_PASSCRED/SO_PASSPIDFD/SO_PASSSEC; no ancillary data; passed descriptors closed and treated as a malformed frame under existing semantics; SO_PEERCRED the only credential source | §20.2.5 |
+| INFO-4 unsolicited D-Bus flood | Untrusted (sender filter), memory bounded by pinned zbus queues and the recorded bus message size (no new limit), time bounded by §6.4, never PASS, L7 unchanged; adversarial qualification added | §20.3.3, §20.3.7 |
+| INFO-6 Q enumerator privilege | od06-q-enum-v1 MUST NOT RUN AS ROOT; unprivileged user; access failure is qualification FAIL; no privileged workaround | §20.1.4a |
+
+Preserved, not corrected, closed, waived or re-rated: Security INFO-1 (P0
+reads fd 0 before AF_UNIX validation), INFO-5 (R4 not-found / client
+evidence-copy race) and INFO-7 (same-principal RECONCILE cancellation
+semantics), each OPEN / PRESERVED / NON-BLOCKING. The Architecture C1
+resolutions ARCH-S5-m01..m07 and the 7 Architecture INFO findings are
+unchanged; C2 does not reopen DG-1..DG-4. Unchanged: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED
+/ CARRIED TO STAGE 5; process-lifecycle containment only (no filesystem
+sandboxing, network isolation, secret isolation, same-account isolation or
+malicious-test sandboxing); R-1..R-5; AT-07/TB-01; FUTURE guards; Stage 4
+review/apply semantics; TAP-2; CRS-1; PPI-1; #23F; both approval gates. No
+new exit code, broker frame, journal state, record reason, refusal enum or
+hash domain. Next: fresh independent exact-head HEAVY Architecture
+re-review of the C2 HEAD; only if APPROVED on that HEAD, fresh independent
+exact-head HEAVY Security re-review; then separate Product Owner design
+acceptance. Merge NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED.
