@@ -3260,7 +3260,8 @@ PS-C alternate elevation mechanisms:
   block device node does the probe report read or write access (R_OK and
   W_OK asked separately); (ii) no character device node outside /dev/null,
   /dev/zero, /dev/full, /dev/random, /dev/urandom, /dev/tty, /dev/ptmx,
-  /dev/pts/ptmx, /dev/net/tun and /dev/fuse is reported writable (the
+  /dev/pts/ptmx, /dev/net/tun and /dev/fuse is reported writable, except
+  the single object of the F1 exact exception AA-NULL (C5) (the
   account's own `/dev/pts/<n>` nodes are owned by it and do not exist under
   the F1 quiescence rule); (iii) every listening socket (AF_UNIX
   path and abstract, TCP and UDP on every address, from `ss -lpn` as root)
@@ -3351,22 +3352,160 @@ F1 Writable objects.
   alive (no /proc entry with any Uid value u). Under KillMode
   control-group this leaves the runner cgroup empty, so no broker-chain
   process (B4) and no workload process exists during the walk.
-  QZ3: the protected journal, read as root and read-only, has no attempt
-  in PREPARED, SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED or ORPHANED.
-  Every incomplete attempt is first finalized by its owner's RECONCILE
-  (§7). The only permitted recovery states are terminal attempts and
-  QUARANTINED attempts.
-  QZ4: every loaded unit whose name begins with `qa-agent-exec-v1-` is an
-  own workload service OW (F2, R-SD) whose ActiveState is inactive or
-  failed and whose cgroup is empty. A retained failed or inactive OW unit
-  of a terminal or QUARANTINED attempt (CollectMode, facts not yet reset,
-  §6.1, §6.3) is permitted and is not removed by qualification. An OW unit
-  that is active, activating, deactivating or reloading fails QZ. A
-  `qa-agent-exec-v1-` unit that is not OW fails PS-F (INELIGIBLE).
+  QZ3 (C5): the protected journal is read only through the read contract
+  JR below, after QZ1 and QZ2 hold. QZ3 holds only when JR yields a
+  validated snapshot that proves all of: every attempt's head state is
+  terminal (PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR) or
+  QUARANTINED, so no attempt is in PREPARED, SUBMITTING, CONTROLLER_BOUND,
+  STARTED, OBSERVED or ORPHANED; no transaction record has phase INTENT;
+  no transaction, claim or tombstone is ambiguous or unbound to its
+  attempt (JR4); and no history is corrupt, unknown, missing or ambiguous.
+  A terminal or QUARANTINED attempt is acceptable only with intact
+  history (JR3). Every incomplete attempt is first finalized by its
+  owner's RECONCILE (§7), and every INTENT is first resolved by the
+  broker's existing P1 recovery; qualification performs neither.
+  QZ4 (C5): every loaded unit whose name begins with `qa-agent-exec-v1-`
+  is an own workload service OW (F2, R-SD), proven from the JR snapshot,
+  whose ActiveState is inactive or failed and whose cgroup is empty. A
+  retained inactive or failed unit (CollectMode, facts not yet reset,
+  §6.1, §6.3) is permitted only if its cgroup is empty, its attempt's
+  history is intact in the snapshot and the full OW proof, including the
+  durable controller binding of OW (2), succeeds. Such a unit is not
+  removed or reset by qualification. An OW unit that is active,
+  activating, deactivating or reloading fails QZ. A `qa-agent-exec-v1-`
+  unit that is not OW fails PS-F (INELIGIBLE); qualification tooling
+  never stops, deletes, resets or otherwise acts on it. Existing
+  authorized broker recovery and cleanup (§6.3, §7) must resolve it
+  before a later run can succeed.
   B4 is observed with the service running before the stop and again after
   the restart, under QZ1 and QZ3, with the broker-chain rule of B4. No
   qualification step classifies a broker-chain process as a violation only
   because it is in the runner cgroup.
+- Protected-journal read contract JR (C5, closed, read-only). The broker
+  journal under /var/lib/qa-agent-controller-v1 (§5.2, §11.2) stays the
+  root-owned authority. Qualification tooling may read and validate it.
+  It never writes, renames, deletes, repairs, truncates, fsyncs or
+  re-creates any entry. It never performs broker recovery, rollback,
+  release or reservation reconstruction, and it never takes or creates a
+  lock. JR introduces no state, version, reason or compatibility rule of
+  its own. It applies only the existing §7 and §11 semantics, and
+  anything those semantics do not accept is INELIGIBLE.
+  JR1 Order and anchoring. JR runs only after QZ1 and QZ2 hold, so no
+  broker process exists and no CREATE can reserve. The tool opens
+  /var/lib/qa-agent-controller-v1 from "/" one component at a time with
+  openat2 RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS. Every component
+  must be a root-owned directory that is not writable per F0. The final
+  directory must be root:root 0700, and fstatfs on its descriptor must
+  give a type in the §5.6.2 allowlist (the §5.6.2 F2 check, unchanged).
+  That descriptor anchors every later access. Each subdirectory and file
+  is opened relative to its parent descriptor with O_NOFOLLOW (directories
+  also O_DIRECTORY; files O_RDONLY | O_NOATIME, so a read does not even
+  update access times). A symlink, FIFO, socket, device, hard-linked file
+  (link count other than 1), a path that changes between getdents64 and
+  open, or a regular file that is not root:root 0600 (§5.2) is
+  INELIGIBLE. Every subdirectory must be root-owned and not group- or
+  other-writable. A file larger than 16777216 bytes is INELIGIBLE. A file
+  is read to end of file, and its size and inode must equal the fstat
+  values taken before the read.
+  JR2 Deterministic enumeration and classes. Each directory is listed
+  completely with getdents64. Entries are processed in bytewise name
+  order, depth first. Every file must fall in exactly one class of the
+  fixed §11.2 protected-path layout compiled into the enrolled broker
+  build: attempt entry `attempts/<ID>/<8-digit-sequence>.json`, the
+  attempt's current pointer, transaction record, claim, tombstone,
+  incident, or a non-record file that layout defines. A non-record file is
+  checked for type, owner and mode only and is never evidence. The tool
+  uses that exact layout and no other. A temporary, unknown or
+  unclassifiable entry, or an entry in an unexpected place, is
+  INELIGIBLE. A record file is parsed with the strict §11.1 data model:
+  ASCII JSON; a duplicate key, trailing data, an unsafe integer or -0 is
+  INELIGIBLE.
+  JR3 Attempt schema and history. Every attempt entry is exactly
+  QaAgentExecutionAttempt v1 (§11.2), with exactly the keys kind,
+  schemaVersion, executionId, sequence, state, binding, controller,
+  submission, timeline, observation, cleanup, outcomeDigest,
+  previousDigest and journalDigest. kind is exactly
+  "QaAgentExecutionAttempt" and schemaVersion is exactly 1. state is one
+  of the §7 states. submission is NOT_SENT, MAY_HAVE_BEEN_SENT or BOUND.
+  binding, controller, timeline, observation and cleanup have exactly
+  their §11.1 and §11.2 keys, types, enums and grammars, checked with the
+  existing validators. Each nullable field is null or non-null exactly as
+  §11.2 and §7 require for the entry's state. Where those sections do
+  not fix nullness for a state, both §11.2 forms are accepted, and the
+  type is still checked. An unknown or malformed kind, schemaVersion,
+  state or submission, an extra or missing key, a wrong field type or an
+  invalid nullability is INELIGIBLE. For each attempt directory `<ID>`:
+  `<ID>` matches ^[0-9a-f]{32}$; every entry's executionId equals `<ID>`;
+  each file name's sequence equals the entry's sequence; the sequences are
+  exactly 0..n with no gap or duplicate and n < 1024; entry 0 has state
+  PREPARED, submission NOT_SENT and previousDigest null; for k > 0,
+  previousDigest equals entry k-1's journalDigest and the state change
+  from k-1 to k is an allowed §7 successor; and every journalDigest
+  equals the recomputed H with the domain
+  "qa-ai-agent:execution-attempt:v1:" (§11.1, §11.2). binding is identical
+  in every entry. Binding and controller consistency, from §7, §7.1 and
+  §11.2: controller is non-null exactly when submission is BOUND.
+  PREPARED has NOT_SENT. SUBMITTING has MAY_HAVE_BEEN_SENT.
+  CONTROLLER_BOUND, STARTED, OBSERVED, PASSED and TEST_FAILED have BOUND,
+  because the §7 table reaches them only through CONTROLLER_BOUND.
+  submission never moves back in the order NOT_SENT, MAY_HAVE_BEEN_SENT,
+  BOUND. BOUND is first recorded only in an entry whose predecessor has
+  MAY_HAVE_BEEN_SENT, because nothing is bound without a send. Once
+  non-null, controller is identical in every later entry, and
+  controller.unitName equals the derived unitName (§7.1). The attempt's
+  current pointer is exactly {executionId, sequence, journalDigest}. It
+  names this attempt and its highest entry n with that entry's
+  journalDigest. This makes it the single, unambiguous head. A missing
+  pointer, a pointer to a lower entry, an entry above the pointer, or two
+  candidate heads is INELIGIBLE. An incident record must have its exact
+  §11.2 shape and domain "qa-ai-agent:execution-incident:v1:", and it must
+  name an attempt present in the snapshot.
+  JR4 Reservation records. Every transaction record is exactly
+  {schemaVersion, executionId, rootKey, consumedKeys, bindingDigest,
+  phase}. schemaVersion is 1; phase is exactly INTENT or COMMITTED;
+  consumedKeys is exactly two H. Any other value, or an extra, missing or
+  mistyped key, is INELIGIBLE. Every claim and tombstone is exactly
+  {schemaVersion:1, key, executionId, bindingDigest} (§11.2). A COMMITTED
+  transaction is consumed as normal durable qualification evidence only
+  when it is intact and fully corresponds to one attempt in the
+  snapshot. That attempt has the same executionId and a
+  binding.bindingDigest equal to its bindingDigest. rootKey is the §11.2
+  RootKey of that binding's root identity. consumedKeys are the two §11.2
+  consumed keys derived from that binding, in the fixed order.
+  Corresponding: for every attempt, a tombstone exists under each of its
+  two consumed keys with the same executionId and bindingDigest. A claim
+  exists under its rootKey with the same executionId and bindingDigest
+  only if the head state is QUARANTINED (§7: claims are retained). A
+  claim left by a terminal attempt that is not QUARANTINED is an
+  unfinished §7 release. A claim, tombstone or transaction that names no
+  attempt in the snapshot, or names one with a different bindingDigest,
+  is a partial or orphaned reservation. Both are INELIGIBLE.
+  INTENT disposition: a transaction record with phase INTENT, whether
+  partial, malformed, unresolved or otherwise intact, is never
+  qualification evidence. The host is INELIGIBLE until the broker's
+  existing P1 recovery (§7, §7.4 S0) resolves it. JR performs no
+  recovery, write, rollback or reservation reconstruction.
+  JR5 Lost history. Any corrupt or unreadable entry, digest mismatch,
+  sequence gap, duplicate or ambiguous head, missing predecessor, unknown
+  version or phase, lost or pruned history that the current state needs,
+  or ambiguous current state is INELIGIBLE. Missing history is never
+  reconstructed or inferred. This includes target files, client local
+  state, systemd, the unit name and cgroup state (§11.2).
+  JR6 Snapshot and consistency. From the validated tree, JR derives the
+  canonical snapshot summary. It is the CRS-1 object {heads, files}.
+  heads is [{executionId, sequence, journalDigest, state}], one item per
+  attempt, from its current pointer. files is [{path, size, sha256}], one
+  item per file, with path relative to the journal root. Both lists are
+  sorted bytewise by their first listed key. journalSnapshotDigest =
+  "sha256:" + lowercase hex of SHA-256 over the CRS-1 encodeValue bytes
+  (the §20.1.4 content-digest convention; no new hash domain). The order
+  in one run is: QZ1, QZ2, JR observation 1 (snapshot digest D1), QZ3 and
+  QZ4 decided on that snapshot, the F1 and F2 walk (OW decided on the same
+  snapshot), then QZ1 and QZ2 again and JR observation 2 (D2, a full
+  re-read and re-validation through JR1–JR5), and QZ3 and QZ4 again. A
+  qualified record is produced only if D1 equals D2 exactly. A difference,
+  or a failure in either observation, makes the host INELIGIBLE for this
+  run. No record is produced. A new clean run may be tried later.
 - Scope: the procedure runs in PID 1's mount and user namespaces (nsfs
   dev/ino equality) and reads /proc/1/mountinfo. Every mount's filesystem
   type is in exactly one closed class. W, walked: ext4, xfs, btrfs, vfat,
@@ -3440,11 +3579,12 @@ F1 Writable objects.
   for which W_OK is the connect permission only (the socket inode cannot
   be modified through it), so whether a connectable socket is permitted
   is decided by C6 (iii) alone; (iv) a pseudo-filesystem endpoint
-  matched by a row of the closed table PE below (C4). Every other
+  matched by a row of the closed table PE below (C4); (v) the single
+  object matched by the exact exception AA-NULL below (C5). Every other
   writable answer — any regular file, directory, FIFO, block device or
   other character device not owned by the account, whoever owns it, and
-  any writable object on a pseudo filesystem that no PE row matches — is
-  INELIGIBLE. Objects owned
+  any writable object on a pseudo filesystem that no PE row and not
+  AA-NULL matches — is INELIGIBLE. Objects owned
   by u are runner state (R-1/R-2 territory), not violations by themselves;
   F2 decides whether root consumes them.
 - Σ is accepted only with the kernel's sticky-directory protections in
@@ -3484,6 +3624,54 @@ F1 Writable objects.
   enabled as installed. Disabling or reconfiguring an LSM is not a way to
   pass qualification without a separate owner decision. PE is never
   widened in place (PS-E: a new procedure literal).
+- Exact exception AA-NULL (C5, closed, one object). PE rows stay
+  regular-file rules; AA-NULL is not a PE row, not a device class and not
+  a securityfs rule. When AppArmor is enabled, its securityfs
+  initialisation creates one character device inode, `.null`, in the
+  AppArmor directory. AppArmor uses it to replace a file descriptor that
+  a confined task may not keep across exec. A writable F0 answer for a
+  character device on securityfs is permitted only for an object that
+  satisfies every one of these conditions:
+  (N1) path: the canonical walked path is exactly
+  /sys/kernel/security/apparmor/.null, reached by the F1 walk with no
+  symlink component, and its statx mount ID is the mount whose mount point
+  in /proc/1/mountinfo is exactly /sys/kernel/security and whose type is
+  securityfs (no other mount of any type at or above that mount point
+  shadows it);
+  (N2) type: statx reports a character device (S_IFCHR);
+  (N3) device: stx_rdev_major is 1 and stx_rdev_minor is 3, and the
+  "Character devices" section of /proc/devices maps major 1 to exactly
+  the name `mem`;
+  (N4) owner and mode: uid 0, gid 0, and the full st_mode is exactly
+  S_IFCHR | 0666 (no setuid, setgid or sticky bit, no other permission
+  value);
+  (N5) kernel and AppArmor facts: the running kernel equals the recorded
+  filesystem.kernel; /sys/module/apparmor/parameters/enabled reads `Y`;
+  the comma-separated list in /sys/kernel/security/lsm contains `apparmor`;
+  and both values equal the recorded filesystem.apparmor values (record
+  below);
+  (N6) no host-control: the kernel authority basis below holds on the
+  qualified kernel build.
+  Kernel authority basis: AppArmor creates the inode as a special inode
+  with device number (MEM_MAJOR, 3). Opening it dispatches by device
+  number to the memory driver's null minor, the same driver and file
+  operations as /dev/null, which C6 (ii) already permits. A write is
+  discarded, a read returns end of file, and no ioctl or mapping changes
+  kernel, policy, file or service state. The inode, its directory and the
+  securityfs mount are root-owned, and the account cannot change mode,
+  owner, name or link (F1 still decides the directory). So the account
+  gains no PS-0 host-control through it. Every other object fails AA-NULL
+  and is INELIGIBLE under the F1 rule: a different path, including the
+  same name on another securityfs mount or bind mount, in another
+  directory or outside securityfs; a different type, including a regular
+  file at the exact path; a different device number, including 1:5 or
+  another major; a non-zero owner or group; or a different mode. A
+  character device 1:3 elsewhere is not covered by AA-NULL; only C6 (ii)
+  can permit it, by its own exact path list. If AppArmor is not enabled
+  as recorded (N5), AA-NULL permits nothing. AA-NULL has no F0w
+  observation (writes are inert by the basis above). It is never widened
+  in place (PS-E). If the qualified kernel creates `.null` with other
+  facts than N1–N4, that is a §20.7 STOP, never an in-place change.
 - ACL semantics (C4, kernel-effective). Present access is the F0 answer
   alone. For exactly the probe credentials, the kernel applies the
   object's access ACL: the acl(5) matching entry (ACL_USER for u, else the
@@ -3604,13 +3792,33 @@ all of the following, read as root and read-only; matching the name alone
 is never enough:
 (1) name: the whole name matches ^qa-agent-exec-v1-[0-9a-f]{32}\.service$
 and the 32 hex digits are its executionId;
-(2) approved creation path: the protected journal holds exactly one
-attempt with that executionId. Its derived unitName (§7.1) equals the name,
-and it reached CONTROLLER_BOUND or later, so the broker recorded
-SUBMITTING before its single StartTransientUnit call and read the binding
-back (§6.2, §7). The attempt's recorded binding (manager boot ID,
-InvocationID, transient flag, cgroup path and properties digest, §6.2)
-equals the live unit's values;
+(2) approved creation path and durable binding (C5): the validated JR
+snapshot holds exactly one attempt with that executionId. Its derived
+unitName (§7.1) equals the name, and its history contains an ACTUAL
+durable controller binding: an entry with submission BOUND and a
+non-null controller (JR3). This entry was written only after SUBMITTING
+was recorded before the single StartTransientUnit call and the binding
+was read back (§6.2, §7). That controller, constant from that entry to
+the head, matches the live unit exactly: controller.unitName equals the
+name; controller.bootId equals the current manager boot ID;
+controller.invocationId equals the live InvocationID; the live
+Transient property is yes (§6.2); controller.cgroupPath equals the live
+ControlGroup (beneath the §11.1 anchor) and, where the cgroup directory
+exists, its dev and inode equal controller.cgroupDev and cgroupIno; if
+the manager has already released the cgroup of an inactive or failed
+unit (live ControlGroup empty), no directory exists at
+controller.cgroupPath; controller.propertiesDigest equals the digest of
+the live effective properties under the §11.1 rule; and
+controller.contractVersion is the literal of §11.1. The state reached is
+never a substitute for this evidence. "CONTROLLER_BOUND or later" proves
+nothing by itself, and matching the name, cgroup path, timing, terminal
+state or executionId text never proves ownership. An attempt that went
+from SUBMITTING (or PREPARED) to ORPHANED, EXECUTION_ERROR, TIMED_OUT or
+QUARANTINED with no durable controller binding recorded may be valid
+journal history (JR3). It never makes any unit OW. A retained
+`qa-agent-exec-v1-` unit of such an attempt fails (2) and the host is
+INELIGIBLE until existing authorized broker recovery and cleanup (§7,
+§7.4 Cases D, E and H) resolve it;
 (3) closed property set: Transient is yes; FragmentPath is
 `/run/systemd/transient/<name>`; DropInPaths and SourcePath are empty. The
 effective properties equal the §6.1 allowlist for this attempt, and their
@@ -3623,9 +3831,10 @@ error are file descriptors, never file:, append: or truncate:;
 of the B1/B2 account (non-zero). SupplementaryGroups and
 AmbientCapabilities are empty, CapabilityBoundingSet is 0 and
 NoNewPrivileges is yes, so the unit is not root-executing under R-SD (R);
-(5) current state: the attempt is current protected journal state (not
-pruned, history intact, §7); whether the unit may be active at that
-moment is decided by QZ4, not by OW;
+(5) current state: the attempt's complete history passes JR3–JR5 in the
+validated JR snapshot (not pruned, history intact, single head, §7);
+whether the unit may be active at that moment is decided by QZ4, not by
+OW;
 (6) no added systemd authority: TriggeredBy, Triggers, Names other than
 the name itself (no alias), and every enablement or Wants/Requires link
 from another unit are empty; the unit file is root-owned and not writable
@@ -3717,9 +3926,10 @@ bytewise by its first listed key:
 | elevation | {doasAbsent, polkitAbsent, probes [{command, exitStatus, unitCreated}], rootPasswordLocked, uidZeroAccounts, suPam [{path, sha256}], sshPermitRootLogin (string or null)} (C1–C4) |
 | privilegedFiles | [{path, uid, gid, mode, sha256, capabilities (string or null), package}] (C5) |
 | endpoints | {blockAccessible [], charWritable [paths], listeners [{protocol, address, serverExe, package, sourcePackage}], busNames [{name, serverExe, sourcePackage}], dbusPolicy [{path, sha256}]} (C6; blockAccessible and charWritable are F0 probe results) |
-| filesystem | {probe {uid, gid, groups [], capabilities "0", noNewPrivs true, lsmLabel ("unconfined" or null)}, sysctls {protectedSymlinks, protectedHardlinks, protectedRegular, protectedFifos}, stickyDirs [{path, uid, gid, mode}], mountClasses [{fsType, walkClass ("W", "P" or "A"), aclClass ("posix" or "none")}], kernel {release, package, packageVersion}, pseudoEndpoints [{row, fsType, mode, observation (errno name or null)}]} (F0, F1; stickyDirs the Σ members present; C4: mountClasses one item per filesystem type present in the mount table; kernel the running kernel release and the Debian package that ships it, on which the PE authority basis rests; pseudoEndpoints one item per distinct (row, fsType, mode, observation) among writable answers permitted by PE, so the record does not vary with the number of cgroups) |
+| filesystem | {probe {uid, gid, groups [], capabilities "0", noNewPrivs true, lsmLabel ("unconfined" or null)}, sysctls {protectedSymlinks, protectedHardlinks, protectedRegular, protectedFifos}, stickyDirs [{path, uid, gid, mode}], mountClasses [{fsType, walkClass ("W", "P" or "A"), aclClass ("posix" or "none")}], kernel {release, package, packageVersion}, pseudoEndpoints [{row, fsType, mode, observation (errno name or null)}], apparmor {enabled, lsm, null ({path, fsType, rdevMajor, rdevMinor, uid, gid, mode} or null)}} (F0, F1; C5: apparmor.enabled the exact content of /sys/module/apparmor/parameters/enabled ("Y" or "N", or null if absent), apparmor.lsm the exact /sys/kernel/security/lsm string, apparmor.null the AA-NULL object facts N1–N4 when AA-NULL permits it, else null; the AA-NULL path is also listed in endpoints.charWritable; stickyDirs the Σ members present; C4: mountClasses one item per filesystem type present in the mount table; kernel the running kernel release and the Debian package that ships it, on which the PE authority basis rests; pseudoEndpoints one item per distinct (row, fsType, mode, observation) among writable answers permitted by PE, so the record does not vary with the number of cgroups) |
 | rootExecution | {units [{name, rootExecuting, sources [{path, sha256 (or null), linkTarget (or null), package (or null)}]}] (every unit except transient scopes, slices and OW units), generators [{path, package}], cron {daemonProviders [names], files [{path, sha256, package (or null)}], userCrontabs [account names]}, atJobOwners [account names], pam [{path, sha256}] (every stack), udevRules [{path, sha256, package (or null)}], dbusServices [{path, sha256, user (or null)}], kernel {corePattern, modprobe, hotplug, binfmt [{name, interpreter, flags}]}, rootShell [{path, sha256, package (or null)}], packageHooks [{key, value}], sshd ({authorizedKeysCommand, authorizedPrincipalsCommand, forceCommand, subsystems [strings]} or null), rootUnitSourcePackages [names], localContent [{path, sha256 (or null)}]} (F2; localContent is LC with sha256 null only for /etc/resolv.conf, whose content changes with DHCP leases, and for the secret files /etc/shadow, /etc/shadow-, /etc/gshadow, /etc/gshadow- and every `/etc/ssh/ssh_host_*_key`, whose digests the record must not carry; all of them are still token-checked at every run, and the shadow and gshadow states are recorded by C4 and F3) |
 | mounts | {fstabSha256, fuseConfSha256 (or null), mountHelpers [paths]} (F4; mountHelpers the setuid or capability mount helpers of M2) |
+| journal | {attemptKind "QaAgentExecutionAttempt", attemptSchemaVersion 1, transactionSchemaVersion 1} (C5, JR: the exact durable schemas that JR validated; a broker build with another journal schema is a mismatch and needs requalification, never an in-place compatibility rule) |
 
 The record carries no time, PID, inode or boot-specific value, so equal
 host state yields equal bytes. PS-F records configuration and evidence
@@ -3737,6 +3947,20 @@ od06-q-enum-v1 evidence). They are host-eligibility evidence, not caller
 identity and not authority: the broker never reads them, no runtime
 decision is taken from the digest, enrollment does not change, and
 SO_PEERCRED stays the only runtime caller identity source (§20.2.5).
+
+Journal snapshot evidence (C5). The JR snapshot digest is run evidence,
+not record content. If it were in the byte-compared record, every normal
+broker attempt would change the record. That would contradict the
+lifecycle rule below. Each successful run therefore retains, next to the
+record, one closed object QaAgentControllerJournalSnapshot v1. Its keys
+are exactly {kind "QaAgentControllerJournalSnapshot", schemaVersion 1,
+procedure "od06-priv-surface-v1", privilegeSurfaceDigest,
+journalSnapshotDigest}. journalSnapshotDigest is the equal D1 and D2 of
+JR6. It is encoded and stored under the same rules as the record. It
+copies no journal content. It is not authority: the broker and client
+never read it. Neither it nor privilegeSurfaceDigest is an execution,
+reservation or recovery input. The protected journal stays the
+authoritative source.
 
 Verification and lifecycle. Verification reruns the procedure and requires
 the new record to be byte-identical to the qualified record (equal
@@ -3893,8 +4117,39 @@ cgroups; a retained failed OW unit of a terminal attempt and its removal
 by ResetFailedUnit; new journal files, rotated logs and new root-owned
 /run files in non-writable modes; a DHCP rewrite of /etc/resolv.conf with
 RC tokens; and a broker-chain process present in the runner cgroup during
-B4 observation. Every case is detected by PS-A–PS-F at verification or
-requalification, never by C1a.
+B4 observation. C5 AA-NULL vectors. PASS (the record unchanged):
+AppArmor enabled, and /sys/kernel/security/apparmor/.null is a character
+device 1:3, root:root, S_IFCHR | 0666, on the securityfs mount at
+/sys/kernel/security, with the recorded kernel and AppArmor facts.
+INELIGIBLE (each): the same object at any other path, including `.null`
+on a second securityfs mount or a bind mount of it, and a 1:3 `.null`
+lookalike under /run, /tmp or /dev; a regular file, FIFO or block device
+at the exact path; a character device at the exact path with 1:5, 4:3 or
+any other device number; a non-zero uid or gid; a mode other than 0666,
+or any setuid, setgid or sticky bit; AppArmor disabled, or a kernel
+different from filesystem.kernel, while a `.null` object is present; and
+/proc/devices not mapping major 1 to `mem`. C5 JR and OW vectors.
+INELIGIBLE (no record; nothing written to the journal): an attempt entry
+with schemaVersion 2 or an unknown kind; an unknown state or submission
+value; an extra, missing or mistyped key, or a non-null controller with
+submission MAY_HAVE_BEEN_SENT; a transaction record with an unknown
+phase or schemaVersion; a partial, malformed or intact INTENT
+transaction; a journalDigest mismatch; a previousDigest that does not
+equal the predecessor's journalDigest, and a sequence gap; two candidate
+heads (a pointer disagreeing with the highest entry, or an entry above
+the pointer); a temporary or unclassified file, a symlink, a hard-linked
+entry or a 0644 entry in the journal tree; a claim or tombstone naming
+no attempt or a different bindingDigest; a missing tombstone; a claim
+retained by a PASSED attempt; a journal file that changes between JR
+observation 1 and observation 2 (D1 differs from D2); and a retained
+inactive `qa-agent-exec-v1-<ID>.service` whose attempt went SUBMITTING
+→ EXECUTION_ERROR or QUARANTINED with no durable controller binding (the
+name, cgroup path and timing all match). Eligible if every other
+predicate passes: a terminal attempt with intact history and no retained
+unit; and a retained inactive or failed unit of a terminal or QUARANTINED
+attempt with an empty cgroup, intact history and a durable binding that
+matches the live unit (accepted by QZ4). Every case is detected by
+PS-A–PS-F at verification or requalification, never by C1a.
 
 ### 20.3 DG-3 — native broker, build, distribution and Linux host
 
@@ -4841,7 +5096,7 @@ durable terminal -> release/reconcile) crosses these boundaries:
 | Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
 | Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4 |
 | Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
-| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid; C4: the procedure reads the protected journal and systemd unit state read-only for QZ and OW (never writes them; read-only manager queries only) | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest | Host INELIGIBLE until requalified |
+| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid; C4: the procedure reads the protected journal and systemd unit state read-only for QZ and OW (never writes them; read-only manager queries only); C5: the journal is read only through the descriptor-anchored, closed read contract JR (no write, repair, recovery or lock), and each run retains QaAgentControllerJournalSnapshot v1 | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); JR D1 = D2 within each run; never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest and journalSnapshotDigest | Host INELIGIBLE until requalified |
 | Build-environment recipe | This repository (versioned Containerfile) | Git history | Release qualification: containerfileDigest over the git blob | Raw SHA-256 of blob bytes | Not a qualified recipe |
 | Build-environment image and content record | Authorized build qualification; direct Buildx push to the durable GHCR location | Registry, by digest only | Post-push verification: registry-served manifest bytes hashed to D, blobs verified, content record from the layers, rebuild equivalence with an independent rebuild (§20.3.4a) | D = SHA-256 of the served platform manifest bytes; QaAgentBuildEnvContent content-digest | Not qualified / release BLOCKED |
 | Broker build record | Release-qualification parties | Release evidence | Release qualification (§20.3.4, §20.3.4a) | CRS-1; content-digest buildRecordDigest | Release BLOCKED |
@@ -4901,7 +5156,11 @@ PE-PSI, PE-PSI-CG, PE-NSPID) and the denial probe F0w; the ACL rules
 (a) and (b); the own workload service predicate OW; the semantic
 conditions S1–S4 and PS-F verification events; and the record keys
 filesystem.mountClasses, filesystem.kernel and filesystem.pseudoEndpoints.
-Every new digest uses
+C5 adds, inside PS-F: the exact exception AA-NULL (N1–N6, one object,
+not a PE row); the protected-journal read contract JR (JR1–JR6) and the
+journalSnapshotDigest; the durable-binding requirement of OW (2); the
+record keys filesystem.apparmor and journal; and the run-evidence object
+QaAgentControllerJournalSnapshot v1. Every new digest uses
 the existing raw content-digest convention over CRS-1 or file bytes. No new
 exit code, frame, journal state, record reason, refusal enum or hash
 domain. No public export, bin or package-file change is proposed; the
@@ -4939,8 +5198,13 @@ extended-attribute table, the ACL rules and S1–S4 are operator-run
 qualification tooling and qualification-time read-only observations of
 broker and manager state. None adds an import or call edge to either
 approval gate, to #23F, apply.js, gate symbols or legacy execution, and no
-code changes. Current trigger FALSE; proposed trigger FALSE. No closure,
-re-rating or remediation.
+code changes. Current trigger FALSE; proposed trigger FALSE. C5
+revalidation: AA-NULL, JR, the OW durable-binding requirement and the
+journal snapshot evidence are operator-run qualification tooling and
+read-only observations of kernel, journal and manager state. None adds an
+import or call edge to either approval gate, to #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -4997,7 +5261,11 @@ cannot place, that fails PS-F and cannot be removed; C4: a filesystem type
 whose observed ACL result contradicts its class; a writable
 pseudo-filesystem endpoint outside PE, or a PE row whose authority basis
 or F0w result does not hold on the qualified kernel; an LSM that would
-have to be disabled; or a non-volatile LC file that the host rewrites in
+have to be disabled; C5: an AppArmor `.null` object on the qualified
+kernel whose facts differ from AA-NULL N1–N4 or whose authority basis
+does not hold; a journal layout, schema or history that JR cannot
+validate without a new compatibility rule, a write, a repair or a
+recovery step in qualification tooling; or a non-volatile LC file that the host rewrites in
 normal operation)
 — never answered by widening an allowlist without a new procedure literal
 and review; the §20.3.4a recipe cannot build, its pinned base digest,
@@ -5014,8 +5282,8 @@ INDETERMINATE.
 
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
-(no broker source, no Cargo file, nothing built or published; C3 and C4
-leave it byte-unchanged and change this file only). No source,
+(no broker source, no Cargo file, nothing built or published; C3, C4 and
+C5 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -5188,6 +5456,56 @@ gates. No new exit code, broker frame, journal state, record reason,
 refusal enum or hash domain; the privilege boundary is not widened. Next:
 fresh independent exact-head HEAVY Architecture re-review of the C4 HEAD;
 only if APPROVED on that HEAD, fresh independent exact-head HEAVY Security
+re-review; then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.13 Architecture corrective C5 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C5 — APPROVED. Reviewed HEAD
+fb468a1e1836ed532336a37350e8aef044a4b44c (tree
+9f2dccf2704c0ddba1c1ad3e23e393d601bf85a1, parent
+dd00e38f05f225248c031290438b76bf979ab38c, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR /
+7 INFO; ARCH-S5-C3-m02 RESOLVED. C5 is documentation only, this file
+only; native/qa-agent-controller-v1/Containerfile is byte-identical to
+C2, C3 and C4 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C5
+resolves exactly the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C4-m01 AppArmor .null vs closed PS-F | One exact exception AA-NULL, separate from PE (PE rows stay regular-file rules), for /sys/kernel/security/apparmor/.null only. All of these are required: exact canonical path on the securityfs mount at /sys/kernel/security; character device; rdev 1:3 with major 1 mapped to `mem`; uid 0, gid 0, st_mode exactly S_IFCHR \| 0666; running kernel and AppArmor facts (enabled, LSM list) equal to the recorded values; and the stated kernel authority basis (memory-driver null minor, as /dev/null) giving no PS-0 host-control. No general character-device, AppArmor-device, major/minor-only or securityfs exception. F1 rule (v) and C6 (ii) reference it by name. Record key filesystem.apparmor; PASS and INELIGIBLE vectors (wrong path, alternate securityfs path, lookalike elsewhere, regular-file lookalike, wrong type, wrong rdev, wrong owner, wrong mode, AppArmor or kernel facts different) | §20.2.7 F1, C6, record, vectors; §20.6; §20.7 |
+| ARCH-S5-C4-m02 protected-journal read contract | Closed read-only contract JR. JR1: descriptor-anchored open of /var/lib/qa-agent-controller-v1 after QZ1/QZ2, with no symlinks, exact owner, mode and type, and O_NOATIME. JR2: deterministic enumeration into the fixed §11.2 layout classes. JR3: exact QaAgentExecutionAttempt v1 schema (14 keys, closed enums, nullability), contiguous sequences, previousDigest chain, journalDigest recomputation, single head, and binding/controller/submission consistency per state. JR4: transaction schemaVersion 1 with phase exactly INTENT or COMMITTED; only an intact COMMITTED transaction that matches its attempt, tombstones and claims is evidence; INTENT is always INELIGIBLE, with no recovery. JR5: lost, corrupt or ambiguous history is INELIGIBLE and never reconstructed. JR6: canonical snapshot and journalSnapshotDigest, with a full re-read before the record and D1 = D2 required. Qualification never writes, repairs, recovers or locks. OW (2) requires an actual durable controller binding that matches the live unit (unitName, boot ID, InvocationID, Transient, cgroup path/dev/ino, properties digest, contract version). State order, name, cgroup path, timing and executionId text never prove ownership. A SUBMITTING-to-terminal or QUARANTINED attempt without a binding never makes a unit OW. QZ3 and QZ4 are rewritten on the validated snapshot. Record key journal (stable schema identifiers) and the run-evidence object QaAgentControllerJournalSnapshot v1, kept outside the byte-compared record so that normal attempts are not conditions; no journal content is copied; not authority. Journal and OW vectors | §20.2.7 F1 QZ/JR, F2 OW, record, vectors; §20.5; §20.6; §20.7 |
+
+od06-priv-surface-v1 has still never been run and no host has been
+qualified under it, so C5 amends the proposed literal before any
+qualification and the PS-E new-literal rule is not engaged. No new journal
+state, attempt or transaction version, record reason, broker frame, exit
+code, refusal enum or hash domain; broker P1, RECONCILE and §7.4 recovery
+semantics are unchanged and are not duplicated in qualification tooling.
+
+Preserved: the 7 Architecture INFO findings of the C4 re-review
+(including the PE-PSI-CG premise, the AppArmor authority wording, file
+capability revision 1, F0w audit side effects, verification cadence, the
+procedure literal freeze point and the sudo startup race) and every
+carried Architecture INFO finding from earlier reviews stay on the review
+record. None is closed, waived, re-rated or absorbed. Only wording that
+C4-m01 and C4-m02 strictly require was changed. ARCH-S5-C3-m02 stays
+RESOLVED, and the C5 changes to OW and QZ only tighten it.
+ARCH-S5-C3-m01, ARCH-S5-C2-m02, m03 and m04 stay RESOLVED, and the
+Architecture C1 resolutions ARCH-S5-m01..m07 stand. The Security C2
+direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved.
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED /
+NON-BLOCKING. DG-1..DG-4 are not reopened. SO_PEERCRED remains the only
+runtime caller identity source. Further unchanged items: execute
+DISABLED; Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW /
+CONDITIONAL with current and proposed triggers FALSE; §19.1 L1–L7 and
+I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01;
+FUTURE guards; Stage 4 review/apply authority; TAP-2; CRS-1; PPI-1; #23F;
+both approval gates. The privilege boundary is not widened. Next: fresh
+independent exact-head HEAVY Architecture re-review of the C5 HEAD; only
+if APPROVED on that HEAD, fresh independent exact-head HEAVY Security
 re-review; then separate Product Owner design acceptance and merge
 authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
 AUTHORIZED; OCI publication NOT AUTHORIZED.
