@@ -2410,6 +2410,12 @@ only the sentences listed here, and only as stated:
 | §3 runner row "macOS / generic Linux / GitHub-hosted Linux / containerized Linux / generic VM — DEFERRED" | §20.0.1 disposition table; §3 text is retained as history and the §20.0.1 table governs |
 | §3 runner row "Provisioned self-hosted Linux — Initial candidate" | Refined, not replaced: eligible only as §20.3.6 class D on the named reference target after qualification |
 | §8.2 "exact qualified executable JS/reporter closure", "profile-enumerated static config imports" (producer and algorithm unspecified) | §20.1.4a closed enumeration procedure od06-q-enum-v1 |
+| §11.2 "Fixed protected paths", the pointer, transaction, claim, tombstone and incident locations, and the §11.3 record location (layout unspecified) | §20.3.8 closed layout od06-journal-layout-v1 (C6): classes S0–S13, write discipline and cross-object relations K1–K7; schemas unchanged |
+| §7 "Recoverable transaction ... Partial intent blocks root" (recovery direction and resolver unspecified) and §5.6.4 R4 "Protected-store transaction recovery" | §20.3.8 recovery matrix (C6): an uncommitted INTENT is always rolled back, by CREATE C5 or by any RECONCILE R4, with or without the enrollment enabled flag |
+| §7.4 S0 broker-crash cell "Partial INTENT recovered by next P1" | §20.3.8: rolled back by the next CREATE C5 or by any RECONCILE R4 |
+| §7.4 S6 broker-crash cell "release recovered by next P1", §6.4 P6 row "release failure: claims retained, next P1", §7 "crash during release recovered before admission" and §5.6.3 "leaves the leaf for the next P1" | §20.3.8: finished by the next CREATE C5 or by RECONCILE R6/R7 of that executionId, with or without the enrollment enabled flag; outcome never rewritten |
+| §5.6.4 R7 "Terminal commit and claim release per §7" for an attempt whose terminal outcome is already committed (unspecified) | §20.3.8: no new entry or record; only the remaining release steps |
+| §7 "short runner admission lock", "per-attempt operation locks" and "runner quarantine" (representation unspecified) | §20.3.8 non-record state: kernel advisory locks on fixed directory descriptors, no lock file; runner quarantine derived, no stored object |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
 classifications; AT-07/TB-01 RESIDUAL; FUTURE guards OPEN; Stage 4
@@ -3352,18 +3358,25 @@ F1 Writable objects.
   alive (no /proc entry with any Uid value u). Under KillMode
   control-group this leaves the runner cgroup empty, so no broker-chain
   process (B4) and no workload process exists during the walk.
-  QZ3 (C5): the protected journal is read only through the read contract
-  JR below, after QZ1 and QZ2 hold. QZ3 holds only when JR yields a
-  validated snapshot that proves all of: every attempt's head state is
-  terminal (PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR) or
-  QUARANTINED, so no attempt is in PREPARED, SUBMITTING, CONTROLLER_BOUND,
-  STARTED, OBSERVED or ORPHANED; no transaction record has phase INTENT;
-  no transaction, claim or tombstone is ambiguous or unbound to its
-  attempt (JR4); and no history is corrupt, unknown, missing or ambiguous.
-  A terminal or QUARANTINED attempt is acceptable only with intact
-  history (JR3). Every incomplete attempt is first finalized by its
-  owner's RECONCILE (§7), and every INTENT is first resolved by the
-  broker's existing P1 recovery; qualification performs neither.
+  QZ3 (C5, C6): the protected journal is read only through the read
+  contract JR below, after QZ1 and QZ2 hold. QZ3 holds only when JR yields
+  a validated snapshot that JR4 classifies CLEAN: every path is in a class
+  of the layout od06-journal-layout-v1 (§20.3.8); no staging file exists;
+  no transaction has phase INTENT; every attempt's head state is terminal
+  (PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR) or QUARANTINED, so no
+  attempt is in PREPARED, SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED
+  or ORPHANED, and its history is intact (JR3); and every relation K1–K7
+  of §20.3.8 holds with no release-pending claim, no uncommitted terminal
+  residue and no orphan, duplicate, corrupt, unknown or ambiguous object
+  (JR4). Qualification never accepts an INTENT, an incomplete attempt, a
+  release-pending claim or a corrupt or ambiguous transaction state.
+  Being blocked is not the same as being unrecoverable: for a closed
+  recoverable class of the §20.3.8 matrix (T-A, T-B, T-C, A-INC, A-RES,
+  A-REL) this run is INELIGIBLE, and the state is resolved only outside
+  the run by the existing RECONCILE under the §20.3.8 disabled-enrollment
+  procedure, after which a new run starts from QZ1. For class D the host
+  fails closed on the existing operator path (§5.3, §7 runner
+  quarantine). Qualification performs no recovery.
   QZ4 (C5): every loaded unit whose name begins with `qa-agent-exec-v1-`
   is an own workload service OW (F2, R-SD), proven from the JR snapshot,
   whose ActiveState is inactive or failed and whose cgroup is empty. A
@@ -3407,19 +3420,24 @@ F1 Writable objects.
   other-writable. A file larger than 16777216 bytes is INELIGIBLE. A file
   is read to end of file, and its size and inode must equal the fstat
   values taken before the read.
-  JR2 Deterministic enumeration and classes. Each directory is listed
-  completely with getdents64. Entries are processed in bytewise name
-  order, depth first. Every file must fall in exactly one class of the
-  fixed §11.2 protected-path layout compiled into the enrolled broker
-  build: attempt entry `attempts/<ID>/<8-digit-sequence>.json`, the
-  attempt's current pointer, transaction record, claim, tombstone,
-  incident, or a non-record file that layout defines. A non-record file is
-  checked for type, owner and mode only and is never evidence. The tool
-  uses that exact layout and no other. A temporary, unknown or
-  unclassifiable entry, or an entry in an unexpected place, is
-  INELIGIBLE. A record file is parsed with the strict §11.1 data model:
-  ASCII JSON; a duplicate key, trailing data, an unsafe integer or -0 is
-  INELIGIBLE.
+  JR2 Deterministic enumeration and classes (C6). Each directory is
+  listed completely with getdents64. Entries are processed in bytewise
+  name order, depth first. JR knows exactly one layout, the closed layout
+  od06-journal-layout-v1 of §20.3.8, and no other. Every observed path,
+  directory or file, maps to exactly one class S0–S13 of its table by
+  that class's literal directory and name grammar; JR then checks the
+  class's file type, owner root, group root and mode (directories 0700,
+  files 0600, link count 1). The structural classes S0, S1, S2 and S12
+  are checked that way only and are never evidence. The staging classes
+  S5 and S7 are never permitted at quiescence: a present staging file is
+  INELIGIBLE and is classified by §20.3.8 (S5 class D, S7 class T-B).
+  Every other class is record evidence and is parsed with its exact
+  schema (JR3, JR4). There is no catch-all class: a temporary, unknown or
+  unclassifiable entry, an entry in an unexpected place (including a name
+  that matches a class grammar in another directory), or any lock,
+  metadata or marker file is INELIGIBLE. A record file is parsed with the
+  strict §11.1 data model: ASCII JSON; a duplicate key, trailing data, an
+  unsafe integer or -0 is INELIGIBLE.
   JR3 Attempt schema and history. Every attempt entry is exactly
   QaAgentExecutionAttempt v1 (§11.2), with exactly the keys kind,
   schemaVersion, executionId, sequence, state, binding, controller,
@@ -3453,38 +3471,43 @@ F1 Writable objects.
   MAY_HAVE_BEEN_SENT, because nothing is bound without a send. Once
   non-null, controller is identical in every later entry, and
   controller.unitName equals the derived unitName (§7.1). The attempt's
-  current pointer is exactly {executionId, sequence, journalDigest}. It
-  names this attempt and its highest entry n with that entry's
-  journalDigest. This makes it the single, unambiguous head. A missing
-  pointer, a pointer to a lower entry, an entry above the pointer, or two
-  candidate heads is INELIGIBLE. An incident record must have its exact
-  §11.2 shape and domain "qa-ai-agent:execution-incident:v1:", and it must
-  name an attempt present in the snapshot.
-  JR4 Reservation records. Every transaction record is exactly
-  {schemaVersion, executionId, rootKey, consumedKeys, bindingDigest,
-  phase}. schemaVersion is 1; phase is exactly INTENT or COMMITTED;
-  consumedKeys is exactly two H. Any other value, or an extra, missing or
-  mistyped key, is INELIGIBLE. Every claim and tombstone is exactly
-  {schemaVersion:1, key, executionId, bindingDigest} (§11.2). A COMMITTED
-  transaction is consumed as normal durable qualification evidence only
-  when it is intact and fully corresponds to one attempt in the
-  snapshot. That attempt has the same executionId and a
-  binding.bindingDigest equal to its bindingDigest. rootKey is the §11.2
-  RootKey of that binding's root identity. consumedKeys are the two §11.2
-  consumed keys derived from that binding, in the fixed order.
-  Corresponding: for every attempt, a tombstone exists under each of its
-  two consumed keys with the same executionId and bindingDigest. A claim
-  exists under its rootKey with the same executionId and bindingDigest
-  only if the head state is QUARANTINED (§7: claims are retained). A
-  claim left by a terminal attempt that is not QUARANTINED is an
-  unfinished §7 release. A claim, tombstone or transaction that names no
-  attempt in the snapshot, or names one with a different bindingDigest,
-  is a partial or orphaned reservation. Both are INELIGIBLE.
-  INTENT disposition: a transaction record with phase INTENT, whether
-  partial, malformed, unresolved or otherwise intact, is never
-  qualification evidence. The host is INELIGIBLE until the broker's
-  existing P1 recovery (§7, §7.4 S0) resolves it. JR performs no
-  recovery, write, rollback or reservation reconstruction.
+  current pointer is the class S4 file `attempts/<ID>/current.json` of
+  §20.3.8, exactly {executionId, sequence, journalDigest}, and there is
+  no other pointer or head candidate. It names this attempt and its
+  highest entry n with that entry's journalDigest. This makes it the
+  single, unambiguous head. A missing pointer, a pointer to a lower entry,
+  an entry above the pointer, a pointer staging file (S5), or two
+  candidate heads is INELIGIBLE.
+  JR4 Cross-object correspondence (C6). JR4 is a validator, not recovery
+  code: it never writes, removes, renames, rolls back, releases or locks.
+  Schemas first. Every transaction (S6) is exactly {schemaVersion,
+  executionId, rootKey, consumedKeys, bindingDigest, phase}: schemaVersion
+  1, phase exactly INTENT or COMMITTED, consumedKeys exactly two H, and
+  executionId equal to its file name. Every claim and tombstone (S8–S10)
+  is exactly {schemaVersion:1, key, executionId, bindingDigest} (§11.2),
+  with key equal to "sha256:" + its file-name hex. Every record (S11) is
+  exactly AutomationExecutionRecord v2 with the §11.3 keys, types and enums
+  and a recordDigest that recomputes under domain
+  "qa-ai-agent:automation-execution-record:v2:". Every incident revision
+  (S13) is exactly QaAgentExecutionIncident v1 (§11.2) with an
+  incidentDigest that recomputes under domain
+  "qa-ai-agent:execution-incident:v1:". Any other value, or an extra,
+  missing or mistyped key, is INELIGIBLE. Relations second. JR4 evaluates
+  the closed relations K1–K7 of §20.3.8 over the whole snapshot, for every
+  attempt along attempt → current pointer → transaction → claim → both
+  tombstones → incident where required → record where required, and in
+  reverse, so that every transaction, claim, tombstone, record and
+  incident is accounted for by exactly one attempt or by the single
+  permitted INTENT. Cardinalities are exactly those of the §20.3.8 table;
+  none is implementation-selected. Result: CLEAN, or the §20.3.8 classes
+  found, each with its executionId. Only CLEAN satisfies QZ3. Any other
+  result is INELIGIBLE for this run. A recoverable class (T-A, T-B, T-C,
+  A-INC, A-RES, A-REL) is reported as blocking qualification and is
+  resolved only by the existing RECONCILE outside the run (R4 for the
+  T classes and A-RES, R5–R7 for A-INC, R6/R7 for A-REL; §20.3.8 matrix
+  and disabled-enrollment procedure). Class D is not auto-recovered. JR
+  resolves no INTENT, removes no residue, releases no claim and performs
+  no recovery, rollback or reservation reconstruction.
   JR5 Lost history. Any corrupt or unreadable entry, digest mismatch,
   sequence gap, duplicate or ambiguous head, missing predecessor, unknown
   version or phase, lost or pruned history that the current state needs,
@@ -3929,7 +3952,7 @@ bytewise by its first listed key:
 | filesystem | {probe {uid, gid, groups [], capabilities "0", noNewPrivs true, lsmLabel ("unconfined" or null)}, sysctls {protectedSymlinks, protectedHardlinks, protectedRegular, protectedFifos}, stickyDirs [{path, uid, gid, mode}], mountClasses [{fsType, walkClass ("W", "P" or "A"), aclClass ("posix" or "none")}], kernel {release, package, packageVersion}, pseudoEndpoints [{row, fsType, mode, observation (errno name or null)}], apparmor {enabled, lsm, null ({path, fsType, rdevMajor, rdevMinor, uid, gid, mode} or null)}} (F0, F1; C5: apparmor.enabled the exact content of /sys/module/apparmor/parameters/enabled ("Y" or "N", or null if absent), apparmor.lsm the exact /sys/kernel/security/lsm string, apparmor.null the AA-NULL object facts N1–N4 when AA-NULL permits it, else null; the AA-NULL path is also listed in endpoints.charWritable; stickyDirs the Σ members present; C4: mountClasses one item per filesystem type present in the mount table; kernel the running kernel release and the Debian package that ships it, on which the PE authority basis rests; pseudoEndpoints one item per distinct (row, fsType, mode, observation) among writable answers permitted by PE, so the record does not vary with the number of cgroups) |
 | rootExecution | {units [{name, rootExecuting, sources [{path, sha256 (or null), linkTarget (or null), package (or null)}]}] (every unit except transient scopes, slices and OW units), generators [{path, package}], cron {daemonProviders [names], files [{path, sha256, package (or null)}], userCrontabs [account names]}, atJobOwners [account names], pam [{path, sha256}] (every stack), udevRules [{path, sha256, package (or null)}], dbusServices [{path, sha256, user (or null)}], kernel {corePattern, modprobe, hotplug, binfmt [{name, interpreter, flags}]}, rootShell [{path, sha256, package (or null)}], packageHooks [{key, value}], sshd ({authorizedKeysCommand, authorizedPrincipalsCommand, forceCommand, subsystems [strings]} or null), rootUnitSourcePackages [names], localContent [{path, sha256 (or null)}]} (F2; localContent is LC with sha256 null only for /etc/resolv.conf, whose content changes with DHCP leases, and for the secret files /etc/shadow, /etc/shadow-, /etc/gshadow, /etc/gshadow- and every `/etc/ssh/ssh_host_*_key`, whose digests the record must not carry; all of them are still token-checked at every run, and the shadow and gshadow states are recorded by C4 and F3) |
 | mounts | {fstabSha256, fuseConfSha256 (or null), mountHelpers [paths]} (F4; mountHelpers the setuid or capability mount helpers of M2) |
-| journal | {attemptKind "QaAgentExecutionAttempt", attemptSchemaVersion 1, transactionSchemaVersion 1} (C5, JR: the exact durable schemas that JR validated; a broker build with another journal schema is a mismatch and needs requalification, never an in-place compatibility rule) |
+| journal | {layout "od06-journal-layout-v1", attemptKind "QaAgentExecutionAttempt", attemptSchemaVersion 1, transactionSchemaVersion 1} (C5, JR: the exact durable schemas that JR validated; a broker build with another journal schema is a mismatch and needs requalification, never an in-place compatibility rule; C6: layout is the single closed §20.3.8 layout identifier, which fixes every class's path, schema and version, and qualification accepts no other value) |
 
 The record carries no time, PID, inode or boot-specific value, so equal
 host state yields equal bytes. PS-F records configuration and evidence
@@ -4148,7 +4171,38 @@ name, cgroup path and timing all match). Eligible if every other
 predicate passes: a terminal attempt with intact history and no retained
 unit; and a retained inactive or failed unit of a terminal or QUARANTINED
 attempt with an empty cgroup, intact history and a durable binding that
-matches the live unit (accepted by QZ4). Every case is detected by
+matches the live unit (accepted by QZ4). C6 layout and recovery vectors.
+INELIGIBLE for the run but recoverable, each followed by the existing
+RECONCILE of the named executionId with enrollment disabled and then a
+new run that passes if every other predicate passes: an INTENT with
+every companion (T-A); an INTENT alone, and an INTENT with each proper
+subset of its companions (T-B, T-C); an INTENT beside
+`transactions/<ID>.json.next` holding its COMMITTED form (T-B); an
+incomplete COMMITTED attempt (A-INC); a record, and an incident base,
+left beside an OBSERVED head by an interrupted terminal commit (A-RES);
+a PASSED attempt whose live claim is still present after a P6 release
+failure (A-REL, also with BOUND_RECORDED client state after only the
+record copy is removed). INELIGIBLE, class D: two INTENT transactions;
+an INTENT whose claim or tombstone key holds an object of another
+executionId; an INTENT companion with a different bindingDigest; a
+COMMITTED transaction without its attempt directory, and an attempt
+directory without a transaction; a missing, third or mismatched
+tombstone, and a tombstone whose key differs from its file name; a claim
+naming no attempt; a second claim naming the same executionId; a
+QUARANTINED head with an unresolved incident and no claim; a QUARANTINED
+head without an incident base; a resolved incident whose claim remains;
+a terminal head without a record, two records for one executionId, and a
+record naming no attempt; a recordDigest that does not recompute; a head
+outcomeDigest different from recordDigest; a record whose status,
+binding, controller, timeline or cleanup differs from the head; an
+incident revision 00000002; `attempts/<ID>/current.json.next`; an entry
+above the pointer; any lock, layout-marker or metadata file, and any
+file outside the S0–S13 grammars; a fixed directory with mode 0755.
+Eligible: a CLEAN store of terminal attempts, each with its COMMITTED
+transaction, two tombstones and record; a QUARANTINED attempt with an
+unresolved incident and its retained claim; a QUARANTINED attempt with a
+resolved incident and no claim; a terminal attempt with a
+later-inconsistency incident and no claim. Every case is detected by
 PS-A–PS-F at verification or requalification, never by C1a.
 
 ### 20.3 DG-3 — native broker, build, distribution and Linux host
@@ -4786,6 +4840,271 @@ version, driver, exporter option or attestation setting -> new
 build-environment qualification; SOURCE_DATE_EPOCH or a build argument
 present in the client environment -> not a qualified build.
 
+#### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
+
+This subsection is the single normative layout of the broker protected
+store S = /var/lib/qa-agent-controller-v1 (§5.2) and the closed recovery
+matrix for its crash states. JR (§20.2.7) consumes it; the broker
+implements it. It introduces no object class, lifecycle or journal state,
+schema, schema version, record reason, broker frame, exit code, refusal
+enum, hash domain, CLI command or flag, broker operation or maintenance
+service. Every class below is an object that §§5–7 and §11.1–§11.3 already
+require, and every recovery action is a step of the existing CREATE C5 or
+RECONCILE R4–R7 (§5.6.4).
+
+Layout identity. The layout is identified by the single closed literal
+`od06-journal-layout-v1`. It is a compiled constant of the broker for
+contractVersion "qa-agent-controller-v1" (journal version 1, §4.1), and
+the od06-priv-surface-v1 JR reader compiles the same literal and accepts
+exactly that one value. It is not caller-controlled, not an enrollment or
+request field, not selectable and not free-form, and S holds no layout,
+version or metadata file: the identity is a property of the reviewed
+broker build (brokerSha256, §5.4) and of the qualification procedure,
+recorded only as journal.layout in QaAgentControllerPrivilegeSurface v1
+(§20.2.7). Any change to a class, path, schema or relation below is a new
+reviewed layout literal, a new broker build and therefore a new §5.4
+record and requalification; never an in-place compatibility rule. No new
+hash domain is introduced for it.
+
+Inventory. The durable protected objects required by §§5–7 and
+§11.1–§11.3 are: attempt entries and their current pointer (§11.2); the
+reservation transaction and its companions "PREPARED/claims/tombstones/
+data/directories" (§7, §11.2); the live root claim (§7, §11.2); the two
+consumed tombstones (§7, §11.2); AutomationExecutionRecord v2 (§7.3 step
+9, §11.3); the incident and its resolution revision (§7.2 QUARANTINED,
+§11.2). Also referenced, with no stored object of their own (see
+"Non-record state"): the admission and per-attempt operation locks (§7),
+runner quarantine (§5.4, §7, §7.4) and crash/boot history (§5.2, §6.3).
+
+Classes. Paths are relative to S. X is an executionId
+(^[0-9a-f]{32}$). k is the 64 lowercase hex digits of an H key value
+(key = "sha256:" + k). Every file is a regular file, root:root 0600,
+link count 1; every directory is root:root 0700 (§5.2, JR1). Readers of
+every class: the broker (CREATE P1–P6 including C5, RECONCILE R4–R7) and,
+read-only, JR; the client never reads S. "Evidence" means JR parses and
+cross-checks the class (JR3, JR4); "structural" means type, owner and mode
+only.
+
+| Class | Exact path grammar | Content / schema | Producer and creation point | Cardinality | Retention / removal | Key correspondence | JR |
+|---|---|---|---|---|---|---|---|
+| S0 store root | `.` (S itself) | Directory | Operator install (§5.2, §5.3) | Exactly one | Never removed by the broker (§5.3 retains history) | — | Structural |
+| S1 fixed directories | Exactly `attempts`, `transactions`, `claims`, `tombstones`, `tombstones/run`, `tombstones/package`, `records`, `incidents` | Directory | Broker, mkdirat immediately before the first object of its class is written, under the lock held for that write, parent fsynced | At most one each; absent means the class is empty | Never | — | Structural |
+| S2 attempt directory | `attempts/<X>` | Directory | Broker, reservation step 2 | At most one per X; exists iff `transactions/<X>.json` exists (K1) | Only by T rollback | X = transaction executionId | Structural |
+| S3 attempt entry | `attempts/<X>/<s>.json`, s ^[0-9]{8}$ | QaAgentExecutionAttempt v1 (§11.2) | Broker: entry 0 at reservation step 3 (PREPARED, NOT_SENT); entry n+1 at each §7 transition | Entries 0..n, contiguous, n < 1024 | Never; entry 0 only by T rollback | executionId = X; sequence = s | Evidence (JR3) |
+| S4 current pointer | `attempts/<X>/current.json` | Exactly {executionId, sequence, journalDigest} (§11.2) | Broker: reservation step 4 (create-only), then replaced through S5 after every new entry | Exactly one per S2 once written; no other head file | Only by T rollback | executionId = X; sequence = highest n; journalDigest = entry n's | Evidence (head selector, JR3) |
+| S5 pointer staging | `attempts/<X>/current.json.next` | The next S4 value | Broker, inside one invocation holding X's operation lock, immediately renamed over S4 | Zero outside a live broker invocation | Consumed by the rename | Names entry n+1 | Never at quiescence: INELIGIBLE; class D (§11.2 temp rule, unchanged) |
+| S6 transaction | `transactions/<X>.json` | Transaction (§11.2) {schemaVersion 1, executionId, rootKey, consumedKeys, bindingDigest, phase} | Broker: reservation step 1 (INTENT, create-only); step 9 (COMMITTED, replaced through S7) | EXACTLY ONE per consumed attempt (phase COMMITTED); at most one INTENT in all of S (the admission lock serializes reservations) | COMMITTED: retained permanently, never removed; INTENT: only as the last step of T rollback | executionId = X; rootKey = RootKey of binding.root; consumedKeys = the two §11.2 consumed keys of the binding, fixed order; bindingDigest = binding.bindingDigest | Evidence (JR4) |
+| S7 transaction staging | `transactions/<X>.json.next` | S6 with phase COMMITTED, every other member equal | Broker, reservation step 8, renamed over S6 at step 9 | Zero outside a live broker invocation | Consumed by the rename, or by T rollback | Equal to S6 except phase | Never at quiescence: INELIGIBLE; class T-B |
+| S8 live root claim | `claims/<k>.json`, k from rootKey | {schemaVersion:1, key, executionId, bindingDigest} (§11.2) | Broker, reservation step 5 | At most one per rootKey (file name) and at most one per executionId; presence fixed by K3 | Non-QUARANTINED terminal: P6 or R7 release; QUARANTINED: when the existing separate incident resolution clears the quarantine (§7); uncommitted INTENT: T rollback | key = transaction rootKey; executionId, bindingDigest = transaction's | Evidence (JR4) |
+| S9 consumed-run tombstone | `tombstones/run/<k>.json`, k from consumedKeys[0] | Same schema as S8 | Broker, reservation step 6 | EXACTLY ONE per consumed attempt; one per key (file name) | Never (no-retry, §7); only T rollback of an uncommitted INTENT | key = consumedKeys[0] | Evidence (JR4) |
+| S10 consumed-package tombstone | `tombstones/package/<k>.json`, k from consumedKeys[1] | Same schema as S8 | Broker, reservation step 7 | EXACTLY ONE per consumed attempt; one per key | As S9 | key = consumedKeys[1] | Evidence (JR4) |
+| S11 execution record | `records/<X>.json` | AutomationExecutionRecord v2 (§11.3) | Broker, terminal commit step (i) | EXACTLY ONE iff the head is terminal or QUARANTINED (K4) | Never; only A-RES removal of an uncommitted residue | executionId = X; recordDigest = head outcomeDigest | Evidence (JR4) |
+| S12 incident directory | `incidents/<X>` | Directory | Broker, with the base revision | At most one per X | Never; only A-RES removal | X = incident executionId | Structural |
+| S13 incident revision | `incidents/<X>/<r>.json`, r exactly 00000000 (base) or 00000001 (resolution) | QaAgentExecutionIncident v1 (§11.2) | Base: broker, QUARANTINED terminal commit step (ii), or a later-inconsistency incident on a committed terminal attempt (§7, §7.4 S6); resolution: the existing separate incident resolution (§7, §11.2), whose procedure this design does not define or change | Base exactly one per incident; resolution zero or one; the head is the highest present revision; no other ordering or head file | Never; only A-RES removal of an uncommitted base | executionId = X; rootDigest = binding.root.digest | Evidence (JR4) |
+
+Write discipline. A create-only object (S3, the initial S4, the INTENT
+S6, S8–S11, S13) is written into an O_TMPFILE descriptor of its target
+directory, fully written and fsynced, then linkat-ed to its final name
+(which fails if the name exists) and the directory is fsynced; no visible
+temporary name exists for it. Only two objects are ever replaced: S4,
+through S5, and S6 once, INTENT → COMMITTED, through S7. The staging file
+is created the same way and renameat-ed over the final name, then the
+directory is fsynced. No other temporary, staging or partial file is ever
+created in S, and none is permitted at qualification quiescence. Orders,
+each step durable before the next:
+
+- Reservation (CREATE C7 reservation commit, under the admission lock):
+  1 S6 INTENT; 2 S2; 3 S3 entry 0; 4 S4; 5 S8; 6 S9; 7 S10; 8 S7;
+  9 rename S7 over S6 and fsync `transactions`. Step 9 is the reservation
+  commit (§6.4 P1S origin, §7.2 ACCEPTED backing). Before it nothing is
+  reserved (§7.4 S0).
+- Transition (X's operation lock): S3 entry n+1, then S5 and its rename
+  over S4. The rename is the transition's commit; the backing frame
+  follows it (§7.2).
+- Terminal commit (§7.3 step 9, X's operation lock): (i) S11; (ii) for
+  QUARANTINED only, S12 and the S13 base; (iii) the terminal S3 entry n+1
+  with outcomeDigest = recordDigest; (iv) S5 and its rename over S4,
+  which is the terminal commit; then the TERMINAL or QUARANTINED frame.
+- Release (P6, or R7): the §7.3 step 10 steps, ending with unlink of S8
+  and fsync of `claims`; non-QUARANTINED terminal heads only.
+
+Non-record state. The admission lock is flock(LOCK_EX) on the S0
+directory descriptor; the per-attempt operation lock is flock(LOCK_EX) on
+the `attempts/<X>` descriptor. Both are kernel-held, released at process
+exit and never represented by a file; under QZ2 no broker process exists,
+so no lock is held, and JR never calls flock. Runner quarantine (§5.4, §7,
+§7.4) has no stored object: it is the fail-closed condition the broker
+re-derives at every invocation from its persisting cause (a class D state
+of S, an unreadable newer schema, an unknown namespace unit, or a storage
+failure re-observed by F2 or a failing fsync), and it ends only by the
+existing operator remediation (§5.3). Crash and boot history is the S3
+entries themselves (controller.bootId, timeline). Layout v1 has no
+metadata, version, marker, lock or index file. Any entry of S outside
+S0–S13 is INELIGIBLE for JR and class D for the broker.
+
+Cross-object relations. Head = the S3 entry named by S4. "Consumed" =
+the S6 of X has phase COMMITTED.
+
+- K1 Transaction and attempt. For every X, S2 exists iff S6 exists,
+  except inside a T-class state. Every S2 holds only S3 entries and S4
+  (and, only inside a live invocation, S5).
+- K2 Consumed attempt. Its S3 history passes JR3; S4 names the highest
+  entry; binding is identical in every entry; S6 executionId, rootKey,
+  consumedKeys and bindingDigest equal the values derived from that
+  binding; S9 at consumedKeys[0] and S10 at consumedKeys[1] exist, each
+  exactly {1, key, X, bindingDigest}. No other tombstone names X, and
+  every tombstone is accounted for by exactly one consumed attempt or by
+  the single INTENT (K6). Missing, duplicate, extra or mismatched: class
+  D.
+- K3 Claim. For a consumed X, the S8 at its rootKey, exactly {1, rootKey,
+  X, bindingDigest}, MUST exist when the head is incomplete (PREPARED,
+  SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED, ORPHANED) and when the
+  head is QUARANTINED with an unresolved incident; it MUST NOT exist when
+  the head is QUARANTINED with a resolved incident. When the head is
+  terminal and not QUARANTINED it is absent (normal) or present
+  (RELEASE-PENDING, class A-REL: the only state in which a
+  non-QUARANTINED terminal attempt holds its claim, §7.4 S6). Every S8
+  names exactly one X under these rules or the single INTENT (K6); any
+  other claim (naming no attempt or transaction, another bindingDigest,
+  another root, or a second claim for one X) is an orphan: class D.
+- K4 Record. Head terminal (PASSED, TEST_FAILED, TIMED_OUT,
+  EXECUTION_ERROR) or QUARANTINED ⇒ exactly one S11 with: executionId X;
+  binding identical to the attempt binding; controller identical to the
+  head controller (null only if never bound); timeline identical to the
+  head timeline; cleanup identical to the head cleanup; status equal to
+  the head state; process and the stdout/stderr members of capture equal
+  to the same-named head observation members where the head observation
+  is non-null; a valid §11.3 status/reason pair, with PRESUBMIT_FAILURE
+  only for a head with submission NOT_SENT and controller null, and a
+  QUARANTINED status only with one of the four §11.3 QUARANTINED reasons
+  (CONTROLLER_FAILURE, MISSING_UNIT_PROOF, CLEANUP_UNPROVEN,
+  STATE_INCONSISTENT); recordDigest
+  recomputing; and head outcomeDigest = recordDigest. TERMINAL statuses
+  require non-null cleanup; QUARANTINED permits null cleanup (§11.3).
+  Head incomplete ⇒ no S11, except the A-RES residue. Missing, duplicate
+  or mismatched record, or a record naming no attempt: class D.
+- K5 Incident. Head QUARANTINED ⇒ exactly one S13 base with executionId
+  X, rootDigest = binding.root.digest, reason = the S11 reason, createdAt
+  UTC, resolvedAt null and cleanup null. Head terminal and not
+  QUARANTINED ⇒ zero or one base (a later-inconsistency incident), with
+  the same rules except that reason is one of those four §11.3
+  QUARANTINED reasons and need not equal the record reason. A resolution
+  revision,
+  if present, equals its base in every member except resolvedAt (UTC, not
+  before createdAt), cleanup (a non-null §11.1 cleanup) and
+  incidentDigest; "resolved" means it is present. Head incomplete ⇒ no
+  incident, except an A-RES base residue (never a resolution revision).
+  A missing required base, a revision other than 00000000/00000001, a
+  resolution without a base, or an incident naming no attempt: class D.
+- K6 INTENT. At most one S6 has phase INTENT. Its companions are the
+  objects of reservation steps 2–8 that carry its executionId X. A
+  present companion matches only if it is exactly what that step writes:
+  S2 holds nothing but S3 entry 0 and S4; entry 0 is a valid PREPARED,
+  NOT_SENT, sequence-0 entry whose binding yields the INTENT's rootKey,
+  consumedKeys and bindingDigest; S4 names entry 0; S8, S9 and S10 sit at
+  the INTENT's keys, each exactly {1, key, X, bindingDigest}; S7 equals
+  the INTENT except phase COMMITTED. S4 present requires entry 0; entry 0
+  present requires S2. No S11, S12 or S13 exists for X.
+- K7 Closure. Every object of S is accounted for by K1–K6. Anything else
+  (unknown name, duplicate identity, impossible companion set,
+  unsupported schema, phase or version, ambiguous ownership) is class D.
+
+Recovery matrix (closed). The broker applies it in CREATE C5 and in
+RECONCILE R4; JR4 only classifies with it. Identity always comes from the
+protected objects themselves; it is never inferred from target files,
+unit names, cgroups, client state or caller hints.
+
+| Class | Exact condition | Resolver (enrollment enabled or not) | Disposition |
+|---|---|---|---|
+| T-A complete INTENT | The single INTENT, structurally valid, with every K6 companion present and matching | Any RECONCILE R4; CREATE C5 | Roll back |
+| T-B torn or partial INTENT | The single INTENT, structurally valid, with any K6-consistent subset of its companions, including S7 | As T-A | Roll back |
+| T-C INTENT without attempt | T-B with no S2, S3 or S4 (a valid pre-PREPARED crash state) | As T-A | Roll back |
+| A-INC incomplete consumed attempt | K2 holds, head incomplete, K3 claim present | RECONCILE(X) R4–R7; CREATE C5 pre-create reconciliation | §7 Cases A–H to a terminal or QUARANTINED commit |
+| A-RES uncommitted terminal residue | K2 holds, head incomplete, and an S11 and/or an S12 with its S13 base that are valid, name X, carry the attempt binding and recompute, with no resolution revision | RECONCILE(X) R4; CREATE C5 for each attempt it reconciles | Remove the residue (S13 base, S12, S11; each unlink then parent fsync) under X's operation lock, then A-INC |
+| A-REL release pending | K2, K4 and K5 hold, head terminal and not QUARANTINED, K3 claim present | RECONCILE(X) R6/R7; CREATE C5 | Remaining release steps only |
+| D corrupt or unknown | Anything else: an INTENT whose own schema, digests or keys are invalid; two INTENTs; a companion mismatching its INTENT; an INTENT key already holding another executionId's claim or tombstone; S5 present; an entry above the pointer; a broken K1–K5 relation; any K7 object | None automatic | CREATE C5: REFUSED/INELIGIBLE exit 5 before reservation; RECONCILE R4: REFUSED/INELIGIBLE, no write and no manager action; runner quarantine until the existing operator remediation (§5.3, §7); JR INELIGIBLE |
+
+Rollback (T-A, T-B, T-C), under the admission lock: unlink, each only if
+present and only if it matches (K6), S7, S10, S9, S8, S4, S3 entry 0, S2,
+fsyncing the parent after each, and finally S6, then fsync
+`transactions`. A crash during rollback leaves a T-B or T-C state, and
+rollback is idempotent. Rollback, never roll-forward, follows from the
+existing commit point: the reservation exists only from the COMMITTED
+rename (§6.4 P1S origin); ACCEPTED is backed only by COMMITTED (§7.2);
+§7.4 S0 is "nothing reserved"; no SUBMITTING entry, D-Bus call, unit or
+leaf can exist before COMMITTED; and a pre-commit request is
+unconsumed and may be retried (§6.4). Tombstones written under an
+uncommitted INTENT were never consumption: CREATE C5 runs before the C7
+REPLAY check, so no admission decision ever reads them. Rollback
+therefore weakens no no-retry rule, and committed tombstones (K2) are
+never removed.
+
+R4 and C5 order. R4 is, after R1a–R3: (1) under the admission lock, the
+T rows of the matrix over the whole store, independent of the requested
+executionId and of attempt ownership, for the single enrolled caller
+authenticated at R1a; (2) lookup of X (absent after (1):
+REFUSED/INPUT_MISMATCH, §20.4.7) and the ownership check; (3) under X's
+operation lock, the A-RES row for X and K1–K5 for X (class D: refusal as
+above). CREATE C5 performs (1), then (3) and Cases A–H for every
+incomplete attempt it reconciles, and the A-REL release of every
+release-pending claim, before §5.6.4 step C6 (W3 free space, W5
+binding). Neither R1a nor R4 reads the enrollment
+enabled flag (§5.6.4 R1a).
+
+R7 for a committed outcome. When RECONCILE(X) finds a head that is
+already terminal or QUARANTINED, R5 has no case to apply and R7 writes no
+entry, record or incident and never rewrites the outcome or re-evaluates
+PASS. For a non-QUARANTINED terminal head with its claim present (A-REL),
+R6 and R7 perform only the remaining §7.3 step 10 work, in that order:
+ResetFailedUnit on the bound unit only if it is loaded, failed and still
+matches the stored controller binding (otherwise skipped); leaf removal
+under R6 (W1, W2, W4; on their failure the leaf stays, §5.6.3, and the
+claim release still proceeds); then unlink of the S8 claim and fsync of
+`claims`. No workload is rerun and no tombstone is touched. For a
+QUARANTINED head the claim is retained (§7). Either way R7 then sends the
+committed record in a TERMINAL or QUARANTINED frame (§7.4 S6 "reconcile
+returns it").
+
+Disabled-enrollment recovery procedure (normative). Qualification never
+invokes it; it occurs outside a qualification run:
+
+1. The qualification run ends INELIGIBLE and produces no record; JR4
+   reports the class and executionId.
+2. Enrollment stays disabled (QZ1 is never weakened); CREATE remains
+   impossible.
+3. The enrolled account, authenticated by the broker through the exact
+   §20.2.3/§20.2.4 chain (SO_PEERCRED, §20.2.5), invokes the existing
+   RECONCILE operation for the reported executionId. For a T class any
+   reconcilable executionId suffices, because R4 (1) is store-wide; the
+   S0 client holds the INTENT's executionId in its retained marker.
+4. RECONCILE runs R1a–R7 under the stored protected binding, without the
+   enrollment enabled flag.
+5. It gains no CREATE or start authority: no reservation, claim, PREPARED
+   or SUBMITTING entry and no StartTransientUnit (§5.6.4).
+6. Afterwards no account process remains; the runner returns to the
+   required quiescent state (QZ1, QZ2).
+7. A new qualification run starts from QZ1 and JR observation 1.
+
+Invocation through the existing client (§20.4.5, §20.4.7), with no new
+command or flag. Local state BOUND_RECONCILABLE: `qa-agent execute --run
+<id> --package <NNNN>` selects RECONCILE(marker.executionId); RECONCILE
+skips the CREATE-only steps 3d and 3e, so it needs neither the opt-in
+nor an enabled enrollment. An S0 crash leaves the marker (§20.4.5 row
+6e): the RECONCILE triggers R4 rollback, is REFUSED/INPUT_MISMATCH and
+the client removes the marker and exits 4 EXECUTION_NOT_FOUND. Local
+state BOUND_RECORDED (the TERMINAL frame arrived before the P6 release
+failed): the record copy `<output.dir>/execution/<executionId>.json` is a
+non-authoritative local copy (§20.4.7); removing only that copy, with the
+marker kept, makes the state BOUND_RECONCILABLE, and the same command
+then runs R7 and rewrites the copy from the committed record after R1–R5.
+This grants nothing, because the broker's tombstones, not local files,
+decide every CREATE. If no marker exists, the broker still accepts the
+§4.2 reconcile frame for the reported executionId from the enrolled
+account through the same chain: it authenticates the account, not the
+program, and grants that request nothing beyond RECONCILE (R-1/R-2
+same-principal scope, unchanged). C6 adds no tool, command, flag,
+frame or operation for it.
+
 ### 20.4 DG-4 — execute CLI and configuration
 
 #### 20.4.1 Reconstructed gap
@@ -5096,7 +5415,7 @@ durable terminal -> release/reconcile) crosses these boundaries:
 | Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
 | Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4 |
 | Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
-| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid; C4: the procedure reads the protected journal and systemd unit state read-only for QZ and OW (never writes them; read-only manager queries only); C5: the journal is read only through the descriptor-anchored, closed read contract JR (no write, repair, recovery or lock), and each run retains QaAgentControllerJournalSnapshot v1 | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); JR D1 = D2 within each run; never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest and journalSnapshotDigest | Host INELIGIBLE until requalified |
+| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid; C4: the procedure reads the protected journal and systemd unit state read-only for QZ and OW (never writes them; read-only manager queries only); C5: the journal is read only through the descriptor-anchored, closed read contract JR (no write, repair, recovery or lock), and each run retains QaAgentControllerJournalSnapshot v1; C6: JR classifies every path and relation against the closed layout od06-journal-layout-v1 (§20.3.8) | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); JR D1 = D2 within each run; never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest and journalSnapshotDigest | Host INELIGIBLE until requalified |
 | Build-environment recipe | This repository (versioned Containerfile) | Git history | Release qualification: containerfileDigest over the git blob | Raw SHA-256 of blob bytes | Not a qualified recipe |
 | Build-environment image and content record | Authorized build qualification; direct Buildx push to the durable GHCR location | Registry, by digest only | Post-push verification: registry-served manifest bytes hashed to D, blobs verified, content record from the layers, rebuild equivalence with an independent rebuild (§20.3.4a) | D = SHA-256 of the served platform manifest bytes; QaAgentBuildEnvContent content-digest | Not qualified / release BLOCKED |
 | Broker build record | Release-qualification parties | Release evidence | Release qualification (§20.3.4, §20.3.4a) | CRS-1; content-digest buildRecordDigest | Release BLOCKED |
@@ -5160,10 +5479,19 @@ C5 adds, inside PS-F: the exact exception AA-NULL (N1–N6, one object,
 not a PE row); the protected-journal read contract JR (JR1–JR6) and the
 journalSnapshotDigest; the durable-binding requirement of OW (2); the
 record keys filesystem.apparmor and journal; and the run-evidence object
-QaAgentControllerJournalSnapshot v1. Every new digest uses
+QaAgentControllerJournalSnapshot v1. C6 adds: the layout literal
+od06-journal-layout-v1 and the record member journal.layout; the class
+paths S0–S13, including the staging names `current.json.next` and
+`<executionId>.json.next` and the fixed directory names; the write
+discipline and write orders; relations K1–K7; the recovery classes T-A,
+T-B, T-C, A-INC, A-RES, A-REL and D and the JR4 result CLEAN
+(qualification and broker-internal classifications, never output values,
+frames, journal states or reasons); and the disabled-enrollment recovery
+procedure. Every new digest uses
 the existing raw content-digest convention over CRS-1 or file bytes. No new
 exit code, frame, journal state, record reason, refusal enum or hash
-domain. No public export, bin or package-file change is proposed; the
+domain; C6 adds no CLI command or flag, broker operation or maintenance
+service. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -5204,7 +5532,14 @@ journal snapshot evidence are operator-run qualification tooling and
 read-only observations of kernel, journal and manager state. None adds an
 import or call edge to either approval gate, to #23F, apply.js, gate
 symbols or legacy execution, and no code changes. Current trigger FALSE;
-proposed trigger FALSE. No closure, re-rating or remediation.
+proposed trigger FALSE. C6 revalidation: the protected-store layout, the
+recovery matrix and the R4/R7 clarifications are broker-internal storage
+and recovery rules, JR's use of them is operator-run qualification
+tooling, and the disabled-enrollment procedure uses only the existing
+RECONCILE path of the client and broker. None adds an import or call
+edge to either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -5265,7 +5600,10 @@ have to be disabled; C5: an AppArmor `.null` object on the qualified
 kernel whose facts differ from AA-NULL N1–N4 or whose authority basis
 does not hold; a journal layout, schema or history that JR cannot
 validate without a new compatibility rule, a write, a repair or a
-recovery step in qualification tooling; or a non-volatile LC file that the host rewrites in
+recovery step in qualification tooling; C6: a protected-store object
+outside the od06-journal-layout-v1 classes, or a crash state outside the
+§20.3.8 matrix that the existing RECONCILE R4–R7 cannot resolve while
+enrollment is disabled; or a non-volatile LC file that the host rewrites in
 normal operation)
 — never answered by widening an allowlist without a new procedure literal
 and review; the §20.3.4a recipe cannot build, its pinned base digest,
@@ -5282,8 +5620,8 @@ INDETERMINATE.
 
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
-(no broker source, no Cargo file, nothing built or published; C3, C4 and
-C5 leave it byte-unchanged and change this file only). No source,
+(no broker source, no Cargo file, nothing built or published; C3, C4,
+C5 and C6 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -5508,4 +5846,59 @@ independent exact-head HEAVY Architecture re-review of the C5 HEAD; only
 if APPROVED on that HEAD, fresh independent exact-head HEAVY Security
 re-review; then separate Product Owner design acceptance and merge
 authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.14 Architecture corrective C6 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C6 — APPROVED. Reviewed HEAD
+841268c46e38eb095df7e49ff0e8775080f8c579 (tree
+dc476fac473b1877ffec017ed2790fd8eb9aece6, parent
+fb468a1e1836ed532336a37350e8aef044a4b44c, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR;
+ARCH-S5-C4-m01 RESOLVED. C6 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2–C5
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C6 resolves exactly
+the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C5-m01 closed protected-store layout and cardinality | One closed layout, literal od06-journal-layout-v1, compiled into the qa-agent-controller-v1 broker and the JR reader, recorded as journal.layout, never caller- or enrollment-selected; no layout file and no new hash domain. Inventory of every durable protected object of §§5–7 and §11.1–§11.3 and fourteen classes S0–S13, each with exact path grammar, type, owner, group, mode, schema, producer, readers, creation point, cardinality, retention and removal, key correspondence and JR role: attempt entries, the single pointer `attempts/<X>/current.json`, exactly one transaction per consumed attempt (COMMITTED retained permanently, at most one INTENT), claims keyed by RootKey, exactly two tombstones, AutomationExecutionRecord v2 at `records/<X>.json` as a validated evidence class, incident base and at most one resolution revision. Write discipline: O_TMPFILE + linkat for create-only objects, exactly two staging names for the only replaced objects, none permitted at quiescence. Locks are kernel flock on fixed directory descriptors (no file); runner quarantine is derived (no file). Relations K1–K7 close attempt → pointer → transaction → claim → tombstones → incident → record, including RELEASE-PENDING versus orphan claims, record ↔ terminal head (executionId, binding, controller, timeline, cleanup, status/reason, recordDigest, outcomeDigest) and the terminal/QUARANTINED distinction. Unknown or unclassifiable files are INELIGIBLE / class D. JR2, JR3 and JR4 rewritten on the exact layout | §20.3.8; §20.2.7 JR2, JR3, JR4, record journal, vectors; §20.0; §20.5; §20.6 |
+| ARCH-S5-C5-m02 recovery while enrollment is disabled | QZ1 unchanged and qualification stays read-only; the existing RECONCILE is the only resolver outside the run and needs no enabled flag (R1a). Closed recovery matrix: T-A/T-B/T-C (complete, partial, attempt-less INTENT) always rolled back, never rolled forward, because the reservation commit is the COMMITTED rename; A-INC through Cases A–H; A-RES removal of an uncommitted terminal residue; A-REL remaining release only; D never auto-recovered (refusal, runner quarantine, operator path). R4 performs the T rows store-wide; R7 on a committed outcome writes nothing and performs only the remaining §7.3 step 10 release. §7.4 S0/S6, §6.4 P6, §7 and §5.6.3 "next P1" texts superseded so that CREATE C5 and RECONCILE R4–R7 both resolve them. QZ3 separates "qualification accepts" (CLEAN only) from "state is recoverable"; JR4 is a validator that reports the class. Normative seven-step procedure and its invocation through the existing client state; no new interface | §20.3.8; §20.2.7 QZ3, JR4, vectors; §20.0; §20.6; §20.7 |
+
+Decision basis for rollback: §6.4 (P1S origin at the COMMITTED fsync;
+pre-commit requests are unconsumed and may be retried), §7.2 (ACCEPTED
+backed only by COMMITTED) and §7.4 S0 ("nothing reserved"). The §11.2
+rule that temporary or ambiguous attempt files quarantine is kept
+unchanged; it is now the class D treatment of S5 residue and of an entry
+above the pointer. The incident resolution procedure itself is not
+defined or changed; C6 fixes only its durable result (revision path and
+the claim relation).
+
+No new journal state, attempt, transaction, record or incident schema or
+version, record reason, broker frame, broker operation, exit code,
+refusal enum, hash domain, CLI command, CLI flag or maintenance service.
+SO_PEERCRED remains the only runtime caller identity source; JR remains
+read-only and non-authoritative; no retry semantics are weakened;
+committed tombstones stay durable; terminal outcomes are never rewritten.
+
+Preserved: the Architecture INFO findings of the C5 re-review (including
+AA-NULL nodev wording, JR1 NO_XDEV, OW managerId/brokerSha256
+commentary, JournalSnapshot retention identity, the total JR read-size
+bound and operational cleanup for unbound retained units) and every
+carried Architecture INFO finding stay on the review record, none closed,
+waived, re-rated or absorbed. ARCH-S5-C4-m01 stays RESOLVED and AA-NULL
+is unchanged; ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the
+Architecture C1 resolutions ARCH-S5-m01..m07 stand. The Security C2
+direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved;
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C6 HEAD;
+only if APPROVED on that HEAD, fresh independent exact-head HEAVY
+Security re-review; then separate Product Owner design acceptance and
+merge authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
 AUTHORIZED; OCI publication NOT AUTHORIZED.
