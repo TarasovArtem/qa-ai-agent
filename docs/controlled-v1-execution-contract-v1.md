@@ -2385,6 +2385,7 @@ separate Product Owner authorization against the then-certified main.
 | Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md only |
 | Host of this authoring | Windows; not Linux, sudo, systemd or native evidence |
 | Execute / Controlled Release | DISABLED / NOT APPROVED |
+| Corrective C1 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C1 — resolves ARCH-S5-m01..m07 of the HEAVY Architecture review of de37be62c16daf10413736cb489efc11abc4ff60 (§20.9); still PROPOSED |
 
 ### 20.0 Scope, precedence and unchanged invariants
 
@@ -2403,15 +2404,40 @@ only the sentences listed here, and only as stated:
 | §8.2 fingerprint membership "profile-enumerated" | §20.1.4 membership rule |
 | §4.2 "Current config v1 unchanged ... No new CLI option authorized by this design" | §20.4: closed future grammar and config v2, effective only with Stage 5 implementation; still no activation |
 | §5.3 "Distribution/signature/release packaging ... require later release approval" | §20.3 fixes the model; publication of any build and any compatibility pair still requires release approval |
+| §3 runner row "macOS / generic Linux / GitHub-hosted Linux / containerized Linux / generic VM — DEFERRED" | §20.0.1 disposition table; §3 text is retained as history and the §20.0.1 table governs |
+| §3 runner row "Provisioned self-hosted Linux — Initial candidate" | Refined, not replaced: eligible only as §20.3.6 class D on the named reference target after qualification |
+| §8.2 "exact qualified executable JS/reporter closure", "profile-enumerated static config imports" (producer and algorithm unspecified) | §20.1.4a closed enumeration procedure od06-q-enum-v1 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
 classifications; AT-07/TB-01 RESIDUAL; FUTURE guards OPEN; Stage 4
 review/apply semantics; TAP-2; CRS-1; PPI-1; #23F; both approval gates;
 OP-06-02/OP-06-03; the §4.2 request, §7.2 frames, §7 states, §9.3 exits,
-§11 schemas and hash domains; runner dispositions of §3 except where §20.3.6
-narrows a DEFERRED class to a named reference target. No new exit code,
-broker frame, journal state, record reason, refusal enum or hash domain is
-introduced. New closed values are listed in §20.6.
+§11 schemas and hash domains; the §3 Windows REFUSED row and the §3 VM
+sentence ("may physically be a VM"); the productization §10.7 exit taxonomy
+and its pipeline tie rule, which §20.4.5 follows without exception. No new
+exit code, broker frame, journal state, record reason, refusal enum or hash
+domain is introduced. New closed values are listed in §20.6.
+
+#### 20.0.1 Runner disposition after §20 (supersedes the §3 DEFERRED row)
+
+Every class named in the §3 DEFERRED row is assigned exactly one
+disposition here. Nothing outside this table changes a §3 disposition.
+
+| §3 class | §20 disposition | Governing row |
+|---|---|---|
+| macOS | Narrowed to **REFUSED** (no Linux containment primitives) | §20.3.6 "Windows / macOS hosts" |
+| GitHub-hosted Linux | Narrowed to **REFUSED** for execute; build and unprivileged tests only (class A, never qualification evidence) | §20.3.6 "GitHub-hosted runners for execute", class A |
+| Containerized Linux (Docker, Podman, LXC, Kubernetes) and WSL2 | Narrowed to **REFUSED** for execute; build and unprivileged tests only (class A) | §20.3.6 "Containers", "WSL2", class A |
+| Generic Linux — Debian 13 (trixie) amd64 on a dedicated self-hosted host or dedicated VM that is itself the qualified host | **SUPPORTED** only as the named reference target, only for an exact recorded tuple after Stage 5 qualification | §20.3.6 class D |
+| Generic Linux — Debian 13 disposable integration and adversarial VMs | **QUALIFICATION-ONLY** (never execute eligibility) | §20.3.6 classes B, C |
+| Generic Linux — any host whose sudo is not upstream sudo | Narrowed to **REFUSED** | §20.3.6 "not upstream sudo" |
+| Generic Linux — Ubuntu 24.04 LTS, every other distribution or release, aarch64 | Still **DEFERRED** | §20.3.6 Ubuntu, "Other distributions", aarch64 rows |
+| Generic VM — not dedicated, or not itself the qualified host (shared, nested-only, provider-managed) | Still **DEFERRED** | §3 VM sentence; §20.3.6 class D |
+
+Windows stays REFUSED (§3, unchanged). DEFERRED keeps its §3 meaning:
+no support, not a refusal decision, and reopening needs an owner decision.
+REFUSED needs an owner decision to reverse. No class becomes eligible by
+labels, configuration booleans or this table alone.
 
 ### 20.1 DG-1 — fingerprintDigest client handoff
 
@@ -2493,12 +2519,11 @@ unique, 1..4096 entries, total size <= 67108864:
   node_modules/@playwright/test/cli.js,
   node_modules/playwright/package.json,
   node_modules/playwright-core/package.json.
-- Q, operator-qualified closure members: the qualification procedure's
-  enumeration of the framework/reporter executable JS closure and the
-  static config imports, recorded as data in enrollment. Neither client nor
-  broker recomputes Q at runtime; runtime enforcement is the exact listed
-  set. Completeness of Q is qualification evidence; dynamic or unlisted
-  imports remain R-4 (unchanged).
+- Q, operator-qualified closure members: exactly the output of the closed
+  procedure od06-q-enum-v1 (§20.1.4a), recorded as data in enrollment.
+  Neither client nor broker recomputes Q at runtime; runtime enforcement is
+  the exact listed set. Constructs that §20.1.4a leaves outside Q remain
+  R-4 (unchanged).
 
 Applied target specs are bound by targets[].afterDigest, not by the
 fingerprint, and are not members. A member path is canonical root-relative
@@ -2523,6 +2548,112 @@ Hashing, with no normalization of any value:
   canonical encoding.
 - Root digest: Stage 4 root-identity-v1 (domain
   "qa-ai-agent:repository-root-binding:v1:", unchanged).
+
+#### 20.1.4a Q enumeration procedure od06-q-enum-v1 (closed)
+
+Producer and time. The operator runs od06-q-enum-v1 as part of Stage 5
+qualification tooling (never shipped in the npm package, never invoked by
+the client or the broker, needing no root), on the qualified host, against
+the exact enrolled root, after the target's dependencies are installed and
+before enrollment.json is written. Its output is data that the operator
+reviews and writes as root; it is not a runtime authority source, and the
+broker trusts only the root-owned enrollment that results.
+
+Fixed parameters. N = the exact qualified Node version of the profile
+(qualification.nodeVersion); resolution and module-format rules are those
+documented for exactly N; no --conditions, loaders, hooks, NODE_OPTIONS,
+NODE_PATH or --preserve-symlinks; the condition sets are N's defaults for
+require and for import. A procedure revision is a new literal, never an
+in-place change.
+
+Starting entrypoints E (literal per adapter version; all are also M
+members):
+
+| Adapter | E |
+|---|---|
+| od06-cypress-v1 | cypress.config.js; node_modules/cypress/bin/cypress |
+| od06-playwright-v1 | playwright.config.js; node_modules/@playwright/test/cli.js |
+
+The fixed junit reporter (§8.2) is built into the framework; it is covered
+only through edges reachable from E, never through a separate list.
+
+Algorithm (worklist over canonical root-relative paths; visited set; the
+output is a set, so traversal order cannot change it):
+
+1. Module format of each JavaScript member (.js, .cjs, .mjs and the
+   extensionless E member) is N's documented determination (extension,
+   nearest package.json "type", and N's syntax detection where N enables
+   it). The file is parsed as an ECMAScript program of that goal (hashbang
+   allowed). A parse error fails the procedure.
+2. Edges recognized syntactically, each only with a specifier that is a
+   string literal or a template literal without substitutions: import and
+   export ... from declarations; import(specifier); a call
+   require(specifier) whose callee is the identifier require with exactly
+   one argument; require.resolve(specifier) with exactly one argument. Over-
+   inclusion through a shadowed require is harmless (more members or a
+   recorded unresolved specifier).
+3. Every other construct is a dynamic site and is never resolved: a
+   non-literal argument to import() or require(), module.require,
+   createRequire results, eval and Function, fs-based loading, and any
+   computed callee. Each is recorded as {path, line, column} in the evidence
+   record.
+4. Resolution of a recognized specifier from its importing file uses N's
+   documented algorithms: the CommonJS require resolution (relative paths,
+   exact file, then extension probing in N's order, directory package.json
+   "main", directory index files, ancestor node_modules directories) for
+   require and require.resolve; the ESM resolution algorithm (package
+   "exports" and "imports" with the import conditions, no extension
+   probing) for import declarations and import(). Node builtins (node:
+   prefix or bare builtin names) are excluded and are not members.
+5. The resolved path must be inside the root: a result outside the root,
+   or a non-file URL (data:, http:, https:), fails the procedure. Each
+   component beneath the root is opened without following symlinks
+   (openat2 RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV
+   semantics); a symlink component, a mount crossing, a non-regular leaf,
+   link count other than 1 or size over 16777216 fails the procedure. N's
+   realpath step therefore always yields the opened path.
+6. Member kinds: .js, .cjs, .mjs and extensionless CommonJS files are
+   members and are traversed by steps 1–5; .json files are members and are
+   not traversed; .node files are members, hashed as raw bytes and not
+   traversed (their own native dependencies are R-4 or bound by the
+   profile). Any other resolved extension (for example .ts, .jsx, .wasm)
+   fails the procedure as an unsupported construct.
+7. Unresolved specifiers: a recognized specifier for which N's algorithm
+   finds no file is recorded in the evidence record and is not a member.
+   This admits the optional-dependency pattern (try { require("x") } catch)
+   inside node_modules; a file that later appears there is outside Q and is
+   R-4.
+8. Config closure completeness: for the config file and every member it
+   reaches that is not beneath a node_modules directory (target-authored
+   code), any dynamic site (step 3) or unresolved specifier (step 7) fails
+   the procedure. Completeness is required there because those imports are
+   the profile's static config imports.
+9. Q = all visited members. files = M ∪ Q, deduplicated by path and sorted
+   by path bytewise ascending. Cycles terminate through the visited set; no
+   depth limit applies. A member of M that is absent or fails step 5 fails
+   the procedure.
+10. Limits: more than 4096 entries in files, or a total size over 67108864
+    bytes, fails the procedure. There is no truncation, sampling or
+    priority order.
+
+Failure of the procedure is a qualification FAIL for that root: no
+enrollment entry is written and the root is not eligible (§20.7 STOP when
+an adapter version cannot be enumerated).
+
+Persistence. The operator writes fingerprint {algorithm:"od06-files-v1",
+files, digest} into enrollment roots[i] with the §20.1.4 hashing and the
+same fingerprint into the public view; the enrollment and view schemas do
+not change. The evidence record, retained with qualification evidence and
+never read by client or broker, is {procedure:"od06-q-enum-v1", adapter,
+nodeVersion, entrypoints, unresolved[], dynamicSites[], files[]}, each list
+sorted bytewise. Determinism evidence: two independent executions on the
+same root produce byte-identical files lists.
+
+Requalification triggers (rerun the procedure before re-enrollment): any
+runtime fingerprint drift (exit 4 or PRESUBMIT_FAILURE, §20.1.7); any change
+of N, the adapter version, the framework version, cypress.config.js or
+playwright.config.js, package.json or package-lock.json; any dependency
+install, update or removal in the root; a new procedure literal.
 
 #### 20.1.5 Client derivation of bindingDigest (exact)
 
@@ -2609,10 +2740,19 @@ changed); fingerprint.digest not recomputable; no entry for the live root;
 member symlink, hardlink (link count 2), directory, size or hash drift;
 mandatory adapter member missing from enrollment; client with checks
 disabled still refused by the broker; RECONCILE with the view deleted still
-finalizes. Qualification evidence: the Node encodeValue and the broker's
-Rust encoder produce byte-identical canonical vectors for view, fingerprint,
-qualification and binding; Q enumeration record for the exact
-framework/reporter versions.
+finalizes. od06-q-enum-v1: config importing a file outside the root;
+symlinked or hard-linked package directory or file (npm link, workspace
+link); a mount beneath the root on a resolved path; a resolved .ts file;
+a non-literal require in the config closure and one inside node_modules
+(FAIL versus recorded dynamic site); a missing literal specifier in the
+config closure (FAIL) and an optional try/require inside node_modules
+(recorded unresolved); a package "exports" map selecting different files
+for require and import; an import cycle; 4097 entries and 67108865 bytes
+(FAIL, no truncation); an M member missing; two runs producing identical
+files. Qualification evidence: the Node encodeValue and the broker's Rust
+encoder produce byte-identical canonical vectors for view, fingerprint,
+qualification and binding; the od06-q-enum-v1 evidence record for the
+exact adapter, framework and Node versions.
 
 ### 20.2 DG-2 — trusted sudo caller authentication
 
@@ -2659,14 +2799,17 @@ guarantee: if a client Node build supplied a real pipe, the broker refuses
 File /etc/sudoers.d/qa-agent-controller-v1, root:root 0440, protected
 parent; qa_runner is substituted once by the literal enrolled account:
 
-    Defaults:qa_runner env_reset, !setenv, !requiretty, !use_pty, !log_input, !log_output, !intercept, !log_subcmds
+    Defaults:qa_runner env_reset, !setenv, !requiretty, !use_pty, !log_input, !log_output, !intercept, !log_subcmds, log_exit_status
     qa_runner ALL=(root:root) NOPASSWD: NOSETENV: NOLOG_INPUT: NOLOG_OUTPUT: NOINTERCEPT: /usr/local/libexec/qa-agent-controller-v1 ""
 
 "" forbids every argument ([sudoers](https://www.sudo.ws/docs/man/sudoers.man/)).
 !use_pty and the client's new session both keep sudo off the pty path;
 !intercept, NOINTERCEPT and !log_subcmds keep sudo from tracing or
 preloading into the command; no I/O logging keeps sudo from interposing
-pipes. Effective-policy qualification (as root, on the host):
+pipes. log_exit_status is a forcing input for the §20.2.4a topology (it
+keeps the sudoers policy close hook installed); it logs only the exit
+status through the existing sudo log, adds no relay and is not relied on as
+proof. Effective-policy qualification (as root, on the host):
 `sudo -l -U <account>` lists exactly this one command and no other rule; no
 command_timeout, runchroot, runcwd, SELinux role/type or AppArmor profile
 applies to it; sudo.conf loads only the upstream sudoers policy/I/O/audit
@@ -2693,14 +2836,60 @@ container-runtime access such as sudo, wheel, disk, docker or lxd).
    ([exec.c](https://raw.githubusercontent.com/sudo-project/sudo/main/src/exec.c),
    [exec_pty.c](https://raw.githubusercontent.com/sudo-project/sudo/main/src/exec_pty.c),
    [exec_nopty.c](https://raw.githubusercontent.com/sudo-project/sudo/main/src/exec_nopty.c)):
-   exec_pty returns false when /dev/tty cannot be opened; direct exec is not
-   used while the sudoers policy plugin has a close function
-   ([policy.c](https://raw.githubusercontent.com/sudo-project/sudo/main/plugins/sudoers/policy.c));
-   exec_nopty forks and the command inherits stdin/stdout/stderr directly
-   unless an I/O plugin logs that stream; closefrom (default 3) closes higher
-   descriptors.
-3. Broker process: parent = the sudo front end; fd 0 and fd 1 = the child
-   ends of two client-created socketpairs; fd 2 = /dev/null.
+   exec_pty returns false when /dev/tty cannot be opened; exec_nopty forks
+   and the command inherits stdin/stdout/stderr directly unless an I/O
+   plugin logs that stream; closefrom (default 3) closes higher descriptors.
+   Whether sudo forks at all is not fixed by this policy alone: upstream
+   direct_exec_allowed (exec.c) execs the command in place, replacing the
+   sudo process, when the policy plugin has no close function, no audit
+   plugin has a close function and no RBAC, timeout, sudoedit, intercept,
+   log_subcmds or ptrace flag is set; the sudoers plugin clears its close
+   function only when I/O logging, use_pty, log_exit_status and log servers
+   are all off and the authentication backend needs no session end
+   ([policy.c](https://raw.githubusercontent.com/sudo-project/sudo/main/plugins/sudoers/policy.c)).
+   The fork therefore depends on the exact sudo build, PAM session
+   configuration, audit plugins and Defaults. §20.2.3 sets log_exit_status
+   to keep the close function, but the topology is an exact qualification
+   invariant (§20.2.4a), not a property of the policy text.
+3. Broker process on a qualified host (§20.2.4a): parent = the qualified
+   /usr/bin/sudo front-end process; fd 0 and fd 1 = the child ends of two
+   client-created socketpairs; fd 2 = /dev/null.
+
+#### 20.2.4a Sudo parent-topology qualification invariant (closed)
+
+A host is eligible only if qualification proves, for the exact recorded
+sudo build (version and package digest), sudo.conf, the full PAM stack of
+the sudo service, every loaded policy/audit/approval/I/O plugin, and the
+exact §20.2.3 file, all of the following by observation of real broker
+invocations through the §20.2.4 spawn on that host:
+
+- T1 Not direct exec: the broker's parent PID is a process distinct from
+  the client, and the client's direct child (the spawned PID) is that
+  parent.
+- T2 Parent identity: the parent's `/proc/<pid>/exe` has the dev/ino of
+  /usr/bin/sudo under PP (root:root, regular, setuid-root, not group/other
+  writable), and the parent stays alive for the whole broker lifetime of
+  every observed invocation (S0–S6 and REFUSED paths).
+- T3 Structural check meaningful: C1a.4 passes on every observed
+  invocation, and fails (CALLER_REFUSED) when the same broker is reached
+  with each §20.2.6 non-sudo parent.
+- T4 Descriptor pass-through: the broker's fd 0 and fd 1 are the same
+  sockets (equal socket inode in `/proc/<pid>/fdinfo` and `/proc/<pid>/fd`) as
+  the client-created socketpair child ends; SO_PEERCRED returns the client;
+  no pipe, pty or socket is interposed; fd 2 is /dev/null.
+- T5 Stability: T1–T4 hold for every observed phase and after
+  systemctl daemon-reexec, a sudo package reinstall of the same version,
+  and a reboot.
+
+Any T1–T5 failure, or any later change of the sudo build, sudo.conf, PAM
+stack for sudo, loaded plugins or the §20.2.3 file without requalification,
+makes the host INELIGIBLE (qualification FAIL). There is no
+environment-variable, loginuid or /proc credential fallback and SO_PEERCRED
+stays the only identity source. At runtime the topology is not trusted but
+re-checked: a direct exec leaves the client as the broker's parent, so
+C1a.4 refuses (CALLER_REFUSED, exit 5) before any protected-store access;
+an unqualified topology change can only make execution unavailable, never
+authenticate.
 
 Relay and lifetime semantics (I4 inputs; qualification must observe them on
 the exact sudo build):
@@ -2799,10 +2988,19 @@ or fail qualification, never authenticate); parent PID-reuse race (parent
 killed between getppid and pidfd_open); SIGHUP, SIGTERM, SIGTSTP and SIGALRM
 sent to the sudo front end at every phase S0–S6 (no outcome other than the
 §7.4 rows); client SIGKILL at every phase (EOF/EPIPE -> CLIENT_LOST or the
-§7.4 row); sudo front end SIGKILLed. Qualification evidence: exact sudo
-build and sudo.conf, the effective policy listing, the broker's fd table
-showing fds 0/1 as the client's sockets, no pty allocated, the observed
-signal-relay table for the exact build, Yama ptrace_scope >= 1.
+§7.4 row); sudo front end SIGKILLed. Topology (§20.2.4a): with
+log_exit_status removed, pam_session disabled and no audit-plugin close
+(the direct-exec configuration), the broker's parent is the client and C1a.4
+refuses with no protected-store access, and qualification records T1 FAIL;
+an audit or I/O plugin added to sudo.conf after qualification; a PAM stack
+change for the sudo service; a sudo build swap of the same version string
+with a different package digest (each requalification FAIL until
+re-observed). Qualification evidence: exact sudo build, package digest and
+sudo.conf, the PAM stack of the sudo service, the loaded plugin list, the
+effective policy listing, the T1–T5 observation record (process tree with
+client, sudo and broker PIDs; broker parent exe dev/ino; socket inodes of
+fds 0/1 on both sides), no pty allocated, the observed signal-relay table
+for the exact build, Yama ptrace_scope >= 1.
 
 ### 20.3 DG-3 — native broker, build, distribution and Linux host
 
@@ -2843,9 +3041,17 @@ mode and no hidden runtime behaviour in a root one-shot process.
 | Hand-written D-Bus in the broker | New security-sensitive parser | Inside the digest | Small | Rejected (no proof that it is safer) |
 | /run/systemd/private peer socket | — | — | — | Rejected: changes the §4.3/§5.6.1 manager identity (bus unique owner) |
 
-Exact use: zbus major version 5, blocking API, default features off,
-features exactly async-io and blocking-api (no tokio), Unix FD passing
-enabled. Connection only to the literal address
+Exact use: zbus exactly 5.13.2 (Cargo.toml requirement "=5.13.2"),
+blocking API, default features off, features exactly async-io and
+blocking-api (no tokio), Unix FD passing enabled. Version evidence from the
+published crate sources: ConnectionCredentials has no ProcessFD member in
+zbus 5.0.0–5.5.0 and has it from 5.7.1 on; 5.13.2 declares edition 2024 and
+rust-version 1.85, and in src/fdo/dbus.rs maps the D-Bus key "ProcessFD" to
+an `Option<OwnedFd>` exposed as ConnectionCredentials::process_fd() (with
+process_id() for "ProcessID"), returned by the DBus proxy method
+get_connection_credentials, whose blocking variant the blocking-api feature
+generates. Any other zbus version is a new broker build that must re-prove
+this surface before qualification. Connection only to the literal address
 unix:path=/run/dbus/system_bus_socket with EXTERNAL authentication; the
 environment is already cleared, so no DBUS_* variable can redirect it.
 Calls: org.freedesktop.DBus GetNameOwner and GetConnectionCredentials
@@ -2863,17 +3069,23 @@ signal dispositions before creating the connection.
 
 | Item | Normative value |
 |---|---|
-| Source location | native/qa-agent-controller-v1/ in this repository (Cargo workspace: Cargo.toml, Cargo.lock, rust-toolchain.toml); outside the package.json "files" allowlist, so never in the npm tarball |
-| Direct dependencies (closed allowlist) | zbus 5 (features above), rustix 1, libc 0.2 (only in one sys module), sha2 0.10, md-5 0.10 (§9.4 Cypress name check). No serde_json, tokio, logging or CLI crates; JSON is an in-repository strict parser in safe Rust |
-| Transitive set | Exactly Cargo.lock (crates.io checksums); sources only crates.io; cargo deny (advisories, licenses, sources, bans) and an audit record for each crate containing unsafe code are release-qualification evidence |
+| Source location | native/qa-agent-controller-v1/ in this repository (Cargo workspace: Cargo.toml, Cargo.lock, rust-toolchain.toml, build-env.digest); outside the package.json "files" allowlist, so never in the npm tarball |
+| Direct dependencies (closed allowlist) | zbus "=5.13.2" (features above), rustix 1, libc 0.2 (only in one sys module), sha2 0.10, md-5 0.10 (§9.4 Cypress name check). No other direct dependency: in particular no direct serde_json, tokio, logging, tracing-subscriber or CLI crate; JSON is an in-repository strict parser in safe Rust. Adding a direct dependency is a §20.7 STOP |
+| Transitive closure (distinct from the direct allowlist) | Exactly the Cargo.lock graph resolved for the direct set; it is not claimed to be free of any crate category. For zbus 5.13.2 it includes, among others, tracing (a mandatory zbus dependency; the broker installs no subscriber and no log backend, so events are discarded), serde/serde_repr, winnow, uuid, enumflags2, the zvariant/zbus_names/zbus_macros family and their proc-macro dependencies, and the async-io feature set (async-io, async-executor, async-lock, async-task, blocking, async-process and its async-signal/signal-hook-registry). zbus 5.13.2 uses rustix and libc on Linux; nix and xdg-home were dependencies of earlier zbus 5 releases and are absent unless Cargo.lock shows them |
+| Transitive controls | Cargo.lock committed and used with --locked; every package from crates.io with its registry checksum verified by cargo; no git, path (outside the workspace) or alternative-registry source; cargo deny check on the exact lock (advisories with no unignored RUSTSEC entry, an explicit license allowlist, sources restricted to crates.io, bans on duplicate majors only where listed); an unsafe-code inventory per locked crate (cargo geiger output or an equivalent per-crate count) with an audit note for each crate containing unsafe code; an inventory of crates that install signal handlers, spawn processes or start threads, each shown unreachable from or compatible with the broker's paths (the unix:path address never selects the unixexec transport, so async-process is not reached; the broker's dispositions are set before the connection); build scripts in the graph must not compile C or call pkg-config. Any lock change is a new broker build requalified against the new exact graph |
 | Unsafe policy | #![forbid(unsafe_code)] in every broker crate except one sys module with an enumerated list of libc calls (getresuid, getresgid, close_range, execve and any primitive rustix lacks), each wrapped and reviewed |
-| Toolchain | Rust stable >= 1.85.0 (edition 2024); the exact version is pinned in rust-toolchain.toml with target x86_64-unknown-linux-musl and recorded in brokerBuild; changing it is a new broker build |
-| Build command | cargo build --release --locked --offline --target x86_64-unknown-linux-musl, dependencies pre-fetched with cargo fetch --locked, RUSTFLAGS "--remap-path-prefix=<source dir>=/qa-agent-controller-v1 -C target-feature=+crt-static" |
+| Toolchain | Exactly Rust 1.85.0 (rustc 1.85.0 (4d91de4e4 2025-02-17), Cargo 1.85.0 = cargo 0.86.0), edition 2024, pinned in rust-toolchain.toml (channel "1.85.0", targets ["x86_64-unknown-linux-musl"], profile minimal) and installed only from the official channel manifest channel-rust-1.85.0.toml (2025-02-20) with these component xz SHA-256 values verified: rustc x86_64-unknown-linux-gnu 7436f13797475082cd87aa65547449e01659d6a810b4cd5f8aedc48bb9f89dfb; cargo x86_64-unknown-linux-gnu 0aff33b57b0e0b102d762a2b53042846c1ca346cff4b7bd96b5c03c9e8e51d81; rust-std x86_64-unknown-linux-gnu 285e105d25ebdf501341238d4c0594ecdda50ec9078f45095f793a736b1f1ac2; rust-std x86_64-unknown-linux-musl 27cebed8bafcb07c1c61a3dfc548efc3c032720d953375391896b664f8fe06f5. Changing any of them is a new broker build |
+| Target and linker | Target x86_64-unknown-linux-musl. Linker for the target is exactly rust-lld from the pinned rustc component (lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld, covered by the rustc hash above), flavor ld.lld, with the self-contained musl crt objects and libc from the pinned musl rust-std. No host cc, gcc, binutils ld or system libc participates in linking the broker. Host-target build scripts and proc macros are linked by the build environment's cc; their outputs are not part of the artifact |
+| Build environment | Exactly one OCI image, x86-64, referenced only by its immutable manifest digest stored in native/qa-agent-controller-v1/build-env.digest (one line "sha256:" + 64 lowercase hex), created once at Stage 5 implementation from Debian 13 with the pinned toolchain preinstalled under /opt/rust (RUSTUP_HOME=/opt/rust/rustup, CARGO_HOME=/opt/rust/cargo) and reviewed with that implementation; changing the digest is a new broker build. Builds run in a fresh container from that digest with --network none, source bind-mounted read-only at /build/src, CARGO_TARGET_DIR=/build/target, the prepared registry volume at /opt/rust/cargo/registry, an unprivileged numeric build user, umask 022 |
+| Build environment variables | The container starts from an empty environment plus exactly: PATH=/opt/rust/cargo/bin:/usr/bin:/bin, RUSTUP_HOME, CARGO_HOME, CARGO_TARGET_DIR (values above), LANG=C, LC_ALL=C, TZ=UTC, SOURCE_DATE_EPOCH = the committer timestamp of the source commit (for any build script that reads it; the broker embeds no time), CARGO_INCREMENTAL=0, QA_BROKER_SOURCE_COMMIT = 40-hex commit (read by env! for brokerBuild), RUSTFLAGS below. No other variable, no ~/.cargo/config.toml and no .cargo/config.toml outside the source tree |
+| Build command | Preparation: cargo fetch --locked in a container from the same digest, with network, into a fresh build volume mounted at /opt/rust/cargo/registry (cargo verifies every registry checksum against Cargo.lock). Build: cargo build --release --frozen --target x86_64-unknown-linux-musl (--frozen = --locked plus --offline) with --network none |
+| RUSTFLAGS (exact, in this order) | -C linker=rust-lld -C linker-flavor=ld.lld -C link-self-contained=yes -C target-feature=+crt-static -C link-arg=--build-id=none --remap-path-prefix=/build/src=/qa-agent-controller-v1 --remap-path-prefix=/opt/rust/cargo/registry/src=/cargo-registry --remap-path-prefix=/opt/rust/cargo/git/checkouts=/cargo-git --remap-path-prefix=/opt/rust/rustup=/rustup --remap-path-prefix=/build/target=/target |
 | Release profile | opt-level 2, codegen-units 1, lto true, panic "abort", overflow-checks true, debug false, strip "symbols", incremental false |
+| Host-specific metadata | No timestamps, hostnames, user names, absolute host paths or build IDs in the artifact: paths are remapped as above (panic locations included), --build-id=none, no .comment beyond the toolchain identification, no embedded environment except QA_BROKER_SOURCE_COMMIT |
 | Linkage | Static-pie ELF64 x86-64: no PT_INTERP, no DT_NEEDED, no RPATH/RUNPATH; musl from the pinned Rust target. No shared library, so no dynamic-loader or library-substitution class applies to the broker, and brokerSha256 covers all broker code |
 | CPU baseline | x86-64 baseline (no target-cpu override). aarch64: DEFERRED |
 | Panic / OOM | Process abort = broker crash, handled only by §7.4 |
-| Reproducibility | Two independent builds from the same commit, toolchain pin and Cargo.lock on different hosts give identical SHA-256; non-reproducibility blocks release qualification |
+| Reproducibility verification | Two builds from the same commit, Cargo.lock and build-env.digest, on two different physical or virtual x86-64 hosts (different kernels, hostnames, users and host checkout paths outside the container), each in a fresh container per the rows above, give byte-identical artifacts (equal SHA-256); a third build by the release-qualification party repeats the check. A difference, or a build that needs any input not listed here, is non-reproducible: release qualification is BLOCKED. The build record (commit, build-env.digest, toolchain hashes, Cargo.lock SHA-256, RUSTFLAGS, artifact SHA-256 of each build) is release-qualification evidence |
 
 brokerBuild (enrollment qualification, <=256 ASCII) is exactly
 "qa-agent-controller-v1/" + brokerVersion + "+" + 40-hex source commit +
@@ -2961,7 +3173,14 @@ Artifact with PT_INTERP or DT_NEEDED -> release blocked; digest mismatch
 with the record -> INCOMPATIBLE; /proc/self/exe differs from the fixed path
 (copied or bind-mounted broker) -> CALLER_REFUSED at C1a.2; group-writable
 /usr/local ancestor -> refused; brokerBuild mismatch -> INELIGIBLE;
-non-reproducible rebuild -> release blocked; unsolicited unicast D-Bus
+non-reproducible rebuild -> release blocked; a build linked by a host cc or
+ld instead of the pinned rust-lld, a build outside the build-env.digest
+container, an extra or missing environment variable or RUSTFLAGS entry, or an
+artifact containing a host build path or build ID -> not a qualified build
+(release blocked); a zbus version other than 5.13.2, a direct dependency
+outside the allowlist, a git/path/alternative-registry source or a registry
+checksum mismatch -> release blocked; bus reply without ProcessFD on the
+reference host -> N1 failure (§5.6.1); unsolicited unicast D-Bus
 signals and method calls from another account during observation are
 dropped; DBUS_* in the caller environment has no effect; differential
 fuzzing of the Rust JSON parser against the product strict parser; P0 frame
@@ -3036,35 +3255,75 @@ for the workload; nothing is inherited wholesale.
 
 #### 20.4.5 Validation order and exits
 
-| # | Step | Exit / code |
-|---|---|---|
-| 1 | Usage (§20.4.3) | 2 |
-| 2 | RELEASE_CAPABILITIES.execute disabled | 5 CAPABILITY_NOT_ENABLED_IN_RELEASE, before root, config, run, local state or sudo |
-| 3 | Root, config load/validate, containment | 3 |
-| 4 | Provider: none consumed; AI_* and providers.allow are not evaluated | — |
-| 5 | Platform linux, Stage 4 principal, Stage 4 storage eligibility | 5 EXECUTE_PLATFORM_UNSUPPORTED / existing REVIEWER_IDENTITY_UNAVAILABLE |
-| 6 | Local client state decision (§20.4.7) | 4 or 5 per that table; selects CREATE or RECONCILE |
-| 7 | CREATE only: capabilities.execute opt-in | 5 CAPABILITY_NOT_REQUESTED |
-| 8 | CREATE only: SUT environment | 3 EXECUTE_SUT_ENVIRONMENT_INVALID |
-| 9 | CREATE only: §8.1 binding | 4 (existing Stage 4/applied codes, EXECUTION_BINDING_MISMATCH) |
-| 10 | CREATE only: §20.1.5 compatibility, view and fingerprint | 5 EXECUTE_INCOMPATIBLE / EXECUTE_RUNNER_NOT_ELIGIBLE; 4 EXECUTION_FINGERPRINT_MISMATCH |
-| 11 | CREATE only: durable attempt marker | 1 on I/O failure, before sudo |
-| 12 | sudo spawn failure (ENOENT/EACCES) before any byte is sent | 5 EXECUTE_BROKER_UNAVAILABLE; marker removed |
-| 13 | Broker REFUSED | SCHEMA_INVALID -> 1; INPUT_MISMATCH -> 4; CALLER_REFUSED, INELIGIBLE, REPLAY, INCOMPATIBLE, RECOVERY_BUDGET_EXHAUSTED -> 5 |
-| 14 | Validated TERMINAL/QUARANTINED | §9.3 table (0, 10, 8, 7) |
-| 15 | Client-side protocol violation, EOF before a final frame, sudo exit without a frame | 7 (synchronous orphan; marker retained) |
+The order is exactly the productization §10.7 pipeline, usage (2) → config
+(3) → authority (5) → input (4) → provider (6) → execution (7/8/10), with no
+Stage-5-specific exception and no change to the numeric taxonomy. Within a
+stage the steps run in the listed order. The first failing step ends the
+invocation and determines the exit and reason code, so simultaneous failures
+always resolve to the earliest stage and, within it, the earliest step.
+
+| # | Stage | Step | Applies to | Exit / code |
+|---|---|---|---|---|
+| 1 | Usage | §20.4.3 grammar | All | 2 (existing usage codes) |
+| 2a | Config | Root resolution and containment, config load, closed v1/v2 schema (§20.4.4), output.dir containment; the current canonical root digest (Stage 4 root-identity-v1) is computed here | All | 3 (existing config codes) |
+| 2b | Config | Effective execute config; each effective SUT variable present in the client's own environment and within §9.1 bounds (§20.4.4) | All (values are sent only on CREATE) | 3 EXECUTE_SUT_ENVIRONMENT_INVALID |
+| 3a | Authority | RELEASE_CAPABILITIES.execute disabled | All | 5 CAPABILITY_NOT_ENABLED_IN_RELEASE; nothing after this step runs |
+| 3b | Authority | Platform linux, Stage 4 principal, Stage 4 storage eligibility | All | 5 EXECUTE_PLATFORM_UNSUPPORTED / existing REVIEWER_IDENTITY_UNAVAILABLE |
+| 3c | Authority | Local-state classification (§20.4.7): BOUND_RECORDED, BOUND_LIVE, BOUND_RECONCILABLE, NONE or INVALID | All | BOUND_RECORDED -> 5 EXECUTION_ALREADY_RECORDED; BOUND_LIVE -> 5 EXECUTION_IN_PROGRESS; INVALID emits nothing here (deferred to 4a); operation = RECONCILE iff BOUND_RECONCILABLE, otherwise CREATE |
+| 3d | Authority | capabilities.execute opt-in | CREATE (every classification except BOUND_RECONCILABLE) | 5 CAPABILITY_NOT_REQUESTED |
+| 3e | Authority | §20.1.5 steps 3–5: compatibility.json, public view, root entry for the step-2a root digest | CREATE | 5 EXECUTE_INCOMPATIBLE / EXECUTE_RUNNER_NOT_ELIGIBLE |
+| 3f | Authority | /usr/bin/sudo under PP (advisory early refusal, §20.2.4) | All | 5 EXECUTE_BROKER_UNAVAILABLE |
+| 4a | Input | Local state INVALID (from 3c) | All | 4 EXECUTION_CLIENT_STATE_INVALID |
+| 4b | Input | §8.1 binding reconstruction | CREATE | 4 (existing Stage 4/applied codes, EXECUTION_BINDING_MISMATCH) |
+| 4c | Input | §20.1.5 step 6 fingerprint member bytes, then steps 7–8 | CREATE | 4 EXECUTION_FINGERPRINT_MISMATCH |
+| 5 | Provider | None consumed; AI_* and providers.allow are not evaluated | — | — |
+| 6a | Execution | Durable attempt marker (§20.4.7) | CREATE | 1 on I/O failure (internal), before sudo |
+| 6b | Execution | sudo spawn failure (ENOENT/EACCES) before any byte is sent (a race after 3f) | All | 5 EXECUTE_BROKER_UNAVAILABLE; a CREATE marker is removed |
+| 6c | Execution | Broker REFUSED | All | SCHEMA_INVALID -> 1; INPUT_MISMATCH -> 4; CALLER_REFUSED, INELIGIBLE, REPLAY, INCOMPATIBLE, RECOVERY_BUDGET_EXHAUSTED -> 5 |
+| 6d | Execution | Validated TERMINAL/QUARANTINED | All | §9.3 table (0, 10, 8, 7) |
+| 6e | Execution | Client-side protocol violation, EOF before a final frame, sudo exit without a frame | All | 7 (synchronous orphan; marker retained) |
+
+Why this is the product-wide order and not an exception:
+
+- Applicability, not reordering: 3d, 3e, 4b, 4c and 6a are CREATE-only,
+  mirroring §5.6.4 rule (a) (reconcile needs no opt-in, binding,
+  fingerprint or execute-block authority). Whether a step applies is
+  decided by 3c before the step's stage completes, so no CREATE-only check
+  ever runs after a later-stage failure. INVALID state is treated as
+  CREATE for applicability: it can never be reconciled, so a 5 from 3d/3e
+  precedes the 4 from 4a, exactly as the tie rule requires.
+- Config-stage checks precede operation selection, so 2a and 2b apply to
+  RECONCILE as well: a reconcile needs a valid config and the effective SUT
+  variables present, but sends no SUT value and uses no execute-block value.
+  This is the only operational consequence of the tie rule for RECONCILE.
+- 3c reads input files but emits only authority-class refusals (5); every
+  input-class defect it finds is reported at 4a. The tie rule orders failing
+  checks, and no 4 is emitted before stage 3 has passed.
+- 6b and 6c are dispositions of the single privileged attempt. They occur
+  only after every client stage passed, so they never compete with a
+  client-detected failure; the broker's own fixed order (§5.6.4, §20.2.5)
+  selects its single refusal. The numeric mappings are unchanged.
+
+Release-disabled invariant: with RELEASE_CAPABILITIES.execute disabled, an
+invocation performs only steps 1–3a. It reads the command line, the root
+directory identity, the target's config file and its own environment (2b
+reads and discards the effective SUT values), and nothing else: no run
+evidence, local execution state, compatibility.json, public view or
+/usr/bin/sudo; no write; no sudo spawn and no broker or privileged action.
+A malformed command line still exits 2 and an invalid config 3, per the
+product-wide tie rule; every invocation that passes steps 1–2b exits 5 at
+3a.
 
 No interactive TTY is required and the Stage 4 CI/TTY refusals do not
 apply: execute never prompts and never reads its own stdin. CI use is
 allowed only on a qualified runner; Stage 4 prohibitions are unaffected.
-RECONCILE skips steps 7–11: it needs no opt-in, binding, fingerprint
-or execute block, mirroring §5.6.4 rule (a).
 
 #### 20.4.6 Output and executionId exposure
 
 --json: stdout carries exactly one envelope (existing CLI output schema 1)
 {schemaVersion, command:"execute", ok, exitCode, runId, artifacts, errors,
-execution}; execution = null before step 6, otherwise exactly {operation:
+execution}; execution = null until step 3c selects an operation (and for
+every failure at or before 3c), otherwise exactly {operation:
 "create"|"reconcile", executionId, packageOrdinal, status, reason,
 recordPath, recordDigest}, with status, reason, recordPath and recordDigest
 null until a validated TERMINAL/QUARANTINED. Human mode: one line on
@@ -3082,35 +3341,87 @@ with O_EXCL and fsynced together with the directory:
 
 - attempt-<runId>-<NNNN>.json = QaAgentExecutionClientAttempt v1, exact keys
   {kind:"QaAgentExecutionClientAttempt", schemaVersion:1, executionId,
-  runId, packageOrdinal, rootDigest, bindingDigest, clientBootId,
-  clientPid, clientStartTime, createdAt}; clientBootId is the lowercase
-  canonical UUID from /proc/sys/kernel/random/boot_id; clientPid a safe
-  integer; clientStartTime the decimal string of field 22 of
-  /proc/self/stat; createdAt UTC. Written immediately before the sudo spawn
-  of a CREATE.
+  runId, packageOrdinal, rootDigest, product, bindingDigest, clientBootId,
+  clientPid, clientStartTime, createdAt}; product is the client's own
+  installed {name, version} (the binding product grammar); bindingDigest is
+  the step-4c value sent in the CREATE request; clientBootId is the
+  lowercase canonical UUID from /proc/sys/kernel/random/boot_id; clientPid
+  a safe integer; clientStartTime the decimal string of field 22 of
+  /proc/self/stat; createdAt UTC. Bytes are the CRS-1 canonical encoding.
+  Written immediately before the sudo spawn of a CREATE (step 6a).
 - <executionId>.json = the exact AutomationExecutionRecord v2 bytes from a
-  validated TERMINAL/QUARANTINED frame (recordDigest verified, binding
-  equal to the marker's bindingDigest).
+  validated TERMINAL/QUARANTINED frame of this invocation's attempt,
+  written only after the R-checks below pass on the received record.
 
 These files are local evidence copies and a recovery hint, never authority;
 the broker's protected journal and tombstones decide.
 
-| Local state for (run, package) | Action |
-|---|---|
-| No attempt file | CREATE with a fresh executionId |
-| Attempt + verifying record | Exit 5 EXECUTION_ALREADY_RECORDED (no broker call, no re-execution) |
-| Attempt, no record, marker boot/pid/start time match a live process | Exit 5 EXECUTION_IN_PROGRESS (no broker call) |
-| Attempt, no record, process not live | RECONCILE(executionId) |
-| Malformed, unknown or duplicate file, or a record that does not verify | Exit 4 EXECUTION_CLIENT_STATE_INVALID (no broker call) |
+Step 3c reads only two names: the marker file for the invocation's --run
+and --package, and, if that marker is BOUND, the record file named by
+marker.executionId. Files of other (run, package) pairs are never read and
+never influence the decision. Each read file must be a regular file opened
+without following symlinks beneath the non-symlink execution directory,
+link count 1, owner = the client's effective UID, size <= 1048576 (marker)
+or the §11.3 record bound, strict JSON in canonical encoding with the
+closed schema.
+
+Marker binding (all required for BOUND; any failure is INVALID):
+
+- M1 The marker's file-name runId and NNNN equal marker.runId and
+  marker.packageOrdinal.
+- M2 marker.runId = --run and marker.packageOrdinal = --package.
+- M3 marker.rootDigest = the current canonical root digest from step 2a
+  (a marker copied from, or restored for, another root, or written before
+  the root's identity changed, never matches).
+- M4 marker.product = the client's own product {name, version} (a marker
+  written by another product version is foreign, consistent with the
+  Stage 4 "run created by another product version" input refusal).
+- M5 marker.executionId matches the §7.1 executionId grammar and
+  marker.bindingDigest is H. bindingDigest is not recomputed at 3c: it
+  needs §8.1 reconstruction (input stage), RECONCILE needs no binding
+  (rule (a)), and it is compared with the record below.
+
+Record binding (all required for BOUND_RECORDED; any failure is INVALID):
+
+- R1 The record file name is marker.executionId + ".json" and
+  record.executionId = marker.executionId.
+- R2 record.recordDigest verifies over the record (§11.3 domain).
+- R3 record.binding.bindingDigest = marker.bindingDigest and verifies over
+  record.binding (§11.1 execution-binding domain).
+- R4 record.binding.runId, packageOrdinal and root.digest equal M2/M3's
+  current values; record.binding.product = marker.product; and
+  record.binding.principal = the step-3b Stage 4 principal.
+- R5 record.status and reason are a valid §11.3 pair.
+
+Review, apply, package and plan identities (reviewRecordId, applyRecordId
+and the binding digests) are bound by R3 through bindingDigest and are not
+re-derived at 3c. That is sufficient: R4 fixes (root, run, package), and the
+broker's tombstone for that triple refuses every further CREATE (REPLAY)
+whatever apply identity a different record claimed, so a record cannot make
+the client skip a CREATE that the broker would allow.
+
+| Local state for (run, package) | Classification at 3c | Action |
+|---|---|---|
+| No marker file | NONE | CREATE with a fresh executionId |
+| M1–M5 pass; record present and R1–R5 pass | BOUND_RECORDED | Exit 5 EXECUTION_ALREADY_RECORDED (no broker call, no re-execution) |
+| M1–M5 pass; no record; clientBootId = current boot_id and a process with clientPid, owned by the client's UID, whose /proc stat field 22 = clientStartTime exists | BOUND_LIVE | Exit 5 EXECUTION_IN_PROGRESS (no broker call) |
+| M1–M5 pass; no record; that process is not live (or another boot) | BOUND_RECONCILABLE | RECONCILE(marker.executionId) |
+| Any M-check fails; a record file present for a BOUND marker but any R-check fails; a non-regular, symlinked, hard-linked, foreign-owned, oversize, non-canonical or schema-invalid marker or record | INVALID | Exit 4 EXECUTION_CLIENT_STATE_INVALID at 4a (no broker call), unless an earlier step refused |
+
+A copied, restored, foreign or stale marker or record therefore never
+selects RECONCILE, EXECUTION_IN_PROGRESS or EXECUTION_ALREADY_RECORDED for
+an unrelated execution; it fails closed as INVALID with the existing code.
+The broker still re-checks everything on RECONCILE (R1a–R7) and binds the
+executionId to its protected attempt.
 
 The liveness guard is a same-account UX safeguard that stops a second
 invocation from reconciling (stopping) an attached attempt; it is not a
 security boundary. Deleting local files cannot re-authorize execution: a
 new CREATE for a consumed (root, run, package) is REFUSED/REPLAY by the
-broker's tombstones.
+broker's tombstones, which remain authoritative.
 
 A pre-reservation REFUSED on CREATE (proven unreserved, §7.2) and a
-step-12 spawn failure remove the attempt file, so a retry after
+step-6b spawn failure remove the attempt file, so a retry after
 remediation is a fresh CREATE. Reconcile clarification (refines §5.6.4 R4,
 no new enum): an executionId with no protected attempt after transaction
 recovery is REFUSED/INPUT_MISMATCH with no journal write or manager action;
@@ -3120,9 +3431,11 @@ the client then removes the attempt file and exits 4 EXECUTION_NOT_FOUND.
 
 RELEASE_CAPABILITIES.execute stays {enabled:false}. Stage 5 implementation
 (separately authorized) may add the grammar, config v2, client and broker
-behind that gate; every well-formed execute invocation then still exits 5
-CAPABILITY_NOT_ENABLED_IN_RELEASE at step 2. info platform.executeDecision
-stays "PENDING_OD_06" until activation. Activation is exactly a separate,
+behind that gate; every execute invocation that passes steps 1–2b then
+exits 5 CAPABILITY_NOT_ENABLED_IN_RELEASE at step 3a, under the §20.4.5
+release-disabled invariant (no local state, protected file, sudo or broker
+access). info platform.executeDecision stays "PENDING_OD_06" until
+activation. Activation is exactly a separate,
 Product-Owner-authorized change that sets enabled:true (and the info
 decision value) after Stage 5 implementation, Linux/native/adversarial/
 installed-package qualification and independent Security review;
@@ -3133,13 +3446,31 @@ never override the release gate.
 
 Every refused flag and duplicate; --json with stdout purity; --help with an
 invalid config (exit 0, nothing read); disabled release with well-formed and
-malformed trailing input (after implementation: 5 for well-formed, 2 for
-malformed; before: byte-identical reserved behaviour); v1 file with an
-execute key; v2 bounds (999, 600001, 33 names, duplicate, lowercase, SUT_
-alone, 61-character suffix); missing SUT variable; oversize value; v1
-defaults; every §20.4.7 local-state row, including forged pid/start time,
-stale boot, deleted record and deleted attempt (broker REPLAY); RECONCILE
-without opt-in; the INPUT_MISMATCH not-found path; sudo absent.
+malformed trailing input (after implementation: 2 for malformed, 3 for an
+invalid config, otherwise 5 at 3a with a syscall trace showing no read of
+local execution state, compatibility.json, the public view or
+/usr/bin/sudo and no spawn; before: byte-identical reserved behaviour); v1
+file with an execute key; v2 bounds (999, 600001, 33 names, duplicate,
+lowercase, `SUT_` alone, 61-character suffix); missing SUT variable; oversize
+value; v1 defaults. Precedence pairs (§20.4.5), each asserting the earlier
+stage's code: usage + invalid config -> 2; invalid config + disabled
+release -> 3; missing SUT variable + disabled release -> 3; disabled
+release + INVALID local state -> 5 CAPABILITY_NOT_ENABLED_IN_RELEASE with
+the state unread; missing opt-in + INVALID local state -> 5
+CAPABILITY_NOT_REQUESTED; stale public view + INVALID local state -> 5;
+BOUND_RECONCILABLE + missing opt-in + stale view -> RECONCILE proceeds;
+INVALID local state + binding mismatch -> 4
+EXECUTION_CLIENT_STATE_INVALID; binding mismatch + fingerprint drift -> 4
+EXECUTION_BINDING_MISMATCH. Local-state identity (§20.4.7): every
+classification row; each M1–M5 and R1–R5 check failing alone (marker
+renamed to another run or package, marker copied from another root,
+marker from another product version, malformed executionId, record from
+another execution, record with a bindingDigest differing from the marker,
+record whose binding names another run, package, root or principal, record
+digest altered), each -> 4 with no broker call; forged pid/start time;
+stale boot; deleted record and deleted attempt (broker REPLAY); RECONCILE
+without opt-in; the INPUT_MISMATCH not-found path; sudo absent at 3f and
+removed between 3f and 6b.
 
 ### 20.5 Trust-boundary data map
 
@@ -3156,14 +3487,15 @@ durable terminal -> release/reconcile) crosses these boundaries:
 | enrollment.json | Operator | root:root 0600 | Broker C1a.3 | Strict JSON §5.2 | §5.2 mapping |
 | compatibility.json | Operator (release record) | root:root 0644, PP | Client advisory; broker C1a.3 + C7 | Canonical; execution-compatibility:v1 | INCOMPATIBLE 5 |
 | enrollment-public.json | Operator | root:root 0644, PP | Client advisory; broker C7-PV byte equality | Canonical; no own digest | INELIGIBLE 5 |
-| Fingerprint member bytes | Target repository (runner) | Runner-owned | Client step 6; broker C7 and P1S on dR | Raw sha256; execution-fingerprint:v1 | 4 pre-reservation; PRESUBMIT_FAILURE 7 |
+| Fingerprint member bytes | Target repository (runner) | Runner-owned | Client §20.4.5 step 4c; broker C7 and P1S on dR | Raw sha256; execution-fingerprint:v1 | 4 pre-reservation; PRESUBMIT_FAILURE 7 |
 | Stage 4 evidence | Runner output dir | Runner-owned | Client §8.1; broker §4.3 item 3 | Existing Stage 4 domains | 4 |
-| Config execute block | Target repository | Runner-owned | Client step 3 | Strict JSON | 3 |
-| SUT values | Client environment | Process memory, socket, memfd | Client step 8; broker item 5 | Never hashed or persisted | 3 / broker refusal |
+| Config execute block | Target repository | Runner-owned | Client §20.4.5 step 2a | Strict JSON | 3 |
+| SUT values | Client environment | Process memory, socket, memfd | Client §20.4.5 step 2b; broker item 5 | Never hashed or persisted | 3 / broker refusal |
 | Broker frames | Broker | Socket | Client §7.2 | §11.3 | 7 |
 | Result proposal | Client | Socket | Broker §7.2/§9.4 | §11.2 | RESULT_INVALID 7 |
 | Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
-| Record copy / attempt marker | Client | Runner-owned | Client (digest/binding) | automation-execution-record:v2 | Not authority; 4 on corruption |
+| Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4 |
+| Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
 
 No implicit trust transfer: every datum the client reads from a root-owned
 file is advisory and is recomputed or byte-compared by the broker from its
@@ -3178,7 +3510,15 @@ the exact sudoers Defaults line; the compiled literal /usr/bin/sudo; adapter
 mandatory member lists; the brokerBuild format; source path
 native/qa-agent-controller-v1/; config schemaVersion 2 with the execute
 block; the execute command spec; client files QaAgentExecutionClientAttempt
-v1 and the record copy; CLI reason codes EXECUTE_SUT_ENVIRONMENT_INVALID,
+v1 (with the product key) and the record copy; local-state
+classifications NONE, BOUND_RECORDED, BOUND_LIVE, BOUND_RECONCILABLE,
+INVALID and checks M1–M5/R1–R5 (client-internal, not output values); the
+§20.0.1 runner disposition table; the sudo topology invariant T1–T5 and the
+log_exit_status Defaults entry; procedure literal od06-q-enum-v1 and its
+evidence record; exact zbus 5.13.2; exact Rust 1.85.0 toolchain pins; the
+rust-lld linker rule; native/qa-agent-controller-v1/build-env.digest and the
+exact build environment and RUSTFLAGS; CLI reason codes
+EXECUTE_SUT_ENVIRONMENT_INVALID,
 EXECUTE_PLATFORM_UNSUPPORTED, EXECUTION_BINDING_MISMATCH,
 EXECUTE_INCOMPATIBLE, EXECUTE_RUNNER_NOT_ELIGIBLE,
 EXECUTION_FINGERPRINT_MISMATCH, EXECUTE_BROKER_UNAVAILABLE,
@@ -3194,8 +3534,14 @@ caller authentication, the public view read, the C7-PV comparison, the Rust
 broker, the CLI grammar, config v2 and the client state files are kernel-
 or broker-side checks, data reads and CLI parsing. They add no import or
 call edge to either approval gate, #23F, apply.js, gate symbols or legacy
-execution; the §10 proposed graph is unchanged. No closure, re-rating or
-remediation.
+execution; the §10 proposed graph is unchanged. C1 revalidation: the
+od06-q-enum-v1 qualification tooling is operator-run and outside the
+product import graph; the §20.4.5 reorder, the §20.4.7 M/R identity checks,
+the sudo topology invariant, the exact build environment and the zbus pin
+are CLI ordering, local data reads, qualification observations and native
+build inputs; none adds an import or call edge to either approval gate,
+to #23F, apply.js, gate symbols or legacy execution. Current trigger FALSE;
+proposed trigger FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -3214,18 +3560,28 @@ CARRIED TO STAGE 5**. Design linkage only, no closure claim:
 ### 20.7 Qualification boundary and STOP conditions
 
 Design-specified: every mechanism in §20.1–§20.4. Still requiring real
-Linux evidence on the exact tuple: sudo no-pty descriptor pass-through and
-signal relay; SO_PEERCRED values observed at the broker; ProcessFD from the
-bus; a reproducible static build; zbus behaviour against the qualified
-systemd; canonical-encoding equivalence; adapter membership sets; every §12
-and §20 negative vector. Nothing here is runner certification.
+Linux evidence on the exact tuple: the §20.2.4a T1–T5 sudo topology
+(forked sudo parent, descriptor pass-through) and signal relay; SO_PEERCRED
+values observed at the broker; ProcessFD from the bus through zbus 5.13.2;
+a reproducible static build under §20.3.4; zbus behaviour against the
+qualified systemd; canonical-encoding equivalence; od06-q-enum-v1 output
+and its determinism for each adapter version; every §12 and §20 negative
+vector. Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
-sudo build does not pass fds 0/1 through or allocates a pty under §20.2.3;
-the client's Node build does not yield socketpair stdio; the reference
-host's bus lacks ProcessFD; a reproducible static build is not achievable;
-a dependency outside the §20.3.4 allowlist becomes necessary; Q cannot be
-enumerated for an adapter version; or any TSB-F02 edge would become TRUE or
+sudo build, PAM stack and plugin set cannot satisfy T1–T5 under §20.2.3
+(sudo direct-execs the broker, does not pass fds 0/1 through or allocates a
+pty); the client's Node build does not yield socketpair stdio; the
+reference host's bus lacks ProcessFD; zbus 5.13.2 cannot deliver ProcessFD
+through the blocking API on the reference host; a reproducible static build
+is not achievable with the §20.3.4 environment (including a link failure
+with the pinned rust-lld, which is never answered by falling back to a host
+linker); a dependency outside the §20.3.4 direct allowlist, or a transitive
+crate that fails the transitive controls, becomes necessary; Q cannot be
+enumerated for an adapter version under od06-q-enum-v1 (including any
+limit, unsupported construct or config-closure completeness failure); the
+§20.4.5 order cannot be implemented without departing from the
+productization §10.7 tie rule; or any TSB-F02 edge would become TRUE or
 INDETERMINATE.
 
 ### 20.8 Delivery boundary
@@ -3237,3 +3593,36 @@ independent exact-head HEAVY Security review on the same HEAD; then separate
 Product Owner acceptance and merge authorization. Merge NOT AUTHORIZED;
 Stage 5 implementation NOT AUTHORIZED; execute DISABLED; Controlled Release
 NOT APPROVED.
+
+### 20.9 Architecture corrective C1 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C1 — APPROVED. Reviewed
+HEAD de37be62c16daf10413736cb489efc11abc4ff60 (tree
+ec55590fbc24917f9ba4a57ee6813fd25ce9a441, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c); independent HEAVY Architecture
+result CHANGES REQUIRED, 0 MAJOR / 7 MINOR / 11 INFO. C1 is documentation
+only, this file only, and resolves exactly the seven MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-m01 sudo parent topology | The unconditional fork claim is removed; the upstream direct-exec conditions are stated; log_exit_status is added as a forcing input only; the closed T1–T5 qualification invariant makes any direct-exec, interposition or unqualified change INELIGIBLE; runtime C1a.4 refuses a direct-exec topology; no environment fallback; SO_PEERCRED unchanged | §20.2.3, §20.2.4, §20.2.4a, §20.2.6, §20.7 |
+| ARCH-S5-m02 Q enumeration | Closed procedure od06-q-enum-v1: producer, time, fixed Node parameters, literal entrypoints, edge grammar, CommonJS/ESM resolution of the exact Node version, member kinds, dynamic and unresolved boundaries, config-closure completeness, link/mount rules, set semantics, limits, persistence and requalification triggers | §20.0, §20.1.4, §20.1.4a, §20.1.8, §20.7 |
+| ARCH-S5-m03 reproducible build | Exact Rust 1.85.0 toolchain with component hashes; rust-lld from the pinned toolchain as the only target linker; one OCI build image pinned by digest; fixed paths, environment, RUSTFLAGS and path remaps (source, registry, rustup, target); no build ID or host metadata; two-host plus third-party verification; non-reproducible -> release qualification BLOCKED | §20.3.4, §20.3.7, §20.7 |
+| ARCH-S5-m04 zbus contract | Exact zbus 5.13.2, with the ProcessFD surface verified in the published sources (absent through 5.5.0); direct allowlist separated from the Cargo.lock transitive closure, which truthfully includes tracing and the async-io set; explicit transitive controls | §20.3.3, §20.3.4, §20.3.7, §20.7 |
+| ARCH-S5-m05 runner dispositions | §3 rows added to the §20.0 supersession table; §20.0.1 assigns each §3 DEFERRED class exactly one of DEFERRED, REFUSED, QUALIFICATION-ONLY or SUPPORTED (named reference target only); §3 text kept as history | §20.0, §20.0.1 |
+| ARCH-S5-m06 validation precedence | §20.4.5 follows productization §10.7 usage -> config -> authority -> input -> provider -> execution with no exception; CREATE-only steps are applicability rules decided at 3c; release-disabled invariant preserved without reordering; simultaneous-failure pairs tested; numeric taxonomy unchanged | §20.4.5, §20.4.6, §20.4.8, §20.4.9 |
+| ARCH-S5-m07 local-state identity | Marker gains product; M1–M5 bind the marker to run, package, current root digest, product and grammar; R1–R5 bind the record to the marker, its bindingDigest, run, package, root, product and principal; copied, restored, foreign or stale state is INVALID (existing exit 4 code); broker tombstones stay authoritative | §20.4.7, §20.4.9, §20.5 |
+
+The 11 INFO findings are preserved on the review record: none is closed,
+absorbed, re-rated or converted into scope by C1. No INFO-driven
+clarification was needed to make m01..m07 correct. Unchanged: execute
+DISABLED; Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW /
+CONDITIONAL with current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5
+OPEN / PRESERVED / CARRIED TO STAGE 5; process-lifecycle containment only;
+R-1..R-5; AT-07/TB-01; FUTURE guards; Stage 4 semantics; TAP-2; CRS-1;
+PPI-1; #23F; both approval gates; the broker create/reconcile architecture;
+the DG-1..DG-4 selected options. No new exit code, broker frame, journal
+state, record reason, refusal enum or hash domain. Next: independent
+exact-head HEAVY Architecture re-review of the C1 HEAD; only if APPROVED,
+independent exact-head HEAVY Security review; then separate Product Owner
+design acceptance. Merge NOT AUTHORIZED.
