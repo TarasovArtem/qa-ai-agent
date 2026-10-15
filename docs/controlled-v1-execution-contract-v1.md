@@ -2412,10 +2412,16 @@ only the sentences listed here, and only as stated:
 | §8.2 "exact qualified executable JS/reporter closure", "profile-enumerated static config imports" (producer and algorithm unspecified) | §20.1.4a closed enumeration procedure od06-q-enum-v1 |
 | §11.2 "Fixed protected paths", the pointer, transaction, claim, tombstone and incident locations, and the §11.3 record location (layout unspecified) | §20.3.8 closed layout od06-journal-layout-v1 (C6): classes S0–S13, write discipline and cross-object relations K1–K7; schemas unchanged |
 | §7 "Recoverable transaction ... Partial intent blocks root" (recovery direction and resolver unspecified) and §5.6.4 R4 "Protected-store transaction recovery" | §20.3.8 recovery matrix (C6): an uncommitted INTENT is always rolled back, by CREATE C5 or by any RECONCILE R4, with or without the enrollment enabled flag |
-| §7.4 S0 broker-crash cell "Partial INTENT recovered by next P1" | §20.3.8: rolled back by the next CREATE C5 or by any RECONCILE R4 |
+| §7.4 S0 broker-crash cell "Partial INTENT recovered by next P1" | §20.3.8: rolled back by the next CREATE C5 or by any RECONCILE R4, and authoritatively at CREATE C7 AL2–AL3 (C7) |
 | §7.4 S6 broker-crash cell "release recovered by next P1", §6.4 P6 row "release failure: claims retained, next P1", §7 "crash during release recovered before admission" and §5.6.3 "leaves the leaf for the next P1" | §20.3.8: finished by the next CREATE C5 or by RECONCILE R6/R7 of that executionId, with or without the enrollment enabled flag; outcome never rewritten |
 | §5.6.4 R7 "Terminal commit and claim release per §7" for an attempt whose terminal outcome is already committed (unspecified) | §20.3.8: no new entry or record; only the remaining release steps |
 | §7 "short runner admission lock", "per-attempt operation locks" and "runner quarantine" (representation unspecified) | §20.3.8 non-record state: kernel advisory locks on fixed directory descriptors, no lock file; runner quarantine derived, no stored object |
+| §7 "short runner admission lock serializes namespace/reservation only" and the §20.3.8 (C6) "under the admission lock" texts (acquisition point, rescan and span unspecified) | §20.3.8 admission commit lock protocol AL0–AL7 (C7): acquired immediately before the reservation mutation; rescan, T-class recovery and conflict re-checks under it; held continuously from the INTENT through the durable COMMITTED rename; never held across a manager, client or lifecycle wait |
+| §11.2 "ambiguous/missing/temp/unknown files quarantine" and the §20.3.8 (C6) class D treatment of "S5 present" and "an entry above the pointer" | §20.3.8 A-RES rule (C7): an entry above the pointer, a pointer staging file or a terminal-commit object that the durable S4 head proves uncommitted, and that is an exact prefix of one candidate transition, is rolled back crash-idempotently; every other temporary, ambiguous or unknown file stays class D |
+| §7 QUARANTINED row "separate incident may clear quarantine", §7 "Already quarantined retains claims until separate operator incident resolution", §5.6.3 "keep their leaf until operator incident resolution", §11.2 "resolvedAt+cleanup null until operator recovery" and "Resolution appends immutable revision", and the §20.3.8 (C6) resolution revision 00000001, "resolved incident" and claim-release-on-resolution texts | §20.3.8 "Incident resolution in Controlled-v1" (C7, owner decision C7-03): UNSUPPORTED_IN_CONTROLLED_V1; QUARANTINED is durable and fail-closed; the base incident is immutable with resolvedAt and cleanup null; claim and leaf are retained; any resolution workflow is FUTURE and separately authorized |
+| §7 "later inconsistency separate quarantine incident, not success rewrite" and §7.4 S6 "ambiguity incident" (producer unspecified) | §20.3.8 K5 (C7): no Controlled-v1 broker path writes an incident for a head that is not QUARANTINED; an inconsistency of a committed terminal attempt is class D (runner quarantine); the committed outcome is never rewritten |
+| §20.4.2 "--execution <id> selector — Rejected", §20.4.6 "executionId ... is never a CLI input", and the §20.3.8 (C6) "no new command or flag", record-copy removal and producer-less raw §4.2 reconcile frame texts | §20.4.10 (C7, owner decision C7-02): the single recovery-only command `qa-agent reconcile --execution <executionId> [--json]`, which always sends the existing RECONCILE request, independent of local client state |
+| The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
 classifications; AT-07/TB-01 RESIDUAL; FUTURE guards OPEN; Stage 4
@@ -2425,7 +2431,9 @@ OP-06-02/OP-06-03; the §4.2 request, §7.2 frames, §7 states, §9.3 exits,
 sentence ("may physically be a VM"); the productization §10.7 exit taxonomy
 and its pipeline tie rule, which §20.4.5 follows without exception. No new
 exit code, broker frame, journal state, record reason, refusal enum or hash
-domain is introduced. New closed values are listed in §20.6.
+domain is introduced. C7 adds exactly one recovery-only CLI command with its
+one value flag (§20.4.10) and no broker operation. New closed values are
+listed in §20.6.
 
 #### 20.0.1 Runner disposition after §20 (supersedes the §3 DEFERRED row)
 
@@ -3430,7 +3438,9 @@ F1 Writable objects.
   files 0600, link count 1). The structural classes S0, S1, S2 and S12
   are checked that way only and are never evidence. The staging classes
   S5 and S7 are never permitted at quiescence: a present staging file is
-  INELIGIBLE and is classified by §20.3.8 (S5 class D, S7 class T-B).
+  INELIGIBLE and is classified by §20.3.8 (S5 class A-RES when it is the
+  exact pointer candidate of an uncommitted entry n+1, otherwise class D;
+  S7 class T-B; C7).
   Every other class is record evidence and is parsed with its exact
   schema (JR3, JR4). There is no catch-all class: a temporary, unknown or
   unclassifiable entry, an entry in an unexpected place (including a name
@@ -4171,38 +4181,51 @@ name, cgroup path and timing all match). Eligible if every other
 predicate passes: a terminal attempt with intact history and no retained
 unit; and a retained inactive or failed unit of a terminal or QUARANTINED
 attempt with an empty cgroup, intact history and a durable binding that
-matches the live unit (accepted by QZ4). C6 layout and recovery vectors.
-INELIGIBLE for the run but recoverable, each followed by the existing
-RECONCILE of the named executionId with enrollment disabled and then a
-new run that passes if every other predicate passes: an INTENT with
+matches the live unit (accepted by QZ4). C6 layout and recovery vectors,
+as amended by C7. INELIGIBLE for the run but recoverable, each followed by
+`qa-agent reconcile --execution <ID>` (§20.4.10) of the named executionId
+with enrollment disabled and with no marker, an INVALID marker,
+BOUND_RECONCILABLE and BOUND_RECORDED client state in turn and no local
+file removed, and then a new run that passes if every other predicate
+passes: an INTENT with
 every companion (T-A); an INTENT alone, and an INTENT with each proper
 subset of its companions (T-B, T-C); an INTENT beside
 `transactions/<ID>.json.next` holding its COMMITTED form (T-B); an
-incomplete COMMITTED attempt (A-INC); a record, and an incident base,
-left beside an OBSERVED head by an interrupted terminal commit (A-RES);
-a PASSED attempt whose live claim is still present after a P6 release
-failure (A-REL, also with BOUND_RECORDED client state after only the
-record copy is removed). INELIGIBLE, class D: two INTENT transactions;
+incomplete COMMITTED attempt (A-INC); a PASSED attempt whose live claim
+is still present after a P6 release failure (A-REL). C7 A-RES crash
+probes, each with an incomplete head n: entry n+1 linked with no pointer
+update; entry n+1 and `current.json.next` naming it; a record only; a
+record and the terminal entry n+1; a record and an empty
+`incidents/<ID>`; a record and the incident base; record, incident base
+and terminal entry n+1; a terminal entry n+1 with `current.json.next`.
+Each is also run with the broker killed after every A-RES removal step
+(before and after that step's directory fsync) and RECONCILE re-run after
+every crash point. Every case converges to head n with no residue, and S4
+and entries 0..n are byte-unchanged throughout. INELIGIBLE, class D: two INTENT transactions;
 an INTENT whose claim or tombstone key holds an object of another
 executionId; an INTENT companion with a different bindingDigest; a
 COMMITTED transaction without its attempt directory, and an attempt
 directory without a transaction; a missing, third or mismatched
 tombstone, and a tombstone whose key differs from its file name; a claim
 naming no attempt; a second claim naming the same executionId; a
-QUARANTINED head with an unresolved incident and no claim; a QUARANTINED
-head without an incident base; a resolved incident whose claim remains;
-a terminal head without a record, two records for one executionId, and a
-record naming no attempt; a recordDigest that does not recompute; a head
+QUARANTINED head without its claim; a QUARANTINED head without an
+incident base; an incident revision `00000001.json` (resolution, C7) or
+`00000002.json`; a base with non-null resolvedAt or cleanup; an incident
+beside a committed PASSED, TEST_FAILED, TIMED_OUT or EXECUTION_ERROR head
+(C7); an empty `incidents/<ID>` with no record, or one holding an
+unknown file; a terminal head without a record, two records for one
+executionId, and a record naming no attempt; a recordDigest that does
+not recompute; a head
 outcomeDigest different from recordDigest; a record whose status,
-binding, controller, timeline or cleanup differs from the head; an
-incident revision 00000002; `attempts/<ID>/current.json.next`; an entry
-above the pointer; any lock, layout-marker or metadata file, and any
+binding, controller, timeline or cleanup differs from the head; a
+`current.json.next` that is not the pointer candidate of entry n+1, or
+that exists without entry n+1; two entries above the pointer; an entry
+above a terminal or QUARANTINED head; a record beside a non-terminal
+entry n+1; any lock, layout-marker or metadata file, and any
 file outside the S0–S13 grammars; a fixed directory with mode 0755.
 Eligible: a CLEAN store of terminal attempts, each with its COMMITTED
-transaction, two tombstones and record; a QUARANTINED attempt with an
-unresolved incident and its retained claim; a QUARANTINED attempt with a
-resolved incident and no claim; a terminal attempt with a
-later-inconsistency incident and no claim. Every case is detected by
+transaction, two tombstones and record; a QUARANTINED attempt with its
+immutable base incident and its retained claim. Every case is detected by
 PS-A–PS-F at verification or requalification, never by C1a.
 
 ### 20.3 DG-3 — native broker, build, distribution and Linux host
@@ -4840,6 +4863,21 @@ version, driver, exporter option or attestation setting -> new
 build-environment qualification; SOURCE_DATE_EPOCH or a build argument
 present in the client environment -> not a qualified build.
 
+C7 admission commit lock vectors (§20.3.8 AL0–AL7): two concurrent
+CREATEs for distinct roots and for the same root, with the broker paused
+at each AL6 step, so that the other waits at AL1 and then, under its own
+hold, observes either no INTENT (after COMMITTED) or a dead holder's
+INTENT and rolls it back before creating its own. At no observed instant
+does S hold two INTENTs. A holder killed at each AL6 step leaves at most
+its single INTENT, which the next CREATE at AL2–AL3 and the next
+RECONCILE at R4 (1) roll back. A CREATE or RECONCILE that finds an INTENT
+while another live broker holds the lock never touches it (blocked at
+AL1). A claim, run tombstone or package tombstone of the current INTENT
+seen by a waiting broker never yields REPLAY or a root refusal after that
+INTENT is rolled back. A stray claim or tombstone with no INTENT or
+COMMITTED transaction is class D at AL4. A long Cases A–H wait in C5
+holds no admission commit lock (another CREATE reaches AL6 meanwhile).
+
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
 This subsection is the single normative layout of the broker protected
@@ -4850,7 +4888,10 @@ schema, schema version, record reason, broker frame, exit code, refusal
 enum, hash domain, CLI command or flag, broker operation or maintenance
 service. Every class below is an object that §§5–7 and §11.1–§11.3 already
 require, and every recovery action is a step of the existing CREATE C5 or
-RECONCILE R4–R7 (§5.6.4).
+RECONCILE R4–R7 (§5.6.4) or, for the T rows, of the CREATE C7 admission
+commit lock protocol (C7). C7 makes this recovery product-reachable
+through the §20.4.10 command, which selects the existing RECONCILE
+operation; that command is the only CLI addition.
 
 Layout identity. The layout is identified by the single closed literal
 `od06-journal-layout-v1`. It is a compiled constant of the broker for
@@ -4864,15 +4905,20 @@ recorded only as journal.layout in QaAgentControllerPrivilegeSurface v1
 (§20.2.7). Any change to a class, path, schema or relation below is a new
 reviewed layout literal, a new broker build and therefore a new §5.4
 record and requalification; never an in-place compatibility rule. No new
-hash domain is introduced for it.
+hash domain is introduced for it. C7 changes S3, S5, S8, S12, S13, K1, K3,
+K5 and the recovery matrix while no broker build exists and nothing has
+been qualified under the literal, so C7 amends the proposed literal
+od06-journal-layout-v1 itself (the C5 precedent for od06-priv-surface-v1,
+§20.13); the new-literal rule above binds from the first reviewed broker
+build and is not engaged.
 
 Inventory. The durable protected objects required by §§5–7 and
 §11.1–§11.3 are: attempt entries and their current pointer (§11.2); the
 reservation transaction and its companions "PREPARED/claims/tombstones/
 data/directories" (§7, §11.2); the live root claim (§7, §11.2); the two
 consumed tombstones (§7, §11.2); AutomationExecutionRecord v2 (§7.3 step
-9, §11.3); the incident and its resolution revision (§7.2 QUARANTINED,
-§11.2). Also referenced, with no stored object of their own (see
+9, §11.3); the incident, which in Controlled-v1 is its immutable base
+revision only (§7.2 QUARANTINED, §11.2; C7). Also referenced, with no stored object of their own (see
 "Non-record state"): the admission and per-attempt operation locks (§7),
 runner quarantine (§5.4, §7, §7.4) and crash/boot history (§5.2, §6.3).
 
@@ -4890,17 +4936,17 @@ only.
 | S0 store root | `.` (S itself) | Directory | Operator install (§5.2, §5.3) | Exactly one | Never removed by the broker (§5.3 retains history) | — | Structural |
 | S1 fixed directories | Exactly `attempts`, `transactions`, `claims`, `tombstones`, `tombstones/run`, `tombstones/package`, `records`, `incidents` | Directory | Broker, mkdirat immediately before the first object of its class is written, under the lock held for that write, parent fsynced | At most one each; absent means the class is empty | Never | — | Structural |
 | S2 attempt directory | `attempts/<X>` | Directory | Broker, reservation step 2 | At most one per X; exists iff `transactions/<X>.json` exists (K1) | Only by T rollback | X = transaction executionId | Structural |
-| S3 attempt entry | `attempts/<X>/<s>.json`, s ^[0-9]{8}$ | QaAgentExecutionAttempt v1 (§11.2) | Broker: entry 0 at reservation step 3 (PREPARED, NOT_SENT); entry n+1 at each §7 transition | Entries 0..n, contiguous, n < 1024 | Never; entry 0 only by T rollback | executionId = X; sequence = s | Evidence (JR3) |
+| S3 attempt entry | `attempts/<X>/<s>.json`, s ^[0-9]{8}$ | QaAgentExecutionAttempt v1 (§11.2) | Broker: entry 0 at reservation step 3 (PREPARED, NOT_SENT); entry n+1 at each §7 transition | Entries 0..n, contiguous, n < 1024 | Never; entry 0 only by T rollback; an entry n+1 above the pointer only by A-RES rollback (C7) | executionId = X; sequence = s | Evidence (JR3) |
 | S4 current pointer | `attempts/<X>/current.json` | Exactly {executionId, sequence, journalDigest} (§11.2) | Broker: reservation step 4 (create-only), then replaced through S5 after every new entry | Exactly one per S2 once written; no other head file | Only by T rollback | executionId = X; sequence = highest n; journalDigest = entry n's | Evidence (head selector, JR3) |
-| S5 pointer staging | `attempts/<X>/current.json.next` | The next S4 value | Broker, inside one invocation holding X's operation lock, immediately renamed over S4 | Zero outside a live broker invocation | Consumed by the rename | Names entry n+1 | Never at quiescence: INELIGIBLE; class D (§11.2 temp rule, unchanged) |
-| S6 transaction | `transactions/<X>.json` | Transaction (§11.2) {schemaVersion 1, executionId, rootKey, consumedKeys, bindingDigest, phase} | Broker: reservation step 1 (INTENT, create-only); step 9 (COMMITTED, replaced through S7) | EXACTLY ONE per consumed attempt (phase COMMITTED); at most one INTENT in all of S (the admission lock serializes reservations) | COMMITTED: retained permanently, never removed; INTENT: only as the last step of T rollback | executionId = X; rootKey = RootKey of binding.root; consumedKeys = the two §11.2 consumed keys of the binding, fixed order; bindingDigest = binding.bindingDigest | Evidence (JR4) |
+| S5 pointer staging | `attempts/<X>/current.json.next` | The next S4 value | Broker, inside one invocation holding X's operation lock continuously from entry n+1 through the rename (C7), immediately renamed over S4 | Zero outside a live broker invocation | Consumed by the rename, or by A-RES rollback (C7) | Names entry n+1 | Never at quiescence: INELIGIBLE; class A-RES when it is the exact pointer candidate of an uncommitted entry n+1, otherwise class D (C7; §11.2 temp rule otherwise unchanged) |
+| S6 transaction | `transactions/<X>.json` | Transaction (§11.2) {schemaVersion 1, executionId, rootKey, consumedKeys, bindingDigest, phase} | Broker: reservation step 1 (INTENT, create-only); step 9 (COMMITTED, replaced through S7) | EXACTLY ONE per consumed attempt (phase COMMITTED); at most one INTENT in all of S (the admission commit lock serializes reservations, AL0–AL7, C7) | COMMITTED: retained permanently, never removed; INTENT: only as the last step of T rollback | executionId = X; rootKey = RootKey of binding.root; consumedKeys = the two §11.2 consumed keys of the binding, fixed order; bindingDigest = binding.bindingDigest | Evidence (JR4) |
 | S7 transaction staging | `transactions/<X>.json.next` | S6 with phase COMMITTED, every other member equal | Broker, reservation step 8, renamed over S6 at step 9 | Zero outside a live broker invocation | Consumed by the rename, or by T rollback | Equal to S6 except phase | Never at quiescence: INELIGIBLE; class T-B |
-| S8 live root claim | `claims/<k>.json`, k from rootKey | {schemaVersion:1, key, executionId, bindingDigest} (§11.2) | Broker, reservation step 5 | At most one per rootKey (file name) and at most one per executionId; presence fixed by K3 | Non-QUARANTINED terminal: P6 or R7 release; QUARANTINED: when the existing separate incident resolution clears the quarantine (§7); uncommitted INTENT: T rollback | key = transaction rootKey; executionId, bindingDigest = transaction's | Evidence (JR4) |
+| S8 live root claim | `claims/<k>.json`, k from rootKey | {schemaVersion:1, key, executionId, bindingDigest} (§11.2) | Broker, reservation step 5 | At most one per rootKey (file name) and at most one per executionId; presence fixed by K3 | Non-QUARANTINED terminal: P6 or R7 release; QUARANTINED: retained permanently, no Controlled-v1 release path (C7); uncommitted INTENT: T rollback | key = transaction rootKey; executionId, bindingDigest = transaction's | Evidence (JR4) |
 | S9 consumed-run tombstone | `tombstones/run/<k>.json`, k from consumedKeys[0] | Same schema as S8 | Broker, reservation step 6 | EXACTLY ONE per consumed attempt; one per key (file name) | Never (no-retry, §7); only T rollback of an uncommitted INTENT | key = consumedKeys[0] | Evidence (JR4) |
 | S10 consumed-package tombstone | `tombstones/package/<k>.json`, k from consumedKeys[1] | Same schema as S8 | Broker, reservation step 7 | EXACTLY ONE per consumed attempt; one per key | As S9 | key = consumedKeys[1] | Evidence (JR4) |
 | S11 execution record | `records/<X>.json` | AutomationExecutionRecord v2 (§11.3) | Broker, terminal commit step (i) | EXACTLY ONE iff the head is terminal or QUARANTINED (K4) | Never; only A-RES removal of an uncommitted residue | executionId = X; recordDigest = head outcomeDigest | Evidence (JR4) |
-| S12 incident directory | `incidents/<X>` | Directory | Broker, with the base revision | At most one per X | Never; only A-RES removal | X = incident executionId | Structural |
-| S13 incident revision | `incidents/<X>/<r>.json`, r exactly 00000000 (base) or 00000001 (resolution) | QaAgentExecutionIncident v1 (§11.2) | Base: broker, QUARANTINED terminal commit step (ii), or a later-inconsistency incident on a committed terminal attempt (§7, §7.4 S6); resolution: the existing separate incident resolution (§7, §11.2), whose procedure this design does not define or change | Base exactly one per incident; resolution zero or one; the head is the highest present revision; no other ordering or head file | Never; only A-RES removal of an uncommitted base | executionId = X; rootDigest = binding.root.digest | Evidence (JR4) |
+| S12 incident directory | `incidents/<X>` | Directory holding only its S13 base | Broker, QUARANTINED terminal commit step (ii), immediately before its S13 base (C7) | Exactly one per X whose head is QUARANTINED; none for any other head, except A-RES residue (C7) | Never; only A-RES removal of an uncommitted one | X = incident executionId | Structural |
+| S13 incident base | `incidents/<X>/00000000.json`, the only revision name in Controlled-v1 (C7) | QaAgentExecutionIncident v1 (§11.2), resolvedAt null and cleanup null | Broker, QUARANTINED terminal commit step (ii) only (C7: no later-inconsistency or resolution producer exists) | Exactly one per S12; no other revision | Never; only A-RES removal of an uncommitted base | executionId = X; rootDigest = binding.root.digest; reason = the S11 reason | Evidence (JR4) |
 
 Write discipline. A create-only object (S3, the initial S4, the INTENT
 S6, S8–S11, S13) is written into an O_TMPFILE descriptor of its target
@@ -4913,31 +4959,40 @@ directory is fsynced. No other temporary, staging or partial file is ever
 created in S, and none is permitted at qualification quiescence. Orders,
 each step durable before the next:
 
-- Reservation (CREATE C7 reservation commit, under the admission lock):
+- Reservation (CREATE C7 reservation commit, under the admission commit
+  lock held continuously per AL6–AL7, C7):
   1 S6 INTENT; 2 S2; 3 S3 entry 0; 4 S4; 5 S8; 6 S9; 7 S10; 8 S7;
   9 rename S7 over S6 and fsync `transactions`. Step 9 is the reservation
   commit (§6.4 P1S origin, §7.2 ACCEPTED backing). Before it nothing is
   reserved (§7.4 S0).
-- Transition (X's operation lock): S3 entry n+1, then S5 and its rename
-  over S4. The rename is the transition's commit; the backing frame
-  follows it (§7.2).
-- Terminal commit (§7.3 step 9, X's operation lock): (i) S11; (ii) for
-  QUARANTINED only, S12 and the S13 base; (iii) the terminal S3 entry n+1
-  with outcomeDigest = recordDigest; (iv) S5 and its rename over S4,
-  which is the terminal commit; then the TERMINAL or QUARANTINED frame.
+- Transition (X's operation lock, held continuously from the first write
+  to the directory fsync after the rename, C7): S3 entry n+1, then S5 and
+  its rename over S4. The rename is the transition's commit; the backing
+  frame and every manager action that depends on the transition follow
+  its durable commit (§7.2; §4.3 item 7 SUBMITTING before D-Bus; §7
+  ORPHANED before stop).
+- Terminal commit (§7.3 step 9, X's operation lock, held continuously
+  from (i) to the directory fsync after (iv), C7): (i) S11; (ii) for
+  QUARANTINED only, S12 and then the S13 base; (iii) the terminal S3
+  entry n+1 with outcomeDigest = recordDigest; (iv) S5 and its rename over
+  S4, which is the terminal commit; then the TERMINAL or QUARANTINED frame.
 - Release (P6, or R7): the §7.3 step 10 steps, ending with unlink of S8
   and fsync of `claims`; non-QUARANTINED terminal heads only.
 
-Non-record state. The admission lock is flock(LOCK_EX) on the S0
-directory descriptor; the per-attempt operation lock is flock(LOCK_EX) on
-the `attempts/<X>` descriptor. Both are kernel-held, released at process
-exit and never represented by a file; under QZ2 no broker process exists,
+Non-record state. The admission lock (C7: the admission commit lock,
+AL0–AL7 below) is flock(LOCK_EX) on the S0 directory descriptor; the
+per-attempt operation lock is flock(LOCK_EX) on the `attempts/<X>`
+descriptor. Both descriptors are opened O_CLOEXEC and the broker creates
+no child process while holding either lock (C7). Both are kernel-held,
+released at process exit and never represented by a file; under QZ2 no broker process exists,
 so no lock is held, and JR never calls flock. Runner quarantine (§5.4, §7,
 §7.4) has no stored object: it is the fail-closed condition the broker
 re-derives at every invocation from its persisting cause (a class D state
 of S, an unreadable newer schema, an unknown namespace unit, or a storage
 failure re-observed by F2 or a failing fsync), and it ends only by the
-existing operator remediation (§5.3). Crash and boot history is the S3
+existing operator remediation (§5.3). That remediation never clears a
+per-attempt QUARANTINED outcome, its incident or its claim (C7; §5.3
+retains quarantine history). Crash and boot history is the S3
 entries themselves (controller.bootId, timeline). Layout v1 has no
 metadata, version, marker, lock or index file. Any entry of S outside
 S0–S13 is INELIGIBLE for JR and class D for the broker.
@@ -4947,7 +5002,7 @@ the S6 of X has phase COMMITTED.
 
 - K1 Transaction and attempt. For every X, S2 exists iff S6 exists,
   except inside a T-class state. Every S2 holds only S3 entries and S4
-  (and, only inside a live invocation, S5).
+  (and S5 only inside a live invocation or as an A-RES residue, C7).
 - K2 Consumed attempt. Its S3 history passes JR3; S4 names the highest
   entry; binding is identical in every entry; S6 executionId, rootKey,
   consumedKeys and bindingDigest equal the values derived from that
@@ -4958,9 +5013,9 @@ the S6 of X has phase COMMITTED.
   D.
 - K3 Claim. For a consumed X, the S8 at its rootKey, exactly {1, rootKey,
   X, bindingDigest}, MUST exist when the head is incomplete (PREPARED,
-  SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED, ORPHANED) and when the
-  head is QUARANTINED with an unresolved incident; it MUST NOT exist when
-  the head is QUARANTINED with a resolved incident. When the head is
+  SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED, ORPHANED) and whenever
+  the head is QUARANTINED (C7: retained permanently; Controlled-v1 has no
+  incident resolution and no QUARANTINED release). When the head is
   terminal and not QUARANTINED it is absent (normal) or present
   (RELEASE-PENDING, class A-REL: the only state in which a
   non-QUARANTINED terminal attempt holds its claim, §7.4 S6). Every S8
@@ -4983,19 +5038,17 @@ the S6 of X has phase COMMITTED.
   require non-null cleanup; QUARANTINED permits null cleanup (§11.3).
   Head incomplete ⇒ no S11, except the A-RES residue. Missing, duplicate
   or mismatched record, or a record naming no attempt: class D.
-- K5 Incident. Head QUARANTINED ⇒ exactly one S13 base with executionId
-  X, rootDigest = binding.root.digest, reason = the S11 reason, createdAt
-  UTC, resolvedAt null and cleanup null. Head terminal and not
-  QUARANTINED ⇒ zero or one base (a later-inconsistency incident), with
-  the same rules except that reason is one of those four §11.3
-  QUARANTINED reasons and need not equal the record reason. A resolution
-  revision,
-  if present, equals its base in every member except resolvedAt (UTC, not
-  before createdAt), cleanup (a non-null §11.1 cleanup) and
-  incidentDigest; "resolved" means it is present. Head incomplete ⇒ no
-  incident, except an A-RES base residue (never a resolution revision).
-  A missing required base, a revision other than 00000000/00000001, a
-  resolution without a base, or an incident naming no attempt: class D.
+- K5 Incident (C7). Head QUARANTINED ⇒ exactly one S12 holding exactly
+  one S13 base `00000000.json` with executionId X, rootDigest =
+  binding.root.digest, reason = the S11 reason, createdAt UTC, resolvedAt
+  null, cleanup null and an incidentDigest that recomputes. Head terminal
+  and not QUARANTINED, or head incomplete ⇒ no S12 and no S13, except an
+  A-RES residue of an incomplete head. Controlled-v1 has no resolution
+  revision and no later-inconsistency incident, because no broker path
+  produces either. A missing or second base, any other revision name
+  (including 00000001), a non-null resolvedAt or cleanup, an incident of
+  a committed head that is not QUARANTINED, an S12 holding anything other
+  than its base, or an incident naming no attempt: class D.
 - K6 INTENT. At most one S6 has phase INTENT. Its companions are the
   objects of reservation steps 2–8 that carry its executionId X. A
   present companion matches only if it is exactly what that step writes:
@@ -5016,15 +5069,16 @@ unit names, cgroups, client state or caller hints.
 
 | Class | Exact condition | Resolver (enrollment enabled or not) | Disposition |
 |---|---|---|---|
-| T-A complete INTENT | The single INTENT, structurally valid, with every K6 companion present and matching | Any RECONCILE R4; CREATE C5 | Roll back |
+| T-A complete INTENT | The single INTENT, structurally valid, with every K6 companion present and matching | Any RECONCILE R4 (1); CREATE C5 (1) and, authoritatively, CREATE C7 AL3 (C7); always under the admission commit lock | Roll back |
 | T-B torn or partial INTENT | The single INTENT, structurally valid, with any K6-consistent subset of its companions, including S7 | As T-A | Roll back |
 | T-C INTENT without attempt | T-B with no S2, S3 or S4 (a valid pre-PREPARED crash state) | As T-A | Roll back |
 | A-INC incomplete consumed attempt | K2 holds, head incomplete, K3 claim present | RECONCILE(X) R4–R7; CREATE C5 pre-create reconciliation | §7 Cases A–H to a terminal or QUARANTINED commit |
-| A-RES uncommitted terminal residue | K2 holds, head incomplete, and an S11 and/or an S12 with its S13 base that are valid, name X, carry the attempt binding and recompute, with no resolution revision | RECONCILE(X) R4; CREATE C5 for each attempt it reconciles | Remove the residue (S13 base, S12, S11; each unlink then parent fsync) under X's operation lock, then A-INC |
+| A-RES uncommitted residue (C7) | K2 holds for X, the head n named by S4 is incomplete with entries 0..n chain-complete (JR3), and the objects of X beyond that committed state form a non-empty exact prefix of one candidate transition P or F of the A-RES rule below | RECONCILE(X) R4 (3); CREATE C5 for each attempt it reconciles | A-RES rollback under X's operation lock back to durable head n, then A-INC |
 | A-REL release pending | K2, K4 and K5 hold, head terminal and not QUARANTINED, K3 claim present | RECONCILE(X) R6/R7; CREATE C5 | Remaining release steps only |
-| D corrupt or unknown | Anything else: an INTENT whose own schema, digests or keys are invalid; two INTENTs; a companion mismatching its INTENT; an INTENT key already holding another executionId's claim or tombstone; S5 present; an entry above the pointer; a broken K1–K5 relation; any K7 object | None automatic | CREATE C5: REFUSED/INELIGIBLE exit 5 before reservation; RECONCILE R4: REFUSED/INELIGIBLE, no write and no manager action; runner quarantine until the existing operator remediation (§5.3, §7); JR INELIGIBLE |
+| D corrupt or unknown | Anything else: an INTENT whose own schema, digests or keys are invalid; two INTENTs; a companion mismatching its INTENT; an INTENT key already holding another executionId's claim or tombstone; an S5, an entry above the pointer, a record or an incident object that is not part of an exact A-RES prefix (C7: for example an S5 that is not the pointer candidate of entry n+1, two entries above the pointer, an S12 without its S11, an S11 beside a non-terminal entry n+1, an entry above a terminal or QUARANTINED head); a broken K1–K5 relation; any K7 object | None automatic | CREATE C5: REFUSED/INELIGIBLE exit 5 before reservation; RECONCILE R4: REFUSED/INELIGIBLE, no write and no manager action; runner quarantine until the existing operator remediation (§5.3, §7); JR INELIGIBLE |
 
-Rollback (T-A, T-B, T-C), under the admission lock: unlink, each only if
+Rollback (T-A, T-B, T-C), under the admission commit lock and from a scan
+made under that same hold (AL2, C7): unlink, each only if
 present and only if it matches (K6), S7, S10, S9, S8, S4, S3 entry 0, S2,
 fsyncing the parent after each, and finally S6, then fsync
 `transactions`. A crash during rollback leaves a T-B or T-C state, and
@@ -5033,13 +5087,162 @@ existing commit point: the reservation exists only from the COMMITTED
 rename (§6.4 P1S origin); ACCEPTED is backed only by COMMITTED (§7.2);
 §7.4 S0 is "nothing reserved"; no SUBMITTING entry, D-Bus call, unit or
 leaf can exist before COMMITTED; and a pre-commit request is
-unconsumed and may be retried (§6.4). Tombstones written under an
-uncommitted INTENT were never consumption: CREATE C5 runs before the C7
-REPLAY check, so no admission decision ever reads them. Rollback
+unconsumed and may be retried (§6.4). The claim and tombstones written
+under an uncommitted INTENT were never consumption (C7 replaces the C6
+claim that admission never reads them). Admission does read them, but
+only under the admission commit lock (AL2–AL4) and only through the
+closed T-A/T-B/T-C relations, which roll them back before the AL5
+conflict check; before COMMITTED they are never consumption-authoritative,
+and a claim or tombstone that cannot be proven to belong to the single
+INTENT or to a COMMITTED transaction is class D (fail closed). Rollback
 therefore weakens no no-retry rule, and committed tombstones (K2) are
 never removed.
 
-R4 and C5 order. R4 is, after R1a–R3: (1) under the admission lock, the
+A-RES rule (C7, crash-idempotent). Committedness of an attempt's objects
+is decided only by its durable head, never by object existence: for X
+with S4 naming entry n, the committed objects are S4, entries 0..n and
+the objects K1–K5 require for head n. Nothing else of X is committed,
+whatever exists. When head n is incomplete, the write orders above allow
+exactly two candidate transitions, each an ordered list:
+
+- P, a non-terminal transition: P1 S3 entry n+1; P2 S5.
+- F, a terminal commit: F1 S11; F2 S12 and F3 its S13 base, both only
+  when the S11 status is QUARANTINED; F4 S3 entry n+1; F5 S5.
+
+The uncommitted objects of X are A-RES residue only when they are exactly
+a non-empty prefix of P or of F (F2 and F3 omitted from the list when the
+S11 status is not QUARANTINED), and every present object corresponds
+exactly:
+
+- Entry n+1: file name and sequence n+1; executionId X; previousDigest =
+  entry n's journalDigest; journalDigest recomputes; binding identical;
+  state an allowed §7 successor of entry n's state, with the JR3 field
+  rules for that state; no entry above n+1 exists. Under P its state is
+  incomplete and no S11, S12 or S13 of X exists. Under F its state equals
+  the S11 status, its outcomeDigest equals recordDigest, and S11 meets K4
+  against it as if it were the head.
+- S11: the K4 schema and recomputing recordDigest; executionId X; binding
+  identical to the attempt binding; a valid §11.3 status/reason pair whose
+  status is an allowed §7 successor of entry n's state.
+- S12 and S13: present only for a QUARANTINED S11 status; S12 holds
+  nothing, or only S13 `00000000.json`; S13 meets K5 against S11.
+- S5: exactly the S4 schema with {executionId X, sequence n+1,
+  journalDigest of entry n+1}.
+
+Every other combination is class D. The case lists close the required
+probes: P1 alone (entry n+1 linked, pointer not updated); P1 + P2; F1
+alone (record only); F1 + F4 (record and terminal entry, non-QUARANTINED);
+F1 + F2 (record and empty incident directory); F1 + F2 + F3 (record and
+incident base); F1 + F2 + F3 + F4; and either list complete up to S5
+(terminal entry and pointer staging). An empty S12 is residue only as the
+F2 end of a prefix with a present QUARANTINED S11, and an S12 holding
+only S13 `00000000.json` only as F2 + F3. An S12 without its S11, beside
+a non-QUARANTINED S11, or holding any other or second file is class D.
+When the head is terminal or QUARANTINED, an entry above the pointer
+or an S5 is class D (a committed terminal head has no successor), and its
+S11, S12 and S13 are committed objects under K4 and K5, never residue.
+
+A-RES rollback runs under X's operation lock, from a scan made under that
+hold. The plan is the present prefix; the broker removes it in reverse
+list order, each step durable before the next: S5 (unlinkat, fsync
+`attempts/<X>`); entry n+1 (unlinkat, fsync `attempts/<X>`); S13
+(unlinkat, fsync `incidents/<X>`); S12 (unlinkat AT_REMOVEDIR, fsync
+`incidents`); S11 (unlinkat, fsync `records`). It then re-reads S4 and
+requires it byte-equal to the value read at classification. It never
+touches S4, entries 0..n, S2, S6, S8, S9, S10 or any object of another
+executionId. Afterwards head n continues as A-INC.
+
+Crash idempotence. Creation and rollback both move along the same list,
+one durable step at a time, and X's operation lock excludes every other
+broker writer of X, so a residue observed by a lock holder was left by a
+process that died. Every state a crash can leave is again a prefix of the
+same list over the same head n. That holds during the original
+transition or terminal commit, during any rollback step, and between an
+unlink and its directory fsync (the object then survives or not). The
+result is either a shorter A-RES residue, which the next RECONCILE(X) R4
+or CREATE C5 rolls back to completion, or the empty prefix: durable head
+n with no residue (A-INC). Repeated recovery therefore converges in at
+most five removals and never moves the head. ENOENT from a planned
+unlinkat, including the AT_REMOVEDIR of a planned S12, means that object
+is already removed. Only an object that S4 proves uncommitted can be
+planned. ENOTEMPTY on S12, or any other error, stops the rollback with
+class D. ENOENT never masks a committed object: committed objects are
+never planned. A missing committed object (an entry 0..n, S4, or for a
+terminal head its S11 or incident base) is a broken K relation, class D
+at classification. No outcome is rewritten: the candidate outcome was
+never committed, and by the write orders no frame and no manager action
+depended on it. No COMMITTED transaction and no committed tombstone is
+touched, and the attempt stays consumed. A rolled-back terminal
+candidate is re-decided by Cases A–H from head n, exactly as §7.4 S5
+already treats a proposal that was not made durable ("a valid PASS is
+lost, never inferred").
+
+Admission commit lock protocol (C7). The admission commit lock is the
+only lock under which an INTENT is created, read for recovery or rolled
+back, and no T-row decision is ever taken from a scan made without it.
+
+- AL0 Without the lock: C1–C6, including the C5 A-INC, A-RES and A-REL
+  work under per-attempt operation locks with its manager waits (Cases
+  A–H), and the non-mutating C7 checks (the §5.4 compatibility/pair part,
+  §4.3 items 3–6 data checks, qualification and launch-size checks).
+- AL1 Immediately before the reservation mutation, CREATE acquires
+  flock(LOCK_EX) on the S0 descriptor (blocking; the wait is inside P1
+  and counted against A).
+- AL2 Under that hold it rescans `transactions`, `claims`,
+  `tombstones/run` and `tombstones/package` completely and, for any
+  INTENT found, its `attempts/<X>`. No earlier scan is reused.
+- AL3 It applies the T rows store-wide. A single INTENT in T-A, T-B or
+  T-C is rolled back under this hold. Any other INTENT state (two
+  INTENTs, a mismatching companion, an invalid INTENT, an INTENT key
+  holding another executionId's object) is class D: the lock is released
+  and CREATE is REFUSED/INELIGIBLE exit 5 with nothing written.
+- AL4 Every remaining claim and tombstone must name an executionId whose
+  S6 is COMMITTED, with the matching rootKey or consumedKeys entry and
+  bindingDigest (the K2/K3 key correspondence). Anything else is class D,
+  refused as in AL3.
+- AL5 Against this scan it re-checks the request's rootKey (an S8 at it:
+  the existing §4.3 item 6 claim refusal), both consumedKeys (an S9 or
+  S10 at either: REFUSED/REPLAY), the §7.1 executionId non-reuse rule (an
+  S2 or S6 for it), the §7 capacity bounds, and remaining A (past it:
+  REFUSED/RECOVERY_BUDGET_EXHAUSTED). Each refusal releases the lock with
+  nothing written.
+- AL6 Only then does it perform reservation steps 1–9 (S6 INTENT, S2,
+  S3 entry 0, S4, S8, S9, S10, S7, rename of S7 over S6, then fsync of
+  `transactions`), holding the lock continuously. The span contains no
+  manager call, client frame or other lifecycle wait.
+- AL7 It releases the lock only after step 9 is durable; the ACCEPTED
+  frame and P1S follow the release. If a step of AL6 fails, the broker
+  rolls its own INTENT back under the same hold and releases only after
+  that rollback is durable. The CREATE is then REFUSED before the
+  reservation commit (§5.6.4). If the rollback also fails, or the
+  process dies, the lock ends with the process and the INTENT stays for
+  the next holder (§7.4 S0: the client gets no REFUSED and exits 7).
+
+The T rows of CREATE C5 (1) and RECONCILE R4 (1) use the same lock:
+AL1, AL2 and AL3, then release. RECONCILE waits for it without a separate
+deadline, because every holder's span contains only bounded
+protected-store I/O (§6.4: a host whose storage stalls fails
+qualification). These earlier holds only make pre-create reconciliation
+start from a store without an INTENT; AL2–AL3 at CREATE C7 are
+authoritative.
+
+At most one INTENT (proof). (a) An S6 INTENT is created only in AL6,
+while holding the lock. (b) AL3 established, under the same continuous
+hold, that no INTENT exists. (c) No other process can create one before
+the holder releases. The holder releases only after its own INTENT is
+COMMITTED or durably rolled back, or by dying, since the descriptor is
+O_CLOEXEC and no child holds it. (d) So whenever the lock is free, no
+live process owns any INTENT in S. The next holder, CREATE at AL2–AL3 or
+RECONCILE at R4 (1), sees that INTENT and rolls it back, or refuses
+(class D), before any new INTENT can exist. The same argument makes T
+rollback safe: an INTENT observed under the lock never belongs to a live
+writer. Claims and tombstones are created only in AL6. While a holder is
+inside AL2–AL6, the set its AL5 check read can therefore only shrink, by
+a P6 or A-REL release of a terminal attempt's claim, and a shrink never
+makes that check unsafe.
+
+R4 and C5 order. R4 is, after R1a–R3: (1) under a hold of the admission
+commit lock with its own rescan (AL1–AL3, then release; C7), the
 T rows of the matrix over the whole store, independent of the requested
 executionId and of attempt ownership, for the single enrolled caller
 authenticated at R1a; (2) lookup of X (absent after (1):
@@ -5048,7 +5251,8 @@ operation lock, the A-RES row for X and K1–K5 for X (class D: refusal as
 above). CREATE C5 performs (1), then (3) and Cases A–H for every
 incomplete attempt it reconciles, and the A-REL release of every
 release-pending claim, before §5.6.4 step C6 (W3 free space, W5
-binding). Neither R1a nor R4 reads the enrollment
+binding). CREATE C7 then runs AL1–AL7, whose AL2–AL3 are the
+authoritative T-row pass (C7). Neither R1a nor R4 reads the enrollment
 enabled flag (§5.6.4 R1a).
 
 R7 for a committed outcome. When RECONCILE(X) finds a head that is
@@ -5061,7 +5265,10 @@ matches the stored controller binding (otherwise skipped); leaf removal
 under R6 (W1, W2, W4; on their failure the leaf stays, §5.6.3, and the
 claim release still proceeds); then unlink of the S8 claim and fsync of
 `claims`. No workload is rerun and no tombstone is touched. For a
-QUARANTINED head the claim is retained (§7). Either way R7 then sends the
+QUARANTINED head R6 does not access the leaf and R7 releases nothing: the
+claim, leaf and incident are retained permanently in Controlled-v1, and
+RECONCILE never clears, downgrades or rewrites the quarantine, recreates a
+workload or retries (C7). Either way R7 then sends the
 committed record in a TERMINAL or QUARANTINED frame (§7.4 S6 "reconcile
 returns it").
 
@@ -5073,10 +5280,13 @@ invokes it; it occurs outside a qualification run:
 2. Enrollment stays disabled (QZ1 is never weakened); CREATE remains
    impossible.
 3. The enrolled account, authenticated by the broker through the exact
-   §20.2.3/§20.2.4 chain (SO_PEERCRED, §20.2.5), invokes the existing
-   RECONCILE operation for the reported executionId. For a T class any
-   reconcilable executionId suffices, because R4 (1) is store-wide; the
-   S0 client holds the INTENT's executionId in its retained marker.
+   §20.2.3/§20.2.4 chain (SO_PEERCRED, §20.2.5), runs
+   `qa-agent reconcile --execution <executionId>` (§20.4.10, C7) for the
+   executionId JR4 reported; it sends the existing RECONCILE request. For
+   a T class that executionId is the INTENT's own: R4 (1) rolls it back
+   store-wide, R4 (2) then finds no attempt, and the command exits 4
+   EXECUTION_NOT_FOUND, which for a T class is the expected completion.
+   Because R4 (1) is store-wide, any other executionId would serve too.
 4. RECONCILE runs R1a–R7 under the stored protected binding, without the
    enrollment enabled flag.
 5. It gains no CREATE or start authority: no reservation, claim, PREPARED
@@ -5085,25 +5295,43 @@ invokes it; it occurs outside a qualification run:
    required quiescent state (QZ1, QZ2).
 7. A new qualification run starts from QZ1 and JR observation 1.
 
-Invocation through the existing client (§20.4.5, §20.4.7), with no new
-command or flag. Local state BOUND_RECONCILABLE: `qa-agent execute --run
-<id> --package <NNNN>` selects RECONCILE(marker.executionId); RECONCILE
-skips the CREATE-only steps 3d and 3e, so it needs neither the opt-in
-nor an enabled enrollment. An S0 crash leaves the marker (§20.4.5 row
-6e): the RECONCILE triggers R4 rollback, is REFUSED/INPUT_MISMATCH and
-the client removes the marker and exits 4 EXECUTION_NOT_FOUND. Local
-state BOUND_RECORDED (the TERMINAL frame arrived before the P6 release
-failed): the record copy `<output.dir>/execution/<executionId>.json` is a
-non-authoritative local copy (§20.4.7); removing only that copy, with the
-marker kept, makes the state BOUND_RECONCILABLE, and the same command
-then runs R7 and rewrites the copy from the committed record after R1–R5.
-This grants nothing, because the broker's tombstones, not local files,
-decide every CREATE. If no marker exists, the broker still accepts the
-§4.2 reconcile frame for the reported executionId from the enrolled
-account through the same chain: it authenticates the account, not the
-program, and grants that request nothing beyond RECONCILE (R-1/R-2
-same-principal scope, unchanged). C6 adds no tool, command, flag,
-frame or operation for it.
+Product invocation (C7, owner decision C7-02; supersedes the C6 paragraph
+that relied on local client state, record-copy removal and a raw reconcile
+frame without a product producer). The normative product path is
+`qa-agent reconcile --execution <executionId> [--json]` (§20.4.10). It
+reaches RECONCILE for the requested executionId whatever the local client
+state is: no marker, an INVALID, stale or foreign marker,
+BOUND_RECONCILABLE or BOUND_RECORDED. It reads and writes no local
+execution file, and it never requires deleting or rewriting a marker or
+`<output.dir>/execution/<executionId>.json` first. The implicit RECONCILE
+that `qa-agent execute` selects for a BOUND_RECONCILABLE marker (§20.4.5
+step 3c, §20.4.7) stays compatible and unchanged, but it is not the
+recovery path. Local files remain non-authoritative copies; the broker's
+protected store and tombstones decide every CREATE. These two client
+paths are the only producers of the §4.2 reconcile frame. The broker
+authenticates the account, not the program, and grants a reconcile frame
+nothing beyond RECONCILE (R-1/R-2 same-principal scope, unchanged). C7
+adds no broker operation, frame, journal state, reason, refusal enum or
+exit code for it.
+
+Incident resolution in Controlled-v1 (C7, owner decision C7-03).
+INCIDENT RESOLUTION IS NOT SUPPORTED (design disposition
+UNSUPPORTED_IN_CONTROLLED_V1, never an output value). QUARANTINED is a
+durable fail-closed outcome. Its record, terminal head and immutable S13
+base stay exactly as committed, with resolvedAt and cleanup null. No
+resolution revision (`00000001.json`) is ever produced. The live claim is
+retained permanently, so the root stays blocked for every later CREATE;
+that is the intended R1 behaviour. The leaf is not removed. No
+Controlled-v1 actor resolves, clears, downgrades or rewrites a
+quarantine: not RECONCILE (R4–R7, including §20.4.10), not CREATE C5, not
+qualification (JR is read-only), not the runner or client, and not
+runner-quarantine remediation. No maintenance command exists. The
+QaAgentExecutionIncident v1 schema keeps its resolvedAt and cleanup keys
+unchanged; in R1 they are always null. No R1 invariant depends on a
+resolution. Any incident-resolution, decommission or quarantine-recovery
+workflow is FUTURE. It needs a separate Product Owner design decision and
+Security review, and, because it would add an S13 revision or change K3
+or K5, a new layout literal (layout identity above).
 
 ### 20.4 DG-4 — execute CLI and configuration
 
@@ -5122,7 +5350,8 @@ client state, output or exits.
 |---|---|
 | Minimal: execute --run --package, no new flag, implicit reconcile through local attempt state | **SELECTED** |
 | Explicit --reconcile flag or "execute reconcile" subcommand | Rejected: new option or word; a rerun without it needs a second refusal path; the §20.4.7 guard already prevents accidental reconcile of a live attempt |
-| --execution <id> selector | Rejected: new selector concept; executionId is client-generated and recorded locally |
+| --execution <id> selector | Rejected for execute: new selector concept; executionId is client-generated and recorded locally |
+| Separate recovery-only `qa-agent reconcile --execution <id> [--json]` (C7) | **SELECTED** by owner decision C7-02 as the normative recovery path (§20.4.10): always RECONCILE, never CREATE, independent of local client state |
 | Additive execute key under schemaVersion 1 | Rejected: two incompatible meanings of "v1" across product versions |
 | Free-form spec/grep/browser/framework/timeout flags | Rejected (mission and §4.2) |
 
@@ -5250,7 +5479,8 @@ ACCEPTED ("execution <executionId> accepted (unit <unitName>)") and a final
 status line with the record path. In both modes the broker's raw stdout/
 stderr frames (§9.2) are written to the client's stderr only, bounded as in
 §9.2 and never persisted by the product. executionId is printed, recorded
-in the marker and in the record filename; it is never a CLI input.
+in the marker and in the record filename; it is never an execute input
+(C7: it is the sole input of `qa-agent reconcile`, §20.4.10).
 
 #### 20.4.7 Client state, CREATE versus RECONCILE
 
@@ -5359,7 +5589,8 @@ Product-Owner-authorized change that sets enabled:true (and the info
 decision value) after Stage 5 implementation, Linux/native/adversarial/
 installed-package qualification and independent Security review;
 Controlled Release remains a further separate decision. Target opt-in can
-never override the release gate.
+never override the release gate. `qa-agent reconcile` (§20.4.10, C7) sits
+behind the same gate and adds no capability.
 
 #### 20.4.9 Negative tests (DG-4)
 
@@ -5391,6 +5622,136 @@ stale boot; deleted record and deleted attempt (broker REPLAY); RECONCILE
 without opt-in; the INPUT_MISMATCH not-found path; sudo absent at 3f and
 removed between 3f and 6b.
 
+#### 20.4.10 Explicit recovery command qa-agent reconcile (C7, owner decision C7-02)
+
+Grammar:
+
+    qa-agent reconcile --execution <executionId> [--json]
+    qa-agent reconcile --help
+
+Command spec: kind "reconcile", capability "execute" (the same release
+gate; no new capability), neither requiresRun nor requiresPackage, flags
+exactly [execution, json, help]. --execution is a value flag that only
+this command accepts. Its value must match the §4.2 executionId grammar
+^[0-9a-f]{32}$. A missing --execution, or a value outside that grammar,
+is the existing USAGE_INVALID. A missing value is USAGE_MISSING_VALUE,
+a duplicate USAGE_DUPLICATE_OPTION and an unknown option
+USAGE_UNKNOWN_OPTION. --run, --package, --root, --config, --offline and
+--history are USAGE_OPTION_NOT_APPLICABLE, --version is USAGE_CONFLICT,
+and any positional argument is USAGE_UNEXPECTED_ARGUMENT. All of these
+exit 2 with existing codes. `qa-agent execute` does not accept
+--execution (USAGE_OPTION_NOT_APPLICABLE, exit 2), and reconcile accepts
+none of execute's selectors, so a command line selects exactly one of
+the two commands; there is no combined form. --offline is refused for
+the same R-5 reason as for execute; the command makes no network access.
+--help prints reconcile help (stating "disabled in this release" while
+disabled), reads nothing and exits 0. Until Stage 5 implementation is
+merged, "reconcile" stays an unknown command (USAGE_UNKNOWN_COMMAND,
+exit 2), byte-identical to today.
+
+Operation. The command always builds exactly the §4.2 reconcile request
+{schemaVersion:1, contractVersion, operation:"reconcile", executionId}
+and never a create request. It never reserves, never causes
+StartTransientUnit, launches no framework or test and sends no SUT value.
+It uses the existing §20.2.4 sudo spawn, and the broker authenticates it
+through C1a.1–C1a.5 as R1a (SO_PEERCRED, §20.2.5) exactly as any
+RECONCILE. R1a does not read the enrollment enabled flag, so the command
+works while enrollment is disabled. The request carries no root,
+bindingDigest, controller identity, unitName, reservation key or outcome,
+and the closed §4.2 schema gives the caller no way to send one. The
+broker loads the protected attempt for the requested executionId at
+R4 (2). It validates the grammar, protected attempt identity, stored
+binding, ownership, the allowed RECONCILE state and the §20.3.8 recovery
+matrix itself. An executionId with no protected attempt after R4 (1) is
+the existing REFUSED/INPUT_MISMATCH (§20.4.7). On an attempt still
+attached to a live CREATE, the command is the existing §4.2 cancellation
+("Cancellation calls reconcile from another one-shot invocation"; §7
+Case A); there is no client-side liveness guard.
+
+Local-state independence. The command reads no root, config, environment
+variable, run evidence, marker, record copy, compatibility.json or public
+view, and writes no local file. Local client state never selects the
+operation and is never recovery authority. The command therefore behaves
+identically with no marker, an INVALID, stale or foreign marker,
+BOUND_RECONCILABLE or BOUND_RECORDED, and nothing has to be deleted or
+rewritten first. A later `qa-agent execute` keeps its §20.4.7 behaviour:
+for BOUND_RECONCILABLE it re-runs the idempotent RECONCILE and writes the
+record copy; for BOUND_RECORDED it exits 5 EXECUTION_ALREADY_RECORDED;
+for an S0 marker it gets INPUT_MISMATCH, removes the marker and exits 4.
+
+Validation order: the productization §10.7 pipeline, unchanged tie rule;
+step numbers follow §20.4.5.
+
+| # | Stage | Step | Exit / code |
+|---|---|---|---|
+| 1 | Usage | Grammar above | 2 (existing usage codes) |
+| 2 | Config | None: no root, config or environment is read | — |
+| 3a | Authority | RELEASE_CAPABILITIES.execute disabled | 5 CAPABILITY_NOT_ENABLED_IN_RELEASE; nothing after this step runs |
+| 3b | Authority | Platform linux only (the Stage 4 principal and storage parts concern local evidence that this command never reads) | 5 EXECUTE_PLATFORM_UNSUPPORTED |
+| 3f | Authority | /usr/bin/sudo under PP (advisory early refusal, §20.2.4) | 5 EXECUTE_BROKER_UNAVAILABLE |
+| 4 | Input | None client-side (the executionId grammar is step 1) | — |
+| 5 | Provider | None consumed | — |
+| 6b | Execution | sudo spawn failure (ENOENT/EACCES) before any byte is sent | 5 EXECUTE_BROKER_UNAVAILABLE |
+| 6c | Execution | Broker REFUSED | SCHEMA_INVALID -> 1; INPUT_MISMATCH -> 4 EXECUTION_NOT_FOUND; CALLER_REFUSED, INELIGIBLE, REPLAY, INCOMPATIBLE, RECOVERY_BUDGET_EXHAUSTED -> 5 |
+| 6d | Execution | Validated TERMINAL/QUARANTINED | §9.3 table (0, 10, 8, 7) |
+| 6e | Execution | Client-side protocol violation, EOF before a final frame, sudo exit without a frame | 7 |
+
+Release-disabled invariant: with RELEASE_CAPABILITIES.execute disabled,
+the command performs only steps 1 and 3a. It reads only its command line:
+no file, environment variable, /usr/bin/sudo or broker. A malformed
+command line still exits 2; every other invocation exits 5 at 3a.
+
+Frame validation. The §7.2 RECONCILE row applies: exactly one structural
+frame, frameSequence 0, disposition REFUSED, TERMINAL or QUARANTINED,
+operation "reconcile" and executionId equal to --execution. For TERMINAL
+or QUARANTINED, the record's recordDigest recomputes, record.executionId
+equals --execution, status and reason are a valid §11.3 pair, the frame
+reason equals the record reason, and attemptDigest is H. With no local
+binding there is no client binding comparison. The exit reports the
+broker's committed outcome for that executionId: RECONCILE accepts no
+proposal and R5 never yields PASSED or TEST_FAILED (§7.3), so exit 0 or
+10 only reports an outcome committed earlier (R7), never a new one.
+Anything else is step 6e.
+
+Output. With --json, stdout carries exactly one envelope (existing CLI
+output schema 1) {schemaVersion, command:"reconcile", ok, exitCode,
+runId, artifacts:[], errors, execution}. execution is null for every
+failure before the broker is invoked (steps 1–3f and 6b); otherwise it is
+exactly the §20.4.6 object {operation:"reconcile", executionId,
+packageOrdinal, status, reason, recordPath, recordDigest}. recordPath is
+always null, because no local copy is written. packageOrdinal, status,
+reason and recordDigest are null until a validated TERMINAL/QUARANTINED;
+then packageOrdinal and runId come from record.binding. Human mode prints
+one final line with executionId, status and reason. No raw frame exists
+on this path (RECONCILE has no STARTED to EXITED window).
+
+| Protected state of the executionId, after R4 (1) | Result |
+|---|---|
+| Any T class in S | Rolled back store-wide at R4 (1); the executionId then follows its own row |
+| No protected attempt (including the rolled-back INTENT's own executionId) | REFUSED/INPUT_MISMATCH -> 4 EXECUTION_NOT_FOUND |
+| A-RES | Rollback to head n, then as A-INC |
+| A-INC | §7 Cases A–H to a terminal or QUARANTINED commit -> §9.3 (7, 8, or QUARANTINED 7) |
+| A-REL | Remaining release only; committed record -> §9.3 |
+| Terminal, clean | Committed record, nothing written -> §9.3 |
+| QUARANTINED | Committed record, nothing written or released, quarantine unchanged -> 7 |
+| Class D | REFUSED/INELIGIBLE -> 5, no write and no manager action |
+| Caller not the enrolled owner, or any R1a failure | REFUSED/CALLER_REFUSED (or the existing R1a outcome) -> 5 |
+
+Negative tests (C7): every refused option and duplicate; --execution
+missing, empty, uppercase, 31 and 33 hex digits, and non-hex; a
+positional argument; --execution on execute; --help with no other read;
+the disabled release, with a syscall trace showing only the command line
+read; --json stdout purity. Each with enrollment disabled and, in turn,
+no marker, an INVALID marker, a marker of another run, BOUND_RECONCILABLE
+and BOUND_RECORDED for the same executionId, with no local file removed
+and none read or written (trace): a T-A INTENT (exit 4 EXECUTION_NOT_FOUND,
+store CLEAN afterwards); each A-RES probe of §20.2.7; A-INC; A-REL; a
+clean terminal attempt (record returned, no write); a QUARANTINED attempt
+(record returned, claim, incident and leaf byte-unchanged); class D
+(exit 5, no write); an unknown executionId (exit 4); a different account
+(CALLER_REFUSED 5). The request bytes on the socket are always exactly
+the four §4.2 reconcile keys.
+
 ### 20.5 Trust-boundary data map
 
 The §12 mission chain (client -> Stage 4 reconstruction -> binding -> sudo
@@ -5413,7 +5774,8 @@ durable terminal -> release/reconcile) crosses these boundaries:
 | Broker frames | Broker | Socket | Client §7.2 | §11.3 | 7 |
 | Result proposal | Client | Socket | Broker §7.2/§9.4 | §11.2 | RESULT_INVALID 7 |
 | Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
-| Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4 |
+| Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4; never read by `qa-agent reconcile` (C7) |
+| Explicit reconcile executionId (C7) | Operator command line of `qa-agent reconcile` | Process argv | Client §20.4.10 step 1 grammar; broker R1a–R4 against the protected store | §4.2 ID grammar; no hash | 2 usage; broker refusal per §20.4.10 |
 | Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
 | Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid; C4: the procedure reads the protected journal and systemd unit state read-only for QZ and OW (never writes them; read-only manager queries only); C5: the journal is read only through the descriptor-anchored, closed read contract JR (no write, repair, recovery or lock), and each run retains QaAgentControllerJournalSnapshot v1; C6: JR classifies every path and relation against the closed layout od06-journal-layout-v1 (§20.3.8) | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); JR D1 = D2 within each run; never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest and journalSnapshotDigest | Host INELIGIBLE until requalified |
 | Build-environment recipe | This repository (versioned Containerfile) | Git history | Release qualification: containerfileDigest over the git blob | Raw SHA-256 of blob bytes | Not a qualified recipe |
@@ -5487,11 +5849,21 @@ discipline and write orders; relations K1–K7; the recovery classes T-A,
 T-B, T-C, A-INC, A-RES, A-REL and D and the JR4 result CLEAN
 (qualification and broker-internal classifications, never output values,
 frames, journal states or reasons); and the disabled-enrollment recovery
-procedure. Every new digest uses
+procedure. C7 adds: the command `qa-agent reconcile` with the value flag
+--execution and its command spec (kind "reconcile", capability
+"execute", §20.4.10), reusing existing usage codes, CLI reason codes,
+exits and the CLI output schema 1 envelope; the A-RES rule (candidate
+transitions P and F, exact-prefix residue, reverse-order crash-idempotent
+rollback); the admission commit lock protocol AL0–AL7; and the
+Controlled-v1 incident rule (base revision `00000000.json` only, no
+resolution revision, disposition UNSUPPORTED_IN_CONTROLLED_V1, which is
+never an output value). Every new digest uses
 the existing raw content-digest convention over CRS-1 or file bytes. No new
 exit code, frame, journal state, record reason, refusal enum or hash
 domain; C6 adds no CLI command or flag, broker operation or maintenance
-service. No public export, bin or package-file change is proposed; the
+service; C7 adds exactly the one command and one flag above, and no
+broker operation, frame, journal state, record reason, refusal enum, exit
+code, usage code, CLI reason code or maintenance service. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -5539,7 +5911,14 @@ tooling, and the disabled-enrollment procedure uses only the existing
 RECONCILE path of the client and broker. None adds an import or call
 edge to either approval gate, to #23F, apply.js, gate symbols or legacy
 execution, and no code changes. Current trigger FALSE; proposed trigger
-FALSE. No closure, re-rating or remediation.
+FALSE. C7 revalidation: `qa-agent reconcile` is CLI parsing plus the
+existing execute client's sudo spawn of the existing RECONCILE request;
+it reads no Stage 4 evidence, approval record or local execution state.
+The A-RES rule, the admission commit lock protocol and the Controlled-v1
+incident rule are broker-internal storage and recovery rules. None adds an
+import or call edge to either approval gate, to #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -5572,7 +5951,10 @@ image built from the §20.3.4a recipe, its content record, its publication
 at the durable location (separately approved), the registry-served D and
 the builder identity values (versions, B), and an independent rebuild with
 rebuild equivalence; the P0 ENOTSOCK outcome observed on the broker;
-the unsolicited-D-Bus flood bounds. Nothing here is runner certification.
+the unsolicited-D-Bus flood bounds; C7: the A-RES crash probes and their
+re-run convergence (§20.2.7 vectors), the admission commit lock vectors
+(§20.3.7) and the §20.4.10 reconcile vectors on the reference host.
+Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
 sudo build, PAM stack and plugin set cannot satisfy T1–T5 under §20.2.3
@@ -5603,7 +5985,12 @@ validate without a new compatibility rule, a write, a repair or a
 recovery step in qualification tooling; C6: a protected-store object
 outside the od06-journal-layout-v1 classes, or a crash state outside the
 §20.3.8 matrix that the existing RECONCILE R4–R7 cannot resolve while
-enrollment is disabled; or a non-volatile LC file that the host rewrites in
+enrollment is disabled; C7: a crash state of an incomplete head that is
+neither CLEAN, an exact A-RES prefix nor class D, a reservation that
+cannot go from INTENT to durable COMMITTED inside one continuous AL6 hold
+without a manager or client wait, a recovery that `qa-agent reconcile`
+cannot reach through the existing RECONCILE, or any need to clear a
+quarantine for R1 viability; or a non-volatile LC file that the host rewrites in
 normal operation)
 — never answered by widening an allowlist without a new procedure literal
 and review; the §20.3.4a recipe cannot build, its pinned base digest,
@@ -5621,7 +6008,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5 and C6 leave it byte-unchanged and change this file only). No source,
+C5, C6 and C7 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -5902,3 +6289,65 @@ only if APPROVED on that HEAD, fresh independent exact-head HEAVY
 Security re-review; then separate Product Owner design acceptance and
 merge authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
 AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.15 Architecture corrective C7 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C7 — APPROVED, with binding
+owner decisions C7-02 (official recovery command) and C7-03 (no incident
+resolution in Controlled-v1). Reviewed HEAD
+f784884e1f9a3f42b15e817bf270807c25d407c4 (tree
+3b78644a0e0e829e27a34026c488d1925f77c511, parent
+841268c46e38eb095df7e49ff0e8775080f8c579, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 4 MINOR
+/ 6 INFO. C7 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2–C6
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C7 resolves exactly
+the four MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C6-m01 crash-idempotent uncommitted residue recovery | Committedness is decided only by the durable S4 head. A-RES is extended from "record and incident" to the two candidate transitions of an incomplete head: P (entry n+1, then S5) and F (S11, S12, S13 base, terminal entry n+1, S5). Exact correspondence rules apply (chain, digests, executionId, binding, allowed successor, outcomeDigest = recordDigest, the S5 pointer candidate, no later sequence). Only an exact non-empty prefix is residue; everything else, and any successor of a terminal head, is class D. Rollback runs in reverse list order under X's operation lock, each unlink durable before the next, followed by an S4 byte-equality re-check. Because creation and rollback move along the same list, every crash point leaves a prefix and repeated RECONCILE converges. ENOENT counts as "already removed" only for planned (provably uncommitted) objects, and a missing committed object is class D at classification. Empty S12 is closed. The transition and terminal-commit lock spans are continuous; frames and manager actions follow the durable commit | §20.3.8 classes S3, S5, write discipline, K1, matrix A-RES and D, A-RES rule; §20.2.7 JR2 and vectors; §20.0 |
+| ARCH-S5-C6-m02 product-reachable RECONCILE | Owner decision C7-02: the single recovery-only command `qa-agent reconcile --execution <executionId> [--json]`. Closed grammar with existing usage codes; it is mutually exclusive with execute and has no --offline or network access. It sits behind the existing release gate, with no new capability. It always sends the existing §4.2 reconcile request and never CREATE. It needs no enabled enrollment (R1a) and authenticates through the existing sudo/SO_PEERCRED chain. It accepts no caller root, binding, controller, unit or key authority. It reads and writes no local client file, so it works with no marker, an INVALID marker, BOUND_RECONCILABLE and BOUND_RECORDED, with no deletion prerequisite. Exits and output reuse §20.4.5 6b–6e, §20.4.7 EXECUTION_NOT_FOUND, §9.3 and the CLI output schema 1 envelope. The implicit marker-driven RECONCILE stays compatible. No new broker operation, frame, journal state, reason, refusal enum or exit | §20.4.10; §20.3.8 procedure step 3 and product invocation; §20.4.2, §20.4.6, §20.4.8; §20.5; §20.6; §20.0 |
+| ARCH-S5-C6-m03 incident-resolution disposition | Owner decision C7-03: incident resolution is UNSUPPORTED_IN_CONTROLLED_V1. S13 is exactly the immutable base `00000000.json` with resolvedAt and cleanup null, and there is no resolution revision. The QUARANTINED claim is retained permanently, and K3/K5 no longer reference "resolved". No later-inconsistency incident exists, because no existing broker path produces one: such a state is class D. RECONCILE, CREATE, qualification, runner, client and runner-quarantine remediation never clear a quarantine, and no maintenance command exists. Any resolution workflow is FUTURE, with a separate PO decision, Security review and a new layout literal. QUARANTINED blocking its root is intended fail-closed R1 behaviour | §20.3.8 inventory, S8, S12, S13, K3, K5, R7, incident rule; §20.2.7 vectors; §20.0 |
+| ARCH-S5-C6-m04 exact one-INTENT serialization | Admission commit lock protocol AL0–AL7. Slow C5 work (Cases A–H) and the non-mutating C7 checks run without the lock. The lock is acquired immediately before the reservation mutation. Under it the broker rescans, runs the store-wide T rows (rollback or class D), checks that every claim and tombstone corresponds to a COMMITTED transaction, and re-checks the rootKey, both consumed keys, executionId non-reuse, capacity and remaining A. It then holds the lock continuously from S6 INTENT through S2, S3, S4, S8, S9, S10, S7 and the durable COMMITTED rename and fsync, and releases only then, or after its own durable rollback, or at death (O_CLOEXEC, no child). The proof: whenever the lock is free, no INTENT has a live owner, and the next CREATE or RECONCILE removes it before another can exist. INTENT-era claims and tombstones are read only under the lock and only through T-A/T-B/T-C, never as consumption authority; the false "never reads" statement is replaced | §20.3.8 S6, write discipline, non-record state, rollback, AL protocol, R4/C5 order; §20.3.7 vectors; §20.0 |
+
+Layout literal: od06-journal-layout-v1 has never been compiled into a
+broker build or qualified, so C7 amends the proposed literal itself (the
+§20.13 C5 precedent); the new-literal rule binds from the first reviewed
+build. The C6 record's sentence that C6 "fixes only [the incident
+resolution's] durable result" is historical and superseded by the
+Controlled-v1 incident rule.
+
+No new journal state, attempt, transaction, record or incident schema or
+version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, hash domain or maintenance
+service. The only additions are the one CLI command and its one flag.
+SO_PEERCRED remains the only runtime caller identity source; JR remains
+read-only and non-authoritative; AA-NULL is unchanged;
+AutomationExecutionRecord v2 stays a first-class validated class with
+outcomeDigest = recordDigest; exactly two tombstones; COMMITTED remains
+the reservation and consumption commit point; INTENT is always rolled
+back, never rolled forward; no retry semantics are weakened; committed
+tombstones stay durable; terminal outcomes are never rewritten.
+
+Preserved: the 6 Architecture INFO findings of the C6 re-review and every
+carried Architecture INFO finding (including retained-history growth,
+JR1 NO_XDEV, AA-NULL nodev wording, snapshot evidence retention and
+qualification timing) stay on the review record, none closed, waived,
+re-rated or absorbed. ARCH-S5-C5-m01/m02 (as amended above), ARCH-S5-C4-m01,
+ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the Architecture C1
+resolutions ARCH-S5-m01..m07 stand. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING. DG-1..DG-3
+are not reopened; DG-4 changes only by the owner-authorized §20.4.10
+command. Further unchanged items: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE
+5; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1; PPI-1; #23F; Stage 4
+authority; both approval gates. Next: fresh independent exact-head HEAVY
+Architecture re-review of the C7 HEAD; only if APPROVED on that HEAD,
+fresh independent exact-head HEAVY Security re-review; then separate
+Product Owner design acceptance and merge authorization. Merge NOT
+AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED.
