@@ -38,7 +38,14 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified main / Controlled-v1 implementation baseline (Stage 4B):
+Latest certified main / Controlled-v1 baseline (OD-06 execution design):
+  main: 22ceb0682f9b56c2fbefdbad35273b7c21225d89
+  TREE: 4d7daaa2fbdcb29466f780683d85c1761965c101
+  design PR #254; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  reviewed HEAD: d6fb535639b004e661c2b5aa2576476a12d9baa7 (reviewed TREE = merge TREE)
+  STANDARD_TWO_PARENT; fresh push CI 38592925997 / completed / success / 7/7 jobs
+
+Historical certification anchor (Stage 4B activation; latest implementation baseline):
   main: 2c666e1261df747eb8ca4ce8d33870c8d47404f4
   TREE: 9ec9967b9ac4ba71154544afb5a3f586c86cd354
   implementation PR #249; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
@@ -90,6 +97,13 @@ Historical RTI certification anchor (not the current repository HEAD):
   main: ca9bfa051206ea4e2f96741f276c660dcc6444ac
 ```
 
+`22ceb0682f9b56c2fbefdbad35273b7c21225d89` is the OD-06 execution-design merge
+(PR #254), post-merge certified on its exact SHA (see [OD-06 certification
+record](#od-06-execution-design-certification-record) in §8); it is
+documentation-only and changes no runtime behavior. Stage 4B
+(`2c666e1261df747eb8ca4ce8d33870c8d47404f4`) remains the latest certified
+implementation baseline and a historical certification anchor; all earlier
+anchors above are preserved unchanged.
 `8aa7c5191e662942f1d73539c740904d385c646d` is the `TSB-F04` + `TSB-F07` +
 `XI-01` + `XI-02` remediation merge (PR #238), post-merge certified on its exact
 SHA (see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
@@ -139,8 +153,10 @@ and README's own RTI section for the full RTI evidence chain.
 `ID-3` formal release planning remains **planning-complete**. Controlled-v1
 productization stages 1–3 are **COMPLETE_ON_MAIN**; Stage 4 design is
 **APPROVED / MERGED / POST-MERGE CERTIFIED**; Stage 4A implementation is
-**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, and Stage 4B is
-**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** — see [§12](#12-productization). Architectural
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, Stage 4B is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, OD-06 (execution design) is
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**, and Stage 5 is
+**READY / NOT AUTHORIZED** (execute disabled) — see [§12](#12-productization). Architectural
 independence and formal release maturity are deliberately different axes and
 are never conflated in this project's own documentation.
 
@@ -1251,6 +1267,8 @@ PR #220 certified completion                     COMPLETE
     step 5: TSB-F04 + TSB-F07 + XI-01 + XI-02    COMPLETE_ON_MAIN / CLOSED (PR #238)
 → Controlled-v1 Stage 4A implementation          COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
 → Controlled-v1 Stage 4B activation              COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+→ OD-06 execution design                         COMPLETE_ON_MAIN / POST-MERGE CERTIFIED (PR #254)
+→ Controlled-v1 Stage 5 (execute)                READY / NOT AUTHORIZED
 → remaining Controlled-v1 productization stages as already designed
 → qa-agent-demo external E2E validation          NOT_STARTED
 → Controlled Release (separate Product Owner release grant)
@@ -1298,8 +1316,9 @@ is conditional and its trigger is not currently met; step 5 (`TSB-F04` +
 [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
 evidence](#tsb-f04--tsb-f07--xi-01--xi-02-remediation-closure-evidence)). The
 Controlled-v1 Stage 4B activation is
-`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; the subsequent lifecycle requires
-a separate owner decision. Stage 4A implementation is
+`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; OD-06 (execution design) is
+`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` (PR #254) and Stage 5 is
+`READY / NOT AUTHORIZED`. Stage 4A implementation is
 `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; stages 1–3 are `COMPLETE_ON_MAIN`
 and Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`.
 
@@ -1354,6 +1373,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Controlled-v1 Stage 4A implementation (COMPLETE_ON_MAIN / POST-MERGE CERTIFIED)
   →  Controlled-v1 Stage 4B activation
        (COMPLETE_ON_MAIN / POST-MERGE CERTIFIED)
+  →  OD-06 execution design (COMPLETE_ON_MAIN / POST-MERGE CERTIFIED; PR #254)
+  →  Controlled-v1 Stage 5 — execute (READY / NOT AUTHORIZED)
   →  remaining Controlled-v1 productization stages as already designed
   →  qa-agent-demo external E2E validation (NOT_STARTED)
   →  QA AI Agent v1.0 Controlled Agent Release (NOT APPROVED;
@@ -1366,7 +1387,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (Controlled-v1 Stage 4B canonical closure sync).** Per
+**Current sequence (Controlled-v1 OD-06 canonical closure sync).** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
@@ -1407,13 +1428,18 @@ Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED` (see the
 [current certification record](#controlled-v1-stage-4-design-certification-and-current-productization-state)
 below). Stage 4A implementation is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`
 (PR #247). Stage 4B activation is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`
-(PR #249). This Stage 4B documentation-only canonical closure sync is the active
-governance lifecycle under `WIP = 1`; independent exact-head LIGHT review
-and separate PO merge authorization are required before its merge.
-The subsequent Controlled-v1 lifecycle requires a separate owner decision;
-no next engineering stage is authorized. Later productization stages retain their
-designed order, followed by `qa-agent-demo` (`NOT_STARTED`) and Controlled
-Release (`NOT APPROVED`). If a dependent supported consumer of the
+(PR #249); its canonical closure sync merged via PR #253. OD-06 (the
+Controlled-v1 execution design) is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`
+(PR #254; see the [OD-06 certification
+record](#od-06-execution-design-certification-record) below). This OD-06
+documentation-only canonical closure sync is the active governance lifecycle
+under `WIP = 1`; independent exact-head LIGHT review and separate PO merge
+authorization are required before its merge, and it is not itself complete
+before merge and post-merge certification. Stage 5 (`execute`) is
+`READY / NOT AUTHORIZED`; `execute` remains disabled and no next engineering
+stage is authorized. Later productization stages retain their designed order,
+followed by `qa-agent-demo` (`NOT_STARTED`) and Controlled Release
+(`NOT APPROVED`). If a dependent supported consumer of the
 `TSB-F02` approval gates is later introduced (including by Controlled-v1
 productization), `TSB-F02` becomes a release blocker / implementation required
 under its owner disposition. `TSB-F02 TRIGGER = FALSE`; this sync records
@@ -1422,6 +1448,53 @@ closing AT-07/TB-01 or any FUTURE review guard. It starts no implementation,
 closes, waives or re-rates no security finding, does not activate any
 `MEM`/`RAG`/`LEARN` stage and does not approve Controlled Release (`NOT
 APPROVED`). The steps after `AISEC-6` are strictly serial under `WIP = 1`.
+
+### OD-06 execution design certification record
+
+```text
+OD-06 — Controlled-v1 execution design:       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+Certified contract:                           docs/controlled-v1-execution-contract-v1.md
+Design PR:                                    #254
+Reviewed HEAD:                                d6fb535639b004e661c2b5aa2576476a12d9baa7
+Reviewed TREE:                                4d7daaa2fbdcb29466f780683d85c1761965c101
+Merge SHA / certified main:                   22ceb0682f9b56c2fbefdbad35273b7c21225d89
+Merge TREE:                                   4d7daaa2fbdcb29466f780683d85c1761965c101
+Topology:                                     STANDARD_TWO_PARENT
+Parents:                                      126d105841cf404c92752ae54bb616ed710d7f53
+                                              d6fb535639b004e661c2b5aa2576476a12d9baa7
+Post-merge CI:                                38592925997 / push / completed / success / 7/7 jobs
+Architecture (independent HEAVY):             APPROVED — 0 MAJOR / 0 MINOR
+Security (independent HEAVY):                 APPROVED — 0 CRITICAL / 0 HIGH / 0 MEDIUM
+Carried Security debt:                        7 LOW + 5 INFO — OPEN / PRESERVED
+                                              (Stage 5 implementation / qualification /
+                                              adversarial-test inputs)
+Security boundary:                            process-lifecycle containment only
+Stage 5 — execute:                            READY / NOT AUTHORIZED
+RELEASE_CAPABILITIES.execute:                 disabled
+TSB-F02:                                      OPEN / LOW / CONDITIONAL
+TSB-F02 current trigger:                      FALSE
+TSB-F02 proposed execute trigger:             FALSE
+qa-agent-demo:                                NOT_STARTED
+Controlled Release:                           NOT APPROVED
+```
+
+OD-06 provides **process-lifecycle containment only**. It does not provide
+filesystem sandboxing, network isolation, secret isolation, same-account
+isolation, or hostile/malicious-test sandbox isolation beyond that explicitly
+defined containment. The final Security review's 7 LOW and 5 INFO findings are
+not closed, waived or re-rated. Design certification activates nothing:
+`qa-agent execute` remains a fixed release refusal until Stage 5 implementation,
+qualification and activation are separately authorized and completed. R-1..R-5
+remain accepted, `AT-07/TB-01` remains residual and the FUTURE review guards
+remain open.
+
+This sync uses `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED` and
+`OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED`, review class
+`LIGHT`. Its merge is `NOT AUTHORIZED`: independent exact-head LIGHT review and
+separate PO merge authorization are required, and the sync is not complete until
+merged and post-merge certified. It records already-certified OD-06 completion;
+it implements and activates nothing, authorizes no Stage 5 work and grants no
+Controlled Release approval.
 
 ### Controlled-v1 Stage 4 design certification and current productization state
 
@@ -1435,6 +1508,8 @@ Controlled-v1 productization:
     design:                                   APPROVED / MERGED / POST-MERGE CERTIFIED
     Stage 4A implementation:                   COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
     Stage 4B activation:                       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  OD-06 — execution design:                    COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  Stage 5 — execute:                           READY / NOT AUTHORIZED
 
 Stage 4A implementation PR:                    #247
 Stage 4A reviewed HEAD:                        bf340941d09b25a89090d82f8de04d6a34a99874
@@ -1478,7 +1553,9 @@ FUTURE_REVIEWER_IDENTITY_PROVENANCE_GUARD:      OPEN
 FUTURE_HUMAN_DECISION_PROVENANCE_GUARD:         OPEN
 TSB-F02:                                      OPEN / LOW / CONDITIONAL
 TSB-F02 TRIGGER:                              FALSE
-OD-06:                                       NOT ENTERED
+OD-06:                                        COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+                                              (PR #254; NOT ENTERED at Stage 4B certification)
+Stage 5:                                      READY / NOT AUTHORIZED
 qa-agent-demo:                                NOT_STARTED
 Controlled Release:                           NOT APPROVED
 ```
@@ -1515,11 +1592,10 @@ Fresh post-merge [push CI 38397805024](https://github.com/TarasovArtem/qa-ai-age
 `event=push`, `branch=main`, `head_sha=2c666e1261df747eb8ca4ce8d33870c8d47404f4`,
 **completed / success**. This is post-merge certification, separate from PR-head CI.
 
-This sync uses `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`,
-review class `LIGHT`. Its merge is `NOT AUTHORIZED`: independent exact-head
-LIGHT review and separate PO merge authorization are required. This records
-already-certified Stage 4B completion; it implements and activates nothing
-and grants no Controlled Release approval.
+The Stage 4B canonical closure sync used
+`OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`, review class `LIGHT`,
+and merged via PR #253 (historical). It recorded already-certified Stage 4B
+completion; at that time OD-06 had not been entered.
 
 This is the canonical future sequence following the [subsequent owner
 decisions](#7-owner-phase-order-decision) recorded in §7. `CRW1-D`,
@@ -1759,8 +1835,9 @@ also `CLOSED_ON_MAIN / REMEDIATED` (PR #238). Within applicable Controlled-v1
 release blockers / required remediations, `TSB-F02`'s condition is not currently
 triggered and Stage 4A implementation is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`.
 Controlled-v1 Stage 4B activation is
-`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; a subsequent lifecycle requires
-a separate owner decision. Stages 1–3 are
+`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; OD-06 (execution design) is
+`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` and Stage 5 is
+`READY / NOT AUTHORIZED`. Stages 1–3 are
 `COMPLETE_ON_MAIN` and Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`
 (see the [Controlled v1 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)).
 Controlled Release is `NOT APPROVED`. `D-1` and `D-3` remain `DEFERRED`. No
@@ -5221,6 +5298,8 @@ Controlled-v1 productization:   STAGES 1–3 COMPLETE_ON_MAIN / REQUIRED BEFORE 
 Stage 4 design:                APPROVED / MERGED / POST-MERGE CERTIFIED
 Stage 4A implementation:       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
 Stage 4B activation:           COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+OD-06 execution design:        COMPLETE_ON_MAIN / POST-MERGE CERTIFIED (PR #254)
+Stage 5 — execute:             READY / NOT AUTHORIZED (execute disabled)
 Full-Autonomy productization:   NOT_STARTED / DEFERRED UNTIL AFTER FULL PROJECT STRICT AUDIT
 ```
 
@@ -5240,7 +5319,9 @@ lifecycle scopes:
   has governing design approved/merged/certified and stages 1–3
   `COMPLETE_ON_MAIN`. Stage 4 design is `APPROVED / MERGED / POST-MERGE
   CERTIFIED`; Stage 4A implementation is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`.
-  Stage 4B is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`. Later stages remain separately governed in the
+  Stage 4B is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`. OD-06 (execution design)
+  is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; Stage 5 is `READY / NOT AUTHORIZED`.
+  Later stages remain separately governed in the
   [designed phase order](docs/controlled-v1-productization-contract-v1.md#211-implementation-phasing-advisory-architecture-recommendation--not-authorized).
   At minimum productization
   includes: version/install/upgrade policy; a supported high-level package/API
@@ -5435,7 +5516,7 @@ TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation:
                                  POST-MERGE CERTIFIED (design PR #237;
                                  implementation PR #238; merge
                                  8aa7c5191e662942f1d73539c740904d385c646d)
-active governance lifecycle:     Controlled-v1 Stage 4B canonical closure
+active governance lifecycle:     Controlled-v1 OD-06 canonical closure
                                  sync (LIGHT / SOLE WIP; merge NOT AUTHORIZED)
 Audit findings:                  TSB-F01, TSB-F03, TSB-F04, TSB-F05, TSB-F06,
                                  TSB-F07 CLOSED_ON_MAIN / REMEDIATED;
@@ -5452,8 +5533,9 @@ Triage-boundary review debt:     ARCH-IMPL-m01; 6 Architecture implementation
                                  SEC-C2-I01..SEC-C2-I07 OPEN / PRESERVED
 TSB-F02 trigger:                 FALSE (no dependent supported consumer;
                                  remains OPEN / LOW / CONDITIONAL)
-subsequent lifecycle:            Separate owner decision required; no next
-                                 engineering stage authorized
+subsequent lifecycle:            Stage 5 READY / NOT AUTHORIZED; separate owner
+                                 authorization required; no next engineering
+                                 stage authorized
 Controlled-v1 productization:    Stages 1–3 COMPLETE_ON_MAIN
 Stage 4 design:                  APPROVED / MERGED / POST-MERGE CERTIFIED
 Stage 4A implementation:         COMPLETE_ON_MAIN / POST-MERGE CERTIFIED (PR #247)
@@ -5461,7 +5543,12 @@ Stage 4B activation:             COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
 RELEASE_CAPABILITIES.reviewRecord / apply: enabled / enabled
                                  (validated target-owned config opt-in required)
 RELEASE_CAPABILITIES.execute:    disabled
-OD-06:                          NOT ENTERED
+OD-06 execution design:          COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+                                 (PR #254; merge
+                                 22ceb0682f9b56c2fbefdbad35273b7c21225d89;
+                                 process-lifecycle containment only)
+OD-06 Security review debt:      7 LOW + 5 INFO OPEN / PRESERVED (Stage 5 inputs)
+Stage 5 (execute):               READY / NOT AUTHORIZED
 qa-agent-demo E2E validation:    NOT_STARTED
 MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
 Controlled Release:              NOT APPROVED
@@ -5477,6 +5564,8 @@ Canonical release sequence:
   → Controlled-v1 Stage 4A implementation (COMPLETE_ON_MAIN / POST-MERGE CERTIFIED)
   → Controlled-v1 Stage 4B activation
       (COMPLETE_ON_MAIN / POST-MERGE CERTIFIED)
+  → OD-06 execution design (COMPLETE_ON_MAIN / POST-MERGE CERTIFIED; PR #254)
+  → Controlled-v1 Stage 5 — execute (READY / NOT AUTHORIZED)
   → remaining Controlled-v1 productization stages as already designed
   → qa-agent-demo external E2E validation (NOT_STARTED)
   → QA AI Agent v1.0 Controlled Agent Release   (Stage 1; NOT APPROVED)
@@ -5501,8 +5590,9 @@ RAG and Feedback / Learning layers below are future Full-Autonomy layers; none
 exists today. Stage 4 design is approved/merged/certified; Stage 4A runtime
 implementation is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`. Stage 4B is
 `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`: reviewRecord/apply are enabled with
-validated target-owned config opt-in; execute remains disabled. The subsequent
-lifecycle requires a separate owner decision.
+validated target-owned config opt-in; execute remains disabled. OD-06
+(execution design) is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`; Stage 5 is
+`READY / NOT AUTHORIZED` and requires a separate owner authorization.
 
 **Target architecture, including the layers recorded by this update**
 (conceptual — not a claim that any of these layers are implemented;

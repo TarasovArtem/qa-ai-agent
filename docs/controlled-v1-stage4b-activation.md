@@ -21,12 +21,22 @@ Fresh post-merge [push CI 38397805024](https://github.com/TarasovArtem/qa-ai-age
 Review recording and application still require their own target-owned validated
 config opt-in and all existing interaction, principal, binding and durability gates.
 
-Canonical closure authority: `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
+Canonical closure authority (historical): `OD-CONTROLLED-V1-STAGE-4B-CANONICAL-CLOSURE — APPROVED`.
 The implementation's pre-merge review/merge handoff is superseded by the merged,
-post-merge-certified state above. This documentation-only closure requires a
-separate independent exact-head **LIGHT** review; that review is **NOT STARTED**.
-This closure's merge is **NOT AUTHORIZED**. Controlled Release remains
-**NOT APPROVED**; OD-06 remains **NOT ENTERED**.
+post-merge-certified state above. That documentation-only closure required a
+separate independent exact-head **LIGHT** review and separate merge
+authorization; it has since merged (PR #253). At the time Stage 4B was
+certified, `OD-06 NOT ENTERED` was true (historical snapshot; this file
+remains Stage 4B certification evidence).
+
+Current lifecycle overlay (after OD-06 design PR
+[#254](https://github.com/TarasovArtem/qa-ai-agent/pull/254), merge
+`22ceb0682f9b56c2fbefdbad35273b7c21225d89`): OD-06
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (certified contract:
+[controlled-v1-execution-contract-v1.md](controlled-v1-execution-contract-v1.md));
+Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**; Controlled Release
+**NOT APPROVED**. This overlay changes no Stage 4B implementation identity or
+evidence recorded here.
 
 Historical implementation preflight (before PR #249):
 Certified base main: `e7e1f63541dfa938bf88f15f70fcf1c136ef1d9f`.

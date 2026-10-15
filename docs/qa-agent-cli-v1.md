@@ -8,7 +8,18 @@ See [activation evidence](controlled-v1-stage4b-activation.md) for the exact
 reviewed HEAD, merge SHA/TREE, parents and fresh post-merge main/push CI.
 Release state: `reviewRecord = enabled`, `apply = enabled`, `execute = disabled`.
 Review recording/application require target-owned validated config opt-in.
-OD-06 remains **NOT ENTERED**; Controlled Release remains **NOT APPROVED**.
+Current lifecycle: OD-06 **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED**
+(design PR [#254](https://github.com/TarasovArtem/qa-ai-agent/pull/254), merge
+`22ceb0682f9b56c2fbefdbad35273b7c21225d89`; certified contract
+[`controlled-v1-execution-contract-v1.md`](controlled-v1-execution-contract-v1.md));
+Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**; Controlled Release
+**NOT APPROVED**. OD-06 design certification causes no activated CLI behavior
+change: `execute` remains a fixed release refusal (exit 5) until Stage 5
+implementation and activation are separately authorized and completed.
+`TSB-F02` proposed execute trigger remains `FALSE`.
+The installed `info` output still reports `platform.executeDecision:
+"PENDING_OD_06"` / `supportStatement: "NOT_DECIDED"`; that production wording
+is unchanged by this documentation sync and its update is Stage 5 work.
 Governing design: [`controlled-v1-productization-contract-v1.md`](controlled-v1-productization-contract-v1.md).
 This document describes the implemented surface only. It does not change
 `ROADMAP.md` lifecycle state and does not authorize `execute`, merge, release
@@ -52,7 +63,7 @@ npx qa-agent --version
 | `review show --run <id>` | `capabilities.generate` | none | valid | nothing (read-only, non-authoritative) |
 | `review record --run <id> --package <NNNN>` | `capabilities.reviewRecord` | none | valid | durable whole-package decision and manifest ledger, after TAP-2 |
 | `apply --run <id> --package <NNNN>` | `capabilities.apply` | none | valid | one canonical #23F attempt and durable outcome, after same-principal approval and confirmation |
-| `execute` | reserved (OD-06) | — | — | none — fixed refusal, exit 5 |
+| `execute` | reserved (OD-06 design certified; Stage 5 not authorized) | — | — | none — fixed refusal, exit 5 |
 
 Reserved commands return `CAPABILITY_NOT_ENABLED_IN_RELEASE` without reading
 the root, the config or any other input, and load no review-gate, `#22`/`#23`

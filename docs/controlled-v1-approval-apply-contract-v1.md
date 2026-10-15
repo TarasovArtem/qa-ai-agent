@@ -58,13 +58,21 @@ Fresh post-merge [push CI 38397805024](https://github.com/TarasovArtem/qa-ai-age
 `RELEASE_CAPABILITIES.execute = disabled`.
 Review recording and application still require their own target-owned validated
 config opt-in and all existing interaction, principal, binding and durability gates.
-Stage 4B completion grants no guard closure, OD-06 entry or Controlled Release approval.
+Stage 4B completion granted no guard closure, OD-06 entry or Controlled Release approval.
 `TSB-F02 = OPEN / LOW / CONDITIONAL`; `TSB-F02 TRIGGER = FALSE`.
 R-1..R-5 remain **ACCEPTED**; `AT-07/TB-01 = RESIDUAL`.
-All three FUTURE review guards remain **OPEN**. OD-06 is **NOT ENTERED**;
-Controlled Release is **NOT APPROVED**.
-This canonical-sync PR requires independent exact-head **LIGHT** review and
-separate PO merge authorization; its merge is **NOT AUTHORIZED**.
+All three FUTURE review guards remain **OPEN**.
+At Stage 4B certification, OD-06 had not yet been entered (historical fact).
+Current lifecycle overlay after OD-06 design PR
+[#254](https://github.com/TarasovArtem/qa-ai-agent/pull/254) (merge
+`22ceb0682f9b56c2fbefdbad35273b7c21225d89`): OD-06
+**COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** under the separate certified contract
+[controlled-v1-execution-contract-v1.md](controlled-v1-execution-contract-v1.md);
+Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**; Controlled Release
+**NOT APPROVED**. OD-06 does not change OD-04 authority semantics or any
+approval/apply requirement of this contract.
+The Stage 4B canonical-sync PR required independent exact-head **LIGHT** review and
+separate PO merge authorization (historical).
 
 Product Owner authority: `OD-CONTROLLED-V1-STAGE-4-OD-04 — APPROVED`.
 Architecture C5: **APPROVED**. Security C5: **APPROVED**.
@@ -85,7 +93,10 @@ authorizes no implementation, capability enablement or further merge.
 `qa-agent review record` and `qa-agent apply` are enabled on certified main,
 subject to validated target-owned config opt-in and all existing gates.
 
-Date: 2026-10-13 (Stage 4B canonical closure sync; design history preserved)
+Date: 2026-10-13 (Stage 4B canonical closure sync; design history preserved);
+lifecycle overlay only updated 2026-10-14 (OD-06 canonical closure sync).
+OD-06 references in §30.5 item 22, §32.1 and §§33–37 are point-in-time design-era
+records and remain unchanged.
 
 Normative language: **MUST / MUST NOT / SHOULD / MAY** are used in the RFC 2119
 sense. Every MUST in §8–§24 is an implementation acceptance condition.
@@ -119,7 +130,7 @@ requirements remain binding for the certified Stage 4B activation.
 | `AT-07` / `TB-01` | **RESIDUAL** (§27) — design mitigation on the supported product path for actors outside the residual classes; the same-OS-principal automation class (R-1) and any actor able to write the run directory (R-3) remain, with owner acceptance **ACCEPTED**; no runtime mitigation or closure is claimed |
 | `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` | **OPEN**; satisfaction criteria defined (§10.6). Not closed by this design |
 | Public API / exit codes | **Unchanged.** No new root export, subpath or exit code |
-| OD-06 | **NOT ENTERED.** The contract is platform-independent and fail-closed (§13.8) |
+| OD-06 | At OD-04 approval and Stage 4B certification: **NOT ENTERED** (historical). Current: **COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** (PR #254; [controlled-v1-execution-contract-v1.md](controlled-v1-execution-contract-v1.md)); Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**. This contract remains platform-independent and fail-closed (§13.8) |
 
 ---
 
