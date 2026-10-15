@@ -2425,6 +2425,7 @@ only the sentences listed here, and only as stated:
 | §7 "short runner admission lock" and "per-attempt operation locks" (relative order unspecified), §20.3.8 (C7) AL0–AL1 and R4 (2) (authority after the R4 (1) release unspecified) | §20.3.8 lock hierarchy H1–H7 (C8): GLOBAL → X is the only mixed order, X → GLOBAL and lock upgrade are forbidden, at most one X at a time, no X held at any GLOBAL acquisition, pre-global scans defer INTENT-era objects to the GLOBAL-protected rescan, R4 (2) and C5 (3) take their authority from the preceding GLOBAL hold scan |
 | §20.3.7 (C8) lock hierarchy vectors (1), (2) and (5), which held an X lock across a Cases A–H wait, and the §20.3.8 (C8) AL0/H3/H4 texts (X span relative to lifecycle waits and the re-read on re-acquisition unspecified) | Not a supersession of §7: the §7 rule "short per-attempt operation locks … never held across lifecycle waits" governs unchanged. §20.3.8 lock hierarchy H8 (C9) makes it exact: X is released, with its durable post-condition complete, before every lifecycle, manager or client wait; it is re-acquired before any journal/state mutation or dependent manager action; the head and mutable facts are re-read and revalidated under the re-acquired X; a pre-wait snapshot is never mutation authority; a changed state discards the earlier plan and re-runs the closed classification and Cases A–H disposition |
 | §6.2 "unknown member quarantines runner", §7 "scan runner unknown namespace before creates" and §20.3.8 (C8) H6 for the unit-namespace scan (membership of a unit whose S6 committed after the preceding GLOBAL hold scan unspecified) | §20.3.8 lock hierarchy H9 (C9): units are enumerated first; a matching unit is a known member only if a descriptor-anchored lockless read of its exact S6 finds a valid S6 with phase COMMITTED for that executionId; that read is membership proof only; INTENT, absent, malformed or mismatched S6 keeps the existing unknown-member fail-closed handling |
+| §6.3 reboot "clean namespace", §6.4 P1S "no-send/no-unit/clean-namespace proof" (PRESUBMIT_FAILURE and CLIENT_LOST), §7 Case E "no-send/no-unit proof", §7.4 S1, §11.1 emptyBy not-submitted "no send/no unit/clean namespace proof", §11.3 "proof above", and §20.3.8 (C9) H9 limited to the CREATE C5 scan (membership rule of these enumerations unspecified) | §20.3.8 lock hierarchy H9 (C10): one membership rule for every namespace enumeration and clean-namespace proof (sites (i)–(v)). Enumerate first; a grammar-matching unit's exact S6 is read locklessly and unconditionally; only a valid COMMITTED S6 of that executionId makes it a known member, as membership authority only. The proof's own unit always fails the no-unit part. A clean namespace means no own unit and no unknown member. INTENT, absent, malformed, mismatched S6 or an invalid name keeps the existing fail-closed handling |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -4983,6 +4984,57 @@ rolled back first; class D is refused). The S4-unchanged case continues
 the plan, with the dependent manager and cgroup facts re-observed under
 X. Each failure stays fail-closed with the existing outcome.
 
+C10 namespace-proof membership vectors (§20.3.8 H9 sites (i)–(v)). The
+lock instrumentation of the C8 and C9 vectors also shows that no site
+takes an X lock of an enumerated Y. It also shows that every site reads
+the S6 of each matching unit only after the enumeration that returned
+that unit. In each vector, P is the attempt the proof concerns, and
+B is an independent CREATE that runs AL1–AL7, commits S6 COMMITTED for
+Y and publishes qa-agent-exec-v1-Y.service in its P2. No GLOBAL hold
+scan of the proving broker saw Y. (16) P1S proof race: CREATE A for P is
+in P1S and takes the PRESUBMIT_FAILURE path (recheck failure or S
+exhaustion), and in a second run the CLIENT_LOST path. B publishes Y's
+unit before A's proof enumerates. A reads S6 of Y, finds it COMMITTED
+and classifies Y a known member. P's own unit is absent, so the proof
+holds: EXECUTION_ERROR PRESUBMIT_FAILURE (respectively CLIENT_LOST) 7
+with emptyBy=not-submitted. There is no per-attempt QUARANTINED, no
+runner quarantine, nothing is written for Y and no X of Y is taken. (17)
+Case E in CREATE: CREATE A at C5 (3) A-INC applies Case E to a
+PREPARED/NOT_SENT attempt P left by a crashed broker. B publishes Y
+after A's C5 (1) scan. A's Case E proof classifies Y a known member, and
+P becomes EXECUTION_ERROR PRESUBMIT_FAILURE 7, not QUARANTINED. (18) Case
+E in RECONCILE: RECONCILE(P) applies Case E at R5. B publishes Y after
+R4 (1), and Y's S6 was absent from that scan. The result is the same as
+(17). (19) Reboot clean namespace: after a reboot, P's unit is missing
+(Case D). B commits and publishes Y in the new boot before the
+proof's enumeration. Y is a known member and does not fail the reboot
+proof. P takes the existing Case D boot-change outcome, error 7, when
+the other boot-change conditions hold, and H otherwise, exactly as
+before C10. (20) Own unit: at each of sites (ii)–(v), a unit named for P
+is present. H9 is not applied to it. The no-unit part fails although
+P's S6 is COMMITTED, and the site's existing outcome applies (QUARANTINED
+7; Case D H). (21) Known member at every site: at each of sites (i)–(v),
+a matching unit plus an exact valid COMMITTED S6 of its Y gives a known
+member. There is no false per-attempt or runner quarantine, and no other
+conclusion is drawn. (22) Fail closed at every site: at each of sites
+(i)–(v), a matching unit for Y with S6 in phase INTENT (writer paused in
+AL6), absent, malformed (schema or phase value), non-regular, a symlink,
+or naming an executionId other than Y gives an unknown member. The proof
+fails with the site's existing outcome, the existing runner quarantine
+applies, nothing is written for Y, and the INTENT is not classified or
+touched outside GLOBAL. (23) Invalid name: at each of sites (i)–(v), a
+unit with the qa-agent-exec-v1- prefix whose name falls outside the
+exact grammar (31 or 33 hex characters, uppercase hex, a non-hex
+character, a type other than .service, or a trailing suffix) gets no S6
+read and is never bound. It keeps the existing unbound/unknown-member
+fail-closed handling, with no wildcard kill. (24) Membership followed by
+a head change: at any site, the proving broker classifies Y a known
+member, and B then commits Y's next transition. Any later decision on Y
+(by the proving broker or by RECONCILE(Y)) re-reads Y's head under Y's
+X (H8) and never uses the membership read as head, controller or manager
+evidence. If the proving broker of sites (ii)–(v) waits before its
+terminal write, it makes the proof again under the re-acquired X of P.
+
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
 This subsection is the single normative layout of the broker protected
@@ -5428,7 +5480,8 @@ likewise reconciles and releases only executionIds whose S6 the C5 (1)
 scan saw COMMITTED. Every other object seen after the release is handled
 by lock hierarchy H6 (deferred to the GLOBAL-protected rescan). No step
 reads anything new for this; it fixes which earlier scan is authority.
-The one exception is the namespace membership read of H9 (C9), which
+The one exception is the namespace membership read of H9 (C9, made at
+every namespace enumeration and clean-namespace proof since C10), which
 reads an exact S6 only to prove that a unit is not an unknown member. The
 GLOBAL hold scan fixes only which executionIds exist and are COMMITTED;
 the head, controller and manager facts of X are always re-read under X
@@ -5451,6 +5504,7 @@ one executionId (flock on `attempts/<X>`).
   | CREATE C5 (1) and RECONCILE R4 (1): rescan, T rows, T rollback | Held | None |
   | CREATE C5 (3) A-INC, A-RES, A-REL; RECONCILE R4 (3), R5–R7 | None | One COMMITTED attempt's X at a time, short spans only (H8) |
   | CREATE C5 unit-namespace scan, including the H9 membership read | None | None |
+  | Clean-namespace proofs H9 (ii)–(v) (P1S PRESUBMIT_FAILURE and CLIENT_LOST, Case E in C5 (3) and R5, §6.3 reboot), including their H9 membership reads (C10) | None | Only the proof attempt's own X, inside its short span (H8); never an X of an enumerated Y |
   | Any lifecycle, manager or client wait (Cases A–H, §6.4 P3–P5) | None | None (H8) |
   | CREATE C7 AL1–AL7, including the AL3 T rollback and AL6 reservation steps 1–9 | Held | None |
   | The CREATE's own transitions, terminal commit and P6 release after AL7 | None | Its own X, short spans only (H8) |
@@ -5502,7 +5556,9 @@ one executionId (flock on `attempts/<X>`).
   v1 T rollback takes none (H3).
 - H8 Short X spans (C9; the §7 rule "short per-attempt operation locks
   … never held across lifecycle waits" governs and is not superseded).
-  (a) An X span contains only protected-store I/O of X and the
+  (a) An X span contains only protected-store I/O of X, the H9
+  membership reads of a clean-namespace proof made in that span (C10;
+  lockless, acquiring no lock), and the
   individual manager or cgroup calls and reads that §7 serializes with
   X's journal transitions (for example a StopUnit or KillUnit call, a
   unit-property read, a cgroup.events read), each within its existing
@@ -5547,42 +5603,88 @@ one executionId (flock on `attempts/<X>`).
   unbounded loop. A discarded plan does not reset any deadline. No
   timeout is introduced, and no timeout serves to resolve a deadlock
   (deadlock freedom below is structural).
-- H9 Unit-namespace membership (C9). The unit-namespace scan (§6.2, §7,
-  CREATE C5) runs with no lock held. It first enumerates the units
-  matching ^qa-agent-exec-v1-[0-9a-f]{32}\.service$. Then, for each
-  matching unit whose executionId Y the preceding GLOBAL hold scan did
-  not see COMMITTED, it makes one descriptor-anchored lockless read of
-  `transactions/<Y>.json`: openat on the `transactions` descriptor of S,
-  with O_NOFOLLOW, requiring a regular file, root:root 0600 and link
-  count 1 (the layout file rule above). The unit
+- H9 Unit-namespace membership (C9; scope C10). H9 is the single
+  membership rule of every Controlled-v1 enumeration of the unit
+  namespace qa-agent-exec-v1-* (§4.3 item 6, §6.2) and of every
+  clean-namespace proof. Its closed sites are: (i) the CREATE C5
+  unit-namespace scan (§6.2, §7); (ii) the §6.4 P1S PRESUBMIT_FAILURE
+  no-send/no-unit/clean-namespace proof; (iii) the equivalent proof for
+  P1S CLIENT_LOST (§6.4, §7.4 S1); (iv) the Case E no-unit/clean-namespace
+  proof wherever Case E is applied, in CREATE C5 (3) A-INC and in
+  RECONCILE R5 (§7); (v) the clean-namespace part of the §6.3 reboot
+  proof, wherever it is used (Case D and every other path that relies on
+  boot-change). The emptyBy=not-submitted proof of §11.1 and §11.3 is the
+  record-level statement of (ii)–(iv) and is made only by them. Every
+  other normative text that requires a clean namespace or an
+  unknown-member check refers to one of these sites; no site has a
+  membership rule of its own. Each enumeration runs this one algorithm:
+  (1) It first enumerates the units of the namespace (the bounded
+  read-only ListUnitsByPatterns of §6.3, at most 256 units, §7). (2) A
+  unit with the qa-agent-exec-v1- prefix whose name does not match the
+  whole-string grammar ^qa-agent-exec-v1-[0-9a-f]{32}\.service$ has no
+  executionId. H9 makes no read for it and never binds it; it keeps the
+  existing unbound/unknown-member fail-closed handling (§6.2 runner
+  quarantine, no wildcard kill, nothing written). (3) For each matching
+  unit it extracts the executionId Y from the name. Then it makes one
+  descriptor-anchored lockless read of `transactions/<Y>.json`: openat on
+  the `transactions` descriptor of S, with O_NOFOLLOW, requiring a regular
+  file, root:root 0600 and link count 1 (the layout file rule above). This
+  read is made unconditionally for every matching unit at every site,
+  whether or not a GLOBAL hold scan precedes the site and whatever such a
+  scan saw. The absence of a preceding GLOBAL snapshot never makes a
+  legitimate concurrent COMMITTED unit unknown. (C9 skipped the read at
+  C5 for a Y that the C5 (1) scan saw COMMITTED. Because COMMITTED is
+  permanent, the unconditional read yields the same classification for
+  every intact S6, so the C9 resolution of the C5 scan is unchanged.) (4)
+  The unit
   is a known member only if that read yields exactly the S6 schema with
   phase COMMITTED and executionId Y. An exact COMMITTED S6 is an immutable,
   permanent transaction fact: it never reverts, is never rewritten and is
   never rolled back (H3, K2). A unit is created only after the
   reservation commit (§6.4 P1S, P2), so a legitimate unit observed first
-  always reads back COMMITTED. Within one scan the order unit-before-S6
-  is therefore mandatory. The read is proof authority only for "this
+  always reads back COMMITTED. Within every enumeration the order
+  unit-before-S6 is therefore mandatory. (5) The read is proof authority
+  only for "this
   unit is not an unknown member". It is not authority for any journal or
   protected-store mutation, T or D classification, A-RES or other
-  recovery, claim or tombstone action, terminal decision, manager action,
-  or controller-binding match, and the scan acquires no X lock for Y.
+  recovery, claim or tombstone action, terminal decision, manager or
+  controller action, controller-binding match, or retry, and no site
+  acquires an X lock for Y. (6)
   Every mutable head, controller and manager fact of Y stays subject to
   H8 and Cases A–H under Y's X, and Y's transaction and companions are
-  decided by the GLOBAL-protected rescan (H6, H7). An S6 of Y with phase
+  decided by the GLOBAL-protected rescan (H6, H7). (7) An S6 of Y with phase
   INTENT, an absent S6, a malformed or non-regular S6, or an S6 whose
   executionId is not Y does not make the unit legitimate. The unit is an
   unknown member, with the existing fail-closed handling (§6.2 runner
   quarantine, no wildcard kill, nothing written). An INTENT S6 is still
-  not classified or touched outside GLOBAL (H6). This lockless authority
-  applies to S6 for namespace membership only. It extends to no other
-  protected-store object and to no other decision.
+  not classified or touched outside GLOBAL (H6).
+  Proof's own attempt. At sites (ii)–(v) the proof concerns one attempt
+  P. The unit named for P is never classified by H9: its presence fails
+  the no-unit part whatever P's S6 says (P's S6 is COMMITTED by
+  construction), with the site's existing outcome. The namespace is clean
+  for P exactly when no unit is named for P and every other enumerated
+  unit is a known member under (4). An unknown member fails the proof
+  with the site's existing outcome (QUARANTINED 7 at (ii)–(iv); at (v),
+  no boot-change proof, so the existing Case D outcome applies) and with
+  the existing §6.2 runner quarantine. A known member never fails it.
+  Placement. Sites (ii)–(v) run inside a short span of P's own X (H3, H8).
+  Their enumeration and H9 reads are part of the live facts that span
+  re-observes before its write (H8 (a), (d)). The H9 read takes no lock,
+  so H1, H2 and H4 are unchanged. A membership result is never carried
+  across an X release: after any wait the proof is made again under the
+  re-acquired X (H8 (e)). Site (i) holds no lock. The §20.2.7 OW predicate
+  is a qualification-time rule under QZ2, not a runtime namespace proof,
+  and is unchanged.
+  This lockless authority applies to S6 for namespace membership only. It
+  extends to no other protected-store object and to no other decision.
 
 Deadlock freedom (proof). Under H1–H4 a broker waiting for GLOBAL holds
 no lock, and a broker waiting for an X lock holds no X lock and, in
 layout v1, no GLOBAL. A GLOBAL holder waits for no lock (H3), and an X
 holder waits for neither GLOBAL (H1) nor another X (H2). By H8 no
 lifecycle, manager or client wait happens while any X is held, so an X
-span is finite, like a GLOBAL span. H9 takes no lock. Every wait-for
+span is finite, like a GLOBAL span. H9 takes no lock, inside or outside
+an X span, so it adds no wait-for edge. Every wait-for
 chain therefore ends at a holder that waits for no lock, so no cycle
 exists; a GLOBAL holder's span is bounded protected-store I/O (AL6), and
 crash releases every kernel lock at process exit. Pre-global scans never
@@ -6206,7 +6308,10 @@ DEFERRED TO GLOBAL RESCAN is control flow, never a state, class, reason
 or output value. C9 adds no closed value of any kind either. The short-X rule H8
 and the unit-namespace membership rule H9 are broker-internal locking
 and read rules. "Known member" and "unknown member" keep their existing
-§6.2 meaning and are never a state, class, reason or output value. No public export, bin or package-file change is proposed; the
+§6.2 meaning and are never a state, class, reason or output value. C10
+adds no closed value either: it widens only the sites of the
+broker-internal rule H9, and "clean namespace" keeps its existing
+meaning of a proof, never a state, class, reason or output value. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -6269,8 +6374,12 @@ execution, and no code changes. Current trigger FALSE; proposed trigger
 FALSE. C9 revalidation: H8 and H9 are broker-internal locking and
 protected-store read rules; they add no import or call edge to either
 approval gate, to #23F, apply.js, gate symbols or legacy execution, and
-no code changes. Current trigger FALSE; proposed trigger FALSE. No
-closure, re-rating or remediation.
+no code changes. Current trigger FALSE; proposed trigger FALSE. C10
+revalidation: the H9 scope extension is a broker-internal protected-store
+read rule; it adds no import or call edge to either approval gate,
+to #23F, apply.js, gate symbols or legacy execution, and no code changes.
+Current trigger FALSE; proposed trigger FALSE. No closure, re-rating or
+remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -6309,7 +6418,8 @@ re-run convergence (§20.2.7 vectors), the admission commit lock vectors
 C8: the committed-view vectors (§20.2.7) and the lock hierarchy vectors
 (§20.3.7) on the reference host; C9: the short-X and namespace-membership
 vectors (10)–(15) (§20.3.7) and the C9 forms of vectors (1), (2) and
-(5) on the reference host.
+(5) on the reference host; C10: the namespace-proof membership vectors
+(16)–(24) (§20.3.7) on the reference host.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -6364,7 +6474,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6, C7, C8 and C9 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7, C8, C9 and C10 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -6835,3 +6945,71 @@ Security re-review (Security STOP until then); then separate Product
 Owner design acceptance and merge authorization. Merge NOT AUTHORIZED;
 Stage 5 implementation NOT AUTHORIZED; execute activation NOT
 AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.18 Architecture corrective C10 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C10 — APPROVED. Reviewed HEAD
+d487f806ed4d092d756419eeaccb41ef3144f297 (tree
+682187767350d83d4b9cd5514efca251e9c9b30c, parent
+621899e8d2592d1b27eccb0197a11eb7004db971, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 4 new INFO; ARCH-S5-C8-m01 and ARCH-S5-C8-m02 RESOLVED. C10 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C9 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C10 resolves exactly the one
+MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C9-m01 H9 scope excludes clean-namespace proofs | H9 is the single membership rule of every Controlled-v1 namespace enumeration and clean-namespace proof, with closed sites: (i) the CREATE C5 scan; (ii) the P1S PRESUBMIT_FAILURE no-send/no-unit/clean-namespace proof; (iii) the equivalent P1S CLIENT_LOST proof; (iv) Case E in CREATE C5 (3) and in RECONCILE R5; (v) the §6.3 reboot clean namespace. The emptyBy=not-submitted proof of §11.1/§11.3 is the record-level form of (ii)–(iv). One algorithm applies at every site. Units are enumerated first. A name outside the exact 32-hex grammar gets no read and keeps the existing unbound/unknown fail-closed handling. For each matching unit, Y is extracted and `transactions/<Y>.json` is read once, descriptor-anchored and lockless, unconditionally, whether or not a GLOBAL snapshot preceded the site. Only an exact valid immutable S6 with phase COMMITTED and executionId Y makes the unit a known member. That read is membership authority only: no journal mutation, T/D classification, recovery, claim/tombstone mutation, terminal decision, controller/manager action or retry. Mutable facts stay under H8 and Cases A–H. INTENT, absent, malformed, non-regular or mismatched S6 keeps the existing fail-closed handling. The proof's own unit is never classified by H9 and always fails the no-unit part. A clean namespace means no own unit and no unknown member. Sites (ii)–(v) make the reads inside the proof attempt's own short X span (H8 (a) admits them; no lock is taken, and no X of Y is taken), and redo them after any wait. Vectors (16)–(24) | §20.3.8 C8 authority paragraph, H3 table, H8 (a), H9, deadlock proof; §20.3.7 C10 vectors (16)–(24); §20.0; §20.6; §20.7; §20.8 |
+
+The layout literal od06-journal-layout-v1 is still uncompiled and
+unqualified, so C10 refines the proposed literal itself (the §20.13–§20.17
+precedent). No class, path, schema or write order changes, and no
+fail-closed outcome changes: a known member was never a defined failure
+cause, and every unknown-member, invalid-name, own-unit and proof failure
+keeps its existing outcome.
+
+C10 adds no journal state, attempt, transaction, record or incident schema
+or version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, CLI command or flag, hash
+domain, timeout or maintenance service. Unchanged: the resolutions of
+ARCH-S5-C8-m01 (H8 short X) and ARCH-S5-C8-m02 (H9 at the C5 scan, whose
+classification the unconditional read leaves unchanged); H1–H8 and H9
+except the scope extension above; ARCH-S5-C7-m01 (committed view,
+classification order, A-RES/D disjointness) and every earlier
+resolution; S4 as the sole durable commit marker; the one-INTENT
+invariant and proof; GLOBAL → X only, no X → GLOBAL, no lock upgrade;
+INTENT rollback, never roll-forward; COMMITTED as the consumption commit
+point; permanent COMMITTED transactions; exactly two consumed tombstones;
+no retry; AutomationExecutionRecord v2; SO_PEERCRED as the only runtime
+caller identity source; the §20.4.10 command `qa-agent reconcile
+--execution <executionId> [--json]` and marker independence; incident
+resolution UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED
+fail-closed semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the 4 new Architecture INFO findings of the C9 re-review
+(prefix units outside the name grammar not restated; no explicit byte
+bound on the lockless S6 read; H8 (f) not naming the committed-outcome
+path of the attached CREATE after AL7; H9 not cross-checking
+keys/bindingDigest), the carried C8 and C7 Architecture INFO findings
+and every other carried Architecture INFO finding stay on the review
+record. None is closed, waived, re-rated or absorbed. H9 (2) and vector
+(23) restate the existing invalid-name handling only because the closed
+H9 scope requires it; that text does not close the first C9 INFO, which
+is the reviewer's to disposition. Every earlier Architecture resolution
+stands. The Security C2 direction SEC-S5-m01/m02 and corrections
+INFO-2/3/4/6 are preserved; Security INFO-1, INFO-5 and INFO-7 stay OPEN /
+PRESERVED / NON-BLOCKING. DG-1..DG-4 are not reopened. Further unchanged
+items: execute DISABLED; Controlled Release NOT APPROVED; TSB-F02 OPEN /
+LOW / CONDITIONAL with current and proposed triggers FALSE; §19.1 L1–L7
+and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01;
+FUTURE guards; TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both
+approval gates. Next: fresh independent exact-head HEAVY Architecture
+re-review of the C10 HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on
+that HEAD, fresh independent exact-head HEAVY Security review (Security
+STOP until then); then separate Product Owner design acceptance and
+merge authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
