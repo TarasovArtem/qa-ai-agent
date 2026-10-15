@@ -2421,6 +2421,8 @@ only the sentences listed here, and only as stated:
 | §7 QUARANTINED row "separate incident may clear quarantine", §7 "Already quarantined retains claims until separate operator incident resolution", §5.6.3 "keep their leaf until operator incident resolution", §11.2 "resolvedAt+cleanup null until operator recovery" and "Resolution appends immutable revision", and the §20.3.8 (C6) resolution revision 00000001, "resolved incident" and claim-release-on-resolution texts | §20.3.8 "Incident resolution in Controlled-v1" (C7, owner decision C7-03): UNSUPPORTED_IN_CONTROLLED_V1; QUARANTINED is durable and fail-closed; the base incident is immutable with resolvedAt and cleanup null; claim and leaf are retained; any resolution workflow is FUTURE and separately authorized |
 | §7 "later inconsistency separate quarantine incident, not success rewrite" and §7.4 S6 "ambiguity incident" (producer unspecified) | §20.3.8 K5 (C7): no Controlled-v1 broker path writes an incident for a head that is not QUARANTINED; an inconsistency of a committed terminal attempt is class D (runner quarantine); the committed outcome is never rewritten |
 | §20.4.2 "--execution <id> selector — Rejected", §20.4.6 "executionId ... is never a CLI input", and the §20.3.8 (C6) "no new command or flag", record-copy removal and producer-less raw §4.2 reconcile frame texts | §20.4.10 (C7, owner decision C7-02): the single recovery-only command `qa-agent reconcile --execution <executionId> [--json]`, which always sends the existing RECONCILE request, independent of local client state |
+| §20.3.8 (C6/C7) K2 "S4 names the highest entry", the S4 class row "sequence = highest n" and the §20.2.7 JR3 "highest entry n", "sequences are exactly 0..n" and "an entry above the pointer ... is INELIGIBLE" read as physical files | §20.3.8 committed view and classification order (C8): K2, JR3 and S4 validate S4 plus entries 0..n, n being the highest committed sequence named by the durable S4; one exact A-RES candidate n+1 (and its exact S5) is outside the committed view until S4 commits it; A-RES and D are disjoint; every other above-pointer object stays class D |
+| §7 "short runner admission lock" and "per-attempt operation locks" (relative order unspecified), §20.3.8 (C7) AL0–AL1 and R4 (2) (authority after the R4 (1) release unspecified) | §20.3.8 lock hierarchy H1–H7 (C8): GLOBAL → X is the only mixed order, X → GLOBAL and lock upgrade are forbidden, at most one X at a time, no X held at any GLOBAL acquisition, pre-global scans defer INTENT-era objects to the GLOBAL-protected rescan, R4 (2) and C5 (3) take their authority from the preceding GLOBAL hold scan |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -3464,8 +3466,9 @@ F1 Writable objects.
   state or submission, an extra or missing key, a wrong field type or an
   invalid nullability is INELIGIBLE. For each attempt directory `<ID>`:
   `<ID>` matches ^[0-9a-f]{32}$; every entry's executionId equals `<ID>`;
-  each file name's sequence equals the entry's sequence; the sequences are
-  exactly 0..n with no gap or duplicate and n < 1024; entry 0 has state
+  each file name's sequence equals the entry's sequence; the committed
+  sequences are exactly 0..n, n being the sequence named by S4 (§20.3.8
+  committed view, C8), with no gap or duplicate and n < 1024; entry 0 has state
   PREPARED, submission NOT_SENT and previousDigest null; for k > 0,
   previousDigest equals entry k-1's journalDigest and the state change
   from k-1 to k is an allowed §7 successor; and every journalDigest
@@ -3484,10 +3487,21 @@ F1 Writable objects.
   current pointer is the class S4 file `attempts/<ID>/current.json` of
   §20.3.8, exactly {executionId, sequence, journalDigest}, and there is
   no other pointer or head candidate. It names this attempt and its
-  highest entry n with that entry's journalDigest. This makes it the
-  single, unambiguous head. A missing pointer, a pointer to a lower entry,
-  an entry above the pointer, a pointer staging file (S5), or two
-  candidate heads is INELIGIBLE.
+  highest COMMITTED entry n with that entry's journalDigest (C8: n as
+  named by the durable S4, not the highest physical file). This makes it
+  the single, unambiguous head. JR3 validates the committed view, entries
+  0..n; an object above n is not committed history and JR3 never
+  evaluates it as such. A missing pointer, a pointer naming an entry that
+  does not exist, a committed gap or duplicate, or two candidate heads is
+  INELIGIBLE and class D. An entry above the pointer, or a pointer staging
+  file (S5), is INELIGIBLE for the run (never permitted at quiescence) and
+  is classified by JR4 in the §20.3.8 classification order (C8): the
+  committed view first; then the additional objects, of which exactly one
+  entry n+1 (and an S5 only as its exact pointer candidate) is validated
+  separately against the A-RES requirements and, when it is part of one
+  exact A-RES prefix, is class A-RES and not D; every other entry above
+  n, and every non-exact candidate, is class D. JR3 never rejects a
+  candidate as class D before that A-RES decision.
   JR4 Cross-object correspondence (C6). JR4 is a validator, not recovery
   code: it never writes, removes, renames, rolls back, releases or locks.
   Schemas first. Every transaction (S6) is exactly {schemaVersion,
@@ -4170,7 +4184,10 @@ phase or schemaVersion; a partial, malformed or intact INTENT
 transaction; a journalDigest mismatch; a previousDigest that does not
 equal the predecessor's journalDigest, and a sequence gap; two candidate
 heads (a pointer disagreeing with the highest entry, or an entry above
-the pointer); a temporary or unclassified file, a symlink, a hard-linked
+the pointer; C8: INELIGIBLE for the run in every case, classified by JR4
+as A-RES only when the entries above the pointer are exactly one exact
+A-RES candidate n+1 of an incomplete committed head n, otherwise class
+D); a temporary or unclassified file, a symlink, a hard-linked
 entry or a 0644 entry in the journal tree; a claim or tombstone naming
 no attempt or a different bindingDigest; a missing tombstone; a claim
 retained by a PASSED attempt; a journal file that changes between JR
@@ -4201,7 +4218,13 @@ and terminal entry n+1; a terminal entry n+1 with `current.json.next`.
 Each is also run with the broker killed after every A-RES removal step
 (before and after that step's directory fsync) and RECONCILE re-run after
 every crash point. Every case converges to head n with no residue, and S4
-and entries 0..n are byte-unchanged throughout. INELIGIBLE, class D: two INTENT transactions;
+and entries 0..n are byte-unchanged throughout. C8 committed-view
+vectors: in each of these eight probes, and after every crash point,
+JR4 and the broker classify A-RES and never D (K2 and JR3 pass on the
+committed view 0..n; S4 is valid as naming the highest committed n);
+the same probe with a second entry above the pointer, an entry n+1 with
+another executionId, binding or previousDigest, an S5 naming n or n+2,
+or an unrelated `*.next` file is class D. INELIGIBLE, class D: two INTENT transactions;
 an INTENT whose claim or tombstone key holds an object of another
 executionId; an INTENT companion with a different bindingDigest; a
 COMMITTED transaction without its attempt directory, and an attempt
@@ -4878,6 +4901,43 @@ INTENT is rolled back. A stray claim or tombstone with no INTENT or
 COMMITTED transaction is class D at AL4. A long Cases A–H wait in C5
 holds no admission commit lock (another CREATE reaches AL6 meanwhile).
 
+C8 lock hierarchy vectors (§20.3.8 H1–H7). For each vector, lock-order
+instrumentation on the broker shows no instant at which a process holds
+an X lock while waiting for GLOBAL, no X lock held at any GLOBAL
+acquisition, no X acquisition while GLOBAL is held, and no wait-for cycle;
+a live INTENT is never classified D or touched outside GLOBAL; a dead
+INTENT is rolled back by the next GLOBAL holder; S never holds two
+INTENTs; every failure stays fail-closed with the existing outcome.
+(1) CREATE vs CREATE: A in C5 (3) holds X of a COMMITTED attempt in a
+Cases A–H wait while B runs AL1–AL7 to COMMITTED; A releases X before
+its own AL1 and, under GLOBAL, sees B's transaction COMMITTED and no
+INTENT. (2) CREATE vs RECONCILE: RECONCILE(X) at R4 (3) holds X in a long
+Cases A–H wait while CREATE blocks on the same X in C5 (3) holding no
+GLOBAL, then releases X and reaches AL1; and RECONCILE waiting at R4 (1)
+without a deadline while CREATE is in AL6 obtains GLOBAL after AL7.
+(3) RECONCILE vs RECONCILE of the same X and of different X: the second
+waits for X (holding nothing) or for GLOBAL (holding no X); neither
+waits for both. (4) Dead INTENT: a CREATE killed at each AL6 step; the
+next holder at AL2–AL3 or R4 (1) rolls it back, never a pre-global scan.
+(5) A-RES of X under X while another broker performs AL1–AL7: the
+GLOBAL holder never waits for X; the A-RES holder, when it is a CREATE,
+releases X before its own AL1. (6) Crash holding GLOBAL only (each AL6
+and T-rollback step): the kernel releases GLOBAL; at most one INTENT
+prefix remains for the next holder. (7) Crash holding X only (each
+transition, terminal and A-RES step): at most one P/F prefix remains
+(A-RES). (8) GLOBAL → X: no layout v1 path acquires it (H3); the probe
+asserts that, and a broker killed while holding GLOBAL with any X still
+held by another live broker leaves only the states of (6) and (7), each
+recovered by its own row. (9) Pre-global scan observes another live
+broker's INTENT-era S6 (INTENT), S2 (directory only), and S2 with S3
+entry 0 and S4, each with the writer paused inside AL6: the scanner
+(C5 (3) or R4 (3)) classifies none of them T or D, mutates nothing,
+takes no X lock on them, and its CREATE decides them only at AL2 after
+the writer's AL7 (COMMITTED, so not an INTENT) or death (T rollback).
+RECONCILE of an executionId whose S6 the R4 (1) hold scan did not see
+COMMITTED is REFUSED/INPUT_MISMATCH (or REFUSED/INELIGIBLE when that
+scan found class D) and never acquires its X lock.
+
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
 This subsection is the single normative layout of the broker protected
@@ -4936,8 +4996,8 @@ only.
 | S0 store root | `.` (S itself) | Directory | Operator install (§5.2, §5.3) | Exactly one | Never removed by the broker (§5.3 retains history) | — | Structural |
 | S1 fixed directories | Exactly `attempts`, `transactions`, `claims`, `tombstones`, `tombstones/run`, `tombstones/package`, `records`, `incidents` | Directory | Broker, mkdirat immediately before the first object of its class is written, under the lock held for that write, parent fsynced | At most one each; absent means the class is empty | Never | — | Structural |
 | S2 attempt directory | `attempts/<X>` | Directory | Broker, reservation step 2 | At most one per X; exists iff `transactions/<X>.json` exists (K1) | Only by T rollback | X = transaction executionId | Structural |
-| S3 attempt entry | `attempts/<X>/<s>.json`, s ^[0-9]{8}$ | QaAgentExecutionAttempt v1 (§11.2) | Broker: entry 0 at reservation step 3 (PREPARED, NOT_SENT); entry n+1 at each §7 transition | Entries 0..n, contiguous, n < 1024 | Never; entry 0 only by T rollback; an entry n+1 above the pointer only by A-RES rollback (C7) | executionId = X; sequence = s | Evidence (JR3) |
-| S4 current pointer | `attempts/<X>/current.json` | Exactly {executionId, sequence, journalDigest} (§11.2) | Broker: reservation step 4 (create-only), then replaced through S5 after every new entry | Exactly one per S2 once written; no other head file | Only by T rollback | executionId = X; sequence = highest n; journalDigest = entry n's | Evidence (head selector, JR3) |
+| S3 attempt entry | `attempts/<X>/<s>.json`, s ^[0-9]{8}$ | QaAgentExecutionAttempt v1 (§11.2) | Broker: entry 0 at reservation step 3 (PREPARED, NOT_SENT); entry n+1 at each §7 transition | Committed: entries 0..n, n named by S4, contiguous, n < 1024 (the committed view, C8); outside it at most the one exact A-RES candidate n+1, never committed until S4 names it (C8) | Never; entry 0 only by T rollback; an entry n+1 above the pointer only by A-RES rollback (C7) | executionId = X; sequence = s | Evidence (JR3) |
+| S4 current pointer | `attempts/<X>/current.json` | Exactly {executionId, sequence, journalDigest} (§11.2) | Broker: reservation step 4 (create-only), then replaced through S5 after every new entry | Exactly one per S2 once written; no other head file | Only by T rollback | executionId = X; sequence = highest committed n, as named by the durable S4 itself (C8: not the highest physical file; an exact A-RES candidate n+1 does not invalidate S4 and becomes committed only by the S5 rename over S4); journalDigest = entry n's | Evidence (head selector, JR3) |
 | S5 pointer staging | `attempts/<X>/current.json.next` | The next S4 value | Broker, inside one invocation holding X's operation lock continuously from entry n+1 through the rename (C7), immediately renamed over S4 | Zero outside a live broker invocation | Consumed by the rename, or by A-RES rollback (C7) | Names entry n+1 | Never at quiescence: INELIGIBLE; class A-RES when it is the exact pointer candidate of an uncommitted entry n+1, otherwise class D (C7; §11.2 temp rule otherwise unchanged) |
 | S6 transaction | `transactions/<X>.json` | Transaction (§11.2) {schemaVersion 1, executionId, rootKey, consumedKeys, bindingDigest, phase} | Broker: reservation step 1 (INTENT, create-only); step 9 (COMMITTED, replaced through S7) | EXACTLY ONE per consumed attempt (phase COMMITTED); at most one INTENT in all of S (the admission commit lock serializes reservations, AL0–AL7, C7) | COMMITTED: retained permanently, never removed; INTENT: only as the last step of T rollback | executionId = X; rootKey = RootKey of binding.root; consumedKeys = the two §11.2 consumed keys of the binding, fixed order; bindingDigest = binding.bindingDigest | Evidence (JR4) |
 | S7 transaction staging | `transactions/<X>.json.next` | S6 with phase COMMITTED, every other member equal | Broker, reservation step 8, renamed over S6 at step 9 | Zero outside a live broker invocation | Consumed by the rename, or by T rollback | Equal to S6 except phase | Never at quiescence: INELIGIBLE; class T-B |
@@ -5000,11 +5060,48 @@ S0–S13 is INELIGIBLE for JR and class D for the broker.
 Cross-object relations. Head = the S3 entry named by S4. "Consumed" =
 the S6 of X has phase COMMITTED.
 
+Committed view (C8, normative). S4 is the sole durable proof of the
+committed attempt head (the C7 commit point, unchanged). If S4 names
+sequence n, the COMMITTED VIEW of X is S4 plus attempt entries 0..n, and
+n is the highest COMMITTED sequence, whatever other files exist. K2, JR3
+and the S4 class row validate the committed view only. A physically
+present entry n+1 is outside the committed view when, and only when, the
+complete protected-store state proves it part of an exact A-RES candidate
+prefix (P or F, A-RES rule below); `current.json.next` (S5) is outside
+the committed view only as the exact pointer candidate of that same
+entry n+1 within that same proven prefix. A-RES candidate objects are
+outside the committed view until S4 commits them. This exception exists
+only for A-RES classification and recovery. It makes no other
+above-pointer object legal: every other object above the pointer, and
+every malformed or non-exact candidate, is class D.
+
+Classification order (C8, closed; no implementation-selected order). For
+each X, the broker (C5 (3), R4 (3)) and JR4 classify in exactly this
+order: (1) validate the durable S4 committed view (S4 schema, entries
+0..n per JR3, K2 and the K3–K5 relations for head n); a failure is class
+D; (2) inspect every additional object of X (entries above n, S5, and
+for an incomplete head an S11, S12 or S13); (3) decide whether those
+additional objects form exactly one non-empty exact A-RES prefix; (4) if
+yes, the class is A-RES; (5) otherwise class D. No step rejects an
+additional object before step (3) has decided it, and no additional
+object is ever evaluated as committed history. With no additional
+object, the class follows from head n (A-INC, A-REL or committed
+terminal/QUARANTINED).
+
 - K1 Transaction and attempt. For every X, S2 exists iff S6 exists,
   except inside a T-class state. Every S2 holds only S3 entries and S4
   (and S5 only inside a live invocation or as an A-RES residue, C7).
-- K2 Consumed attempt. Its S3 history passes JR3; S4 names the highest
-  entry; binding is identical in every entry; S6 executionId, rootKey,
+- K2 Consumed attempt (C8: validates the committed view). S4 names
+  exactly one committed entry n; entries 0..n form the complete
+  JR3-valid committed chain with no committed gap or duplicate; n is the
+  highest COMMITTED sequence. Any physically present entry above n fails
+  closed (class D), except that exactly one entry n+1, and an S5 only as
+  the exact pointer candidate of that same n+1 transition, are outside
+  the committed view and excluded from K2 while, and only while, the
+  complete protected-store state independently satisfies an exact A-RES
+  prefix (classification order above); a malformed or non-exact
+  candidate stays class D. Binding is identical in every committed
+  entry (and, by the A-RES rule, in the candidate); S6 executionId, rootKey,
   consumedKeys and bindingDigest equal the values derived from that
   binding; S9 at consumedKeys[0] and S10 at consumedKeys[1] exist, each
   exactly {1, key, X, bindingDigest}. No other tombstone names X, and
@@ -5073,9 +5170,9 @@ unit names, cgroups, client state or caller hints.
 | T-B torn or partial INTENT | The single INTENT, structurally valid, with any K6-consistent subset of its companions, including S7 | As T-A | Roll back |
 | T-C INTENT without attempt | T-B with no S2, S3 or S4 (a valid pre-PREPARED crash state) | As T-A | Roll back |
 | A-INC incomplete consumed attempt | K2 holds, head incomplete, K3 claim present | RECONCILE(X) R4–R7; CREATE C5 pre-create reconciliation | §7 Cases A–H to a terminal or QUARANTINED commit |
-| A-RES uncommitted residue (C7) | K2 holds for X, the head n named by S4 is incomplete with entries 0..n chain-complete (JR3), and the objects of X beyond that committed state form a non-empty exact prefix of one candidate transition P or F of the A-RES rule below | RECONCILE(X) R4 (3); CREATE C5 for each attempt it reconciles | A-RES rollback under X's operation lock back to durable head n, then A-INC |
+| A-RES uncommitted residue (C7) | K2 holds for X over the committed view (C8), the head n named by S4 is incomplete with entries 0..n chain-complete (JR3), and the objects of X beyond that committed state form a non-empty exact prefix of one candidate transition P or F of the A-RES rule below | RECONCILE(X) R4 (3); CREATE C5 for each attempt it reconciles | A-RES rollback under X's operation lock back to durable head n, then A-INC |
 | A-REL release pending | K2, K4 and K5 hold, head terminal and not QUARANTINED, K3 claim present | RECONCILE(X) R6/R7; CREATE C5 | Remaining release steps only |
-| D corrupt or unknown | Anything else: an INTENT whose own schema, digests or keys are invalid; two INTENTs; a companion mismatching its INTENT; an INTENT key already holding another executionId's claim or tombstone; an S5, an entry above the pointer, a record or an incident object that is not part of an exact A-RES prefix (C7: for example an S5 that is not the pointer candidate of entry n+1, two entries above the pointer, an S12 without its S11, an S11 beside a non-terminal entry n+1, an entry above a terminal or QUARANTINED head); a broken K1–K5 relation; any K7 object | None automatic | CREATE C5: REFUSED/INELIGIBLE exit 5 before reservation; RECONCILE R4: REFUSED/INELIGIBLE, no write and no manager action; runner quarantine until the existing operator remediation (§5.3, §7); JR INELIGIBLE |
+| D corrupt or unknown | Anything else: an INTENT whose own schema, digests or keys are invalid; two INTENTs; a companion mismatching its INTENT; an INTENT key already holding another executionId's claim or tombstone; an S5, an entry above the pointer, a record or an incident object that is not part of an exact A-RES prefix (C7: for example an S5 that is not the pointer candidate of entry n+1, two entries above the pointer, an S12 without its S11, an S11 beside a non-terminal entry n+1, an entry above a terminal or QUARANTINED head); a broken K1–K5 relation; any K7 object. A state matching an exact A-RES prefix is never D (C8 disjointness) | None automatic | CREATE C5: REFUSED/INELIGIBLE exit 5 before reservation; RECONCILE R4: REFUSED/INELIGIBLE, no write and no manager action; runner quarantine until the existing operator remediation (§5.3, §7); JR INELIGIBLE |
 
 Rollback (T-A, T-B, T-C), under the admission commit lock and from a scan
 made under that same hold (AL2, C7): unlink, each only if
@@ -5114,7 +5211,8 @@ a non-empty prefix of P or of F (F2 and F3 omitted from the list when the
 S11 status is not QUARANTINED), and every present object corresponds
 exactly:
 
-- Entry n+1: file name and sequence n+1; executionId X; previousDigest =
+- Entry n+1: the JR3 per-entry schema and field rules; file name and
+  sequence n+1, with n + 1 < 1024; executionId X; previousDigest =
   entry n's journalDigest; journalDigest recomputes; binding identical;
   state an allowed §7 successor of entry n's state, with the JR3 field
   rules for that state; no entry above n+1 exists. Under P its state is
@@ -5141,6 +5239,20 @@ a non-QUARANTINED S11, or holding any other or second file is class D.
 When the head is terminal or QUARANTINED, an entry above the pointer
 or an S5 is class D (a committed terminal head has no successor), and its
 S11, S12 and S13 are committed objects under K4 and K5, never residue.
+
+A-RES and D are disjoint (C8). If the complete store state of X matches
+an exact non-empty P or F prefix over an incomplete head n, the class is
+A-RES and never also D: K2 and JR3 validate the committed view, which
+ends at n; S4 correctly names the highest committed n; and the candidate
+objects are outside the committed view, so no K relation and no JR3 rule
+reads them as committed history. Conversely, class D stays mandatory for:
+more than one entry above the pointer; a wrong chain or journalDigest; an
+impossible successor; a wrong executionId; a different binding; a wrong
+outcomeDigest/recordDigest relation; an S5 naming anything except
+candidate n+1; any unrelated staging file; any residue beside a terminal
+or QUARANTINED committed head; and every malformed, ambiguous or
+non-exact prefix. The eight required probes listed above are therefore
+each A-RES and none is D.
 
 A-RES rollback runs under X's operation lock, from a scan made under that
 hold. The plan is the present prefix; the broker removes it in reverse
@@ -5185,9 +5297,13 @@ back, and no T-row decision is ever taken from a scan made without it.
   work under per-attempt operation locks with its manager waits (Cases
   A–H), and the non-mutating C7 checks (the §5.4 compatibility/pair part,
   §4.3 items 3–6 data checks, qualification and launch-size checks).
+  Every per-execution operation lock taken in AL0 is fully released,
+  with its durable post-condition complete, before AL1 (C8, lock
+  hierarchy H4).
 - AL1 Immediately before the reservation mutation, CREATE acquires
   flock(LOCK_EX) on the S0 descriptor (blocking; the wait is inside P1
-  and counted against A).
+  and counted against A). Precondition (C8): the set of per-execution
+  operation locks held by the broker is empty.
 - AL2 Under that hold it rescans `transactions`, `claims`,
   `tombstones/run` and `tombstones/package` completely and, for any
   INTENT found, its `attempts/<X>`. No earlier scan is reused.
@@ -5254,6 +5370,94 @@ release-pending claim, before §5.6.4 step C6 (W3 free space, W5
 binding). CREATE C7 then runs AL1–AL7, whose AL2–AL3 are the
 authoritative T-row pass (C7). Neither R1a nor R4 reads the enrollment
 enabled flag (§5.6.4 R1a).
+
+C8 authority of the steps after the release. R4 (2) is decided from the
+R4 (1) scan made under the hold: X is present only if that scan saw an
+S6 of X with phase COMMITTED, which is retained permanently and never
+reverts, so the fact stays true after the release; X absent from that
+scan, after its T rows, is REFUSED/INPUT_MISMATCH as before; an INTENT of
+X seen there was rolled back or made the invocation class D by R4 (1).
+R4 (3) acquires X's operation lock only after that release. CREATE C5 (3)
+likewise reconciles and releases only executionIds whose S6 the C5 (1)
+scan saw COMMITTED. Every other object seen after the release is handled
+by lock hierarchy H6 (deferred to the GLOBAL-protected rescan). No step
+reads anything new for this; it fixes which earlier scan is authority.
+
+Lock hierarchy (C8, normative). GLOBAL is the admission commit lock
+(flock on the S0 descriptor); X is the per-execution operation lock of
+one executionId (flock on `attempts/<X>`).
+
+- H1 Order. The only permitted mixed order is GLOBAL → X: a broker that
+  holds both acquired GLOBAL first. X → GLOBAL is forbidden; no
+  execution path holds an X lock while it waits for GLOBAL. There is no
+  lock upgrade from X to GLOBAL.
+- H2 One X at a time. A broker holds at most one X lock at any instant
+  and never waits for an X lock while holding another.
+- H3 Closed lock use in layout v1:
+
+  | Path | GLOBAL | X |
+  |---|---|---|
+  | CREATE C5 (1) and RECONCILE R4 (1): rescan, T rows, T rollback | Held | None |
+  | CREATE C5 (3) A-INC, A-RES, A-REL; RECONCILE R4 (3), R5–R7 | None | One COMMITTED attempt's X at a time |
+  | CREATE C7 AL1–AL7, including the AL3 T rollback and AL6 reservation steps 1–9 | Held | None |
+  | The CREATE's own transitions, terminal commit and P6 release after AL7 | None | Its own X |
+
+  No closed path of layout v1 acquires an X lock while holding GLOBAL.
+  AL6 and T rollback need none: GLOBAL alone excludes every writer of an
+  INTENT-era object, because every X-lock writer (transition, terminal
+  commit, A-RES rollback, Cases A–H, release) requires an S6 with phase
+  COMMITTED, and INTENT → COMMITTED happens only under GLOBAL. Any future
+  path that needs both must acquire them GLOBAL → X; C8 adds none. That
+  also keeps every GLOBAL span free of a wait on an X holder, so the
+  AL6 bounded span and the deadline-free RECONCILE wait for GLOBAL stay
+  valid.
+- H4 Empty X set before GLOBAL. Before any GLOBAL acquisition (CREATE
+  C5 (1), CREATE C7 AL1, RECONCILE R4 (1)) the broker holds no X lock.
+  Every X lock taken earlier in the invocation (only C5 (3) qualifies) is
+  fully released, with its completed durable post-condition (a durable
+  transition, terminal commit, A-RES rollback or release per the write
+  orders), and is never carried across AL1.
+- H5 No upgrade. A path that, while holding X, discovers that it needs
+  GLOBAL releases X, does not reuse any observation made under that X
+  hold as authority, and re-enters its closed lock sequence at the next
+  GLOBAL step (CREATE: AL1 and the full AL2 rescan; RECONCILE: a fresh
+  invocation from R4 (1)); then, if still necessary, it takes X in
+  GLOBAL → X order or after releasing GLOBAL. No closed step of layout v1
+  under X needs GLOBAL.
+- H6 Pre-global scans. A scan made without GLOBAL (CREATE C5 (3) and its
+  unit-namespace scan; RECONCILE R4 (3)) may observe INTENT-era-possible
+  objects: an S6 with phase INTENT; an S7; an S2 and its S3, S4 or S5
+  whose executionId the last GLOBAL hold scan of the invocation did not
+  see COMMITTED; and a claim or tombstone that scan did not prove to
+  belong to a COMMITTED S6. Such a scan does not classify them as T;
+  does not classify them as D merely because their writer may be live
+  (it does not apply K1, K6, K7 or the store-wide accounting clauses of
+  K2 and K3 to them, and under X it evaluates K1–K5 only over objects
+  naming X); does not mutate them; never acquires their X lock; and
+  defers their authoritative disposition to the GLOBAL-protected rescan
+  (AL2–AL4 of the same CREATE, or the R4 (1) or C5 (1) of a later
+  invocation). They are only OBSERVED / DEFERRED TO GLOBAL RESCAN: control
+  flow, not a journal state, matrix class, durable reason, output value
+  or refusal.
+- H7 Authoritative rescan. Only a scan made under GLOBAL decides whether
+  an INTENT is T-A, T-B, T-C or class D, and INTENT-era objects are
+  mutated only under GLOBAL. GLOBAL is never released while authoritative
+  INTENT mutation continues: a T rollback is durable, or the process has
+  died, before the release (AL3, AL7). If T recovery ever needed the
+  INTENT's X lock it would take it only while holding GLOBAL (H1); layout
+  v1 T rollback takes none (H3).
+
+Deadlock freedom (proof). Under H1–H4 a broker waiting for GLOBAL holds
+no lock, and a broker waiting for an X lock holds no X lock and, in
+layout v1, no GLOBAL. A GLOBAL holder waits for no lock (H3), and an X
+holder waits for neither GLOBAL (H1) nor another X (H2). Every wait-for
+chain therefore ends at a holder that waits for no lock, so no cycle
+exists; a GLOBAL holder's span is bounded protected-store I/O (AL6), and
+crash releases every kernel lock at process exit. Pre-global scans never
+mutate or retain locks on INTENT-era objects (H6), so a live INTENT is
+never misclassified as D or rolled back outside GLOBAL, and a dead one
+is rolled back by the next GLOBAL holder (at-most-one-INTENT proof
+above, unchanged). No new timeout is introduced.
 
 R7 for a committed outcome. When RECONCILE(X) finds a head that is
 already terminal or QUARANTINED, R5 has no case to apply and R7 writes no
@@ -5863,7 +6067,11 @@ exit code, frame, journal state, record reason, refusal enum or hash
 domain; C6 adds no CLI command or flag, broker operation or maintenance
 service; C7 adds exactly the one command and one flag above, and no
 broker operation, frame, journal state, record reason, refusal enum, exit
-code, usage code, CLI reason code or maintenance service. No public export, bin or package-file change is proposed; the
+code, usage code, CLI reason code or maintenance service. C8 adds no
+closed value of any kind: the committed view, the classification order
+and the lock hierarchy H1–H7 are broker-internal rules, and OBSERVED /
+DEFERRED TO GLOBAL RESCAN is control flow, never a state, class, reason
+or output value. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -5918,7 +6126,12 @@ The A-RES rule, the admission commit lock protocol and the Controlled-v1
 incident rule are broker-internal storage and recovery rules. None adds an
 import or call edge to either approval gate, to #23F, apply.js, gate
 symbols or legacy execution, and no code changes. Current trigger FALSE;
-proposed trigger FALSE. No closure, re-rating or remediation.
+proposed trigger FALSE. C8 revalidation: the committed view, the
+classification order and the lock hierarchy are broker-internal storage,
+classification and locking rules; they add no import or call edge to
+either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -5953,7 +6166,9 @@ the builder identity values (versions, B), and an independent rebuild with
 rebuild equivalence; the P0 ENOTSOCK outcome observed on the broker;
 the unsolicited-D-Bus flood bounds; C7: the A-RES crash probes and their
 re-run convergence (§20.2.7 vectors), the admission commit lock vectors
-(§20.3.7) and the §20.4.10 reconcile vectors on the reference host.
+(§20.3.7) and the §20.4.10 reconcile vectors on the reference host;
+C8: the committed-view vectors (§20.2.7) and the lock hierarchy vectors
+(§20.3.7) on the reference host.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -6008,7 +6223,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6 and C7 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7 and C8 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -6351,3 +6566,63 @@ fresh independent exact-head HEAVY Security re-review; then separate
 Product Owner design acceptance and merge authorization. Merge NOT
 AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; OCI publication NOT
 AUTHORIZED.
+
+### 20.16 Architecture corrective C8 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C8 — APPROVED. Reviewed HEAD
+80a5dc54b417a8905bc68171d2195af5669e1773 (tree
+4e53c7f14c031dd58646019057df60eead06c1b3, parent
+f784884e1f9a3f42b15e817bf270807c25d407c4, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR
+/ 6 INFO. C8 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2–C7
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C8 resolves exactly
+the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C7-m01 K2/JR3/S4 committed-view contradiction with A-RES | S4 stays the sole durable commit marker. The committed view of X is S4 plus entries 0..n, with n named by S4 the highest committed sequence. K2, JR3 and the S4 class row validate only that view; "highest" means highest committed, never highest physical file. Exactly one entry n+1, and an S5 only as its exact pointer candidate, is outside the committed view while, and only while, the complete store state proves an exact A-RES prefix; A-RES candidate objects are outside the committed view until S4 commits them. A closed classification order (committed view, additional objects, exact-prefix decision, A-RES, otherwise D) means no rule rejects a candidate before A-RES decides it. A-RES and D are disjoint: the eight crash-prefix probes are A-RES and never D, and the D list (two entries above the pointer, wrong chain, digest, successor, executionId, binding or outcomeDigest/recordDigest, an S5 naming anything except n+1, unrelated staging, residue beside a terminal head, any non-exact prefix) is unchanged. The candidate also meets the JR3 per-entry rules and n + 1 < 1024 | §20.3.8 S3, S4, committed view, classification order, K2, A-RES rule and disjointness, matrix A-RES and D; §20.2.7 JR3 and vectors; §20.0 |
+| ARCH-S5-C7-m02 GLOBAL / X lock ordering | Lock hierarchy H1–H7. GLOBAL → X is the only mixed order, and X → GLOBAL and lock upgrade are forbidden. A broker holds at most one X. A closed lock-use table shows that no layout v1 path acquires X under GLOBAL: AL6 and T rollback need none, because every X-lock writer requires COMMITTED. No X is held at any GLOBAL acquisition (AL1 precondition: empty X set; C5 (3) locks are released with durable post-conditions). Pre-global scans treat INTENT-era-possible objects as OBSERVED / DEFERRED TO GLOBAL RESCAN, which is control flow only: not T, not D, not mutated, X never taken. Only the GLOBAL-protected rescan decides T-A/T-B/T-C/D, and GLOBAL is never released mid-mutation. R4 (2) and C5 (3) take their authority from the preceding GLOBAL hold scan, since COMMITTED is permanent. A deadlock-freedom proof and nine concurrent vectors cover CREATE/CREATE, CREATE/RECONCILE, RECONCILE/RECONCILE, a dead INTENT, A-RES during admission, crash holding GLOBAL, X or GLOBAL → X, and pre-global observation of a live S6, S2 or S3. No timeout is added; RECONCILE still waits without a deadline | §20.3.8 AL0, AL1, R4/C5 authority, lock hierarchy, deadlock proof; §20.3.7 vectors; §20.0; §20.6; §20.7 |
+
+The layout literal od06-journal-layout-v1 is still uncompiled and
+unqualified, so C8 refines the proposed literal itself (the §20.13 and
+§20.15 precedent). No class, path, schema or write order changes.
+
+C8 adds no journal state, attempt, transaction, record or incident schema
+or version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, CLI command or flag, hash
+domain, timeout or maintenance service. Unchanged: S4 as the durable
+commit marker; the P/F write orders; reverse-order A-RES rollback with
+each step durable; the ENOENT rule; permanent COMMITTED transactions;
+exactly two consumed tombstones; no retry; AutomationExecutionRecord v2
+with outcomeDigest = recordDigest; the one-INTENT invariant and the
+AL0–AL7 span (C8 adds only the AL0 release and AL1 precondition); INTENT
+rollback, never roll-forward; the Controlled-v1 incident rule (incident
+resolution UNSUPPORTED_IN_CONTROLLED_V1; QUARANTINED claim retained);
+the §20.4.10 command `qa-agent reconcile --execution <executionId>
+[--json]` and marker independence; AA-NULL; JR read-only and
+non-authoritative; SO_PEERCRED as the only runtime caller identity
+source.
+
+Preserved: the 6 Architecture INFO findings of the C7 re-review
+(release-gate explanatory note, CLI `--help` precedence, layout literal
+freeze-point recommendation, permanent QUARANTINED capacity effect, AL1
+timed-acquisition implementation note, pre-existing reconcile
+cancellation race) and every carried Architecture INFO finding stay on
+the review record. None is closed, waived, re-rated or absorbed.
+ARCH-S5-C6-m01..m04 (C6-m01 and C6-m04 as refined above), ARCH-S5-C5-m01/m02,
+ARCH-S5-C4-m01, ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the
+Architecture C1 resolutions ARCH-S5-m01..m07 stand. The Security C2
+direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved;
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C8 HEAD;
+only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh independent
+exact-head HEAVY Security re-review; then separate Product Owner design
+acceptance and merge authorization. Merge NOT AUTHORIZED; Stage 5
+implementation NOT AUTHORIZED; OCI publication NOT AUTHORIZED.
