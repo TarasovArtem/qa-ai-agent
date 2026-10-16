@@ -21,6 +21,16 @@ Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**; Controlled Release
 paragraphs below are the historical PR #254 review chronology; sections 3–18
 remain the approved normative design, unchanged.
 
+Stage 5 design-gap overlay (2026-10-15): the authorized Stage 5
+implementation preflight STOPPED before code on four design gaps (DG-1
+fingerprint handoff, DG-2 caller authentication, DG-3 native broker/build/
+distribution/host, DG-4 execute CLI/config). §20 is the **PROPOSED** closed
+resolution under OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-RESOLUTION. It is not
+approved until independent exact-head HEAVY Architecture and Security review
+and Product Owner acceptance; even then it authorizes no Stage 5
+implementation, which needs a new separate authorization. Execute stays
+**DISABLED**; Controlled Release **NOT APPROVED**.
+
 Historical authoring result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
 INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent
 approval, runner certification, PO OD-06 acceptance or release approval.
@@ -2357,3 +2367,6439 @@ package qualification or activation; each still requires the separately
 authorized Stage 5 lifecycle (§12). This canonical-closure sync itself
 requires independent exact-head LIGHT review and separate PO merge
 authorization; its merge is NOT AUTHORIZED.
+
+## 20. Stage 5 design-gap resolution (PROPOSED)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-RESOLUTION — APPROVED (mission
+authority). Status of this section: **PROPOSED** normative design; it is
+not approved until independent exact-head HEAVY Architecture review, then
+(only if Architecture APPROVED on the same HEAD) independent exact-head HEAVY
+Security review, then separate Product Owner design acceptance. Merge of this
+section does not authorize Stage 5 implementation; that needs a new,
+separate Product Owner authorization against the then-certified main.
+
+| Fact | Value |
+|---|---|
+| Base main / TREE | 52e23acf0f7e5d2f7fce2b406a27de51ae1af68c / 176960ba98b1e7babfee553729200c49d748d7ca |
+| Trigger | Stage 5 implementation preflight (2026-10-15) STOPPED before code; no Stage 5 commit exists |
+| Changed-file allowlist | docs/controlled-v1-execution-contract-v1.md; from C2 also native/qa-agent-controller-v1/Containerfile (versioned build-provenance design artifact, §20.3.4a; no broker source) |
+| Host of this authoring | Windows; not Linux, sudo, systemd or native evidence |
+| Execute / Controlled Release | DISABLED / NOT APPROVED |
+| Corrective C1 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C1 — resolves ARCH-S5-m01..m07 of the HEAVY Architecture review of de37be62c16daf10413736cb489efc11abc4ff60 (§20.9); still PROPOSED |
+| Corrective C2 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C2 — resolves SEC-S5-m01 and SEC-S5-m02 and corrects Security INFO-2/3/4/6 of the HEAVY Security review of 101122bff15b0c227de76908a1b5e82c4a4269f9 (§20.10); still PROPOSED |
+| Corrective C3 | OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C3 — resolves ARCH-S5-C2-m01..m04 of the HEAVY Architecture re-review of 3d3809482cad9d3f1659f0be3de85b12abe2e805 (§20.11); this file only, Containerfile byte-unchanged; still PROPOSED |
+
+### 20.0 Scope, precedence and unchanged invariants
+
+§20 closes exactly DG-1..DG-4. Sections 3–19 stay in force. §20 supersedes
+only the sentences listed here, and only as stated:
+
+| Superseded or refined text | Replacement |
+|---|---|
+| §5.1 "Sudo must supply/overwrite authentication metadata unforgeably under allowed options; broker uses that qualified context" | §20.2: kernel socket-credential authentication; no sudo environment or plugin metadata is read |
+| §5.1 sudoers rule shape | §20.2.3 exact rule plus exact Defaults line (superset of the §5.1 shape) |
+| §5.1 client launch "shell:false, framed stdin" | §20.2.4 exact spawn (adds new session, fixed stdio kinds, fixed sudo environment) |
+| §7.2 "exactly the two pipes" | Unchanged meaning; the two byte streams are the AF_UNIX SOCK_STREAM socketpair ends of §20.2.4 |
+| §5.6.4 C1a/R1a "authenticated caller from the qualified sudo context" | §20.2.5 sub-steps C1a.1–C1a.5 |
+| §5.6.4 C1/R1 "P0 intake succeeds" and §6.4 P0 row (non-socket fd 0 unspecified) | §20.2.5 ENOTSOCK rule (C3): a P0 recvmsg ENOTSOCK on fd 0 is REFUSED CALLER_REFUSED exit 5, the early equivalent of C1a.5; every other P0 outcome unchanged |
+| §5.6.4 C7 | §20.1.6 adds step C7-PV (public enrollment view equality) |
+| §5.6.4 R4 lookup of an absent attempt (unspecified) | §20.4.7 clarification: REFUSED/INPUT_MISMATCH |
+| §8.2 fingerprint membership "profile-enumerated" | §20.1.4 membership rule |
+| §4.2 "Current config v1 unchanged ... No new CLI option authorized by this design" | §20.4: closed future grammar and config v2, effective only with Stage 5 implementation; still no activation |
+| §5.3 "Distribution/signature/release packaging ... require later release approval" | §20.3 fixes the model; publication of any build and any compatibility pair still requires release approval |
+| §3 runner row "macOS / generic Linux / GitHub-hosted Linux / containerized Linux / generic VM — DEFERRED" | §20.0.1 disposition table; §3 text is retained as history and the §20.0.1 table governs |
+| §3 runner row "Provisioned self-hosted Linux — Initial candidate" | Refined, not replaced: eligible only as §20.3.6 class D on the named reference target after qualification |
+| §8.2 "exact qualified executable JS/reporter closure", "profile-enumerated static config imports" (producer and algorithm unspecified) | §20.1.4a closed enumeration procedure od06-q-enum-v1 |
+| §11.2 "Fixed protected paths", the pointer, transaction, claim, tombstone and incident locations, and the §11.3 record location (layout unspecified) | §20.3.8 closed layout od06-journal-layout-v1 (C6): classes S0–S13, write discipline and cross-object relations K1–K7; schemas unchanged |
+| §7 "Recoverable transaction ... Partial intent blocks root" (recovery direction and resolver unspecified) and §5.6.4 R4 "Protected-store transaction recovery" | §20.3.8 recovery matrix (C6): an uncommitted INTENT is always rolled back, by CREATE C5 or by any RECONCILE R4, with or without the enrollment enabled flag |
+| §7.4 S0 broker-crash cell "Partial INTENT recovered by next P1" | §20.3.8: rolled back by the next CREATE C5 or by any RECONCILE R4, and authoritatively at CREATE C7 AL2–AL3 (C7) |
+| §7.4 S6 broker-crash cell "release recovered by next P1", §6.4 P6 row "release failure: claims retained, next P1", §7 "crash during release recovered before admission" and §5.6.3 "leaves the leaf for the next P1" | §20.3.8: finished by the next CREATE C5 or by RECONCILE R6/R7 of that executionId, with or without the enrollment enabled flag; outcome never rewritten |
+| §5.6.4 R7 "Terminal commit and claim release per §7" for an attempt whose terminal outcome is already committed (unspecified) | §20.3.8: no new entry or record; only the remaining release steps |
+| §7 "short runner admission lock", "per-attempt operation locks" and "runner quarantine" (representation unspecified) | §20.3.8 non-record state: kernel advisory locks on fixed directory descriptors, no lock file; runner quarantine derived, no stored object |
+| §7 "short runner admission lock serializes namespace/reservation only" and the §20.3.8 (C6) "under the admission lock" texts (acquisition point, rescan and span unspecified) | §20.3.8 admission commit lock protocol AL0–AL7 (C7): acquired immediately before the reservation mutation; rescan, T-class recovery and conflict re-checks under it; held continuously from the INTENT through the durable COMMITTED rename; never held across a manager, client or lifecycle wait |
+| §11.2 "ambiguous/missing/temp/unknown files quarantine" and the §20.3.8 (C6) class D treatment of "S5 present" and "an entry above the pointer" | §20.3.8 A-RES rule (C7): an entry above the pointer, a pointer staging file or a terminal-commit object that the durable S4 head proves uncommitted, and that is an exact prefix of one candidate transition, is rolled back crash-idempotently; every other temporary, ambiguous or unknown file stays class D |
+| §7 QUARANTINED row "separate incident may clear quarantine", §7 "Already quarantined retains claims until separate operator incident resolution", §5.6.3 "keep their leaf until operator incident resolution", §11.2 "resolvedAt+cleanup null until operator recovery" and "Resolution appends immutable revision", and the §20.3.8 (C6) resolution revision 00000001, "resolved incident" and claim-release-on-resolution texts | §20.3.8 "Incident resolution in Controlled-v1" (C7, owner decision C7-03): UNSUPPORTED_IN_CONTROLLED_V1; QUARANTINED is durable and fail-closed; the base incident is immutable with resolvedAt and cleanup null; claim and leaf are retained; any resolution workflow is FUTURE and separately authorized |
+| §7 "later inconsistency separate quarantine incident, not success rewrite" and §7.4 S6 "ambiguity incident" (producer unspecified) | §20.3.8 K5 (C7): no Controlled-v1 broker path writes an incident for a head that is not QUARANTINED; an inconsistency of a committed terminal attempt is class D (runner quarantine); the committed outcome is never rewritten |
+| §20.4.2 "--execution <id> selector — Rejected", §20.4.6 "executionId ... is never a CLI input", and the §20.3.8 (C6) "no new command or flag", record-copy removal and producer-less raw §4.2 reconcile frame texts | §20.4.10 (C7, owner decision C7-02): the single recovery-only command `qa-agent reconcile --execution <executionId> [--json]`, which always sends the existing RECONCILE request, independent of local client state |
+| §20.3.8 (C6/C7) K2 "S4 names the highest entry", the S4 class row "sequence = highest n" and the §20.2.7 JR3 "highest entry n", "sequences are exactly 0..n" and "an entry above the pointer ... is INELIGIBLE" read as physical files | §20.3.8 committed view and classification order (C8): K2, JR3 and S4 validate S4 plus entries 0..n, n being the highest committed sequence named by the durable S4; one exact A-RES candidate n+1 (and its exact S5) is outside the committed view until S4 commits it; A-RES and D are disjoint; every other above-pointer object stays class D |
+| §7 "short runner admission lock" and "per-attempt operation locks" (relative order unspecified), §20.3.8 (C7) AL0–AL1 and R4 (2) (authority after the R4 (1) release unspecified) | §20.3.8 lock hierarchy H1–H7 (C8): GLOBAL → X is the only mixed order, X → GLOBAL and lock upgrade are forbidden, at most one X at a time, no X held at any GLOBAL acquisition, pre-global scans defer INTENT-era objects to the GLOBAL-protected rescan, R4 (2) and C5 (3) take their authority from the preceding GLOBAL hold scan |
+| §20.3.7 (C8) lock hierarchy vectors (1), (2) and (5), which held an X lock across a Cases A–H wait, and the §20.3.8 (C8) AL0/H3/H4 texts (X span relative to lifecycle waits and the re-read on re-acquisition unspecified) | Not a supersession of §7: the §7 rule "short per-attempt operation locks … never held across lifecycle waits" governs unchanged. §20.3.8 lock hierarchy H8 (C9) makes it exact: X is released, with its durable post-condition complete, before every lifecycle, manager or client wait; it is re-acquired before any journal/state mutation or dependent manager action; the head and mutable facts are re-read and revalidated under the re-acquired X; a pre-wait snapshot is never mutation authority; a changed state discards the earlier plan and re-runs the closed classification and Cases A–H disposition |
+| §6.2 "unknown member quarantines runner", §7 "scan runner unknown namespace before creates" and §20.3.8 (C8) H6 for the unit-namespace scan (membership of a unit whose S6 committed after the preceding GLOBAL hold scan unspecified) | §20.3.8 lock hierarchy H9 (C9): units are enumerated first; a matching unit is a known member only if a descriptor-anchored lockless read of its exact S6 finds a valid S6 with phase COMMITTED for that executionId; that read is membership proof only; INTENT, absent, malformed or mismatched S6 keeps the existing unknown-member fail-closed handling |
+| §6.3 reboot "clean namespace", §6.4 P1S "no-send/no-unit/clean-namespace proof" (PRESUBMIT_FAILURE and CLIENT_LOST), §7 Case E "no-send/no-unit proof", §7.4 S1, §11.1 emptyBy not-submitted "no send/no unit/clean namespace proof", §11.3 "proof above", and §20.3.8 (C9) H9 limited to the CREATE C5 scan (membership rule of these enumerations unspecified) | §20.3.8 lock hierarchy H9 (C10): one membership rule for every namespace enumeration and clean-namespace proof (sites (i)–(v)). Enumerate first; a grammar-matching unit's exact S6 is read locklessly and unconditionally; only a valid COMMITTED S6 of that executionId makes it a known member, as membership authority only. The proof's own unit always fails the no-unit part. A clean namespace means no own unit and no unknown member. INTENT, absent, malformed, mismatched S6 or an invalid name keeps the existing fail-closed handling |
+| §6.4 P1S "During all of P1S ... no D-Bus call is made", §12 C2 vector "no D-Bus call observed during P1S", §6.4 synchronous create observation sum (P1S terminal paths unspecified), §20.3.3 "every manager wait is already bounded by its §6.4 phase deadline", and §20.3.8 (C10) H8 (a) "each within its existing §6.3/§6.4 allowance" as applied to H9 sites (ii) and (iii), which have no manager-call allowance in P1S | §20.3.8 H10 (C11, owner option (a)): qualified, not removed. Before the terminal failure decision, and on every successful P1S, zero D-Bus calls (manager or bus driver). After the broker has irrevocably selected PRESUBMIT_FAILURE or P1S CLIENT_LOST, exactly one read-only ListUnitsByPatterns is allowed, bounded by the fixed internal E = 5000 ms, solely for the H9 (ii)/(iii) clean-namespace evidence. Every other D-Bus call stays forbidden in P1S. This does not begin P2, submission stays NOT_SENT, and StartTransientUnit is never reachable. Successful CREATE timing is unchanged. The budgeted work of a terminal P1S path is S plus E plus the existing terminal commit/release I/O. As qualified by C12 (next row), that is budgeted work and not a complete wall-clock bound |
+| §6.4 "Each phase has its own origin and finite bound; none is borrowed from another" and the §6.4 synchronous create observation, as read for a P1S terminal path; §20.3.8 (C9) H8 (c) "counted against them" and H8 (g) "every wait is inside an existing phase budget"; and (C11) H10 (c) "H8 (c) acquisition and accounting unchanged", H10 (i) "synchronous bound is P0+P1+S+E plus ... I/O" and the C11 row above, all as applied to the acquisition of P's X after an irrevocable P1S terminal selection | §20.3.8 H10 (i)–(l) (C12): qualified, not removed. That acquisition is the named terminal X acquisition synchronization interval (H10 (j)). It runs from the irrevocable PRESUBMIT_FAILURE or P1S CLIENT_LOST selection until P's X is held. It is charged to neither S nor E, extends or restarts nothing, is not a phase budget and is not borrowed from one. It grants no progress, submission or StartTransientUnit, and the waiter holds no other lock. flock fairness is not assumed. No FIFO admission, starvation freedom or hard X-acquisition wall-clock bound is claimed, and deadlock freedom stays structural. Under the acquired X, the H8 re-read and revalidation (H10 (k)) precede the E origin. A terminal outcome already committed is never overwritten. E = 5000 ms bounds only the one manager call. The up-to-256 H9 S6 reads are bounded local evidence work outside E and S (H10 (l)). P0+P1+S+E plus I/O is budgeted execution work, not total contention-inclusive wall-clock time. No timeout, state, reason, outcome, exit or retry is added |
+| §20.3.8 (C11/C12) H10 (b) "final for that invocation", H10 (j) (3), H10 (k) "In every branch the selection of (b) stays irrevocable" and branch (3) "H8 (f) applies unchanged ... the proof uses the one call of (c)", H10 (c) "only if (k) leaves the terminal plan in force", vector (36) "the selection stays CLIENT_LOST" and the second run of vector (39); H8 (f) "an incomplete head goes through Cases A–H" and the A-RES rule "Afterwards head n continues as A-INC", as applied inside a live H10 terminal-evidence invocation; the §20.20 C12 resolution text "Any other change gets H8 (f) unchanged"; and the §20.20 sentence "The only path that reaches no call is one where a terminal outcome is already committed" | §20.3.8 H10 (b) and (k) (3) (C13, owner option 2): qualified, not removed. "Irrevocable" means two things. Submission abandonment is always irrevocable. The selected PRESUBMIT_FAILURE or CLIENT_LOST is sticky only on the invocation's own H10 path: the unchanged view of (k) (1), or exact A-RES, exact rollback under the same X, a mandatory fresh re-read, and the exact original PREPARED/NOT_SENT proven restored ((k) (3) (ii)–(iv)). That path resumes the original site (ii) or (iii), never Case E site (iv). Closed precedence, highest first: an already committed outcome; class D or another state forbidding the write; exact restoration; otherwise H8 (f) unchanged, with no reason override. Failed evidence stays QUARANTINED 7. At most one ListUnitsByPatterns per invocation, never two; the rollback and the re-reads make none, and E begins only after the restoration is proven. The selected reason is invocation-local and never durable. After a crash a later CREATE or RECONCILE applies Case E. Zero calls is the result of every path needing no H10 evidence (committed outcome, class D and other dispositions without evidence). No new reason, outcome, state, field, call or timeout |
+| §20.3.8 (C13) H10 (k) "There are three branches. Their precedence is closed (C13), highest first: an outcome already committed (2); class D ... ((3) (i)); exact A-RES followed by exact restoration ((3) (ii)–(iv)); every other state ((3) (v))", branch (1) "S4 is byte-equal ... and no additional object of P exists. The terminal plan stays in force", branch (3) "Any other changed view", branch (3) (v) "The existing H8 (f) classification and disposition govern, with their own existing sites and allowances", the closing sentence "or, only under (3) (v), the one enumeration that an existing H8 (f) disposition itself requires at its own site and under that site's own allowance", vector (47) "the existing H8 (f) classification and disposition decide the result", H9 site (iv) "wherever Case E is applied" as applied inside a live H10 invocation, the C13 row above "Closed precedence ... otherwise H8 (f) unchanged", and the §20.21 record text "(E) any other post-cleanup state gets H8 (f) unchanged" | §20.3.8 H10 (k) (1), (3) (i), (3) (v), H8 (f) and H9 (C14): qualified, not removed. The precedence is exhaustive, highest first: [1] committed outcome (2); [2] class D or another write-forbidding state (3) (i), also when S4 is byte-equal and no additional object exists; [3] the valid unchanged exact original state (1); [4] exact A-RES and exact restoration (3) (ii)–(iv); [5] every other state (3) (v). Branch (1) needs S4 byte-equal, no additional object, a structurally valid committed view, valid K1–K5 and the exact original A-INC PREPARED/NOT_SENT classification; S4 equality and no additional object alone never select it. Under (3) (v) an existing H8 (f) disposition that needs no namespace proof applies unchanged; one that would need a Case E no-send/no-unit/clean-namespace proof makes no ListUnitsByPatterns or other D-Bus call, uses neither (c), E nor S, and gives the existing Case E fail-closed QUARANTINED 7 through the existing commit (proof NOT ESTABLISHED). The selected reason does not override it. H9 site (iv) stays CREATE C5 (3) A-INC and RECONCILE R5 only. At most one ListUnitsByPatterns per invocation, only the call of (c) at site (ii) or (iii). No new D-Bus allowance, H9 site, class, reason, outcome, state, exit code, field, schema or timeout |
+| §6.4 P1S "If that no-send proof fails, the outcome is QUARANTINED 7" and "otherwise QUARANTINED 7"; §7 Case E "no-send/no-unit proof -> error7 PRESUBMIT_FAILURE, else H" and Case H "QUARANTINED7/root claims"; §7.4 S1 "else QUARANTINED"; §11.3 "QUARANTINED only CONTROLLER_FAILURE/MISSING_UNIT_PROOF/CLEANUP_UNPROVEN/STATE_INCONSISTENT"; §20.3.3 "the outcome is the existing QUARANTINED 7"; §20.3.8 (C11–C14) H9 site (iv) and own-attempt "QUARANTINED 7 at (ii)–(iv)", H10 (b), (e), (f), (h), (j) (3), (k) (3) (iv) and (3) (v) (B) "with the same record and reason as that existing Case E proof-failure outcome"; and the §20.3.7 vectors (25)–(57), including vector (53) "those of the existing Case E proof failure", all as applied to a PREPARED/NOT_SENT outcome whose no-send/no-unit/clean-namespace proof is NOT ESTABLISHED (record reason unspecified among the four QUARANTINED reasons) | §20.3.8 H9 failed-proof reason (C15, owner decision): qualified, not removed. For the PREPARED/NOT_SENT proof-failure class (sites (ii)–(iv) and H10 (k) (3) (v) (B)) the outcome is exactly QUARANTINED, reason CLEANUP_UNPROVEN, exit 7. This holds whatever the low-level cause: manager timeout or failure, malformed or unauthenticated reply, more than 256 units, own unit present, unknown member, unreadable membership evidence, or no legal allowance at the site. It also holds whatever PRESUBMIT_FAILURE or CLIENT_LOST was selected. A clean proof keeps PRESUBMIT_FAILURE 7 (sites (ii), (iv)) or CLIENT_LOST 7 (site (iii)). Case H for Case E therefore has the reason CLEANUP_UNPROVEN, and the other Case H uses keep their existing reasons. S11 reason, recordDigest, S13 incident reason (K5) and final QUARANTINED frame reason are all CLEANUP_UNPROVEN. A rule that decides the input first (committed outcome, class D or another write-forbidding state, H10 (k) (3) (v) (A)) keeps its outcome. CONTROLLER_FAILURE, MISSING_UNIT_PROOF (including the §7.4 S2 controller-state-disappears row), STATE_INCONSISTENT and site (v) are unchanged. No new reason, status, outcome, exit, schema, field, incident type, state, operation, H9 site, D-Bus allowance, CLI/API/config, timeout or hash domain |
+| §20.3.3 (C2) "It cannot extend execution: a full queue only delays or blocks receipt of manager messages ... an expiry ends in the existing CONTROLLER_FAILURE, TIMED_OUT, OBSERVATION_EXPIRED or QUARANTINED outcomes" and (C15) "If a full queue delays its reply past E"; §20.3.3 "the broker MUST NOT raise max_queued or create an unbounded MessageIterator or MessageStream" (filtered receive topology unspecified); §20.3.7 (C2) "(a starved manager wait ends in the existing outcome for that phase)"; vector (30) "(manager paused, full queue)"; §20.3.8 H10 (e) "(timeout or blocked queue)"; the H9 failed-proof reason cause "(manager timeout or blocked queue"; and the §20.10 INFO-4 row "time bounded by §6.4" | §20.3.3 receive-path isolation (C16, owner decision, SEC-S5-C15-M01): the two §20.3.3 sentences and the §20.3.7 parenthetical are rewritten in place; the rest is qualified, not removed. Pinned zbus 5.13.2 source evidence Z1–Z8 and normative RP1–RP8: no unfiltered MessageStream/MessageIterator or catch-all subscriber, no object server, no request_name, no cached Proxy, no Proxy receive_*, no max_queued change; one exact-filtered PropertiesChanged subscription (type signal, authenticated manager unique name, Properties interface, PropertiesChanged member, exact bound unit path), none while no unit path is bound; rejection happens at the zbus socket reader's rule check before enqueue and at the inactive-channel drop, never after dequeue. A queue can never be filled or blocked by unrelated traffic, and in P1S no subscription exists, so "full queue" and "blocked queue" in those texts name no reachable cause from unrelated traffic. Only a genuine manager-side delay remains, with its existing outcome (QUARANTINED / CLEANUP_UNPROVEN / 7 at H10 and the H9 sites, C15). A flood-caused expiry or outcome is a qualification failure (vectors (66)–(73)): Stage 5 qualification and Controlled Release BLOCKED, never an ordinary manager failure or residual. Trusted sender validation (RP6) is unchanged. No host ACL or policy, zbus patch, version change, queue-size, deadline, retry or memory change; no new D-Bus method, allowance, site, timeout or outcome |
+| §7 Case A "failure H", Case B "ambiguity H", Case C "failure H", Case D "otherwise H", Case F, Case G "otherwise error/H" and Case H "stop/cleanup/identity fails / QUARANTINED7/root claims"; §6.3 "Failure QUARANTINED7"; §6.4 P4 "QUARANTINED7 if empty unproven"; §7.3 controller/systemd failure row "else QUARANTINED" and orphan/reconcile row "or QUARANTINED"; §7.4 S2/S3 "else QUARANTINED" and "reconcile error 7 or H"; §11.3 "uncertain send must prove actual subtree empty or quarantine"; and the C15 texts "the other Case H uses keep their existing reasons", "CONTROLLER_FAILURE keeps its existing controller and systemd failure dispositions" and "STATE_INCONSISTENT keeps its existing structural and store dispositions" (record reason of these QUARANTINED routes unspecified; no STATE_INCONSISTENT producer named) | §20.3.8 QR quarantine reason partition (C16, owner decision, SEC-S5-C15-L01): qualified, not removed. Status rules are unchanged; QR binds the reason only where an existing rule already reaches QUARANTINED. Closed order: Q0 the C15 PREPARED/NOT_SENT class -> CLEANUP_UNPROVEN (unchanged); Q1 trusted-state conflict SC (c1)–(c5) -> STATE_INCONSISTENT (Case B ambiguity = SC; untrusted input, unobtainable facts, unknown members, store corruption and a boot change used as reboot proof are not SC); Q2 authenticated absence of the unit of a head whose SUBMITTING write is durable, with removal and reboot proof NOT ESTABLISHED -> MISSING_UNIT_PROOF (includes §7.4 S2/S3 and Case D, including site (v)); Q3 every other QUARANTINED route (containment or cleanup proof NOT ESTABLISHED, including a manager-call failure or an unobtainable fact) -> CLEANUP_UNPROVEN. No QUARANTINED route carries CONTROLLER_FAILURE; the §7.3 controller/systemd failure EXECUTION_ERROR CONTROLLER_FAILURE 7 with empty proven is unchanged. Store structural corruption stays class D, refused, no record; STATE_INCONSISTENT's producers are exactly the Q1 routes. S11 reason, recordDigest, S13 (K5) and final frame reason are the QR reason. Vectors (74)–(86). No new reason, status, outcome, exit, state, schema, field, incident type, operation, site, allowance, timeout or hash domain |
+| The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
+
+Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
+classifications; AT-07/TB-01 RESIDUAL; FUTURE guards OPEN; Stage 4
+review/apply semantics; TAP-2; CRS-1; PPI-1; #23F; both approval gates;
+OP-06-02/OP-06-03; the §4.2 request, §7.2 frames, §7 states, §9.3 exits,
+§11 schemas and hash domains; the §3 Windows REFUSED row and the §3 VM
+sentence ("may physically be a VM"); the productization §10.7 exit taxonomy
+and its pipeline tie rule, which §20.4.5 follows without exception. No new
+exit code, broker frame, journal state, record reason, refusal enum or hash
+domain is introduced. C7 adds exactly one recovery-only CLI command with its
+one value flag (§20.4.10) and no broker operation. New closed values are
+listed in §20.6.
+
+#### 20.0.1 Runner disposition after §20 (supersedes the §3 DEFERRED row)
+
+Every class named in the §3 DEFERRED row is assigned exactly one
+disposition here. Nothing outside this table changes a §3 disposition.
+
+| §3 class | §20 disposition | Governing row |
+|---|---|---|
+| macOS | Narrowed to **REFUSED** (no Linux containment primitives) | §20.3.6 "Windows / macOS hosts" |
+| GitHub-hosted Linux | Narrowed to **REFUSED** for execute; build and unprivileged tests only (class A, never qualification evidence) | §20.3.6 "GitHub-hosted runners for execute", class A |
+| Containerized Linux (Docker, Podman, LXC, Kubernetes) and WSL2 | Narrowed to **REFUSED** for execute; build and unprivileged tests only (class A) | §20.3.6 "Containers", "WSL2", class A |
+| Generic Linux — Debian 13 (trixie) amd64 on a dedicated self-hosted host or dedicated VM that is itself the qualified host | **SUPPORTED** only as the named reference target, only for an exact recorded tuple after Stage 5 qualification | §20.3.6 class D |
+| Generic Linux — Debian 13 disposable integration and adversarial VMs | **QUALIFICATION-ONLY** (never execute eligibility) | §20.3.6 classes B, C |
+| Generic Linux — any host whose sudo is not upstream sudo | Narrowed to **REFUSED** | §20.3.6 "not upstream sudo" |
+| Generic Linux — Ubuntu 24.04 LTS, every other distribution or release, aarch64 | Still **DEFERRED** | §20.3.6 Ubuntu, "Other distributions", aarch64 rows |
+| Generic VM — not dedicated, or not itself the qualified host (shared, nested-only, provider-managed) | Still **DEFERRED** | §3 VM sentence; §20.3.6 class D |
+
+Windows stays REFUSED (§3, unchanged). DEFERRED keeps its §3 meaning:
+no support, not a refusal decision, and reopening needs an owner decision.
+REFUSED needs an owner decision to reverse. No class becomes eligible by
+labels, configuration booleans or this table alone.
+
+### 20.1 DG-1 — fingerprintDigest client handoff
+
+#### 20.1.1 Reconstructed gap
+
+§7.1/§11.1: the client computes bindingDigest over a binding that contains
+fingerprintDigest and profileDigest. profileDigest is client-readable inside
+the 0644 §5.4 record. fingerprint lives only in enrollment.json, which §5.2
+fixes root:root 0600, and §11.1 forbids the client to read enrollment. §8.2
+"profile-enumerated static config imports" and "exact qualified executable
+JS/reporter closure" give no algorithm the client could run to derive the
+member list. Result: the client cannot compute bindingDigest without either
+reading enrollment, guessing, or omitting the field.
+
+#### 20.1.2 Alternatives
+
+| Option | Security | Fail-closed / staleness | Implementability / burden | OD-06 impact | Verdict |
+|---|---|---|---|---|---|
+| A. Root-authored public view: root:root 0644 file with, per enrolled root, the full fingerprint object; broker requires byte equality with a view it derives from enrollment | No runner write path; broker never uses it for authority | Any drift = runner INELIGIBLE; a stale view cannot reach the binding comparison | One more operator-written file; broker comparison is byte equality (no parse) | Additive; enrollment schema, mode and the §11.1 "never from enrollment" rule unchanged | **SELECTED** |
+| B. Make enrollment readable by the runner (0640 root:runner) | No secret in it, but widens runner visibility of workspace/qualification/other roots | Same as broker | Trivial | Changes the §5.2 mode and the §11.1 rule | Rejected: reopens OD-06 decisions for no security gain |
+| C. Broker "describe" operation returning fingerprintDigest | Adds a privileged operation reachable by the runner | Fine | New request kind, new frame | Violates the closed create/reconcile interface (§4.2) | Rejected |
+| D. Client omits fingerprintDigest; broker inserts it | — | — | — | Changes the §11.1 binding/bindingDigest and every record/claim | Rejected: forbidden omission |
+| E. Client derives the member list itself (JS import analysis) | Client-side static analysis of untrusted target JS | Derivation disagreements become ambiguous failures | Large; dynamic imports undecidable | Needs a JS analyzer in two languages | Rejected |
+
+Option A plus the §20.1.4 membership rule is selected. The view carries the
+complete fingerprint, not only its digest, so the client can verify fresh
+bytes before invoking the broker. The paths and hashes are not secret: the
+runner can already read every listed file.
+
+#### 20.1.3 Public enrollment view — location, owner, schema
+
+Path: /usr/local/share/qa-agent-controller-v1/enrollment-public.json
+(compiled literal in the broker; product literal in the client). Owner
+root:root, mode 0644, regular, link count 1, not a symlink, size 1..1048576
+bytes. Parent /usr/local/share/qa-agent-controller-v1 root:root 0755.
+Writer: the operator, as root, in the same install/requalification
+transaction that writes enrollment.json and compatibility.json (§5.3). Npm,
+the client and the broker never write it.
+
+Protected-path predicate PP, used by broker and client for this file and,
+as a clarification of §5.2 "protected ancestors", for compatibility.json,
+the broker artifact and /usr/bin/sudo: each component from "/" is opened
+relative to its parent with no symlink resolution (openat2
+RESOLVE_NO_SYMLINKS in the broker; O_NOFOLLOW per component in the client);
+every directory has owner UID 0 and (mode & 0o022) == 0; mount crossings are
+permitted on these fixed system paths (unlike the §5.5 workspace walks).
+Hosts whose distribution default makes /usr/local or a subdirectory
+group-writable (for example root:staff 2775) fail PP until the operator
+removes group write; that is a qualification failure, never a relaxation.
+
+Closed schema QaAgentControllerPublicEnrollment v1, all keys required:
+
+| Key | Value |
+|---|---|
+| kind | "QaAgentControllerPublicEnrollment" |
+| schemaVersion | 1 |
+| contractVersion | "qa-agent-controller-v1" |
+| compatibilityDigest | H, equal to enrollment.compatibilityDigest |
+| caller | exactly enrollment.caller {uid,gid,account} |
+| roots | 1..64 entries, sorted by rootDigest bytewise ascending, unique; each exactly {rootDigest, fingerprint} |
+| roots[].rootDigest | H = Stage 4 root-identity-v1 digest of enrollment roots[i].root, equal to roots[i].root.digest |
+| roots[].fingerprint | exactly enrollment roots[i].fingerprint {algorithm,files,digest} (§8.2) |
+
+File bytes: exactly the CRS-1 encodeValue canonical encoding (§11.1) of the
+object, no BOM, no trailing newline. There is no self-digest field and no new
+hash domain: authority comes from root ownership plus the broker's byte
+equality, never from a hash alone.
+
+#### 20.1.4 Fingerprint membership and canonical hashing
+
+Membership (closes the §8.2 gap). files = M ∪ Q, sorted bytewise by path,
+unique, 1..4096 entries, total size <= 67108864:
+
+- M, mandatory adapter members, literal per adapter version.
+  od06-cypress-v1: cypress.config.js, package.json, package-lock.json,
+  node_modules/cypress/package.json, node_modules/cypress/bin/cypress.
+  od06-playwright-v1: playwright.config.js, package.json,
+  package-lock.json, node_modules/@playwright/test/package.json,
+  node_modules/@playwright/test/cli.js,
+  node_modules/playwright/package.json,
+  node_modules/playwright-core/package.json.
+- Q, operator-qualified closure members: exactly the output of the closed
+  procedure od06-q-enum-v1 (§20.1.4a), recorded as data in enrollment.
+  Neither client nor broker recomputes Q at runtime; runtime enforcement is
+  the exact listed set. Constructs that §20.1.4a leaves outside Q remain
+  R-4 (unchanged).
+
+Applied target specs are bound by targets[].afterDigest, not by the
+fingerprint, and are not members. A member path is canonical root-relative
+(§4.2 path rules, PPI-1 segment grammar), <=300 bytes. The broker refuses an
+enrollment whose files lack any M member of the root's adapter
+(INELIGIBLE, at C7 before the binding comparison).
+
+Hashing, with no normalization of any value:
+
+- files[].sha256 = "sha256:" + lowercase hex of SHA-256 over the raw file
+  bytes, no domain prefix (the Stage 4 run-store content-digest
+  convention); size = exact byte length as a safe integer.
+- fingerprint.digest = H with domain "qa-ai-agent:execution-fingerprint:v1:"
+  over encodeValue({algorithm, files}).
+- profileDigest = H with domain "qa-ai-agent:execution-profile:v1:" over
+  encodeValue(qualification). Version and build fields are hashed as the
+  exact enrolled strings (no semver parsing or case folding); integers as
+  safe integers; frameworkProfiles sorted by framework ascending;
+  fingerprint files and sutNames sorted bytewise.
+- compatibilityDigest = H with domain "qa-ai-agent:execution-compatibility:v1:"
+  over the canonical §5.4 record; compatibility.json bytes are exactly that
+  canonical encoding.
+- Root digest: Stage 4 root-identity-v1 (domain
+  "qa-ai-agent:repository-root-binding:v1:", unchanged).
+
+#### 20.1.4a Q enumeration procedure od06-q-enum-v1 (closed)
+
+Producer and time. The operator runs od06-q-enum-v1 as part of Stage 5
+qualification tooling (never shipped in the npm package, never invoked by
+the client or the broker), on the qualified host, against the exact
+enrolled root, after the target's dependencies are installed and before
+enrollment.json is written. Its output is data that the operator reviews
+and writes as root; it is not a runtime authority source, and the broker
+trusts only the root-owned enrollment that results.
+
+Privilege (C2, normative). od06-q-enum-v1 MUST NOT RUN AS ROOT. It runs as
+an unprivileged qualification user (the enrolled runner account, or a
+dedicated non-root account) whose only required access is read access to
+the enrolled root's target inputs that the procedure opens. At start it
+requires getresuid() and getresgid() to contain no 0 and its permitted,
+effective and ambient capability sets to be empty, and otherwise refuses
+to run. It is not started through sudo, doas, run0, pkexec, a setuid or
+file-capability helper, or any other elevation. A member, directory or
+specifier that the user cannot open or read is a procedure failure
+(qualification FAIL for that root), never a reason to grant the procedure
+root, CAP_DAC_READ_SEARCH, ACL exceptions or any other privileged
+filesystem access.
+
+Fixed parameters. N = the exact qualified Node version of the profile
+(qualification.nodeVersion); resolution and module-format rules are those
+documented for exactly N; no --conditions, loaders, hooks, NODE_OPTIONS,
+NODE_PATH or --preserve-symlinks; the condition sets are N's defaults for
+require and for import. A procedure revision is a new literal, never an
+in-place change.
+
+Starting entrypoints E (literal per adapter version; all are also M
+members):
+
+| Adapter | E |
+|---|---|
+| od06-cypress-v1 | cypress.config.js; node_modules/cypress/bin/cypress |
+| od06-playwright-v1 | playwright.config.js; node_modules/@playwright/test/cli.js |
+
+The fixed junit reporter (§8.2) is built into the framework; it is covered
+only through edges reachable from E, never through a separate list.
+
+Algorithm (worklist over canonical root-relative paths; visited set; the
+output is a set, so traversal order cannot change it):
+
+1. Module format of each JavaScript member (.js, .cjs, .mjs and the
+   extensionless E member) is N's documented determination (extension,
+   nearest package.json "type", and N's syntax detection where N enables
+   it). The file is parsed as an ECMAScript program of that goal (hashbang
+   allowed). A parse error fails the procedure.
+2. Edges recognized syntactically, each only with a specifier that is a
+   string literal or a template literal without substitutions: import and
+   export ... from declarations; import(specifier); a call
+   require(specifier) whose callee is the identifier require with exactly
+   one argument; require.resolve(specifier) with exactly one argument. Over-
+   inclusion through a shadowed require is harmless (more members or a
+   recorded unresolved specifier).
+3. Every other construct is a dynamic site and is never resolved: a
+   non-literal argument to import() or require(), module.require,
+   createRequire results, eval and Function, fs-based loading, and any
+   computed callee. Each is recorded as {path, line, column} in the evidence
+   record.
+4. Resolution of a recognized specifier from its importing file uses N's
+   documented algorithms: the CommonJS require resolution (relative paths,
+   exact file, then extension probing in N's order, directory package.json
+   "main", directory index files, ancestor node_modules directories) for
+   require and require.resolve; the ESM resolution algorithm (package
+   "exports" and "imports" with the import conditions, no extension
+   probing) for import declarations and import(). Node builtins (node:
+   prefix or bare builtin names) are excluded and are not members.
+5. The resolved path must be inside the root: a result outside the root,
+   or a non-file URL (data:, http:, https:), fails the procedure. Each
+   component beneath the root is opened without following symlinks
+   (openat2 RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV
+   semantics); a symlink component, a mount crossing, a non-regular leaf,
+   link count other than 1 or size over 16777216 fails the procedure. N's
+   realpath step therefore always yields the opened path.
+6. Member kinds: .js, .cjs, .mjs and extensionless CommonJS files are
+   members and are traversed by steps 1–5; .json files are members and are
+   not traversed; .node files are members, hashed as raw bytes and not
+   traversed (their own native dependencies are R-4 or bound by the
+   profile). Any other resolved extension (for example .ts, .jsx, .wasm)
+   fails the procedure as an unsupported construct.
+7. Unresolved specifiers: a recognized specifier for which N's algorithm
+   finds no file is recorded in the evidence record and is not a member.
+   This admits the optional-dependency pattern (try { require("x") } catch)
+   inside node_modules; a file that later appears there is outside Q and is
+   R-4.
+8. Config closure completeness: for the config file and every member it
+   reaches that is not beneath a node_modules directory (target-authored
+   code), any dynamic site (step 3) or unresolved specifier (step 7) fails
+   the procedure. Completeness is required there because those imports are
+   the profile's static config imports.
+9. Q = all visited members. files = M ∪ Q, deduplicated by path and sorted
+   by path bytewise ascending. Cycles terminate through the visited set; no
+   depth limit applies. A member of M that is absent or fails step 5 fails
+   the procedure.
+10. Limits: more than 4096 entries in files, or a total size over 67108864
+    bytes, fails the procedure. There is no truncation, sampling or
+    priority order.
+
+Failure of the procedure is a qualification FAIL for that root: no
+enrollment entry is written and the root is not eligible (§20.7 STOP when
+an adapter version cannot be enumerated).
+
+Persistence. The operator writes fingerprint {algorithm:"od06-files-v1",
+files, digest} into enrollment roots[i] with the §20.1.4 hashing and the
+same fingerprint into the public view; the enrollment and view schemas do
+not change. The evidence record, retained with qualification evidence and
+never read by client or broker, is {procedure:"od06-q-enum-v1", adapter,
+nodeVersion, entrypoints, unresolved[], dynamicSites[], files[]}, each list
+sorted bytewise. Determinism evidence: two independent executions on the
+same root produce byte-identical files lists.
+
+Requalification triggers (rerun the procedure before re-enrollment): any
+runtime fingerprint drift (exit 4 or PRESUBMIT_FAILURE, §20.1.7); any change
+of N, the adapter version, the framework version, cypress.config.js or
+playwright.config.js, package.json or package-lock.json; any dependency
+install, update or removal in the root; a new procedure literal.
+
+#### 20.1.5 Client derivation of bindingDigest (exact)
+
+Advisory and refusal-only; the broker repeats everything authoritatively.
+
+1. §8.1 reconstruction yields projectId, runId, packageOrdinal, product
+   (own installed name/version), root {platform:"linux",path,dev,ino,digest},
+   principal (Stage 4 OS-local envelope), reviewRecordId, applyRecordId,
+   reviewRecordDigest, packageDigest, changeSetDigest, automationPlanDigest,
+   repositoryContextDigest, projectionDigest (the Stage 3 run projection,
+   unrelated to the public view), appliedRecordSha256, targets, framework.
+2. timeoutMs from the effective execute config (§20.4.4).
+3. Read compatibility.json under PP (<=262144 bytes, strict JSON, closed §5.4
+   schema, bytes equal to its canonical encoding); require product
+   name/version = own package and contractVersion = product literal. Compute
+   compatibilityDigest. profileDigest = record.profileDigest.
+4. Read the public view under PP (<=1048576 bytes, strict JSON, closed
+   schema above, bytes equal to canonical encoding). Require
+   view.compatibilityDigest = the step-3 digest, view.contractVersion =
+   product literal, view.caller.uid/gid = own effective UID/GID and
+   view.caller.account = own OS account name (the os.userInfo username
+   that Stage 4 escapes into its principal).
+5. Select the single roots[] entry whose rootDigest equals the step-1
+   root.digest; none refuses.
+6. Recompute fingerprint.digest over {algorithm, files}; require equality.
+   For each member, open beneath the root without following symlinks;
+   require a regular file with link count 1, equal size and equal SHA-256.
+7. fingerprintDigest = fingerprint.digest.
+8. bindingDigest = H("qa-ai-agent:execution-binding:v1:" +
+   encodeValue(binding without bindingDigest)), §11.1.
+
+Client failures, all before any sudo invocation and with nothing written:
+steps 3–5 missing/ownership/schema/mismatch -> exit 5
+EXECUTE_RUNNER_NOT_ELIGIBLE (product or contract mismatch: exit 5
+EXECUTE_INCOMPATIBLE); step 6 member drift -> exit 4
+EXECUTION_FINGERPRINT_MISMATCH.
+
+#### 20.1.6 Broker verification (CREATE step C7-PV) and order effects
+
+C1a: unchanged by DG-1. The view is neither opened nor trusted at C1a.
+
+C7, in this order after locks/claims: (i) the §5.4 compatibility/pair part;
+(ii) **C7-PV**: verify every enrollment roots[i].root.digest,
+fingerprint.digest and M membership by recomputation; derive the expected
+view from the C1a-checked enrollment (contractVersion = compiled literal);
+open the fixed path under PP; read at most 1048577 bytes; require byte
+equality with the canonical encoding of the derived view (no JSON parse of
+the file); (iii) §4.3 items 3–6, where the binding is reconstructed with
+fingerprintDigest = enrollment roots[R].fingerprint.digest and compared;
+(iv) the remaining C7 steps. Failure of (ii): REFUSED/INELIGIBLE exit 5,
+before the reservation commit, nothing reserved or consumed. A derived view
+over 1048576 bytes is the same failure.
+
+P1S: the view is not re-read; the existing P1S fingerprint fresh-byte
+recheck uses the enrollment fingerprint and the retained dR (§6.4).
+RECONCILE: the view is never opened; R1a–R7 are unchanged, and a missing,
+stale or foreign view never blocks reconcile.
+
+#### 20.1.7 Disagreement and staleness
+
+| Condition | Client | Broker CREATE | Broker RECONCILE |
+|---|---|---|---|
+| View absent / fails PP / malformed | exit 5 before sudo | C7-PV INELIGIBLE 5 | Not read |
+| View caller/roots/fingerprints differ from enrollment | Not detectable by client | C7-PV INELIGIBLE 5 | Not read |
+| View compatibilityDigest != record | exit 5 | C7-PV INELIGIBLE 5 (derived view differs) | Not read |
+| View and enrollment agree, target files changed | exit 4 | INPUT_MISMATCH 4 before reservation; PRESUBMIT_FAILURE 7 in P1S | Not evaluated |
+| Client skips its checks and sends a stale fingerprintDigest | — | Binding comparison INPUT_MISMATCH 4 | — |
+
+A stale view never grants execution: the broker's binding uses only the
+enrollment value, and the view must equal the enrollment-derived bytes.
+Replacing the view requires root (PP). The runner cannot select a
+fingerprint: the entry is keyed by the live root digest and the broker
+compares the full binding.
+
+#### 20.1.8 Negative tests and qualification evidence (DG-1)
+
+Negative tests: view absent; symlink leaf or ancestor; owner non-root; mode
+0664/0666/0600; group-writable ancestor (root:staff 2775); link count 2;
+oversize; BOM; non-canonical key order or whitespace; unknown/missing key;
+duplicate rootDigest; unsorted roots; caller mismatch; compatibilityDigest
+mismatch; contractVersion mismatch; view from another runner; view one
+requalification behind enrollment (fingerprint member added, removed or
+changed); fingerprint.digest not recomputable; no entry for the live root;
+member symlink, hardlink (link count 2), directory, size or hash drift;
+mandatory adapter member missing from enrollment; client with checks
+disabled still refused by the broker; RECONCILE with the view deleted still
+finalizes. od06-q-enum-v1: config importing a file outside the root;
+symlinked or hard-linked package directory or file (npm link, workspace
+link); a mount beneath the root on a resolved path; a resolved .ts file;
+a non-literal require in the config closure and one inside node_modules
+(FAIL versus recorded dynamic site); a missing literal specifier in the
+config closure (FAIL) and an optional try/require inside node_modules
+(recorded unresolved); a package "exports" map selecting different files
+for require and import; an import cycle; 4097 entries and 67108865 bytes
+(FAIL, no truncation); an M member missing; two runs producing identical
+files. Qualification evidence: the Node encodeValue and the broker's Rust
+encoder produce byte-identical canonical vectors for view, fingerprint,
+qualification and binding; the od06-q-enum-v1 evidence record for the
+exact adapter, framework and Node versions.
+
+### 20.2 DG-2 — trusted sudo caller authentication
+
+#### 20.2.1 Reconstructed gap and evidence
+
+§5.1 requires "authentication metadata" that sudo supplies unforgeably and
+forbids ordinary SUDO_UID, but names no primitive. Upstream sudoers
+documents that with SETENV (implied for ALL) command-line environment
+variables "are not subject to the restrictions" of env_check/env_keep, and
+that env_file/restricted_env_file contribute environment
+([sudoers](https://www.sudo.ws/docs/man/sudoers.man/)); PAM can contribute
+more. Any SUDO_* trust therefore depends on the whole effective policy and
+PAM stack, not on a single enforced primitive.
+
+#### 20.2.2 Alternatives
+
+| Option | Authoritative source | Spoofing | Portability / burden | Verdict |
+|---|---|---|---|---|
+| A. SUDO_UID/SUDO_GID/SUDO_USER environment | sudo policy + PAM + env files | Depends on whole-policy configuration; not kernel evidence | Universal | Rejected (the §5.1 prohibition) |
+| B. Parent sudo process real UID from /proc | Undocumented sudo front-end credential behaviour | PID reuse, version drift | Version-coupled | Rejected as identity (kept only as the structural check C1a.4) |
+| C. Audit loginuid (/proc/self/loginuid) | pam_loginuid at login | Unset for services; names the session, not the caller | Distribution-coupled | Rejected |
+| D. Custom sudo policy/approval plugin | Plugin code inside sudo (root) | Sound, but a second privileged native artifact | High; violates "exactly one artifact" | Rejected |
+| E. **Kernel socket credentials**: the broker's stdin/stdout are AF_UNIX SOCK_STREAM socketpair ends created by the client; SO_PEERCRED returns the creator's credentials | Kernel, recorded at socketpair(2) | Unforgeable by another non-root account | Long-standing Linux primitive; needs sudo to pass the descriptors through unchanged (qualified) | **SELECTED** |
+
+Evidence for E: [unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html):
+SO_PEERCRED "returns the credentials of the peer process connected to this
+socket ... those that were in effect at the time of the call to connect(2),
+listen(2), or socketpair(2)". Linux v6.12
+[af_unix.c](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/unix/af_unix.c)
+init_peercred records task_tgid(current) and get_current_cred() on both
+socketpair ends, and
+[sock.c](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/core/sock.c)
+cred_to_ucred returns cred->euid/egid mapped into the reader's user
+namespace. Node child_process stdio "pipe" is created by libuv
+uv__process_init_stdio as uv_socketpair(SOCK_STREAM, ...)
+([libuv process.c](https://raw.githubusercontent.com/libuv/libuv/v1.x/src/unix/process.c)),
+so the client's existing spawn API already yields client-created
+socketpairs. That is a libuv implementation property, not a Node API
+guarantee: if a client Node build supplied a real pipe, the broker refuses
+(P0 recvmsg ENOTSOCK -> CALLER_REFUSED exit 5, §20.2.5), so availability,
+never identity, depends on it.
+
+#### 20.2.3 Exact sudoers policy (operator-owned, not installed by Stage 5 code)
+
+File /etc/sudoers.d/qa-agent-controller-v1, root:root 0440, protected
+parent; qa_runner is substituted once by the literal enrolled account:
+
+    Defaults:qa_runner env_reset, !setenv, !requiretty, !use_pty, !log_input, !log_output, !intercept, !log_subcmds, log_exit_status
+    qa_runner ALL=(root:root) NOPASSWD: NOSETENV: NOLOG_INPUT: NOLOG_OUTPUT: NOINTERCEPT: /usr/local/libexec/qa-agent-controller-v1 ""
+
+"" forbids every argument ([sudoers](https://www.sudo.ws/docs/man/sudoers.man/)).
+!use_pty and the client's new session both keep sudo off the pty path;
+!intercept, NOINTERCEPT and !log_subcmds keep sudo from tracing or
+preloading into the command; no I/O logging keeps sudo from interposing
+pipes. log_exit_status is a forcing input for the §20.2.4a topology (it
+keeps the sudoers policy close hook installed); it logs only the exit
+status through the existing sudo log, adds no relay and is not relied on as
+proof. Effective-policy qualification is the closed procedure
+od06-priv-surface-v1 (§20.2.7, C2): this rule is the runner account's only
+authorized privilege-elevation path, and the host is INELIGIBLE if the
+account has any other root-equivalent or host-control path. That procedure
+replaces the informal list that stood here in C1 (sudo -l, no
+command_timeout/runchroot/runcwd/SELinux/AppArmor, upstream plugins only, no
+doas/run0/pkexec/Polkit rule, no su credential, no elevating group) and is a
+strict superset of it.
+
+#### 20.2.4 Exact invocation chain and stdio
+
+1. The client (Node, effective UID = enrolled uid) calls
+   child_process.spawn("/usr/bin/sudo", ["-n", "--",
+   "/usr/local/libexec/qa-agent-controller-v1"], {shell: false, detached:
+   true, cwd: "/", stdio: ["pipe", "pipe", "ignore"], env: {PATH:
+   "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C"}}). detached: true makes the
+   child a new session leader (setsid), so sudo has no controlling
+   terminal. No SUT value, credential or caller variable is placed in the
+   sudo environment; SUT values travel only inside the request frame. The
+   client checks /usr/bin/sudo under PP (root-owned, setuid-root, not
+   group/other writable) as an advisory early refusal.
+2. sudo authorizes the invoking account against the rule (NOPASSWD, -n),
+   resets the environment and, with no /dev/tty and no pty requirement,
+   takes the no-pty path. Upstream sudo
+   ([exec.c](https://raw.githubusercontent.com/sudo-project/sudo/main/src/exec.c),
+   [exec_pty.c](https://raw.githubusercontent.com/sudo-project/sudo/main/src/exec_pty.c),
+   [exec_nopty.c](https://raw.githubusercontent.com/sudo-project/sudo/main/src/exec_nopty.c)):
+   exec_pty returns false when /dev/tty cannot be opened; exec_nopty forks
+   and the command inherits stdin/stdout/stderr directly unless an I/O
+   plugin logs that stream; closefrom (default 3) closes higher descriptors.
+   Whether sudo forks at all is not fixed by this policy alone: upstream
+   direct_exec_allowed (exec.c) execs the command in place, replacing the
+   sudo process, when the policy plugin has no close function, no audit
+   plugin has a close function and no RBAC, timeout, sudoedit, intercept,
+   log_subcmds or ptrace flag is set; the sudoers plugin clears its close
+   function only when I/O logging, use_pty, log_exit_status and log servers
+   are all off and the authentication backend needs no session end
+   ([policy.c](https://raw.githubusercontent.com/sudo-project/sudo/main/plugins/sudoers/policy.c)).
+   The fork therefore depends on the exact sudo build, PAM session
+   configuration, audit plugins and Defaults. §20.2.3 sets log_exit_status
+   to keep the close function, but the topology is an exact qualification
+   invariant (§20.2.4a), not a property of the policy text.
+3. Broker process on a qualified host (§20.2.4a): parent = the qualified
+   /usr/bin/sudo front-end process; fd 0 and fd 1 = the child ends of two
+   client-created socketpairs; fd 2 = /dev/null.
+
+#### 20.2.4a Sudo parent-topology qualification invariant (closed)
+
+A host is eligible only if qualification proves, for the exact recorded
+sudo build (version and package digest), sudo.conf, the full PAM stack of
+the sudo service, every loaded policy/audit/approval/I/O plugin, and the
+exact §20.2.3 file, all of the following by observation of real broker
+invocations through the §20.2.4 spawn on that host:
+
+- T1 Not direct exec: the broker's parent PID is a process distinct from
+  the client, and the client's direct child (the spawned PID) is that
+  parent.
+- T2 Parent identity: the parent's `/proc/<pid>/exe` has the dev/ino of
+  /usr/bin/sudo under PP (root:root, regular, setuid-root, not group/other
+  writable), and the parent stays alive for the whole broker lifetime of
+  every observed invocation (S0–S6 and REFUSED paths).
+- T3 Structural check meaningful: C1a.4 passes on every observed
+  invocation, and fails (CALLER_REFUSED) when the same broker is reached
+  with each §20.2.6 non-sudo parent.
+- T4 Descriptor pass-through: the broker's fd 0 and fd 1 are the same
+  sockets (equal socket inode in `/proc/<pid>/fdinfo` and `/proc/<pid>/fd`) as
+  the client-created socketpair child ends; SO_PEERCRED returns the client;
+  no pipe, pty or socket is interposed; fd 2 is /dev/null.
+- T5 Stability: T1–T4 hold for every observed phase and after
+  systemctl daemon-reexec, a sudo package reinstall of the same version,
+  and a reboot.
+
+Any T1–T5 failure, or any later change of the sudo build, sudo.conf, PAM
+stack for sudo, loaded plugins or the §20.2.3 file without requalification,
+makes the host INELIGIBLE (qualification FAIL). There is no
+environment-variable, loginuid or /proc credential fallback and SO_PEERCRED
+stays the only identity source. At runtime the topology is not trusted but
+re-checked: a direct exec leaves the client as the broker's parent, so
+C1a.4 refuses (CALLER_REFUSED, exit 5) before any protected-store access;
+an unqualified topology change can only make execution unavailable, never
+authenticate.
+
+Relay and lifetime semantics (I4 inputs; qualification must observe them on
+the exact sudo build):
+
+- No relay: bytes flow kernel-direct between client and broker; sudo reads
+  neither stream. The sudo front end holds duplicates of the broker's own
+  ends only, so client death closes the only peer ends.
+- Client EOF or death: broker read returns 0, or POLLHUP/POLLRDHUP on fd 0
+  -> client loss (§7.2). Broker write after client death -> EPIPE (SIGPIPE
+  ignored) -> client loss. The 5000 ms structural-frame drain rule is
+  unchanged.
+- Signals: sudo forwards signals it receives to the command (user-generated
+  SIGINT/SIGQUIT/SIGTSTP; others unless sent by the command) and on SIGALRM
+  calls terminate_command, which can end in SIGKILL. Where the qualified
+  sudo build lets the invoking account signal the sudo front end, a
+  same-account process can therefore cause SIGHUP, SIGTERM or SIGKILL of
+  the broker. The broker sets SIG_IGN for SIGHUP, SIGINT, SIGQUIT, SIGTERM,
+  SIGTSTP, SIGTTIN, SIGTTOU, SIGUSR1, SIGUSR2, SIGALRM and SIGPIPE before P0;
+  SIGKILL is a broker crash and is handled only by the existing §7.4
+  broker-crash rows (durable journal, manager deadline, reconcile). No new
+  state or outcome.
+- Ctrl-C at the client's terminal reaches only the client (sudo is in its
+  own session). The client then closes its stdin end, which is CLIENT_LOST
+  (§7.2); the CLI has no separate cancel operation.
+- sudo front-end death: the broker is reparented and continues; peer state
+  is still detected through the sockets.
+
+#### 20.2.5 Authoritative identity and C1a/R1a order
+
+Process-start hygiene, before P0, with no refusal semantics: clearenv; set
+the signal dispositions above; dup /dev/null onto fd 2; close_range(3, ~0);
+umask 077; chdir("/"). Then P0 (§6.4; grammar only, L3 unchanged). Then C1a,
+in this order (R1a uses the same sub-steps; the §5.4 part and the enabled
+flag are not part of C1a in either case):
+
+- C1a.1 Process: getresuid and getresgid all 0; argc == 1.
+- C1a.2 Artifact: the fixed broker path under PP (root:root 0755, regular,
+  no setuid/setgid/file capability, link count 1), and the fstat of
+  /proc/self/exe (opened through a procfs descriptor validated with
+  PROC_SUPER_MAGIC and STATX_ATTR_MOUNT_ROOT) has the same dev/ino.
+- C1a.3 Enrollment and compatibility.json integrity (§5.2, unchanged).
+- C1a.4 Namespace and parent structure: /proc/self/ns/user and
+  /proc/1/ns/user have equal nsfs dev/ino. ppid = getppid(); pidfd =
+  pidfd_open(ppid); fstat of /proc/<ppid>/exe (O_PATH through the validated
+  procfs descriptor) equals the dev/ino of /usr/bin/sudo opened under PP,
+  which must be root:root, regular, setuid-root and not group/other
+  writable; afterwards getppid() still equals ppid and pidfd_send_signal
+  (pidfd, 0) succeeds, so the inspected /proc entry was the live parent (no
+  PID-reuse window). This structurally refuses direct root shells, su, doas,
+  run0, pkexec and in-place exec elevation; it is not the identity proof.
+- C1a.5 Caller identity: fd 0 and fd 1 each have SO_DOMAIN AF_UNIX and
+  SO_TYPE SOCK_STREAM (a non-socket fd 0 never reaches this step: it is
+  refused at P0 with this step's outcome, CALLER_REFUSED exit 5, by the
+  ENOTSOCK rule below); SO_PEERCRED on both returns identical {pid, uid,
+  gid} with pid > 0; uid != 0; uid = enrollment.caller.uid and gid =
+  enrollment.caller.gid. The authenticated account is
+  enrollment.caller.account, bound to that uid by the root-owned
+  enrollment; the broker performs no NSS/passwd lookup.
+
+Any C1a failure: REFUSED reason CALLER_REFUSED, exit 5 (C1a.3 keeps its
+existing §5.2 mapping), with no protected-store read or write, manager call
+or cgroup read; on RECONCILE the attempt is left for a later reconcile. The
+SO_PEERCRED pid is never authority, so PID reuse cannot affect identity; the
+pidfd recheck covers the only PID-based structural check.
+
+Socket options and ancillary data (C2, normative). The protocol carries no
+ancillary data in either direction. The broker MUST NOT enable SO_PASSCRED,
+SO_PASSPIDFD or SO_PASSSEC on fd 0 or fd 1 (the kernel therefore never
+attaches credentials to data the broker receives), never sends ancillary
+data, and MUST NOT accept file descriptors from the caller. Every read from
+fd 0 (P0 intake, the stdin liveness watch and the RESULT_PROPOSAL read) is a
+recvmsg(2) with MSG_CMSG_CLOEXEC and a control buffer of exactly
+CMSG_SPACE(sizeof(int)) bytes; the kernel closes any passed descriptor that
+does not fit. If a call returns any control message or sets MSG_CTRUNC, the
+broker closes every descriptor received in an SCM_RIGHTS message at once,
+never uses or passes it, discards the bytes of that call, and treats the
+event as a malformed frame under the existing closed semantics: before the
+reservation commit it is REFUSED/SCHEMA_INVALID with nothing reserved (in
+P0 a structural check, L3 unchanged); after the reservation commit the
+existing §7.2 broker-side violation outcome applies unchanged
+(EXECUTION_ERROR RESULT_INVALID). SO_PEERCRED stays the only socket
+credential identity source; no new frame, reason or exit code.
+
+ENOTSOCK at P0 (C3, ARCH-S5-C2-m03, normative). P0 runs before C1a.5, and
+recvmsg(2) on a descriptor that is not a socket (pipe, regular file, tty,
+/dev/null or any other non-socket) fails with ENOTSOCK before any byte is
+read. The single mapping is: the first P0 recvmsg(fd 0, ...) that fails
+with ENOTSOCK ends the invocation at once as REFUSED reason CALLER_REFUSED,
+exit 5. It is the early equivalent of the later C1a.5 non-socket check
+(fd 0 SO_DOMAIN AF_UNIX / SO_TYPE SOCK_STREAM) and carries exactly that
+check's outcome, so the same caller defect has one outcome whichever step
+observes it. It happens before C1a.1–C1a.4 run and before P1: no
+reservation, no protected-store read or write, no enrollment or
+compatibility.json read, no manager call and no cgroup read. It is not a
+P0 structural or schema failure: ENOTSOCK is never SCHEMA_INVALID, never
+counts against the 5000 ms P0 bound and never produces the P0 exhaustion
+outcome. The REFUSED frame is written to fd 1 with write(2) (fd 1 may also
+be a non-socket in this case, so sendmsg is not used for it); a failed
+write does not change the exit code 5. No new reason, exit code, frame or
+taxonomy is introduced: CALLER_REFUSED/5 is the existing C1a mapping
+(§5.6.4, §20.4.5 row 6c). Every other P0 outcome is unchanged: on a socket
+fd 0, malformed bytes, a control message, MSG_CTRUNC, EOF before a complete
+frame and P0 timeout keep the existing P0 structural/schema rules
+(REFUSED/SCHEMA_INVALID, nothing reserved; L3 unchanged), and a socket fd 0
+of the wrong domain or type (for example AF_UNIX SOCK_DGRAM or AF_INET) is
+still read under those rules and refused at C1a.5. The mapping moves no
+reservation or authority boundary: P0 still reads only fd 0, and C1a.5
+still performs the full socket and SO_PEERCRED check on fd 0 and fd 1.
+
+Anti-spoofing proof sketch:
+
+| Attempt | Why refused |
+|---|---|
+| SUDO_UID/SUDO_USER/LOGNAME/any variable forged | The environment is never read (cleared at start) |
+| Other non-root account invokes the rule | sudo denies (the rule names only the account) |
+| Other account passes its own socket to the runner | SO_PEERCRED uid = other account != enrollment |
+| Root (direct shell, cron, su, doas, run0, pkexec) runs the broker | Parent is not the qualified sudo (C1a.4), or creator uid 0 (C1a.5), or stdin is not a socket (P0 ENOTSOCK -> CALLER_REFUSED 5) |
+| Nested sudo (runner -> sudo -> root shell -> sudo broker) | Socket creator is root (uid 0), or stdin is not a client socket (P0 ENOTSOCK -> CALLER_REFUSED 5) |
+| setuid program used to create the socket | SO_PEERCRED reports the effective UID (0 or another account) |
+| Runner in an unprivileged user namespace | Kernel maps the creator to the runner's real kuid; a broker outside the initial user namespace fails C1a.4 |
+| sudo build interposes pipes or a pty | fd 0 not a socket (P0 ENOTSOCK -> CALLER_REFUSED 5), or fd 1 not a socket (C1a.5), or creator root (C1a.5) -> refused |
+| Pipe-based client (non-libuv) | P0 ENOTSOCK -> CALLER_REFUSED 5 (availability only) |
+
+Root itself is trusted and out of scope; C1a refuses accidental direct-root
+use, not a deliberate root operator. Same-account authority: any process
+running as the enrolled account can create such sockets and invoke the
+rule. That is the existing R-1/R-2 same-principal model and the L4
+qualification input (Yama, absence of same-account command agents), not a
+new acceptance.
+
+#### 20.2.6 Negative tests and qualification evidence (DG-2)
+
+Negative tests: forged SUDO_UID/SUDO_GID/SUDO_USER via the command line,
+env_file, ~/.pam_environment and PAM; argv present ("" rule and C1a.1);
+direct root invocation from a root shell, cron and systemd-run; su -c,
+doas, run0, pkexec; nested sudo; stdin as pipe, file, tty and /dev/null
+(each: P0 recvmsg ENOTSOCK -> REFUSED CALLER_REFUSED exit 5, never
+SCHEMA_INVALID, with no reservation, protected-store read or write,
+enrollment read, manager call or cgroup read, including when fd 1 is also
+a pipe); stdin an AF_UNIX SOCK_DGRAM socket (P0 rules, then C1a.5);
+stdin and stdout from different processes (pid mismatch); socket created by
+another account, by a setuid helper and by root; runner inside unshare -U;
+sudo -b, -E, -s and -i (all denied by policy); sudo with use_pty forced,
+log_input/log_output, intercept or command_timeout enabled (each must refuse
+or fail qualification, never authenticate); parent PID-reuse race (parent
+killed between getppid and pidfd_open); SIGHUP, SIGTERM, SIGTSTP and SIGALRM
+sent to the sudo front end at every phase S0–S6 (no outcome other than the
+§7.4 rows); client SIGKILL at every phase (EOF/EPIPE -> CLIENT_LOST or the
+§7.4 row); sudo front end SIGKILLed. Topology (§20.2.4a): with
+log_exit_status removed, pam_session disabled and no audit-plugin close
+(the direct-exec configuration), the broker's parent is the client and C1a.4
+refuses with no protected-store access, and qualification records T1 FAIL;
+an audit or I/O plugin added to sudo.conf after qualification; a PAM stack
+change for the sudo service; a sudo build swap of the same version string
+with a different package digest (each requalification FAIL until
+re-observed). Qualification evidence: exact sudo build, package digest and
+sudo.conf, the PAM stack of the sudo service, the loaded plugin list, the
+effective policy listing, the T1–T5 observation record (process tree with
+client, sudo and broker PIDs; broker parent exe dev/ino; socket inodes of
+fds 0/1 on both sides), no pty allocated, the observed signal-relay table
+for the exact build, Yama ptrace_scope >= 1.
+
+#### 20.2.7 Runner privilege-surface qualification od06-priv-surface-v1 (C2, closed)
+
+Invariant PS-0. The §20.2.3 broker rule is the runner account's only
+authorized privilege-elevation path. A host on which the account has any
+other root-equivalent or host-control path is INELIGIBLE. Root-equivalent
+means able to run code with UID 0 or with any capability in the initial
+user namespace; host-control means able to modify root-owned files or
+devices, or to start, configure or enter root-run services, containers or
+virtual machines. Both include every way to change the broker, enrollment,
+compatibility state, the protected journal or tombstones, and every way to
+cause root to execute, load or be configured by state the account controls
+(C3: evaluated completely by PS-F, with kernel-effective access). The root operator
+stays trusted and outside the claim (§20.2.5, unchanged); PS-0 removes
+runner-account privilege, it does not defend against a hostile root.
+
+Runtime C1a does not and cannot detect a runner that already holds root:
+such a runner can rewrite the broker, enrollment and every check. PS-0 is
+therefore a host-eligibility property established and kept by this
+procedure, never by C1a.4 or any runtime topology check.
+
+Producer, privilege and phase. The operator runs od06-priv-surface-v1 as
+part of Stage 5 qualification tooling (not shipped in the npm package,
+never invoked by the client or the broker). It runs as root because its
+inputs (sudoers 0440, shadow, other processes' /proc entries) are
+root-readable only, and it is read-only: it writes nothing but its output
+record into the operator's qualification evidence. It runs on the
+qualified host after the §20.2.3 file, the runner account, its groups and
+the runner service are final, and before enrollment is enabled (§20.3.5
+"qualify"; §5.3). Every probe that executes as the runner account (PS-C3)
+runs from a non-tty session of that account, never through the broker.
+
+Closed requirement sections. Every item is checked; any item that fails,
+cannot be evaluated or cannot be evaluated completely makes the host
+INELIGIBLE. "Package-verified" means shipped by an installed Debian binary
+package of the qualified host whose dpkg --verify reports no difference
+for that file.
+
+PS-A sudo sources and effective policy:
+
+- A1 Package: exactly the Debian binary package sudo is installed (not
+  sudo-ldap), at the recorded version and architecture; every regular file
+  of dpkg -L sudo is recorded with its SHA-256 and is package-verified.
+  This covers /usr/bin/sudo, visudo, cvtsudoers and every plugin object
+  under /usr/libexec/sudo.
+- A2 sudo.conf: /etc/sudo.conf is absent, or every line that is not blank
+  and not a comment is exactly one of `Plugin sudoers_policy sudoers.so`,
+  `Plugin sudoers_io sudoers.so`, `Plugin sudoers_audit sudoers.so`. Any
+  other Plugin, plugin argument, Path, Set or Debug line is INELIGIBLE.
+- A3 Local source set S: /etc/sudoers plus, recursively, every file named by
+  @include or #include and every file that sudoers(5) selects from a
+  directory named by @includedir or #includedir. Recorded per file: path,
+  uid, gid, mode, size, SHA-256; per include directory: path, uid, gid,
+  mode and the complete bytewise-sorted list of entry names, including the
+  names sudo skips (ending in "~" or containing "."), so a later rename is
+  a change. Every file and directory is root-owned with (mode & 0o022) == 0
+  and satisfies the §20.1.3 predicate PP. visudo -c (as root) passes. An
+  include path containing a sudoers escape (for example %h), a missing
+  include target or an unreadable entry is INELIGIBLE.
+- A4 Parsed policy, using sudo's own parser from A1:
+  `cvtsudoers -c /dev/null -i sudoers -f json -e /etc/sudoers` (LC_ALL=C,
+  root; includes inlined, aliases expanded) is the full policy P;
+  `cvtsudoers -c /dev/null -i sudoers -f json -e -M -p -m user=<account>
+  /etc/sudoers` is the matched policy U (local password and group data,
+  the account's groups added, every host kept). Each output must be strict
+  JSON whose numbers are safe integers; its canonical form is the CRS-1
+  encodeValue encoding (§11.1). Requirements: (i) no user list in P and
+  no Defaults binding in P contains ALL as a user, a netgroup (+name) or a
+  non-Unix group (%:name); (ii) U contains exactly one user rule, equal to
+  the §20.2.3 rule (Runas root:root; tags NOPASSWD, NOSETENV, NOLOG_INPUT,
+  NOLOG_OUTPUT, NOINTERCEPT; command the broker path with the empty
+  argument list; host ALL; no option or restriction beyond those tags);
+  (iii) P contains no Defaults entry bound to a command or Runas list
+  that includes the broker path or ALL; (iv) every user-bound Defaults
+  entry in P that matches the account (by name, #uid, %group or %#gid of
+  its groups) is exactly the §20.2.3 Defaults line.
+- A5 Effective listing L: `sudo -n -l -U <account>` run as root with
+  LC_ALL=C, an environment of only PATH=/usr/sbin:/usr/bin:/sbin:/bin, no
+  controlling terminal and stdout a pipe (so sudo does not wrap lines).
+  Canonicalization, in order: split at LF; remove a trailing CR and
+  trailing spaces and tabs from each line; replace the host name in the
+  `Matching Defaults entries for <account> on <host>:` and
+  `User <account> may run the following commands on <host>:` header lines
+  with the literal `<HOST>`; drop empty lines; join with LF and end with one LF. L is
+  compared only as these bytes; sudo -l is evidence of the effective result
+  for the A1 build, never the authority, which is S plus P. Requirements:
+  the command section has exactly one entry and it denotes the §20.2.3
+  rule; every option named in the "Matching Defaults entries" and "Runas
+  and Command-specific defaults" sections is one of env_reset, setenv,
+  requiretty, use_pty, log_input, log_output, intercept, log_subcmds,
+  log_exit_status (each finally set as in §20.2.3), mail_badpass or
+  secure_path. Any other option (for example command_timeout, runchroot,
+  runcwd, role, type, apparmor_profile, closefrom_override, group_plugin,
+  log_servers, iolog_*, env_keep, env_file, restricted_env_file) is
+  INELIGIBLE.
+- A6 sudoers NSS: the sudoers line of /etc/nsswitch.conf is absent or
+  exactly `sudoers: files`.
+- A7 PAM: /etc/pam.d/sudo and, recursively, every file it includes are
+  recorded (path, SHA-256); every module they reference is package-verified
+  and shipped by one of libpam-modules, libpam-modules-bin, libpam-runtime
+  or libpam-systemd. /etc/security/group.conf has no line that is not blank
+  and not a comment (pam_group grants no group).
+
+PS-B account and group surface:
+
+- B1 Account: one passwd entry with the enrolled name, uid != 0, and no
+  other passwd entry with that uid; exactly one passwd entry has uid 0 and
+  it is root.
+- B2 Primary group: the account's private group: group name equal to the
+  account name, gid != 0, an empty member list, and no other passwd entry
+  using that gid as primary group.
+- B3 Supplementary groups: getgrouplist(account, primary gid) through NSS
+  equals exactly {primary gid}. The account therefore has no
+  supplementary group at all. This closed rule, not a list of dangerous
+  names, is the requirement; it excludes in particular root, sudo, wheel,
+  admin, adm, docker, podman, lxd, incus, incus-admin, libvirt,
+  libvirt-qemu, kvm, disk, shadow, systemd-journal and every group named
+  in a sudoers, doas, polkit or D-Bus policy. A host that needs a
+  supplementary group for the runner is INELIGIBLE (an owner decision may
+  later define an allowlist; this design defines none).
+- B4 Observed credentials: for every process of the runner service (the
+  recorded systemd unit, or the recorded process tree if the runner is not
+  a unit), `/proc/<pid>/status` has all four Uid values equal to uid, all
+  four Gid values equal to the primary gid, Groups a subset of {primary
+  gid}, CapInh, CapPrm, CapEff and CapAmb all zero, and `/proc/<pid>/ns/mnt`
+  and `/proc/<pid>/ns/user` with the nsfs dev/ino of PID 1's (C3: the
+  account's file access is then exactly what the PS-F F0 probe, which runs
+  in those namespaces, evaluates). For a unit,
+  systemctl show records User (= account), Group (empty or the primary
+  group), SupplementaryGroups (empty), DynamicUser (no) and
+  AmbientCapabilities (empty). Broker chain (C4): the §20.2.3 path runs
+  sudo and then the broker as root inside the runner unit's cgroup. A
+  process there with all four Uid values 0 belongs to the broker chain,
+  and is outside the B4 credential predicate, exactly when (a) its
+  /proc/<pid>/exe has the dev/ino of the package-verified /usr/bin/sudo
+  (A1) and its parent has all four Uid values equal to uid, or (b) its exe
+  has the dev/ino of the enrolled broker artifact (§20.3.5 path, verified
+  brokerSha256) and its parent satisfies (a). This is the T1–T5 topology
+  (§20.2.4a). Any other process in that cgroup whose credentials differ
+  from the predicate fails B4. Recognition grants nothing: the chain is
+  the one authorized elevation path of PS-0.
+- B5 NSS identity sources: the passwd, group, shadow, gshadow and
+  initgroups lines of /etc/nsswitch.conf name only the modules files and
+  systemd. When systemd is named: the userdb drop-in directories
+  /etc/userdb, /run/userdb, /run/host/userdb, /usr/local/lib/userdb and
+  /usr/lib/userdb contain no user, group or membership record naming the
+  account, its uid or its primary group, and /run/systemd/userdb contains
+  no entry other than io.systemd.DynamicUser, io.systemd.Multiplexer and
+  io.systemd.NameServiceSwitch. The netgroup line is not restricted
+  because no privilege policy may reference a netgroup (A4(i); PS-C).
+
+PS-C alternate elevation mechanisms:
+
+- C1 doas: absence required. No opendoas or doas package is installed and
+  none of /usr/bin/doas, /usr/local/bin/doas, /etc/doas.conf and
+  /usr/local/etc/doas.conf exists.
+- C2 polkit and pkexec: absence required. The polkitd and pkexec packages
+  are not installed, /usr/bin/pkexec does not exist, no system bus service
+  file declares org.freedesktop.PolicyKit1, and on the system bus that name
+  has no owner and is not in ListActivatableNames. No polkit rule or .pkla
+  file can then apply, and no polkit-authorized operation is available to
+  the account.
+- C3 run0, systemd-run and other systemd-mediated elevation: run0 ships
+  with systemd and cannot be absent, so the evidence is C2 plus probes run
+  as the account: `run0 --no-ask-password /usr/bin/true` and
+  `systemd-run --system --no-ask-password --wait /usr/bin/true` each exit
+  non-zero with an access-denied result and create no unit (the system
+  manager's unit list is unchanged). A probe that succeeds, prompts or
+  creates a unit is INELIGIBLE.
+- C4 su and root credentials: the root password field in /etc/shadow is
+  locked (starts with "!" or "*"); /etc/pam.d/su and its includes are
+  recorded and satisfy the A7 module rule, with no pam_wheel trust,
+  pam_permit or pam_succeed_if line in the auth stack; /root has
+  (mode & 0o077) == 0; if openssh-server is installed, sshd -T reports
+  permitrootlogin no. The operator records that no credential of root or
+  of any account holding a privilege grant is readable by or available to
+  the runner account.
+- C5 setuid, setgid and file-capability executables: every regular file on
+  every local filesystem of the host with the setuid or setgid bit or a
+  security.capability attribute is recorded (path, uid, gid, mode, SHA-256,
+  capabilities, owning package). Each must be package-verified, writable
+  only by root and in a directory tree writable only by root. Any such
+  file that is not package-verified is INELIGIBLE. Elevation through these
+  files is covered by A, C1, C2 and C4; a set or digest change is a
+  trigger.
+- C6 Host-control endpoints. Access is decided only by the PS-F F0
+  effective-access probe (C3, ARCH-S5-C2-m01), never from uid, primary gid
+  or mode bits, so POSIX ACLs, read-only mounts, inode attributes and
+  ancestor search permission are all applied by the kernel: (i) for no
+  block device node does the probe report read or write access (R_OK and
+  W_OK asked separately); (ii) no character device node outside /dev/null,
+  /dev/zero, /dev/full, /dev/random, /dev/urandom, /dev/tty, /dev/ptmx,
+  /dev/pts/ptmx, /dev/net/tun and /dev/fuse is reported writable, except
+  the single object of the F1 exact exception AA-NULL (C5) (the
+  account's own `/dev/pts/<n>` nodes are owned by it and do not exist under
+  the F1 quiescence rule); (iii) every listening socket (AF_UNIX
+  path and abstract, TCP and UDP on every address, from `ss -lpn` as root)
+  whose server process has euid 0 or any capability is either not
+  connectable by the account (a path socket for which the probe reports
+  W_OK denied, which is the unix(7) connect permission and includes
+  ancestor search permission; abstract sockets, TCP and UDP always count
+  as connectable) or is served by an executable from a Debian package built
+  from source package systemd or dbus, or is openssh-server's sshd under
+  C4; (iv) every system bus well-known name that is owned or activatable
+  and whose owner or activation user is root or capability-holding belongs
+  to an executable from source package systemd or dbus; (v) the D-Bus
+  system policy files (system.conf, system-local.conf and every file in
+  system.d under /usr/share/dbus-1 and /etc/dbus-1) are recorded and
+  contain no policy element naming the account, its uid or its primary
+  group. Container engines, VM managers and any other root-run control
+  service reachable by the account therefore fail (iii) or (iv).
+
+PS-D remote and dynamic policy. Only local, root-owned files qualify as
+privilege-policy or identity sources. If sudoers, passwd, group, shadow,
+gshadow or initgroups resolution names any NSS module other than files
+(or systemd under B5), if a PAM module outside the A7 packages appears in a
+recorded stack, or if any polkit authority exists (C2), the effective
+policy cannot be captured deterministically and revalidated, and the host
+is INELIGIBLE. No freshness window, cache or "last known" state is
+defined, because none is admitted: an unreachable, stale or changed remote
+source is never treated as unchanged, and LDAP, SSSD, winbind, FreeIPA,
+Active Directory and remote sudoers are not supported.
+
+PS-E procedure completeness. A root-equivalent or host-control path for
+the runner account that this procedure revision does not detect is a
+procedure defect: every host qualified under the revision becomes
+INELIGIBLE until a new procedure literal covers the path and the host is
+requalified with it. A revision is a new literal, never an in-place
+change.
+
+PS-F filesystem access, root execution, dynamic groups and user mounts (C3,
+ARCH-S5-C2-m01). PS-A–PS-D close the elevation mechanisms; PS-F closes the
+remaining PS-0 host-control definition over the whole host: objects the
+account can write, root execution or configuration that consumes state the
+account controls, groups the account can acquire at runtime, and mounts it
+can create. It is part of od06-priv-surface-v1 (same producer, phase, root
+privilege, read-only rule and INELIGIBLE semantics) and is decided by kernel
+evidence, not by permission-bit arithmetic.
+
+F0 Effective-access probe. Every "can the account access" question in C6
+and PS-F is answered only by this probe; no requirement decides runner
+access from uid, gid, mode bits or ACL text. The procedure (root) forks the
+probe, which before its first answer calls setgroups(0, NULL), setresgid(g,
+g, g), setresuid(u, u, u) (u = enrolled uid, g = its primary gid, B1/B2) and
+prctl(PR_SET_NO_NEW_PRIVS, 1), then verifies in its own /proc/self/status
+that all four Uid values are u, all four Gid values are g, Groups is empty
+and CapInh, CapPrm, CapEff and CapAmb are zero, that /proc/self/ns/user and
+/proc/self/ns/mnt have the nsfs dev/ino of PID 1's (B4 requires the same of
+the runner), and that its LSM label (/proc/self/attr/current) is
+`unconfined` or no LSM is active. An unconfined probe has at least the
+access of a runner process under any confinement, so the probe can only
+over-report. It calls no helper, executes nothing and holds no descriptor
+from the procedure except one pipe pair. Each question is
+faccessat2(AT_FDCWD, p, m, AT_EACCESS | AT_SYMLINK_NOFOLLOW) for a canonical
+absolute path p from the walker and m = W_OK (for C6 (i) also, separately,
+m = R_OK; for every C5 file also, separately, m = X_OK, C4). The
+kernel applies mode bits, POSIX ACLs (system.posix_acl_access),
+read-only mounts, immutable and append-only attributes, LSM inode hooks
+and search permission on every ancestor, for exactly these credentials.
+Result: 0 = accessible; EACCES, EPERM, EROFS or ETXTBSY = not accessible;
+ENOENT = vanished (the walker re-stats p as root: present = INELIGIBLE,
+absent = skipped); any other result, a probe that cannot be started, fails
+its self-verification, dies or answers out of order = INELIGIBLE. For an
+AF_UNIX path socket W_OK is the connect permission (unix(7)). W_OK on a
+directory is asked without X_OK, so a write-but-not-search directory is
+over-reported (conservative). The only probe that writes is the denial
+probe F0w (C4). It is forked like F0, with the same credential set-up and
+self-verification, and runs only the observation writes of the F1
+pseudo-filesystem endpoint table. Each write is one openat(O_WRONLY |
+O_NOFOLLOW) followed by exactly one write(2) of the payload in the table.
+It records the errno (or success) and does nothing else. Each payload is
+inert even if the kernel accepts it.
+
+F1 Writable objects.
+
+- Quiescence (C4, normative). F1 and F2 run only in state QZ. QZ is checked
+  before and after the walk; if it fails at either point, no record is
+  produced and the host stays INELIGIBLE. QZ has four parts.
+  QZ1: enrollment is disabled, so no CREATE can reserve (§5.3).
+  RECONCILE stays possible (§7).
+  QZ2: the runner service is stopped and no process of the account is
+  alive (no /proc entry with any Uid value u). Under KillMode
+  control-group this leaves the runner cgroup empty, so no broker-chain
+  process (B4) and no workload process exists during the walk.
+  QZ3 (C5, C6): the protected journal is read only through the read
+  contract JR below, after QZ1 and QZ2 hold. QZ3 holds only when JR yields
+  a validated snapshot that JR4 classifies CLEAN: every path is in a class
+  of the layout od06-journal-layout-v1 (§20.3.8); no staging file exists;
+  no transaction has phase INTENT; every attempt's head state is terminal
+  (PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR) or QUARANTINED, so no
+  attempt is in PREPARED, SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED
+  or ORPHANED, and its history is intact (JR3); and every relation K1–K7
+  of §20.3.8 holds with no release-pending claim, no uncommitted terminal
+  residue and no orphan, duplicate, corrupt, unknown or ambiguous object
+  (JR4). Qualification never accepts an INTENT, an incomplete attempt, a
+  release-pending claim or a corrupt or ambiguous transaction state.
+  Being blocked is not the same as being unrecoverable: for a closed
+  recoverable class of the §20.3.8 matrix (T-A, T-B, T-C, A-INC, A-RES,
+  A-REL) this run is INELIGIBLE, and the state is resolved only outside
+  the run by the existing RECONCILE under the §20.3.8 disabled-enrollment
+  procedure, after which a new run starts from QZ1. For class D the host
+  fails closed on the existing operator path (§5.3, §7 runner
+  quarantine). Qualification performs no recovery.
+  QZ4 (C5): every loaded unit whose name begins with `qa-agent-exec-v1-`
+  is an own workload service OW (F2, R-SD), proven from the JR snapshot,
+  whose ActiveState is inactive or failed and whose cgroup is empty. A
+  retained inactive or failed unit (CollectMode, facts not yet reset,
+  §6.1, §6.3) is permitted only if its cgroup is empty, its attempt's
+  history is intact in the snapshot and the full OW proof, including the
+  durable controller binding of OW (2), succeeds. Such a unit is not
+  removed or reset by qualification. An OW unit that is active,
+  activating, deactivating or reloading fails QZ. A `qa-agent-exec-v1-`
+  unit that is not OW fails PS-F (INELIGIBLE); qualification tooling
+  never stops, deletes, resets or otherwise acts on it. Existing
+  authorized broker recovery and cleanup (§6.3, §7) must resolve it
+  before a later run can succeed.
+  B4 is observed with the service running before the stop and again after
+  the restart, under QZ1 and QZ3, with the broker-chain rule of B4. No
+  qualification step classifies a broker-chain process as a violation only
+  because it is in the runner cgroup.
+- Protected-journal read contract JR (C5, closed, read-only). The broker
+  journal under /var/lib/qa-agent-controller-v1 (§5.2, §11.2) stays the
+  root-owned authority. Qualification tooling may read and validate it.
+  It never writes, renames, deletes, repairs, truncates, fsyncs or
+  re-creates any entry. It never performs broker recovery, rollback,
+  release or reservation reconstruction, and it never takes or creates a
+  lock. JR introduces no state, version, reason or compatibility rule of
+  its own. It applies only the existing §7 and §11 semantics, and
+  anything those semantics do not accept is INELIGIBLE.
+  JR1 Order and anchoring. JR runs only after QZ1 and QZ2 hold, so no
+  broker process exists and no CREATE can reserve. The tool opens
+  /var/lib/qa-agent-controller-v1 from "/" one component at a time with
+  openat2 RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS. Every component
+  must be a root-owned directory that is not writable per F0. The final
+  directory must be root:root 0700, and fstatfs on its descriptor must
+  give a type in the §5.6.2 allowlist (the §5.6.2 F2 check, unchanged).
+  That descriptor anchors every later access. Each subdirectory and file
+  is opened relative to its parent descriptor with O_NOFOLLOW (directories
+  also O_DIRECTORY; files O_RDONLY | O_NOATIME, so a read does not even
+  update access times). A symlink, FIFO, socket, device, hard-linked file
+  (link count other than 1), a path that changes between getdents64 and
+  open, or a regular file that is not root:root 0600 (§5.2) is
+  INELIGIBLE. Every subdirectory must be root-owned and not group- or
+  other-writable. A file larger than 16777216 bytes is INELIGIBLE. A file
+  is read to end of file, and its size and inode must equal the fstat
+  values taken before the read.
+  JR2 Deterministic enumeration and classes (C6). Each directory is
+  listed completely with getdents64. Entries are processed in bytewise
+  name order, depth first. JR knows exactly one layout, the closed layout
+  od06-journal-layout-v1 of §20.3.8, and no other. Every observed path,
+  directory or file, maps to exactly one class S0–S13 of its table by
+  that class's literal directory and name grammar; JR then checks the
+  class's file type, owner root, group root and mode (directories 0700,
+  files 0600, link count 1). The structural classes S0, S1, S2 and S12
+  are checked that way only and are never evidence. The staging classes
+  S5 and S7 are never permitted at quiescence: a present staging file is
+  INELIGIBLE and is classified by §20.3.8 (S5 class A-RES when it is the
+  exact pointer candidate of an uncommitted entry n+1, otherwise class D;
+  S7 class T-B; C7).
+  Every other class is record evidence and is parsed with its exact
+  schema (JR3, JR4). There is no catch-all class: a temporary, unknown or
+  unclassifiable entry, an entry in an unexpected place (including a name
+  that matches a class grammar in another directory), or any lock,
+  metadata or marker file is INELIGIBLE. A record file is parsed with the
+  strict §11.1 data model: ASCII JSON; a duplicate key, trailing data, an
+  unsafe integer or -0 is INELIGIBLE.
+  JR3 Attempt schema and history. Every attempt entry is exactly
+  QaAgentExecutionAttempt v1 (§11.2), with exactly the keys kind,
+  schemaVersion, executionId, sequence, state, binding, controller,
+  submission, timeline, observation, cleanup, outcomeDigest,
+  previousDigest and journalDigest. kind is exactly
+  "QaAgentExecutionAttempt" and schemaVersion is exactly 1. state is one
+  of the §7 states. submission is NOT_SENT, MAY_HAVE_BEEN_SENT or BOUND.
+  binding, controller, timeline, observation and cleanup have exactly
+  their §11.1 and §11.2 keys, types, enums and grammars, checked with the
+  existing validators. Each nullable field is null or non-null exactly as
+  §11.2 and §7 require for the entry's state. Where those sections do
+  not fix nullness for a state, both §11.2 forms are accepted, and the
+  type is still checked. An unknown or malformed kind, schemaVersion,
+  state or submission, an extra or missing key, a wrong field type or an
+  invalid nullability is INELIGIBLE. For each attempt directory `<ID>`:
+  `<ID>` matches ^[0-9a-f]{32}$; every entry's executionId equals `<ID>`;
+  each file name's sequence equals the entry's sequence; the committed
+  sequences are exactly 0..n, n being the sequence named by S4 (§20.3.8
+  committed view, C8), with no gap or duplicate and n < 1024; entry 0 has state
+  PREPARED, submission NOT_SENT and previousDigest null; for k > 0,
+  previousDigest equals entry k-1's journalDigest and the state change
+  from k-1 to k is an allowed §7 successor; and every journalDigest
+  equals the recomputed H with the domain
+  "qa-ai-agent:execution-attempt:v1:" (§11.1, §11.2). binding is identical
+  in every entry. Binding and controller consistency, from §7, §7.1 and
+  §11.2: controller is non-null exactly when submission is BOUND.
+  PREPARED has NOT_SENT. SUBMITTING has MAY_HAVE_BEEN_SENT.
+  CONTROLLER_BOUND, STARTED, OBSERVED, PASSED and TEST_FAILED have BOUND,
+  because the §7 table reaches them only through CONTROLLER_BOUND.
+  submission never moves back in the order NOT_SENT, MAY_HAVE_BEEN_SENT,
+  BOUND. BOUND is first recorded only in an entry whose predecessor has
+  MAY_HAVE_BEEN_SENT, because nothing is bound without a send. Once
+  non-null, controller is identical in every later entry, and
+  controller.unitName equals the derived unitName (§7.1). The attempt's
+  current pointer is the class S4 file `attempts/<ID>/current.json` of
+  §20.3.8, exactly {executionId, sequence, journalDigest}, and there is
+  no other pointer or head candidate. It names this attempt and its
+  highest COMMITTED entry n with that entry's journalDigest (C8: n as
+  named by the durable S4, not the highest physical file). This makes it
+  the single, unambiguous head. JR3 validates the committed view, entries
+  0..n; an object above n is not committed history and JR3 never
+  evaluates it as such. A missing pointer, a pointer naming an entry that
+  does not exist, a committed gap or duplicate, or two candidate heads is
+  INELIGIBLE and class D. An entry above the pointer, or a pointer staging
+  file (S5), is INELIGIBLE for the run (never permitted at quiescence) and
+  is classified by JR4 in the §20.3.8 classification order (C8): the
+  committed view first; then the additional objects, of which exactly one
+  entry n+1 (and an S5 only as its exact pointer candidate) is validated
+  separately against the A-RES requirements and, when it is part of one
+  exact A-RES prefix, is class A-RES and not D; every other entry above
+  n, and every non-exact candidate, is class D. JR3 never rejects a
+  candidate as class D before that A-RES decision.
+  JR4 Cross-object correspondence (C6). JR4 is a validator, not recovery
+  code: it never writes, removes, renames, rolls back, releases or locks.
+  Schemas first. Every transaction (S6) is exactly {schemaVersion,
+  executionId, rootKey, consumedKeys, bindingDigest, phase}: schemaVersion
+  1, phase exactly INTENT or COMMITTED, consumedKeys exactly two H, and
+  executionId equal to its file name. Every claim and tombstone (S8–S10)
+  is exactly {schemaVersion:1, key, executionId, bindingDigest} (§11.2),
+  with key equal to "sha256:" + its file-name hex. Every record (S11) is
+  exactly AutomationExecutionRecord v2 with the §11.3 keys, types and enums
+  and a recordDigest that recomputes under domain
+  "qa-ai-agent:automation-execution-record:v2:". Every incident revision
+  (S13) is exactly QaAgentExecutionIncident v1 (§11.2) with an
+  incidentDigest that recomputes under domain
+  "qa-ai-agent:execution-incident:v1:". Any other value, or an extra,
+  missing or mistyped key, is INELIGIBLE. Relations second. JR4 evaluates
+  the closed relations K1–K7 of §20.3.8 over the whole snapshot, for every
+  attempt along attempt → current pointer → transaction → claim → both
+  tombstones → incident where required → record where required, and in
+  reverse, so that every transaction, claim, tombstone, record and
+  incident is accounted for by exactly one attempt or by the single
+  permitted INTENT. Cardinalities are exactly those of the §20.3.8 table;
+  none is implementation-selected. Result: CLEAN, or the §20.3.8 classes
+  found, each with its executionId. Only CLEAN satisfies QZ3. Any other
+  result is INELIGIBLE for this run. A recoverable class (T-A, T-B, T-C,
+  A-INC, A-RES, A-REL) is reported as blocking qualification and is
+  resolved only by the existing RECONCILE outside the run (R4 for the
+  T classes and A-RES, R5–R7 for A-INC, R6/R7 for A-REL; §20.3.8 matrix
+  and disabled-enrollment procedure). Class D is not auto-recovered. JR
+  resolves no INTENT, removes no residue, releases no claim and performs
+  no recovery, rollback or reservation reconstruction.
+  JR5 Lost history. Any corrupt or unreadable entry, digest mismatch,
+  sequence gap, duplicate or ambiguous head, missing predecessor, unknown
+  version or phase, lost or pruned history that the current state needs,
+  or ambiguous current state is INELIGIBLE. Missing history is never
+  reconstructed or inferred. This includes target files, client local
+  state, systemd, the unit name and cgroup state (§11.2).
+  JR6 Snapshot and consistency. From the validated tree, JR derives the
+  canonical snapshot summary. It is the CRS-1 object {heads, files}.
+  heads is [{executionId, sequence, journalDigest, state}], one item per
+  attempt, from its current pointer. files is [{path, size, sha256}], one
+  item per file, with path relative to the journal root. Both lists are
+  sorted bytewise by their first listed key. journalSnapshotDigest =
+  "sha256:" + lowercase hex of SHA-256 over the CRS-1 encodeValue bytes
+  (the §20.1.4 content-digest convention; no new hash domain). The order
+  in one run is: QZ1, QZ2, JR observation 1 (snapshot digest D1), QZ3 and
+  QZ4 decided on that snapshot, the F1 and F2 walk (OW decided on the same
+  snapshot), then QZ1 and QZ2 again and JR observation 2 (D2, a full
+  re-read and re-validation through JR1–JR5), and QZ3 and QZ4 again. A
+  qualified record is produced only if D1 equals D2 exactly. A difference,
+  or a failure in either observation, makes the host INELIGIBLE for this
+  run. No record is produced. A new clean run may be tried later.
+- Scope: the procedure runs in PID 1's mount and user namespaces (nsfs
+  dev/ino equality) and reads /proc/1/mountinfo. Every mount's filesystem
+  type is in exactly one closed class. W, walked: ext4, xfs, btrfs, vfat,
+  tmpfs, ramfs, devtmpfs, devpts, mqueue, hugetlbfs, sysfs, cgroup2,
+  securityfs, pstore, efivarfs, bpf, tracefs, debugfs, configfs, fusectl,
+  binfmt_misc, nsfs. P, walked with the proc rule below: proc. A, not
+  descended: autofs (statx uses AT_NO_AUTOMOUNT, the untriggered mount
+  point is checked as one object, and a triggered automount appears in the
+  table as its own mount of its own type). Any other type, including nfs,
+  nfs4, cifs, smb3, fuse, fuseblk, `fuse.*`, overlay, 9p, virtiofs, squashfs,
+  iso9660, ecryptfs, zfs and cgroup (v1), makes the host INELIGIBLE.
+- Walk: depth first from "/", each directory opened relative to its parent
+  with openat2 RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS and listed with
+  getdents64; each entry examined with statx(AT_SYMLINK_NOFOLLOW |
+  AT_NO_AUTOMOUNT) for type, mode, uid, gid and mount ID. Symlinks are
+  never followed and never probed (Linux does not use a symlink's own
+  permission bits); a symlink matters only as a path component, which the
+  F2 RC rule resolves. The walk descends into every directory, including
+  mount points of class W or P. On proc, the numeric PID directories, self
+  and thread-self are not descended: access to another process's /proc
+  entries is a ptrace access-mode check against that process's credentials,
+  not an inode permission, and a process of the account reaches only its
+  own (same uid, no capability, Yama >= 1 per L4); every other proc entry
+  (/proc/sys, /proc/sysrq-trigger, /proc/sysvipc, ...) is walked.
+  Over-mounted (shadowed) directory content is reachable by no path, for
+  the account or the walker, and is not visited; a bind-mounted subtree is
+  walked at each visible location. The walk is finite: the mount table is
+  finite and no symlink, PID directory or automount is followed.
+- Uninspectable state: the walker runs as root with CAP_DAC_READ_SEARCH.
+  ENOENT for an entry that getdents64 returned is a vanished entry and is
+  skipped. Any other error of open, getdents64 or statx (EACCES, EIO,
+  ELOOP, ...) is INELIGIBLE. getxattr results are mapped only by the
+  closed table below.
+- Extended-attribute results (C4, closed). Every mount type in the W, P
+  and A classes also belongs to exactly one ACL class. The class says
+  whether the kernel evaluates POSIX ACLs on that superblock. Class posix:
+  ext4, xfs, btrfs, tmpfs, devtmpfs. Class none: vfat, ramfs, devpts,
+  mqueue, hugetlbfs, sysfs, cgroup2, securityfs, pstore, efivarfs, bpf,
+  tracefs, debugfs, configfs, fusectl, binfmt_misc, nsfs, proc, autofs. On
+  the reference kernel, retrieving system.posix_acl_* from a superblock
+  without POSIX ACL support returns EOPNOTSUPP, and permission checks on
+  that superblock never consult an ACL. The walker calls lgetxattr (no
+  following, no automount trigger) and never on a symlink:
+  system.posix_acl_access on every visited non-symlink object not owned by
+  u, system.posix_acl_default on every such directory, and
+  security.capability on every regular file of the C5 scan. On Linux,
+  ENOTSUP equals EOPNOTSUPP and ENOATTR equals ENODATA. Implementation may
+  not choose any other mapping:
+
+  | Attribute and class | Result | Meaning |
+  |---|---|---|
+  | system.posix_acl_access or system.posix_acl_default, class posix | value | Parsed: version 2 and only the tags USER_OBJ, USER, GROUP_OBJ, GROUP, MASK, OTHER, each well formed. A malformed value, an unknown tag or a duplicate entry is INELIGIBLE. The value is then evaluated by the ACL semantics below |
+  | same, class posix | ENODATA | No ACL of that type. The kernel applies the mode bits alone, which F0 evaluates. Not a failure |
+  | same, class posix | EOPNOTSUPP | Inconsistent with the class (for example ext4 mounted noacl): INELIGIBLE |
+  | same, class none | EOPNOTSUPP | No POSIX ACL can exist or be evaluated on this object. Not a failure |
+  | same, class none | value or ENODATA | Inconsistent with the class: INELIGIBLE |
+  | security.capability (C5) | value | Parsed as VFS_CAP revision 2 or 3, recorded by C5. Malformed is INELIGIBLE |
+  | security.capability (C5) | ENODATA or EOPNOTSUPP | No file capability. The kernel's exec path treats both results as "no file capabilities" on the reference kernel |
+  | any | ENOENT | The vanished-entry rule above |
+  | any | any other result (EACCES, EIO, ENOMEM, ERANGE or E2BIG after the size query, a value whose size changed between calls), or a mount type outside the ACL classes | INELIGIBLE |
+
+  The observed classes are recorded (filesystem.mountClasses). A class
+  table that does not match the reference host is a §20.7 STOP, never an
+  in-place reclassification.
+- Rule: for every visited non-symlink object whose owner is not u, the
+  probe is asked W_OK. A writable answer is permitted only for (i) a
+  directory in the exact set Σ = {/tmp, /var/tmp, /dev/shm, /run/lock,
+  /dev/mqueue, /tmp/.X11-unix, /tmp/.ICE-unix, /tmp/.XIM-unix,
+  /tmp/.font-unix} that is uid 0, gid 0 and mode exactly 01777; (ii) a
+  character device permitted by C6 (ii); (iii) an AF_UNIX path socket,
+  for which W_OK is the connect permission only (the socket inode cannot
+  be modified through it), so whether a connectable socket is permitted
+  is decided by C6 (iii) alone; (iv) a pseudo-filesystem endpoint
+  matched by a row of the closed table PE below (C4); (v) the single
+  object matched by the exact exception AA-NULL below (C5). Every other
+  writable answer — any regular file, directory, FIFO, block device or
+  other character device not owned by the account, whoever owns it, and
+  any writable object on a pseudo filesystem that no PE row and not
+  AA-NULL matches — is INELIGIBLE. Objects owned
+  by u are runner state (R-1/R-2 territory), not violations by themselves;
+  F2 decides whether root consumes them.
+- Σ is accepted only with the kernel's sticky-directory protections in
+  force: fs.protected_symlinks = 1, fs.protected_hardlinks = 1,
+  fs.protected_regular >= 1 and fs.protected_fifos >= 1 (the systemd
+  defaults of the reference host); otherwise INELIGIBLE.
+- Pseudo-filesystem endpoints (C4, closed table PE). On proc, sysfs,
+  securityfs, cgroup2, devpts, mqueue, hugetlbfs, pstore, efivarfs, bpf,
+  tracefs, debugfs, configfs, fusectl, binfmt_misc and nsfs, a write is
+  handled by kernel code. DAC mode bits do not show what authority that
+  write carries. Mode bits alone therefore never qualify such an endpoint
+  ("0666 in proc or sys" is not a rule). A writable F0 answer there is
+  permitted only for an object that matches a PE row exactly, and only
+  when all of these hold: the path is in the row; the type is a regular
+  file; uid and gid are 0; (mode & 07000) == 0; the running kernel equals
+  the recorded filesystem.kernel; and the row's observation (if any) gave
+  its required result. Every row rests on the stated authority check of
+  the qualified kernel build. That check makes the write give the account
+  no PS-0 host-control: no root-equivalent code, no modification of
+  root-owned files or devices, and no configuration of root-run services.
+
+  | Row | Type | Exact paths | Kernel authority basis | F0w observation (payload, required result) |
+  |---|---|---|---|---|
+  | PE-AA-ADMIN | securityfs | /sys/kernel/security/apparmor/.load, /sys/kernel/security/apparmor/.replace, /sys/kernel/security/apparmor/.remove | A load, replace or remove in the root policy namespace requires policy-admin capability (CAP_MAC_ADMIN) in the initial user namespace. It is checked against the writer's credentials before any data is consumed (aa_may_manage_policy). The account holds no capability there (B4, F0). A user namespace the account creates gives capabilities only within it, and can affect at most a policy namespace confining that namespace's own processes | One byte 0x00 to each path; EACCES or EPERM. With permission the payload is an unparsable policy blob (.load, .replace) or an empty profile name (.remove), so it changes nothing |
+  | PE-AA-QUERY | securityfs | /sys/kernel/security/apparmor/.access | Transaction file. A write is a label or permission query whose answer is read back on the same open file description. No policy, label or kernel state changes | None |
+  | PE-PSI | proc | /proc/pressure/cpu, /proc/pressure/io, /proc/pressure/memory, /proc/pressure/irq (each where present) | A write registers a PSI poll trigger owned by the open file description and destroyed at its release. For an opener without CAP_SYS_RESOURCE the kernel restricts the trigger window. No persistent kernel, root-service or file state changes | None |
+  | PE-PSI-CG | cgroup2 | `<cgroup directory>/cpu.pressure`, `io.pressure`, `memory.pressure`, `irq.pressure` (each where present) | As PE-PSI, for the cgroup's pressure. No other cgroup file is covered | None |
+  | PE-NSPID | proc | /proc/sys/kernel/ns_last_pid | A write requires CAP_CHECKPOINT_RESTORE or CAP_SYS_ADMIN in the user namespace that owns the writer's active PID namespace. For the account in the initial PID namespace that is the initial user namespace, where it holds no capability. In a PID namespace it creates, the write affects only that namespace | The decimal value just read; EPERM |
+
+  Availability effects of these endpoints (for example PSI trigger
+  resources) are outside PS-0 and are not claimed contained; L7 is
+  unchanged. devpts has no PE row (the account's own nodes do not exist
+  under QZ, and /dev/pts/ptmx is decided by C6 (ii)). So do sysfs,
+  debugfs, tracefs, configfs, bpf, pstore, efivarfs, fusectl, binfmt_misc,
+  nsfs, mqueue and hugetlbfs objects (/dev/mqueue itself is in Σ). Any
+  writable object there is INELIGIBLE. AppArmor and every other LSM stay
+  enabled as installed. Disabling or reconfiguring an LSM is not a way to
+  pass qualification without a separate owner decision. PE is never
+  widened in place (PS-E: a new procedure literal).
+- Exact exception AA-NULL (C5, closed, one object). PE rows stay
+  regular-file rules; AA-NULL is not a PE row, not a device class and not
+  a securityfs rule. When AppArmor is enabled, its securityfs
+  initialisation creates one character device inode, `.null`, in the
+  AppArmor directory. AppArmor uses it to replace a file descriptor that
+  a confined task may not keep across exec. A writable F0 answer for a
+  character device on securityfs is permitted only for an object that
+  satisfies every one of these conditions:
+  (N1) path: the canonical walked path is exactly
+  /sys/kernel/security/apparmor/.null, reached by the F1 walk with no
+  symlink component, and its statx mount ID is the mount whose mount point
+  in /proc/1/mountinfo is exactly /sys/kernel/security and whose type is
+  securityfs (no other mount of any type at or above that mount point
+  shadows it);
+  (N2) type: statx reports a character device (S_IFCHR);
+  (N3) device: stx_rdev_major is 1 and stx_rdev_minor is 3, and the
+  "Character devices" section of /proc/devices maps major 1 to exactly
+  the name `mem`;
+  (N4) owner and mode: uid 0, gid 0, and the full st_mode is exactly
+  S_IFCHR | 0666 (no setuid, setgid or sticky bit, no other permission
+  value);
+  (N5) kernel and AppArmor facts: the running kernel equals the recorded
+  filesystem.kernel; /sys/module/apparmor/parameters/enabled reads `Y`;
+  the comma-separated list in /sys/kernel/security/lsm contains `apparmor`;
+  and both values equal the recorded filesystem.apparmor values (record
+  below);
+  (N6) no host-control: the kernel authority basis below holds on the
+  qualified kernel build.
+  Kernel authority basis: AppArmor creates the inode as a special inode
+  with device number (MEM_MAJOR, 3). Opening it dispatches by device
+  number to the memory driver's null minor, the same driver and file
+  operations as /dev/null, which C6 (ii) already permits. A write is
+  discarded, a read returns end of file, and no ioctl or mapping changes
+  kernel, policy, file or service state. The inode, its directory and the
+  securityfs mount are root-owned, and the account cannot change mode,
+  owner, name or link (F1 still decides the directory). So the account
+  gains no PS-0 host-control through it. Every other object fails AA-NULL
+  and is INELIGIBLE under the F1 rule: a different path, including the
+  same name on another securityfs mount or bind mount, in another
+  directory or outside securityfs; a different type, including a regular
+  file at the exact path; a different device number, including 1:5 or
+  another major; a non-zero owner or group; or a different mode. A
+  character device 1:3 elsewhere is not covered by AA-NULL; only C6 (ii)
+  can permit it, by its own exact path list. If AppArmor is not enabled
+  as recorded (N5), AA-NULL permits nothing. AA-NULL has no F0w
+  observation (writes are inert by the basis above). It is never widened
+  in place (PS-E). If the qualified kernel creates `.null` with other
+  facts than N1–N4, that is a §20.7 STOP, never an in-place change.
+- ACL semantics (C4, kernel-effective). Present access is the F0 answer
+  alone. For exactly the probe credentials, the kernel applies the
+  object's access ACL: the acl(5) matching entry (ACL_USER for u, else the
+  group-class entries ACL_GROUP_OBJ and ACL_GROUP for g, else ACL_OTHER),
+  limited by ACL_MASK. An access ACL that gives the account read only is
+  not host-control and fails nothing; journald's user:u:r-- on the
+  account's per-user journal file is an example. An access ACL that gives
+  it write produces a writable answer, which the rule above decides. A
+  masked entry grants nothing while masked. Only the owner or a
+  CAP_FOWNER holder can raise the mask by a mode change, never the
+  account, and the resulting F0 change is condition S2 below. Two rules
+  read ACL text, and both use the kernel's evaluation, never the mere
+  presence of an entry:
+  (a) Default ACL future write. On creation in a directory d with a
+  default ACL, the kernel copies that ACL to the new object. It limits
+  ACL_MASK (or, without a mask, ACL_GROUP_OBJ) by the group bits of the
+  creation mode, ACL_USER_OBJ by its owner bits and ACL_OTHER by its other
+  bits, and it does not apply the umask. A new directory also inherits d's
+  default ACL. For d not owned by u, Wfut(d) is the union of: the default
+  ACL_USER entry for u, the ACL_GROUP entry for g and ACL_GROUP_OBJ, each
+  limited by the default ACL_MASK when one is present; and ACL_OTHER.
+  ACL_GROUP_OBJ is included because the future group can be g. ACL_USER_OBJ
+  is excluded because it applies to the creator, who is not u (d is not
+  writable by the account, or the rule above already failed); an object
+  later owned by u is runner state. If w is in Wfut(d), the host is
+  INELIGIBLE, because the first object root creates in d with a creation
+  mode that allows w is writable by the account. This rule is stricter
+  than present access for exactly that future write authority.
+  Future execute or search adds nothing: the account would run or
+  traverse the objects with its own credentials, and a privileged
+  executable created in d is a new C5 member to which (b) applies.
+  (b) Privileged-executable execute. For every C5 file whose X_OK answer
+  is accessible, the acl(5) matching entry for u and g must be ACL_OTHER.
+  That means no ACL_USER entry for u, no ACL_GROUP entry for g, and a file
+  group other than g. The account may execute a setuid, setgid or
+  file-capability program only with the authority every local account
+  has, which is what the A, C1, C2 and C4 elevation analysis assumes.
+  Account-specific execute authority fails, for example an ACL entry
+  giving the account execute on a 4754 root:messagebus helper.
+  Search authority on a directory is not disqualifying by itself: it
+  modifies nothing, and every object beneath is probed with ancestor
+  search applied. Read authority is not host-control; C4's credential
+  statement is unchanged.
+- Package-managed mutable state (/var/lib, /var/cache, /var/log,
+  /var/spool, /var/mail, /run) is walked under exactly the same rule; no
+  path is exempt because a package maintains it. Access the account gains
+  only through a setuid or setgid helper (for example crontab's setgid
+  write into /var/spool/cron/crontabs, or at's spool) is not direct access
+  and the probe reports it as not writable; the helper is C5 evidence, and
+  what root later executes from such a spool is decided by F2.
+
+F2 Root execution and configuration of runner-controlled state.
+
+Definitions. Package-verified is as above. Text: a file whose bytes contain
+no NUL. RC(p), "root-controlled", for an absolute path p: p is resolved from
+"/" one component at a time as root (O_NOFOLLOW, AT_NO_AUTOMOUNT); a symlink
+component is replaced by its target text (absolute from "/", relative from
+the current directory) and resolution continues, at most 40 symlinks (more
+= RC false). RC(p) is true iff every existing component c (each directory,
+symlink and the final object) has owner other than u and is not writable
+by the account per F0, and, where c is a Σ directory, c is the last
+component or the next component exists, is owned by uid 0 and is not
+writable per F0; and the first missing component, if any, has a parent
+that is neither a Σ directory nor writable per F0. RC is therefore false
+exactly when the account could create, replace, alter or redirect an object
+the path denotes.
+
+Token rule. The input path tokens of a string s are the maximal substrings
+of s that begin with "/" or "~" at the start of s or after whitespace or
+one of ; & | ( ) < > ' " ` = : , and that contain none of those characters.
+A "~" or "~name" token is expanded with the passwd home directory of that
+account (root's for a bare "~" in a root context). A token containing "*",
+"?" or "[" is a glob: RC applies to its directory prefix (up to the last "/"
+before the first glob character), which additionally must not be a Σ
+directory and must contain no entry owned by u, and to every path the glob
+matches when evaluated. A token containing "$" is cut at the first "$" and
+treated like a glob prefix; the variable's value is checked where it is
+defined (unit Environment and EnvironmentFile values, cron environment
+lines). Lines whose first non-blank character is "#" are not tokenized.
+
+Local-content closure LC. Every text file that is not package-verified and
+is (a) a regular file under /etc, /usr/local/lib/systemd,
+/usr/local/lib/udev or /usr/local/share/dbus-1, (b) one of the R-SHELL root
+files, or (c) named by a token of a file already in LC and an argument,
+script or configuration input of a root execution definition, is in LC;
+every token of every LC file must be RC. The closure is finite (the file set
+is finite; a file is scanned once). Exempt from token checking, with
+reason, exactly: /etc/passwd and /etc/passwd- (home directories are used by
+root programs only to act for that account in that account's own
+sessions); /etc/qa-agent-controller-v1/enrollment.json (the broker's own
+input, consumed only under the §5.5 descriptor-anchored rules); the runner
+unit's fragment and drop-ins (a non-root unit, whose manager-consumed
+inputs are still checked by R-SD (M)). A local file that is a root-executed
+program (argv[0] of a root execution definition, or the script operand of
+an interpreter there) and is not text is INELIGIBLE: its behaviour cannot be
+closed by tokens.
+
+Root-execution classes of the reference host. The Debian 13 reference model
+has exactly the classes below plus the elevation mechanisms of PS-A and
+PS-C. A root process or root execution definition that none of them
+accounts for is an unknown mechanism and INELIGIBLE.
+
+| Class | Enumeration source (as root) | Rule |
+|---|---|---|
+| R-SD systemd system manager | systemctl list-unit-files and list-units --all (--full, no pager); systemctl show --all per unit (effective values after all drop-ins, specifiers resolved); FragmentPath, DropInPaths, SourcePath; the systemd 257 system unit search path (/etc/systemd/system.control, /run/systemd/system.control, /run/systemd/transient, /run/systemd/generator.early, /etc/systemd/system, /etc/systemd/system.attached, /run/systemd/system, /run/systemd/system.attached, /run/systemd/generator, /usr/local/lib/systemd/system, /usr/lib/systemd/system, /run/systemd/generator.late) with every `*.d` drop-in directory; every system.conf.d and system-generators and system-environment-generators directory under /etc/systemd, /run/systemd, /usr/local/lib/systemd and /usr/lib/systemd; /etc/systemd/system.conf | Unit types service, socket, mount, swap, automount, path, timer, target, slice, scope, device only. Every generator and environment generator is a package-verified executable; /etc/rc.local does not exist; /etc/init.d contains only package-verified scripts; both system.attached directories and both system.control directories are absent or empty; /run/systemd/transient contains only .scope and .slice units and own workload services OW (C4, defined below this table; every other transient unit, including any foreign or lookalike service, is INELIGIBLE); no user manager of uid 0 (user@0.service) has a unit source outside /usr/lib/systemd/user (no unit under /etc/systemd/user, /run/systemd/user, /usr/local/lib/systemd/user, /root/.config/systemd/user or /root/.local/share/systemd/user). (M) For every unit, every token of EnvironmentFiles (read by PID 1 as root), the StandardInput/StandardOutput/StandardError file:, append: and truncate: paths, TTYPath, RootDirectory, RootImage, MountImages, ExtensionImages, ExtensionDirectories, BindPaths and BindReadOnlyPaths sources, LoadCredential and LoadCredentialEncrypted sources, socket `Listen*` paths and Symlinks, mount/swap/automount What and Where, and path-unit `Path*` and DirectoryNotEmpty values is RC; PAMName names a stack under R-PAM. (R) A unit is root-executing if its effective User is empty, root or 0, if any `Exec*` setting carries a "+", "!" or "!!" prefix, if any source file sets PermissionsStartOnly=yes, or if it is a socket, mount, swap or automount unit. For a root-executing unit: its fragment and every drop-in are package-verified or generated (under a generator directory, by a package-verified generator); every token of Environment is RC; every argv element of ExecCondition, ExecStartPre, ExecStart, ExecStartPost, ExecReload, ExecStop, ExecStopPost and the socket ExecStartPre/Post and ExecStopPre/Post is tokenized and RC, WorkingDirectory is RC, and argv[0] resolves to a package-verified executable. `Condition*` and `Assert*` paths gate starting only and are not inputs |
+| R-CR cron and anacron | dpkg Provides; /etc/crontab, /etc/cron.d, /etc/cron.hourly, /etc/cron.daily, /etc/cron.weekly, /etc/cron.monthly, /etc/cron.yearly, /etc/anacrontab, /etc/cron.allow, /etc/cron.deny; /var/spool/cron/crontabs | No installed package other than cron provides the virtual package cron-daemon (cronie, bcron, fcron, systemd-cron and similar are INELIGIBLE); anacron, if installed, is the Debian anacron package. Every file in those /etc locations is recorded; every job line, environment line and run-parts entry of a job running as root is tokenized and RC, and every run-parts entry is package-verified or in LC. The crontab spool contains no file other than the account's own crontab (which runs as the account); in particular no root crontab |
+| R-AT at | /var/spool/cron/atjobs, /etc/at.allow, /etc/at.deny | If at is installed, the job spool contains no job whose owner (file uid) is not u; atd runs a job as its owner, so no root job exists |
+| R-PAM every PAM stack | /etc/pam.d (every service file and, recursively, every include) | Every module is package-verified and shipped by one of the A7 packages (A7 extended from the sudo stack to every stack); no pam_xauth.so line (it copies state from the invoking user's home as root) and no pam_namespace.so line (it creates root-made polyinstantiation directories from user-controlled paths); no pam_env.so line with user_readenv=1; every absolute token of every module argument (file=, conffile=, log=, motd_dir= and the pam_exec command and its arguments) is RC; for pam_exec.so the command operand is additionally a package-verified executable or in LC; every motd= and motd_dir= token of pam_motd.so is RC, and for each pam_motd.so line without noupdate, /etc/update-motd.d (which Debian's pam_motd runs with run-parts as root) is RC and every entry is package-verified or in LC |
+| R-UDEV udev | /etc/udev/rules.d, /run/udev/rules.d, /usr/local/lib/udev/rules.d, /usr/lib/udev/rules.d; /etc/udev/udev.conf | Every rule file is package-verified or in LC; every RUN, PROGRAM, IMPORT{program} and IMPORT{file} value is tokenized and RC; a relative program name resolves to /usr/lib/udev and must be package-verified |
+| R-DBUS bus activation | /usr/share/dbus-1/system-services, /usr/local/share/dbus-1/system-services, /lib/dbus-1/system-services | Every service file is package-verified or in LC; every Exec token is RC; C6 (iv) restricts root-activated names |
+| R-KERN kernel usermode helpers | /proc/sys/kernel/core_pattern, /proc/sys/kernel/modprobe, /proc/sys/kernel/hotplug, every /proc/sys/fs/binfmt_misc entry (the automount is triggered first) | core_pattern either does not start with the pipe character or its program and every token are RC; modprobe is RC and package-verified; hotplug is empty; every binfmt_misc interpreter is RC and package-verified (an entry with the C or O flag runs its interpreter with the binary's credentials) |
+| R-SHELL root login environment | /etc/profile, /etc/profile.d, /etc/bash.bashrc, /etc/environment, /root/.profile, /root/.bashrc, /root/.bash_profile, /root/.bash_login, /root/.bash_logout | Each present file, every entry of /etc/profile.d included, is RC and package-verified or in LC |
+| R-PKG package hooks | apt-config dump keys DPkg::Pre-Invoke, DPkg::Post-Invoke, DPkg::Pre-Install-Pkgs, APT::Update::Pre-Invoke, APT::Update::Post-Invoke, APT::Update::Post-Invoke-Success; pre-invoke and post-invoke options of /etc/dpkg/dpkg.cfg and /etc/dpkg/dpkg.cfg.d | Every value token is RC; maintainer scripts and every run-parts hook directory these packages run are package-verified or in LC |
+| R-SSH sshd (if openssh-server is installed) | sshd -T as root | authorizedkeyscommand, authorizedprincipalscommand and forcecommand are none, or their tokens are RC; every subsystem command token is RC |
+
+Own workload service OW (C4, closed). A unit is OW only if it satisfies
+all of the following, read as root and read-only; matching the name alone
+is never enough:
+(1) name: the whole name matches ^qa-agent-exec-v1-[0-9a-f]{32}\.service$
+and the 32 hex digits are its executionId;
+(2) approved creation path and durable binding (C5): the validated JR
+snapshot holds exactly one attempt with that executionId. Its derived
+unitName (§7.1) equals the name, and its history contains an ACTUAL
+durable controller binding: an entry with submission BOUND and a
+non-null controller (JR3). This entry was written only after SUBMITTING
+was recorded before the single StartTransientUnit call and the binding
+was read back (§6.2, §7). That controller, constant from that entry to
+the head, matches the live unit exactly: controller.unitName equals the
+name; controller.bootId equals the current manager boot ID;
+controller.invocationId equals the live InvocationID; the live
+Transient property is yes (§6.2); controller.cgroupPath equals the live
+ControlGroup (beneath the §11.1 anchor) and, where the cgroup directory
+exists, its dev and inode equal controller.cgroupDev and cgroupIno; if
+the manager has already released the cgroup of an inactive or failed
+unit (live ControlGroup empty), no directory exists at
+controller.cgroupPath; controller.propertiesDigest equals the digest of
+the live effective properties under the §11.1 rule; and
+controller.contractVersion is the literal of §11.1. The state reached is
+never a substitute for this evidence. "CONTROLLER_BOUND or later" proves
+nothing by itself, and matching the name, cgroup path, timing, terminal
+state or executionId text never proves ownership. An attempt that went
+from SUBMITTING (or PREPARED) to ORPHANED, EXECUTION_ERROR, TIMED_OUT or
+QUARANTINED with no durable controller binding recorded may be valid
+journal history (JR3). It never makes any unit OW. A retained
+`qa-agent-exec-v1-` unit of such an attempt fails (2) and the host is
+INELIGIBLE until existing authorized broker recovery and cleanup (§7,
+§7.4 Cases D, E and H) resolve it;
+(3) closed property set: Transient is yes; FragmentPath is
+`/run/systemd/transient/<name>`; DropInPaths and SourcePath are empty. The
+effective properties equal the §6.1 allowlist for this attempt, and their
+digest equals the recorded properties digest. In particular ExecStart is
+exactly the fixed broker path with `--workload-v1` and no prefix; every
+other `Exec*` is empty; PermissionsStartOnly is not set; Delegate is no;
+PAMName and EnvironmentFiles are empty; and standard input, output and
+error are file descriptors, never file:, append: or truncate:;
+(4) runner identity: User and Group are the enrolled numeric uid and gid
+of the B1/B2 account (non-zero). SupplementaryGroups and
+AmbientCapabilities are empty, CapabilityBoundingSet is 0 and
+NoNewPrivileges is yes, so the unit is not root-executing under R-SD (R);
+(5) current state: the attempt's complete history passes JR3–JR5 in the
+validated JR snapshot (not pruned, history intact, single head, §7);
+whether the unit may be active at that moment is decided by QZ4, not by
+OW;
+(6) no added systemd authority: TriggeredBy, Triggers, Names other than
+the name itself (no alias), and every enablement or Wants/Requires link
+from another unit are empty; the unit file is root-owned and not writable
+per F0. Under C2, C3 and C6 (iv), the account has no manager method on
+it except through the broker.
+A unit that has the `qa-agent-exec-v1-` prefix (of any type) and fails any
+of (1)–(6) is foreign or lookalike and INELIGIBLE. So is every transient
+unit that is neither a scope, a slice nor OW. OW units are runtime state
+of the qualified product: they are excluded from rootExecution.units and
+from the record, like transient scopes and slices. OW widens nothing:
+each OW unit runs only the non-root workload that §6.1 already defines.
+
+Root daemon closure. Every root-executing unit (R-SD (R)) either has a
+package-verified fragment shipped by a binary package built from a source
+package in N, or is generated by a package-verified systemd generator from
+/etc/fstab (F4), the kernel command line, GPT auto-discovery, the getty
+configuration or an /etc/init.d script shipped by a binary package from N.
+N is the exact set {systemd, dbus, util-linux, openssh, cron, anacron, at,
+apt, dpkg, man-db, e2fsprogs, logrotate, ifupdown, isc-dhcp, dhcpcd, kmod,
+procps, apparmor, console-setup, initramfs-tools, sudo}, whose default
+consumption of account-controllable locations is exactly the cron, at, PAM,
+systemd (M) and sshd inputs above plus the Σ directories under the
+`fs.protected_*` sysctls. Their local configuration is in LC (for example
+/etc/logrotate.d, /etc/ssh/sshd_config.d, /etc/apt/apt.conf.d,
+`/etc/network/if-*.d`), so every local path they act on is RC. A
+root-executing unit from any other source package is INELIGIBLE (§20.7
+STOP; N is never widened in place). Process attribution: every process with
+any Uid value 0 or a non-zero CapEff or CapPrm is a kernel thread, PID 1, a
+process in the cgroup of a unit accepted above, a broker-chain process in
+the runner unit's cgroup (B4; none exists under QZ2), or a process of the
+procedure's own root session scope; any other is INELIGIBLE. Under QZ4, OW
+units have no process. Deliberate
+interactive root operator actions stay outside PS-0 (root is trusted,
+§20.2.5); PS-F governs configured, scheduled, event-driven and
+account-triggerable root execution. A root execution definition that
+reaches account-controlled content although every token is RC is a PS-E
+procedure defect.
+
+F3 Dynamic group acquisition. G1: every /etc/group entry has password field
+"x" and exactly one /etc/gshadow entry; every gshadow password field is
+empty or begins with "!" or "*", so no group password can verify. G2: the
+account appears in no gshadow administrator list, no gshadow member list and
+no /etc/group member list (B2, B3). G3: /usr/bin/newgrp and /usr/bin/sg are
+package-verified (C5). With G1–G2, newgrp and sg (shadow) can switch the
+account only to a group it already belongs to — its primary group — because
+a non-member is admitted only after a group-password check that a locked or
+empty field never passes; gpasswd changes membership only for a group's
+administrators, which the account is not. Any usable group password,
+membership or administrator entry for the account is INELIGIBLE.
+
+F4 User mounts. M1: no /etc/fstab entry's options contain user, users,
+owner, group or user=, which are the only util-linux grants of non-root
+mount and umount; no /run/mount/utab entry names the account. M2: the C5
+set contains no setuid or file-capability mount or umount helper other than
+/usr/bin/mount and /usr/bin/umount (util-linux) and /usr/bin/fusermount3
+(fuse3); in particular no setuid mount.nfs, mount.cifs,
+mount.ecryptfs_private, fusermount (FUSE 2) or ntfs-3g. M3: /etc/fuse.conf
+is absent or has no user_allow_other line. Then fusermount3 refuses
+allow_other and allow_root for the account, and the kernel admits only
+processes with the mounting user's fsuid to its FUSE filesystem, root
+included being refused, so root can never read, execute or traverse
+account FUSE content; a mount over a root-consumed location therefore only
+denies root access (availability) and cannot supply content. M4: mounts the
+account creates in a mount namespace of a non-initial user namespace never
+reach PID 1's namespace (such a namespace is a less-privileged copy whose
+shared mounts become slave mounts, mount_namespaces(7)), and every root
+execution class above runs in PID 1's mount namespace or in a namespace a
+root unit created. M5: udisks2 and every other mount service need polkit
+authority (absent, C2) and a root bus name (excluded, C6 (iv));
+systemd-mount and machinectl are covered by the C3 probes. Seat-based
+uaccess ACLs never name the account (it has no seat session) and are in
+any case evaluated by F0. Any user-mount grant outside M1–M4 is
+INELIGIBLE. setuid package verification alone is not relied on: M1–M4 are
+the closure.
+
+Record, encoding and digest. The output is one record, closed schema
+QaAgentControllerPrivilegeSurface v1, all keys required, each list sorted
+bytewise by its first listed key:
+
+| Key | Value |
+|---|---|
+| kind / schemaVersion / procedure | "QaAgentControllerPrivilegeSurface" / 1 / "od06-priv-surface-v1" |
+| contractVersion | "qa-agent-controller-v1" |
+| account | {name, uid, primaryGid, primaryGroup} (B1, B2) |
+| sudo | {package {name, version, architecture}, files [{path, sha256}], sudoConf null or {sha256}, sources [{path, uid, gid, mode, size, sha256}], includeDirs [{path, uid, gid, mode, entries}], policySha256, matchedPolicy, effectiveListing, pam [{path, sha256}], pamModules [{path, package}], groupConfSha256} (A1–A7; policySha256 over the canonical P bytes; matchedPolicy the canonical U value; effectiveListing the canonical L string) |
+| nss | {nsswitchSha256, passwd, group, shadow, gshadow, initgroups, sudoers (each the ordered module list, [] if the line is absent), userdbEntries} (A6, B5) |
+| groups | {supplementary, gshadow [{group, passwordState}]} (B3, F3; supplementary exactly [primaryGid]; one gshadow item per group, passwordState "empty" or "locked", never a hash) |
+| runner | {unit (string or null), properties (object or null), processGroups} (B4; no PIDs) |
+| elevation | {doasAbsent, polkitAbsent, probes [{command, exitStatus, unitCreated}], rootPasswordLocked, uidZeroAccounts, suPam [{path, sha256}], sshPermitRootLogin (string or null)} (C1–C4) |
+| privilegedFiles | [{path, uid, gid, mode, sha256, capabilities (string or null), package}] (C5) |
+| endpoints | {blockAccessible [], charWritable [paths], listeners [{protocol, address, serverExe, package, sourcePackage}], busNames [{name, serverExe, sourcePackage}], dbusPolicy [{path, sha256}]} (C6; blockAccessible and charWritable are F0 probe results) |
+| filesystem | {probe {uid, gid, groups [], capabilities "0", noNewPrivs true, lsmLabel ("unconfined" or null)}, sysctls {protectedSymlinks, protectedHardlinks, protectedRegular, protectedFifos}, stickyDirs [{path, uid, gid, mode}], mountClasses [{fsType, walkClass ("W", "P" or "A"), aclClass ("posix" or "none")}], kernel {release, package, packageVersion}, pseudoEndpoints [{row, fsType, mode, observation (errno name or null)}], apparmor {enabled, lsm, null ({path, fsType, rdevMajor, rdevMinor, uid, gid, mode} or null)}} (F0, F1; C5: apparmor.enabled the exact content of /sys/module/apparmor/parameters/enabled ("Y" or "N", or null if absent), apparmor.lsm the exact /sys/kernel/security/lsm string, apparmor.null the AA-NULL object facts N1–N4 when AA-NULL permits it, else null; the AA-NULL path is also listed in endpoints.charWritable; stickyDirs the Σ members present; C4: mountClasses one item per filesystem type present in the mount table; kernel the running kernel release and the Debian package that ships it, on which the PE authority basis rests; pseudoEndpoints one item per distinct (row, fsType, mode, observation) among writable answers permitted by PE, so the record does not vary with the number of cgroups) |
+| rootExecution | {units [{name, rootExecuting, sources [{path, sha256 (or null), linkTarget (or null), package (or null)}]}] (every unit except transient scopes, slices and OW units), generators [{path, package}], cron {daemonProviders [names], files [{path, sha256, package (or null)}], userCrontabs [account names]}, atJobOwners [account names], pam [{path, sha256}] (every stack), udevRules [{path, sha256, package (or null)}], dbusServices [{path, sha256, user (or null)}], kernel {corePattern, modprobe, hotplug, binfmt [{name, interpreter, flags}]}, rootShell [{path, sha256, package (or null)}], packageHooks [{key, value}], sshd ({authorizedKeysCommand, authorizedPrincipalsCommand, forceCommand, subsystems [strings]} or null), rootUnitSourcePackages [names], localContent [{path, sha256 (or null)}]} (F2; localContent is LC with sha256 null only for /etc/resolv.conf, whose content changes with DHCP leases, and for the secret files /etc/shadow, /etc/shadow-, /etc/gshadow, /etc/gshadow- and every `/etc/ssh/ssh_host_*_key`, whose digests the record must not carry; all of them are still token-checked at every run, and the shadow and gshadow states are recorded by C4 and F3) |
+| mounts | {fstabSha256, fuseConfSha256 (or null), mountHelpers [paths]} (F4; mountHelpers the setuid or capability mount helpers of M2) |
+| journal | {layout "od06-journal-layout-v1", attemptKind "QaAgentExecutionAttempt", attemptSchemaVersion 1, transactionSchemaVersion 1} (C5, JR: the exact durable schemas that JR validated; a broker build with another journal schema is a mismatch and needs requalification, never an in-place compatibility rule; C6: layout is the single closed §20.3.8 layout identifier, which fixes every class's path, schema and version, and qualification accepts no other value) |
+
+The record carries no time, PID, inode or boot-specific value, so equal
+host state yields equal bytes. PS-F records configuration and evidence
+state only: a violation is never recorded (it makes the host INELIGIBLE and
+no qualified record is produced), transient scopes and slices, OW units,
+session mounts and PID entries are excluded by the F1/F2 rules, root-owned
+logs, journal and runtime files are recorded only as the F1 predicates
+they satisfy and never as an object list (C4), and every recorded
+list is sorted bytewise by its first listed key. Bytes are the CRS-1 encodeValue encoding,
+no BOM, no trailing newline. privilegeSurfaceDigest = "sha256:" + lowercase
+hex of SHA-256 over those bytes (the Stage 4 content-digest convention of
+§20.1.4; no new hash domain). The record and digest are retained with the
+qualification evidence (operator-retained, root-owned, with the T1–T5 and
+od06-q-enum-v1 evidence). They are host-eligibility evidence, not caller
+identity and not authority: the broker never reads them, no runtime
+decision is taken from the digest, enrollment does not change, and
+SO_PEERCRED stays the only runtime caller identity source (§20.2.5).
+
+Journal snapshot evidence (C5). The JR snapshot digest is run evidence,
+not record content. If it were in the byte-compared record, every normal
+broker attempt would change the record. That would contradict the
+lifecycle rule below. Each successful run therefore retains, next to the
+record, one closed object QaAgentControllerJournalSnapshot v1. Its keys
+are exactly {kind "QaAgentControllerJournalSnapshot", schemaVersion 1,
+procedure "od06-priv-surface-v1", privilegeSurfaceDigest,
+journalSnapshotDigest}. journalSnapshotDigest is the equal D1 and D2 of
+JR6. It is encoded and stored under the same rules as the record. It
+copies no journal content. It is not authority: the broker and client
+never read it. Neither it nor privilegeSurfaceDigest is an execution,
+reservation or recovery input. The protected journal stays the
+authoritative source.
+
+Verification and lifecycle. Verification reruns the procedure and requires
+the new record to be byte-identical to the qualified record (equal
+privilegeSurfaceDigest) and every requirement to hold. It is mandatory at
+initial qualification, immediately before every enrollment enable or
+re-enable (§5.3, §20.3.5), after every package installation, upgrade or
+removal on the host, and after every account, group, PAM, NSS, sudo,
+polkit, doas, D-Bus policy or runner-unit administration action, and every
+PS-F verification event below; it runs under QZ. Like T5,
+qualification shows the record unchanged after systemctl daemon-reexec and
+a reboot. Any trigger change or PS-F verification event is made with
+enrollment disabled; one made while enabled makes the host INELIGIBLE from
+that moment. Normal operation of Controlled-v1 and of the host (broker
+attempts, OW units, journal and log writes, runtime files, DHCP updates of
+/etc/resolv.conf) is neither a verification event nor a trigger. A mismatch or a
+failed requirement makes the host INELIGIBLE until explicit
+requalification: full procedure, review of the new record against
+PS-A–PS-F, and re-observation of T1–T5 when an input of §20.2.4a changed.
+
+Requalification triggers (each makes the host INELIGIBLE until
+requalified): any change of the sudo build or package; sudo.conf; the PAM
+stack of sudo or su, or any module in it; the loaded sudo plugins; the
+§20.2.3 file; any other sudoers source, include directory or its entry
+list; the NSS or sudoers-source configuration; the parsed or effective sudo
+policy (P, U or L); the account's uid, primary group or supplementary
+groups, or the runner unit's identity properties; installation or
+configuration of doas; installation of polkit or any polkit rule or .pkla
+file; the run0/systemd-run probe results; the root password state or sshd
+root-login setting; the setuid/setgid/file-capability set or a digest in
+it; the host-control endpoint set; the D-Bus system policy; and the
+availability, presence or configuration of any remote or dynamic policy
+source (which PS-D makes INELIGIBLE outright). For PS-F, C4 replaces raw
+events with semantic conditions on the resulting state. Each condition
+makes the host INELIGIBLE until requalified:
+(S1) Recorded state changed. A rerun would produce a PS-F record value
+different from the qualified one. Examples: a systemd unit source,
+drop-in, enablement link, generator or system.conf input of a recorded
+unit; a cron, anacron or at file, spool owner or cron-daemon provider; a
+PAM stack; a udev rule; a D-Bus activation file; a kernel helper value; an
+R-SHELL file; a package hook; the sshd settings; the gshadow state; the
+fstab, fuse.conf or mount-helper set; the sysctls, Σ, mountClasses,
+kernel or pseudoEndpoints; or the digest of a non-volatile LC file.
+(S2) Kernel-effective F0 result. For any security-relevant object (one
+visited by F1 and not owned by u, a C5 file, or a C6 endpoint), the F0
+answer or the ACL evaluation (a), (b) changed from non-writable or
+non-executable to an authority that F1, PE, C5 or C6 does not permit. A
+new root-owned object whose resulting state satisfies those predicates is
+not a condition. That covers root-owned logs, journal files, rotated
+logs and runtime files.
+(S3) Unknown root path. A root execution or control path appeared that
+the R-classes, OW, the broker chain or the root daemon closure do not
+account for. Examples: a transient unit that is neither scope, slice nor
+OW; a `qa-agent-exec-v1-` lookalike; a root process attribution cannot
+place; a root-executing unit from a source package outside N.
+(S4) Recorded input changed. An immutable or configuration input that
+qualification must record changed: the kernel package, a mount of a new
+filesystem type, the `fs.protected_*` sysctls, or an LSM enabled,
+disabled or reconfigured.
+Volatile LC inputs: for the files recorded with sha256 null
+(/etc/resolv.conf and the listed secret files), a content change is not a
+condition. They remain conditions under S1 if their recorded entry
+changes (path present or absent), and under S2 or S3 if their tokens stop
+being RC or the file stops being a non-account regular file. Declaring an
+input volatile and invalidating the host on each of its normal changes
+are never both in force. A PS-F verification event is an operator action
+that can produce S1–S4, and it requires a rerun before enrollment is
+enabled again. The events are: administration of systemd units, cron, at,
+PAM, udev, D-Bus activation, kernel helpers, R-SHELL files, package hooks
+or sshd; an edit of a non-volatile LC file; a change of owner, mode, ACL or
+inode attribute of a non-account object; a mount, sysctl or LSM change; a
+kernel installation; an /etc/group, /etc/gshadow, /etc/fstab, utab user
+entry, mount helper or /etc/fuse.conf change. The rerun, not the event,
+decides eligibility.
+
+Negative tests (qualification, adversarial; each must leave the qualified
+host INELIGIBLE until full requalification, never eligible): a generic
+`<account> ALL=(ALL) ALL` rule in another /etc/sudoers.d file;
+`Defaults!/usr/local/libexec/qa-agent-controller-v1 use_pty`,
+`Defaults!ALL log_output` and `Defaults:<account> env_keep+=X` in another
+file; a new @include and a new @includedir source; a file renamed into or
+out of an include directory; sudoers via LDAP (`sudoers: files ldap`,
+sudo-ldap installed) and via SSSD (`sudoers: files sss`); the account
+added to sudo, wheel, docker, disk and libvirt; any other supplementary
+group added or removed; SupplementaryGroups= or AmbientCapabilities= set on
+the runner unit; a pam_group grant in /etc/security/group.conf; a userdb
+membership record in /run/userdb; a doas rule (opendoas installed); polkitd
+installed with a rule granting the account
+org.freedesktop.systemd1.manage-units (run0 then succeeds); a setuid copy
+of a shell or a file-capability binary that is not package-verified; a
+root-run Docker or libvirt socket connectable by the account; the sudo
+group-plugin or a command_timeout Default added; the root password
+unlocked with PermitRootLogin yes; an LDAP or SSSD identity source that is
+unreachable, stale or returns a changed group list; and the §20.2.3 rule
+byte-identical while any one of the routes above appears. C3 (PS-F)
+negative tests: a root-owned file in /etc made writable only through a
+POSIX ACL user entry for the account (mode bits unchanged, 0644), and
+separately through a group ACL entry for its primary group; a default ACL
+naming the account on a root-owned directory; a root-owned 0666 file under
+/var/lib and a 0777 directory under /usr/local; a world-writable FIFO under
+/run; a root-owned file reachable only through a runner-owned symlink in a
+root-consumed path; an unknown filesystem type (an NFS or overlay mount)
+and an unreadable directory (each INELIGIBLE, never skipped); a root
+service unit whose ExecStart, ExecStartPre=+, EnvironmentFile,
+WorkingDirectory or StandardOutput=append: names a path in the account's
+home or workspace; a non-root unit with StandardOutput=file: under the
+account's home; a drop-in adding ExecStartPost to a root unit; a path unit
+watching the account's home; a local generator and an executable
+/etc/rc.local; a root line in /etc/cron.d and in /etc/crontab running a
+script in the account's home, a `~account` and a /home glob token; a root
+crontab; an at job queued by root; cronie installed; pam_exec.so running a
+runner-owned script in the session stack of sshd or cron; pam_env with
+user_readenv=1; pam_xauth or pam_namespace added; an update-motd.d script
+sourcing a runner file; a udev RUN of a runner script; a D-Bus activation
+file whose Exec is runner-owned; core_pattern piping to a runner-owned
+program; a binfmt_misc entry with a runner-owned interpreter; /root/.bashrc
+sourcing a runner file; a DPkg::Post-Invoke hook and a logrotate postrotate
+script naming a runner path; an sshd AuthorizedKeysCommand owned by the
+account; a root-executing unit from a source package outside N; a root
+process not attributable to an accepted unit; a gshadow password set with
+gpasswd, the account added as a gshadow administrator or member, and an
+/etc/group password field other than "x"; an fstab entry with user, users,
+owner or group; user_allow_other in /etc/fuse.conf; a setuid mount.cifs or
+FUSE 2 fusermount; and the probe started with a supplementary group, a
+capability or a confined LSM label (self-verification FAIL). C4 negative
+tests (each INELIGIBLE): an ext4 or tmpfs mount for which an ACL lgetxattr
+returns EOPNOTSUPP (for example ext4 mounted noacl); a class-none object
+that returns an ACL value or ENODATA; an lgetxattr EIO, an ERANGE after the
+size query and a malformed ACL value; a mount of a type outside the ACL
+classes; a world-writable root-owned file on sysfs, debugfs or configfs,
+and a writable securityfs or proc file outside PE; a PE path carrying a
+setuid or setgid bit, or a non-zero owner; an F0w write to
+PE-AA-ADMIN or PE-NSPID that succeeds or returns any errno other than the
+required one; a running kernel different from filesystem.kernel; a default
+ACL entry user:u:rw- (or group:g:rw-) with mask rwx or no mask, and a
+default ACL other::rw-, on a root-owned directory under /var/log; an ACL
+entry giving the account execute on a 4754 root:messagebus setuid helper;
+a root-made transient unit named `qa-agent-exec-v1-<32 hex>.service` with
+User=root; a correctly named OW-looking unit with no journal attempt; one
+whose InvocationID, boot ID or properties digest differs from the attempt
+binding; one with an added ExecStartPost, Delegate=yes, a drop-in, an
+alias or a triggering timer or path unit; a name with uppercase hex, 31 or
+33 digits, or a .scope suffix; a foreign transient .service of any other
+name; qualification started with an attempt in SUBMITTING, STARTED or
+ORPHANED, or with an active OW unit (QZ FAIL, no record); and a root
+process in the runner cgroup whose exe is not the enrolled broker or whose
+parent is not the package-verified sudo. C4 positive vectors (each must
+NOT make a qualified host INELIGIBLE, the record unchanged): journald's
+per-user journal with ACL user:u:r-- and /var/log/journal's
+group:adm:r-x / default:group:adm:r-x; ENODATA on objects without ACLs and
+EOPNOTSUPP on proc, sysfs, cgroup2, securityfs and devpts objects; AppArmor
+enabled, with PE-AA-ADMIN denials observed and PE-AA-QUERY writable; the
+0666 /proc/pressure files and cgroup2 pressure files, with any number of
+cgroups; a retained failed OW unit of a terminal attempt and its removal
+by ResetFailedUnit; new journal files, rotated logs and new root-owned
+/run files in non-writable modes; a DHCP rewrite of /etc/resolv.conf with
+RC tokens; and a broker-chain process present in the runner cgroup during
+B4 observation. C5 AA-NULL vectors. PASS (the record unchanged):
+AppArmor enabled, and /sys/kernel/security/apparmor/.null is a character
+device 1:3, root:root, S_IFCHR | 0666, on the securityfs mount at
+/sys/kernel/security, with the recorded kernel and AppArmor facts.
+INELIGIBLE (each): the same object at any other path, including `.null`
+on a second securityfs mount or a bind mount of it, and a 1:3 `.null`
+lookalike under /run, /tmp or /dev; a regular file, FIFO or block device
+at the exact path; a character device at the exact path with 1:5, 4:3 or
+any other device number; a non-zero uid or gid; a mode other than 0666,
+or any setuid, setgid or sticky bit; AppArmor disabled, or a kernel
+different from filesystem.kernel, while a `.null` object is present; and
+/proc/devices not mapping major 1 to `mem`. C5 JR and OW vectors.
+INELIGIBLE (no record; nothing written to the journal): an attempt entry
+with schemaVersion 2 or an unknown kind; an unknown state or submission
+value; an extra, missing or mistyped key, or a non-null controller with
+submission MAY_HAVE_BEEN_SENT; a transaction record with an unknown
+phase or schemaVersion; a partial, malformed or intact INTENT
+transaction; a journalDigest mismatch; a previousDigest that does not
+equal the predecessor's journalDigest, and a sequence gap; two candidate
+heads (a pointer disagreeing with the highest entry, or an entry above
+the pointer; C8: INELIGIBLE for the run in every case, classified by JR4
+as A-RES only when the entries above the pointer are exactly one exact
+A-RES candidate n+1 of an incomplete committed head n, otherwise class
+D); a temporary or unclassified file, a symlink, a hard-linked
+entry or a 0644 entry in the journal tree; a claim or tombstone naming
+no attempt or a different bindingDigest; a missing tombstone; a claim
+retained by a PASSED attempt; a journal file that changes between JR
+observation 1 and observation 2 (D1 differs from D2); and a retained
+inactive `qa-agent-exec-v1-<ID>.service` whose attempt went SUBMITTING
+→ EXECUTION_ERROR or QUARANTINED with no durable controller binding (the
+name, cgroup path and timing all match). Eligible if every other
+predicate passes: a terminal attempt with intact history and no retained
+unit; and a retained inactive or failed unit of a terminal or QUARANTINED
+attempt with an empty cgroup, intact history and a durable binding that
+matches the live unit (accepted by QZ4). C6 layout and recovery vectors,
+as amended by C7. INELIGIBLE for the run but recoverable, each followed by
+`qa-agent reconcile --execution <ID>` (§20.4.10) of the named executionId
+with enrollment disabled and with no marker, an INVALID marker,
+BOUND_RECONCILABLE and BOUND_RECORDED client state in turn and no local
+file removed, and then a new run that passes if every other predicate
+passes: an INTENT with
+every companion (T-A); an INTENT alone, and an INTENT with each proper
+subset of its companions (T-B, T-C); an INTENT beside
+`transactions/<ID>.json.next` holding its COMMITTED form (T-B); an
+incomplete COMMITTED attempt (A-INC); a PASSED attempt whose live claim
+is still present after a P6 release failure (A-REL). C7 A-RES crash
+probes, each with an incomplete head n: entry n+1 linked with no pointer
+update; entry n+1 and `current.json.next` naming it; a record only; a
+record and the terminal entry n+1; a record and an empty
+`incidents/<ID>`; a record and the incident base; record, incident base
+and terminal entry n+1; a terminal entry n+1 with `current.json.next`.
+Each is also run with the broker killed after every A-RES removal step
+(before and after that step's directory fsync) and RECONCILE re-run after
+every crash point. Every case converges to head n with no residue, and S4
+and entries 0..n are byte-unchanged throughout. C8 committed-view
+vectors: in each of these eight probes, and after every crash point,
+JR4 and the broker classify A-RES and never D (K2 and JR3 pass on the
+committed view 0..n; S4 is valid as naming the highest committed n);
+the same probe with a second entry above the pointer, an entry n+1 with
+another executionId, binding or previousDigest, an S5 naming n or n+2,
+or an unrelated `*.next` file is class D. INELIGIBLE, class D: two INTENT transactions;
+an INTENT whose claim or tombstone key holds an object of another
+executionId; an INTENT companion with a different bindingDigest; a
+COMMITTED transaction without its attempt directory, and an attempt
+directory without a transaction; a missing, third or mismatched
+tombstone, and a tombstone whose key differs from its file name; a claim
+naming no attempt; a second claim naming the same executionId; a
+QUARANTINED head without its claim; a QUARANTINED head without an
+incident base; an incident revision `00000001.json` (resolution, C7) or
+`00000002.json`; a base with non-null resolvedAt or cleanup; an incident
+beside a committed PASSED, TEST_FAILED, TIMED_OUT or EXECUTION_ERROR head
+(C7); an empty `incidents/<ID>` with no record, or one holding an
+unknown file; a terminal head without a record, two records for one
+executionId, and a record naming no attempt; a recordDigest that does
+not recompute; a head
+outcomeDigest different from recordDigest; a record whose status,
+binding, controller, timeline or cleanup differs from the head; a
+`current.json.next` that is not the pointer candidate of entry n+1, or
+that exists without entry n+1; two entries above the pointer; an entry
+above a terminal or QUARANTINED head; a record beside a non-terminal
+entry n+1; any lock, layout-marker or metadata file, and any
+file outside the S0–S13 grammars; a fixed directory with mode 0755.
+Eligible: a CLEAN store of terminal attempts, each with its COMMITTED
+transaction, two tombstones and record; a QUARANTINED attempt with its
+immutable base incident and its retained claim. Every case is detected by
+PS-A–PS-F at verification or requalification, never by C1a.
+
+### 20.3 DG-3 — native broker, build, distribution and Linux host
+
+#### 20.3.1 Reconstructed gap
+
+§4.1/§5.2/§5.4 fix one root-owned native artifact with a self-digest but
+choose no language, D-Bus client, linkage, build, versioning or
+distribution, and §5.3 defers packaging; the authoring host has no Linux,
+systemd, sudo or compiler.
+
+#### 20.3.2 Language comparison
+
+| Criterion | Rust | C | Go |
+|---|---|---|---|
+| Memory safety of root parsers (L1) | Safe by construction outside audited unsafe | Manual; highest review burden | Safe |
+| Syscall access (openat2, statx mount ID, pidfd, memfd seals, SO_PEERCRED, close_range, execve) | Direct, via rustix/libc | Direct | Mostly via x/sys/unix; the runtime owns threads and signals |
+| Process model | No runtime; deterministic | No runtime | Mandatory multithreaded runtime, GC and signal interception; interacts with workload-mode execve and dispositions |
+| systemd D-Bus | zbus (pure Rust) or sd-bus FFI | sd-bus native | godbus (pure Go) |
+| Static linking | musl static-pie, no loader | glibc static unsupported for NSS; musl possible | Static by default |
+| Dependency footprint | Moderate (zbus tree) | Minimal | Moderate (godbus, x/sys) plus runtime |
+| Deterministic strict parsing | Safe hand-written parser feasible | Error-prone | Feasible |
+| Build complexity / reproducibility | cargo --locked with a pinned toolchain; reproducible | Simple; toolchain-coupled | Simple, reproducible |
+| Review burden | Unsafe blocks plus dependency audit | Every line | Runtime behaviour plus dependencies |
+
+**Selected: Rust.** C is rejected on L1 (root-side frame, proposal, report
+accounting and D-Bus parsing of untrusted bytes in a memory-unsafe
+language). Go is rejected on process-model control: the broker relies on
+exact process-wide signal dispositions, a single precise execve in workload
+mode and no hidden runtime behaviour in a root one-shot process.
+
+#### 20.3.3 D-Bus strategy
+
+| Option | Untrusted-message parser | Integrity coverage | Footprint | Verdict |
+|---|---|---|---|---|
+| zbus (pure Rust), statically linked | Memory-safe Rust | Inside brokerSha256 (all broker code is one digest) | Larger Rust dependency tree | **SELECTED** |
+| sd-bus via FFI to libsystemd.so.0 | systemd's C parser | Library outside brokerSha256; dynamic loader exposure | Minimal crates | Rejected: weaker integrity model; C parsing of unsolicited signals in root |
+| libdbus via the dbus crate | C | Outside the digest | Medium | Rejected |
+| Hand-written D-Bus in the broker | New security-sensitive parser | Inside the digest | Small | Rejected (no proof that it is safer) |
+| /run/systemd/private peer socket | — | — | — | Rejected: changes the §4.3/§5.6.1 manager identity (bus unique owner) |
+
+Exact use: zbus exactly 5.13.2 (Cargo.toml requirement "=5.13.2"),
+blocking API, default features off, features exactly async-io and
+blocking-api (no tokio), Unix FD passing enabled. Version evidence from the
+published crate sources: ConnectionCredentials has no ProcessFD member in
+zbus 5.0.0–5.5.0 and has it from 5.7.1 on; 5.13.2 declares edition 2024 and
+rust-version 1.85, and in src/fdo/dbus.rs maps the D-Bus key "ProcessFD" to
+an `Option<OwnedFd>` exposed as ConnectionCredentials::process_fd() (with
+process_id() for "ProcessID"), returned by the DBus proxy method
+get_connection_credentials, whose blocking variant the blocking-api feature
+generates. Any other zbus version is a new broker build that must re-prove
+this surface before qualification. Connection only to the literal address
+unix:path=/run/dbus/system_bus_socket with EXTERNAL authentication; the
+environment is already cleared, so no DBUS_* variable can redirect it.
+Calls: org.freedesktop.DBus GetNameOwner and GetConnectionCredentials
+(ProcessFD and ProcessID for §5.6.1 N1) on the bus driver; the §6.1/§6.3
+Manager and Unit methods on org.freedesktop.systemd1 only; AddMatch for
+PropertiesChanged limited to the manager's unique name and the bound unit
+path. Every received message whose sender is neither the bus driver nor
+the authenticated manager unique name is dropped before use. Transient
+properties are built as typed zvariant values from the fixed §6.1 table;
+FDs (signature h) are passed as owned descriptors. No object server is
+registered. zbus's internal executor thread is permitted; the broker sets
+signal dispositions before creating the connection.
+
+Unsolicited traffic (C2, Security INFO-4; linked to L1 and L7, which stay
+OPEN). Any account may send unicast signals to the broker's unique name,
+and the bus driver stamps the sender, so a non-manager sender cannot
+present itself as the manager. Such traffic cannot become trusted: it is
+dropped by the sender filter above before any use and changes no state.
+It cannot grow broker memory without bound: zbus 5.13.2 keeps each incoming
+queue bounded (64 messages by default; "When the queue is full, no more
+messages can be received until room is created", src/connection/mod.rs of
+the published crate), and the broker MUST NOT raise max_queued or create an
+unbounded MessageIterator or MessageStream. Each message is bounded by the
+system bus max_message_size of the qualified host, recorded as
+qualification evidence. In-process buffering is therefore at most the
+fixed number of zbus queues the broker opens times 64 times that size,
+derived from the pinned crate and the recorded bus configuration, with no
+new production limit. It cannot delay or block receipt of a manager reply
+(C16, SEC-S5-C15-M01): under the receive-path isolation rules RP1–RP8
+below, traffic from any sender other than the authenticated manager is
+rejected before it can occupy any zbus queue whose fullness can suspend
+the socket reader. It therefore consumes no capacity of the method-return
+queue or of the one exact-filtered signal queue. Every manager wait keeps
+its §6.4 phase deadline (A, S, TimeoutStartUSec, RuntimeMaxUSec, P4, R)
+or E, and only the manager's own behaviour can exhaust it. An expiry,
+manager timeout or any other outcome caused by unrelated traffic is a
+Stage 5 qualification failure (§20.3.7 vector (73)), never an existing
+outcome of that phase. It cannot produce PASS: PASSED
+needs a durable OBSERVED backed by the authenticated manager's properties
+(§7.3) and a validated proposal, and no message from another sender is
+ever read as manager evidence. The one P1S terminal-evidence
+ListUnitsByPatterns of §20.3.8 H10 (C11) is bounded by E = 5000 ms, not
+by S. If a genuine manager-side delay (for example a paused or stalled
+manager) holds its reply past E, the clean-namespace proof is not
+established and the outcome is the existing QUARANTINED 7, with reason
+CLEANUP_UNPROVEN, not CONTROLLER_FAILURE (§20.3.8 H9 failed-proof
+reason, C15). Unrelated traffic is never that cause (C16, RP5). It does
+not bypass L7: the traffic creates
+no broker process, so the open L7 concurrency question is unchanged.
+
+Receive-path isolation (C16; owner decision
+OD-CONTROLLED-V1-STAGE5-SECURITY-C16; resolves SEC-S5-C15-M01).
+Security property: unrelated traffic MUST NOT consume capacity of an
+active bounded subscriber queue whose fullness can block receipt of
+manager method replies. The owner decision rejects the residual: no
+host-wide D-Bus ACL, no new dbus-daemon or polkit policy, no filtering
+outside the broker, no dedicated system user, no queue-size, deadline,
+retry or memory change. The property is established from the pinned
+library source, below, and gated by the mandatory qualification vectors
+(66)–(73) of §20.3.7.
+
+Pinned-source evidence (zbus 5.13.2, crate archive SHA-256
+1bfeff997a0aaa3eb20c4652baf788d2dfa6d2839a0ead0b3ff69ce2f9c4bdd1, equal
+to the crates.io registry checksum; zbus requires async-broadcast
+"0.7.0", whose 0.7.2 source was inspected; the broker's Cargo.lock
+resolution of async-broadcast is part of the exact graph of §20.3.4 and is
+re-proven against Z3 for any other resolved version):
+
+- Z1 Routing before enqueue. One socket-reader task per connection
+  (src/connection/socket_reader.rs, receive_msg) reads each message. It
+  then walks the connection's broadcaster map, keyed by
+  `Option<OwnedMatchRule>`. For each keyed channel it evaluates
+  MatchRule::matches before calling broadcast_direct; on Ok(false) or a
+  match error it continues, so the message is never offered to that
+  channel. broadcast_direct is awaited channel by channel. A channel that
+  is full and has an active receiver therefore suspends the reader, and
+  with it the receipt of every later message, method returns included
+  (src/connection/mod.rs: "When the queue is full, no more messages can
+  be received until room is created").
+- Z2 Built-in channels. Connection::new (src/connection/mod.rs) creates
+  the unfiltered channel (key None, capacity 64) and the method-return
+  channel (keys msg_type=method_return and msg_type=error, capacity
+  DEFAULT_MAX_METHOD_RETURN_QUEUED = 8). Both are created deactivated,
+  with set_await_active(false).
+- Z3 Inactive drop. In async-broadcast 0.7, try_broadcast returns
+  TrySendError::Inactive when the channel has no active receiver
+  (receiver_count == 0), and the Send future then returns SendError at
+  once when await_active is false. The message is not queued and the
+  reader does not wait. A channel without an active receiver consumes no
+  capacity and never suspends the reader.
+- Z4 Unfiltered activation. Only MessageStream::from(Connection) and
+  MessageStream::from(&Connection) (src/message_stream.rs), and the
+  blocking MessageIterator::from conversions that wrap them
+  (src/blocking/message_iterator.rs), activate the unfiltered channel
+  (msg_receiver.activate_cloned()). No non-test zbus code path calls them.
+- Z5 Method replies. call_method_raw activates a clone of the
+  method-return receiver for one call only (src/connection/mod.rs) and
+  sends the call. PendingMethodCall consumes every item of that receiver
+  and discards each one whose reply_serial differs from the call's serial
+  or whose type is neither method_return nor error. Method replies never
+  pass through the unfiltered channel or a signal subscription channel.
+  Their only coupling to those channels is the reader suspension of Z1.
+- Z6 Filtered subscriptions. MessageStream::for_match_rule and the
+  blocking MessageIterator::for_match_rule call Connection::add_match.
+  It creates one channel keyed by the rule (capacity max_queued or 64)
+  and, on a bus, sends AddMatch. The bus applies match rules only to
+  broadcast routing; a unicast message addressed to the broker is
+  delivered whatever its rules, so the client-side MatchRule::matches is
+  the only filter for unicast traffic. MatchRule::matches
+  (src/match_rule/mod.rs) checks the message type only if the rule sets
+  one. It checks the sender only for a unique name: a well-known sender
+  name is not checked (BusName::WellKnown(_) => ()).
+- Z7 Implicit subscriptions. Connection::request_name adds NameAcquired
+  and NameLost rules whose sender is the well-known org.freedesktop.DBus.
+  Proxy::receive_signal and its variants first subscribe NameOwnerChanged
+  with that well-known sender for a well-known destination
+  (src/proxy/mod.rs, subscribe_dest_owner_change). A Proxy property cache
+  (CacheProperties::Lazily, the default, or Yes) subscribes
+  PropertiesChanged for its destination on first property access. An
+  ObjectServer (Connection::object_server, or builder interfaces/serve_at)
+  adds an active MethodCall subscription for the broker's unique name.
+  Unrelated unicast traffic can enter each of these active queues.
+- Z8 Reader termination. receive_message
+  (src/connection/socket/mod.rs) and Message::from_raw_parts
+  (src/message/mod.rs) deserialize the primary header and the header
+  fields of every message before routing. The header field codes are the
+  closed FieldCode set 1–9 (src/message/field_code.rs). Any error ends
+  the socket-reader task for good (socket_reader.rs: senders.clear(),
+  return). That is a connection loss, not a queue stall. RP7 (a) and (c)
+  exclude it for relayed traffic.
+
+Conclusion: the property is expressible with pinned zbus 5.13.2, with no
+patch, no version or dependency change, no host policy and no new
+transport. Take a broker that holds no active receiver on the unfiltered
+channel and whose only signal subscription fixes type, unique sender,
+interface, member and path. A message from any other sender then matches
+no rule except the two method-return rules, and those only for its own
+type. At the unfiltered channel it is dropped under Z3. The reader never
+waits on capacity because of it.
+
+Normative receive topology (C16, for the whole broker lifetime; no
+temporary, debug or recovery exception):
+
+- RP1 Prohibited receive APIs. The broker MUST NOT create or hold an
+  unfiltered MessageStream or MessageIterator (any conversion from a
+  Connection), any equivalent catch-all subscriber, or any subscriber
+  whose queue may accept arbitrary messages addressed to the broker. It
+  MUST NOT create a match-rule subscriber whose rule leaves the message
+  type, sender, interface, member or path open, or whose sender is a
+  well-known name. It MUST NOT call Connection::object_server, register
+  an interface, use builder serve_at, or call request_name or
+  request_name_with_flags. It MUST NOT build any Proxy (including the
+  blocking fdo DBusProxy used for GetNameOwner and
+  GetConnectionCredentials) with property caching: every Proxy is built
+  with CacheProperties::No. It MUST NOT call any Proxy receive_* method.
+  It MUST NOT call set_max_queued or the connection builder's
+  max_queued, or pass a max_queued other than None.
+  No receive path may let unrelated traffic consume capacity of a queue
+  whose fullness can stop receipt of manager method replies.
+- RP2 The only permitted signal subscription. It is the existing
+  PropertiesChanged subscription and nothing else, created with the
+  blocking MessageIterator::for_match_rule and max_queued None
+  (capacity 64). Its rule closes every dimension: type='signal';
+  sender = the authenticated manager unique name (the §5.6.1 N1
+  GetNameOwner result, a unique name, never a well-known name);
+  interface='org.freedesktop.DBus.Properties';
+  member='PropertiesChanged'; path = the exact bound unit object path.
+  It has no arg, path_namespace or destination dimension and no other
+  wildcard. It is created only after N1 has authenticated the manager
+  and the unit path is bound, at most once per bound unit path in one
+  broker process. While no unit path is bound (P0, P1, P1S, and every
+  RECONCILE step before a unit path is bound) no signal subscription
+  exists. This tightens the existing AddMatch allowance; it adds no
+  D-Bus method, call site or authority.
+- RP3 Calls. Every manager, unit and bus-driver call (the closed §6.3
+  and §20.3.3 list) is made with the blocking Connection::call_method or
+  through a blocking Proxy built under RP1. Its reply is received only
+  through the zbus method-return channel (Z5).
+- RP4 Pre-queue rejection, and where it occurs. Rejection happens in
+  the zbus socket reader, at the per-channel MatchRule::matches check
+  that precedes broadcast_direct (Z1), and at the inactive-channel drop
+  (Z3). It does not happen after dequeue. Per message class:
+  (a) a signal, method call or any other non-reply message from a sender
+  other than the authenticated manager fails the RP2 sender check and
+  matches neither method-return rule. It is offered only to the
+  unfiltered channel, which has no active receiver (RP1, Z4), and is
+  dropped there at once. It takes zero capacity of every queue;
+  (b) a manager signal with any other type, interface, member or path is
+  handled as (a);
+  (c) a method_return or error that answers no outstanding broker call
+  is not delivered by the qualified bus (RP7 (b)). If one were delivered
+  with no broker call outstanding, the method-return channel would be
+  inactive and it would be dropped under Z3. With a call outstanding, it
+  would be consumed and discarded by that call's serial filter (Z5) and
+  never accumulate. Its delivery is a qualification failure (vector
+  (71)).
+  Ignoring or dropping a message after reading it from a queue is not
+  this property. The RP6 validation is a separate authority check, not
+  the isolation mechanism.
+- RP5 Manager reply independence. Receipt of every blocking manager or
+  bus-driver reply depends only on the bus delivering it, on the reader
+  not being suspended, and on the call's own receiver. This holds for:
+  GetNameOwner; GetConnectionCredentials; the AddMatch made by RP2;
+  StartTransientUnit; GetUnit; RefUnit; Properties.GetAll;
+  ListUnitsByPatterns (the H10 call under E, ordinary Case E site (iv)
+  and every other H9 site); StopUnit; KillUnit; ResetFailedUnit;
+  UnrefUnit; the P4 empty confirmation; and every qualification or
+  identity call whose timeout changes a security disposition. Under
+  RP1–RP4 the only channel whose fullness can suspend the reader is the
+  RP2 subscription, and its only admissible producer is the
+  authenticated manager on the bound unit path. Unrelated traffic cannot
+  fill it or any other channel. A hostile sender therefore cannot, by
+  unrelated traffic, cause a manager timeout, an E expiry, a §6.4 phase
+  expiry or any outcome. The manager's own PropertiesChanged signals on
+  the bound path are not unrelated traffic. Vector (72) qualifies that
+  they never fill the RP2 queue during an outstanding call, including
+  under workload-driven activity; otherwise qualification is BLOCKED.
+- RP6 Trusted sender validation preserved. Queue filtering and match
+  rules are not authority, and a match rule is not a security identity
+  by itself. Every message that becomes evidence keeps every existing
+  check: a reply to the broker's own call serial; the bus driver for
+  bus-driver calls; the authenticated manager unique name for manager
+  calls and RP2 signals; the §5.6.1 N1 ProcessFD and ProcessID manager
+  identity; the manager identity, bound unit path, InvocationID and
+  ControlGroup bindings; and every other §7.3 evidence validation. A
+  malformed or untrusted message never gains evidence authority.
+- RP7 Qualified-bus facts. These are recorded qualification evidence,
+  like the bus max_message_size. They are stock bus behaviour: no
+  policy, ACL or configuration file is added. (a) The qualified system
+  bus's org.freedesktop.DBus Features property contains
+  "HeaderFiltering" (D-Bus Specification 0.32: the bus removes header
+  fields it does not understand before relaying). The qualification
+  harness reads it; the broker makes no new call. (b) The qualified
+  system bus does not deliver a method_return or error that answers no
+  outstanding call of the recipient (requested-reply enforcement of the
+  stock system-bus configuration). (c) No message the bus relays to the
+  broker terminates its zbus socket reader (Z8). If (a), (b) or (c) is
+  false, Stage 5 qualification is BLOCKED. That is never answered by a
+  host-policy change, a zbus patch or a version change.
+- RP8 No threshold fix. max_queued is never raised (unchanged rule). E,
+  S, A, P4, R, TimeoutStartUSec, RuntimeMaxUSec, systemd timeouts,
+  retries and memory limits are unchanged, and none of them is a
+  mitigation for M01.
+
+Failure semantics. A hostile flood of unrelated traffic by itself yields
+no security outcome. It never yields CLEANUP_UNPROVEN, CONTROLLER_FAILURE,
+MISSING_UNIT_PROOF, STATE_INCONSISTENT, QUARANTINED, a durable
+transition, claim retention or root blocking. If it is observed to do
+so, Stage 5 qualification and Controlled Release are BLOCKED. It is never
+reinterpreted as an ordinary manager failure, never accepted as an
+availability residual, and never given permanent quarantine as an
+expected result. A genuine, independent manager or containment failure
+that coincides with a flood is classified under the ordinary contract,
+including the §20.3.8 QR reason partition (C16). Unrelated traffic now
+occupies no queue, so the in-process memory bound above remains a true
+upper bound.
+
+#### 20.3.4 Dependencies, toolchain, build and linkage
+
+| Item | Normative value |
+|---|---|
+| Source location | native/qa-agent-controller-v1/ in this repository (Cargo workspace: Cargo.toml, Cargo.lock, rust-toolchain.toml, build-env.digest, and the build-environment recipe Containerfile of §20.3.4a, which C2 adds as the only file there before Stage 5 implementation); outside the package.json "files" allowlist, so never in the npm tarball |
+| Direct dependencies (closed allowlist) | zbus "=5.13.2" (features above), rustix 1, libc 0.2 (only in one sys module), sha2 0.10, md-5 0.10 (§9.4 Cypress name check). No other direct dependency: in particular no direct serde_json, tokio, logging, tracing-subscriber or CLI crate; JSON is an in-repository strict parser in safe Rust. Adding a direct dependency is a §20.7 STOP |
+| Transitive closure (distinct from the direct allowlist) | Exactly the Cargo.lock graph resolved for the direct set; it is not claimed to be free of any crate category. For zbus 5.13.2 it includes, among others, tracing (a mandatory zbus dependency; the broker installs no subscriber and no log backend, so events are discarded), serde/serde_repr, winnow, uuid, enumflags2, the zvariant/zbus_names/zbus_macros family and their proc-macro dependencies, and the async-io feature set (async-io, async-executor, async-lock, async-task, blocking, async-process and its async-signal/signal-hook-registry). zbus 5.13.2 uses rustix and libc on Linux; nix and xdg-home were dependencies of earlier zbus 5 releases and are absent unless Cargo.lock shows them |
+| Transitive controls | Cargo.lock committed and used with --locked; every package from crates.io with its registry checksum verified by cargo; no git, path (outside the workspace) or alternative-registry source; cargo deny check on the exact lock (advisories with no unignored RUSTSEC entry, an explicit license allowlist, sources restricted to crates.io, bans on duplicate majors only where listed); an unsafe-code inventory per locked crate (cargo geiger output or an equivalent per-crate count) with an audit note for each crate containing unsafe code; an inventory of crates that install signal handlers, spawn processes or start threads, each shown unreachable from or compatible with the broker's paths (the unix:path address never selects the unixexec transport, so async-process is not reached; the broker's dispositions are set before the connection); build scripts in the graph must not compile C or call pkg-config. Any lock change is a new broker build requalified against the new exact graph |
+| Unsafe policy | #![forbid(unsafe_code)] in every broker crate except one sys module with an enumerated list of libc calls (getresuid, getresgid, close_range, execve and any primitive rustix lacks), each wrapped and reviewed |
+| Toolchain | Exactly Rust 1.85.0 (rustc 1.85.0 (4d91de4e4 2025-02-17), Cargo 1.85.0 = cargo 0.86.0), edition 2024, pinned in rust-toolchain.toml (channel "1.85.0", targets ["x86_64-unknown-linux-musl"], profile minimal) and installed only from the official channel manifest channel-rust-1.85.0.toml (2025-02-20) with these component xz SHA-256 values verified: rustc x86_64-unknown-linux-gnu 7436f13797475082cd87aa65547449e01659d6a810b4cd5f8aedc48bb9f89dfb; cargo x86_64-unknown-linux-gnu 0aff33b57b0e0b102d762a2b53042846c1ca346cff4b7bd96b5c03c9e8e51d81; rust-std x86_64-unknown-linux-gnu 285e105d25ebdf501341238d4c0594ecdda50ec9078f45095f793a736b1f1ac2; rust-std x86_64-unknown-linux-musl 27cebed8bafcb07c1c61a3dfc548efc3c032720d953375391896b664f8fe06f5. Changing any of them is a new broker build |
+| Target and linker | Target x86_64-unknown-linux-musl. Linker for the target is exactly rust-lld from the pinned rustc component (lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld, covered by the rustc hash above), flavor ld.lld, with the self-contained musl crt objects and libc from the pinned musl rust-std. No host cc, gcc, binutils ld or system libc participates in linking the broker. Host-target build scripts and proc macros are linked by the build environment's cc; their outputs are not part of the artifact |
+| Build environment | Exactly one OCI image, x86-64, referenced only by its immutable manifest digest stored in native/qa-agent-controller-v1/build-env.digest (one line "sha256:" + 64 lowercase hex). The image is built only from the versioned recipe native/qa-agent-controller-v1/Containerfile by the closed §20.3.4a procedure (immutable Debian 13 base digest, fixed Debian snapshot and package versions, the pinned toolchain hash-verified and installed under /opt/rust: toolchain at /opt/rust/rustup/toolchains/1.85.0-x86_64-unknown-linux-gnu, cargo and rustc linked from /opt/rust/cargo/bin, no rustup; RUSTUP_HOME=/opt/rust/rustup, CARGO_HOME=/opt/rust/cargo); build-env.digest is written only by that procedure, never by hand, and an image without that provenance is never qualified however reproducible its output; changing the digest is a new broker build. Builds run in a fresh container from that digest with --network none, source bind-mounted read-only at /build/src, CARGO_TARGET_DIR=/build/target, the prepared registry volume at /opt/rust/cargo/registry, an unprivileged numeric build user, umask 022 |
+| Build environment variables | The container starts from an empty environment plus exactly: PATH=/opt/rust/cargo/bin:/usr/bin:/bin, RUSTUP_HOME, CARGO_HOME, CARGO_TARGET_DIR (values above), LANG=C, LC_ALL=C, TZ=UTC, SOURCE_DATE_EPOCH = the committer timestamp of the source commit (for any build script that reads it; the broker embeds no time), CARGO_INCREMENTAL=0, QA_BROKER_SOURCE_COMMIT = 40-hex commit (read by env! for brokerBuild), RUSTFLAGS below. No other variable, no ~/.cargo/config.toml and no .cargo/config.toml outside the source tree |
+| Build command | Preparation: cargo fetch --locked in a container from the same digest, with network, into a fresh build volume mounted at /opt/rust/cargo/registry (cargo verifies every registry checksum against Cargo.lock). Build: cargo build --release --frozen --target x86_64-unknown-linux-musl (--frozen = --locked plus --offline) with --network none |
+| RUSTFLAGS (exact, in this order) | -C linker=rust-lld -C linker-flavor=ld.lld -C link-self-contained=yes -C target-feature=+crt-static -C link-arg=--build-id=none --remap-path-prefix=/build/src=/qa-agent-controller-v1 --remap-path-prefix=/opt/rust/cargo/registry/src=/cargo-registry --remap-path-prefix=/opt/rust/cargo/git/checkouts=/cargo-git --remap-path-prefix=/opt/rust/rustup=/rustup --remap-path-prefix=/build/target=/target |
+| Release profile | opt-level 2, codegen-units 1, lto true, panic "abort", overflow-checks true, debug false, strip "symbols", incremental false |
+| Host-specific metadata | No timestamps, hostnames, user names, absolute host paths or build IDs in the artifact: paths are remapped as above (panic locations included), --build-id=none, no .comment beyond the toolchain identification, no embedded environment except QA_BROKER_SOURCE_COMMIT |
+| Linkage | Static-pie ELF64 x86-64: no PT_INTERP, no DT_NEEDED, no RPATH/RUNPATH; musl from the pinned Rust target. No shared library, so no dynamic-loader or library-substitution class applies to the broker, and brokerSha256 covers all broker code |
+| CPU baseline | x86-64 baseline (no target-cpu override). aarch64: DEFERRED |
+| Panic / OOM | Process abort = broker crash, handled only by §7.4 |
+| Reproducibility verification | Two builds from the same commit, Cargo.lock and build-env.digest, on two different physical or virtual x86-64 hosts (different kernels, hostnames, users and host checkout paths outside the container), each in a fresh container per the rows above, give byte-identical artifacts (equal SHA-256); a third build by the release-qualification party repeats the check. A difference, or a build that needs any input not listed here, is non-reproducible: release qualification is BLOCKED. Matching artifacts are necessary, not sufficient: the build environment must also pass the §20.3.4a provenance and rebuild checks. The build record is QaAgentControllerBuildRecord v1 (§20.3.4a: commit, recipe and image provenance, toolchain hashes, Cargo.lock SHA-256, RUSTFLAGS, artifact SHA-256 of each build) and is release-qualification evidence |
+
+brokerBuild (enrollment qualification, <=256 ASCII) is exactly
+"qa-agent-controller-v1/" + brokerVersion + "+" + 40-hex source commit +
+" rustc/" + exact toolchain version + " x86_64-unknown-linux-musl", compiled
+into the artifact as a literal; C7 compares it with enrollment
+qualification.brokerBuild. brokerVersion is semver, independent of the npm
+version. contractVersion stays "qa-agent-controller-v1"; an incompatible
+contract is a new literal, new fixed paths and a new artifact, never an
+in-place change.
+
+#### 20.3.4a Build-environment provenance (C2, closed)
+
+Reproducibility alone does not make a build image trustworthy: an opaque
+image can reproduce its own output. The closed chain is
+
+    versioned recipe -> OCI build -> immutable image manifest digest
+      -> build-env.digest -> broker build record
+
+and no step may be skipped or replaced by an image of unknown origin.
+
+Recipe. native/qa-agent-controller-v1/Containerfile in this repository,
+recipe revision 1. It builds the build environment only: no broker source,
+no broker compilation, no Cargo file. containerfileDigest = "sha256:" +
+lowercase hex SHA-256 over the git blob bytes of that path at the source
+commit (`git cat-file blob <commit>:native/qa-agent-controller-v1/Containerfile`),
+never over a working-tree checkout, so line-ending conversion cannot change
+it. The blob must be ASCII, LF line endings, one final LF, no BOM; a blob
+that is not is not a qualified recipe. Every input is a literal in the
+recipe, so containerfileDigest binds all of them:
+
+| Input | Pinned value (verified 2026-10-15) |
+|---|---|
+| Base image | docker.io/library/debian:trixie-20260918, linux/amd64 image manifest sha256:d5ce19d4736f0ebbacd686d1040271a5aeb0cc920f5990c1bfae1717627f0674 (from index sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c; one layer sha256:6eefb2f5d3e91a6cfc577476bbec26bb63f0d0fc31f904493f400833783aa2c2; config architecture amd64, os linux; debuerreotype 0.17, epoch @1789689600 = 2026-09-18T00:00:00Z). The tag is informational; FROM uses the digest |
+| Debian snapshot | http://snapshot.debian.org/archive/debian/20260917T202223Z (suites trixie = Debian 13.7, trixie-updates) and http://snapshot.debian.org/archive/debian-security/20260917T225432Z (trixie-security); component main; the exact runs to which the base image's own 20260918T000000Z snapshot resolves. Release files are verified by apt against the base image's /usr/share/keyrings/debian-archive-keyring.pgp; Check-Valid-Until is off because snapshot Release files have expired, signature checking is not |
+| Packages, environment stage | ca-certificates=20250419, gcc=4:14.2.0-1, gcc-14=14.2.0-19, libc6-dev=2.41-12+deb13u4 (equal to the base image's libc6), --no-install-recommends; their dependencies are fixed by the snapshot |
+| Packages, fetch stage only | ca-certificates=20250419, curl=8.14.1-2+deb13u5, xz-utils=5.8.1-1+deb13u1; not in the final image |
+| Rust | The four §20.3.4 component tarballs from https://static.rust-lang.org/dist/2025-02-20/, each checked with sha256sum --strict against the §20.3.4 values before extraction (equal to channel-rust-1.85.0.toml, whose published SHA-256 is 009e8b5ff43f12bf644b5e5b9fd89f96453072062a450c623882f64e85405da5), installed with each component's install.sh --disable-ldconfig; rustc --version must equal "rustc 1.85.0 (4d91de4e4 2025-02-17)", and rust-lld plus the musl self-contained objects must exist |
+| Final image configuration | Env exactly PATH, RUSTUP_HOME, CARGO_HOME, CARGO_TARGET_DIR, CARGO_INCREMENTAL, LANG, LC_ALL, TZ with the §20.3.4 values; USER 10001:10001 (numeric, no passwd entry); WORKDIR /build/src; /build/target and /opt/rust/cargo/registry owned 10001:10001; ENTRYPOINT []; CMD /usr/bin/false. A broker build still supplies the full §20.3.4 environment explicitly |
+
+The image contains no rustup, so rust-toolchain.toml is not a toolchain
+resolution input inside it; the build qualification still requires
+rustc -vV in the image to report release 1.85.0 and the §20.3.4
+identification "rustc 1.85.0 (4d91de4e4 2025-02-17)", and
+rust-toolchain.toml to pin channel "1.85.0". Mutable mirrors
+(deb.debian.org) and tags are never trust anchors.
+
+Image build and publication model (C3, ARCH-S5-C2-m04; performed only under
+a later, separately authorized build-environment qualification and
+publication; C2 and C3 build, authenticate to, push and publish nothing).
+Exactly one mechanism is selected: Docker Buildx driving a BuildKit daemon
+in the docker-container driver, exporting with the BuildKit image exporter
+and pushing directly to the durable location below in the same build. There
+is no local export followed by a second push, conversion or re-serialization
+step.
+
+1. Builder instance: `docker buildx create --name
+   qa-agent-controller-v1-build-env --driver docker-container --driver-opt
+   image=docker.io/moby/buildkit@sha256:<B> --bootstrap`, where B is the
+   BuildKit image manifest digest fixed by that authorization and recorded
+   in the closed builder evidence below (never a tag). No BuildKit
+   configuration file is supplied: no registry mirror, insecure registry,
+   custom CA or extra worker setting. A fresh builder instance is created
+   for each build and removed after it.
+2. Recipe: extract the recipe blob from the source commit into an empty
+   scratch directory and verify containerfileDigest and the format rule.
+   The build context is a separate empty directory.
+3. Client environment: exactly PATH, HOME, DOCKER_CONFIG (holding only the
+   registry credential of the push identity) and
+   BUILDX_NO_DEFAULT_ATTESTATIONS=1; in particular SOURCE_DATE_EPOCH,
+   `BUILDKIT_*` and `BUILDX_*` other than that one are unset (Buildx would
+   otherwise forward SOURCE_DATE_EPOCH as a build argument).
+4. Build and push, exactly:
+
+        docker buildx build --builder qa-agent-controller-v1-build-env \
+          --platform linux/amd64 --file <scratch>/recipe/Containerfile \
+          --no-cache --pull --provenance=false --sbom=false \
+          --metadata-file <scratch>/buildx-metadata.json \
+          --output type=image,name=ghcr.io/tarasovartem/qa-agent-controller-v1-build-env:<tag>,push=true,oci-mediatypes=true,compression=gzip,force-compression=false \
+          <scratch>/empty-context
+
+   with no --build-arg, --secret, --ssh, --build-context, --allow
+   (entitlements), --cache-from, --cache-to, --label, --annotation, --target,
+   --attest, --load or other --output option. The Containerfile has no
+   `# syntax=` directive, so the frontend is the Dockerfile frontend built
+   into the recorded BuildKit image and no frontend image is pulled. RUN
+   steps use the default BuildKit network (signed apt over the snapshot,
+   hash-verified Rust downloads); broker builds stay --network none
+   (§20.3.4). `<tag>` is informational only (for example
+   `revision-1-<sourceCommit>`) and is never a trust anchor.
+5. Selected format: with one platform and provenance and SBOM disabled the
+   exporter pushes exactly one OCI image manifest
+   (application/vnd.oci.image.manifest.v1+json) referencing one OCI image
+   config (application/vnd.oci.image.config.v1+json) and only
+   application/vnd.oci.image.layer.v1.tar+gzip layers (the pinned base
+   layer is reused as gzip; force-compression=false). No image index, no
+   Docker schema2 media type, no zstd or estargz layer, no attestation
+   manifest, no subject and no referrer is part of the design. If the
+   pinned builder emits an index or any other media type for this command,
+   qualification FAILS; an index is never unwrapped to find a platform
+   manifest.
+
+Definition of D (normative). D is the SHA-256 digest ("sha256:" + 64
+lowercase hex) of the exact manifest bytes that the qualified registry
+serves for the pushed linux/amd64 image manifest when that manifest is
+addressed by digest. D is a platform image manifest digest, never an index
+digest. The registry-served bytes are authoritative: the digest Buildx
+reports (containerimage.digest in the metadata file) and any pre-push or
+local digest are not D unless equal to the hash of the served bytes; if the
+registry stores a different representation than the builder computed, D
+is still the hash of the served bytes, provided every check below passes
+on them.
+
+Post-push verification, in this order, before build-env.digest is written:
+
+1. Obtain the candidate D from the registry API (OCI distribution-spec):
+   `HEAD /v2/tarasovartem/qa-agent-controller-v1-build-env/manifests/<tag>`
+   with Accept: application/vnd.oci.image.manifest.v1+json only; take the
+   Docker-Content-Digest header. Record the Buildx-reported digest beside
+   it. The tag is used only to discover the candidate.
+2. `GET /v2/tarasovartem/qa-agent-controller-v1-build-env/manifests/<D>`
+   with the same Accept header; the response Content-Type must be
+   application/vnd.oci.image.manifest.v1+json and Docker-Content-Digest,
+   if present, must equal D.
+3. Hash the exact response body; the SHA-256 must equal D.
+4. Parse the body strictly (no duplicate keys): members exactly
+   schemaVersion (2), mediaType (the OCI image manifest type), config and
+   layers; no annotations, subject or artifactType; every descriptor has
+   exactly mediaType, digest and size; config mediaType is the OCI image
+   config type; every layer mediaType is the OCI tar+gzip type.
+5. Fetch the config and every layer blob by digest from the same
+   repository; each body's SHA-256 and length must equal its descriptor;
+   the config must state architecture amd64 and os linux; the gunzipped
+   bytes of layer i must have the SHA-256 rootfs.diff_ids[i] of the config,
+   with equal counts. Steps 2–5 are the pull by repository@D.
+6. Compute QaAgentBuildEnvContent from exactly those config and layer
+   bytes (below).
+7. Independently rebuild the same recipe blob with a fresh builder instance
+   of the same recorded builder identity, the same command except that the
+   --output is `type=oci,dest=<scratch>/rebuild.tar,oci-mediatypes=true,compression=gzip,force-compression=false`
+   (no push), and compute its content record from the single manifest of
+   that OCI layout by the same procedure.
+8. The two records must be rebuild-equivalent (below).
+9. Only then write build-env.digest = D.
+
+Content record. QaAgentBuildEnvContent v1 (C3 shape; it replaces the C2
+shape, which no qualified record ever used), all keys required, CRS-1
+canonical bytes: {kind:"QaAgentBuildEnvContent", schemaVersion:1,
+platform, config, packages, entries}. It is computed only from the image
+config and layer blobs of a verified manifest, never from a created or
+running container, so container-runtime injections (/.dockerenv,
+/etc/hostname, /etc/hosts and /etc/resolv.conf bind mounts, the /dev,
+/proc and /sys mounts, /run/.containerenv) are never inputs. The exclusion
+set is therefore closed and EMPTY: every path any layer produces, including
+etc/hostname, etc/hosts, etc/resolv.conf, dev, proc, sys, run, tmp, var,
+root, build and the top-level symlinks bin, lib, lib64 and sbin, is image
+content and recorded. C2's docker create / docker export input and its
+three-path exclusion are withdrawn.
+
+- platform = {architecture, os, variant, osVersion, osFeatures} from the
+  image config; required "amd64", "linux", null, null, null (variant,
+  os.version and os.features must be absent).
+- Image-config closure: top-level members other than architecture, os,
+  config, rootfs, created, author and history FAIL. rootfs.type must be
+  "layers". created, author and history are build metadata with no effect
+  on the filesystem or on any process started from the image and are not
+  recorded; rootfs.diff_ids is layer-serialization identity, bound in
+  verification step 5, and the applied filesystem is recorded entry by
+  entry instead.
+- config = the image config's config object over the closed member set
+  {User, Env, WorkingDir, Entrypoint, Cmd, Healthcheck, Volumes, Shell,
+  OnBuild, StopSignal, Labels, ExposedPorts, ArgsEscaped}; any other member
+  (for example Hostname, Domainname, Image, AttachStdin, Tty, OpenStdin,
+  StdinOnce, MacAddress, NetworkDisabled, StopTimeout, Memory, MemorySwap,
+  CpuShares) FAILS. Every member is recorded, an absent member as null.
+  Required values: User "10001:10001"; Env exactly the eight §20.3.4a
+  names, each once, with the §20.3.4 values, recorded in config order;
+  WorkingDir "/build/src"; Entrypoint absent, null or [] (recorded []);
+  Cmd ["/usr/bin/false"]; Healthcheck absent (any value, including
+  {"Test":["NONE"]}, FAILS, so no health check can run during build use);
+  OnBuild absent or []; Volumes absent or {} (no volume is approved);
+  Shell absent (the recipe has no SHELL; the default is recorded as null);
+  StopSignal absent; Labels absent or {}; ExposedPorts absent or {};
+  ArgsEscaped absent or false (recorded false). Absent, null and the
+  empty value of OnBuild, Volumes, Labels and ExposedPorts are recorded as
+  null.
+- packages = every var/lib/dpkg/status stanza of the applied filesystem
+  with Status "install ok installed", as {package, version, architecture},
+  sorted by package (a readable summary; the file itself is also an
+  entry).
+- entries = the applied root filesystem, by this closed algorithm:
+  1. Layers are applied in manifest order to an initially empty tree.
+     Each layer is a tar stream; accepted member types are regular ("0"
+     and NUL), hard link ("1"), symlink ("2") and directory ("5"), with
+     pax extended headers ("x": path, linkpath, size, uid, gid and
+     `SCHILY.xattr.*` are applied; mtime, atime, ctime, uname, gname and
+     comment are ignored) and GNU long names ("L", "K"). Every other type
+     — character or block device ("3", "4"), FIFO ("6"), contiguous ("7"),
+     global pax header ("g"), sparse ("S") and any vendor type — FAILS;
+     sockets cannot occur in tar.
+  2. Member paths are normalized by removing a leading "./" or "/" and a
+     trailing "/"; a path with an empty, "." or ".." component, a NUL or
+     invalid UTF-8 FAILS. The member "." or "./" sets the root directory.
+  3. Whiteouts follow the OCI image-spec layer rules: per layer, first
+     every opaque marker `.wh..wh..opq` removes all lower-layer children of
+     its directory and every `.wh.<name>` removes `<name>` and its subtree
+     from the lower layers (absent targets are no-ops); then the layer's
+     other members are applied in stream order. Whiteout members are never
+     entries.
+  4. A member whose parent is absent from the tree, or is not a directory
+     node (including a symlink), FAILS; no path is resolved through a
+     symlink. A directory member over an existing directory replaces its
+     metadata and keeps its children; any other member replaces the
+     existing node and its subtree. A hard link must name an existing
+     regular-file node, and the new path then refers to that same node.
+  5. The root directory must be set by some layer; otherwise FAIL.
+  Each path of the final tree, the root included, is one entry
+  {path, type, mode, uid, gid, size, sha256, linkTarget, hardlinkGroup,
+  xattrs}: path absolute ("/" for the root, no trailing "/"); type "file",
+  "dir" or "symlink"; mode = header mode & 0o7777 (permission, setuid,
+  setgid, sticky); uid and gid numeric (names ignored); size the byte
+  length for a file, otherwise 0; sha256 "sha256:" + hex of the content
+  for a file, otherwise null; linkTarget the symlink target text,
+  otherwise null; hardlinkGroup the bytewise-smallest path of all paths
+  referring to the same file node when there are two or more, otherwise
+  null; xattrs the node's extended attributes as [{name, value
+  (lowercase hex)}] sorted by name ([] if none), so POSIX ACL attributes
+  (system.posix_acl_access, system.posix_acl_default) are recorded. A
+  security.capability attribute anywhere FAILS. Entries are sorted
+  bytewise by the UTF-8 bytes of path. Modification times and user/group
+  names are excluded; they change neither file content, ownership nor
+  permission.
+
+Identity. Two applied filesystems that differ in any path, type, mode,
+owner, size, content, symlink target, hard-link structure or extended
+attribute produce different entries, and two image configs that differ in
+any execution-relevant member produce different config values or FAIL.
+Hence, within the linux/amd64 OCI model above, equal QaAgentBuildEnvContent
+records mean the same applied root filesystem and the same execution-relevant
+image configuration. The record does not reproduce manifest, config or
+layer bytes; D stays the separate registry identity.
+
+buildEnvContentDigest = "sha256:" + hex SHA-256 over the CRS-1
+encodeValue bytes of the record (content-digest convention; no new hash
+domain).
+
+Rebuild equivalence. Image builds embed wall-clock state in a few build
+logs, so an independent rebuild is compared by an exact relation, not by
+excluding paths from the record: records R1 and R2 are rebuild-equivalent
+iff they are byte-identical after, in both, the size and sha256 of the
+entries whose path is in the closed set V = {/var/log/dpkg.log,
+/var/log/alternatives.log, /var/log/apt/history.log, /var/log/apt/term.log,
+/var/log/apt/eipp.log.xz, /var/cache/ldconfig/aux-cache} are replaced by
+null. Each V path present in either record must be present in both as type
+"file" with no execute bit, and with equal mode, uid, gid, hardlinkGroup
+and xattrs. V files are logs and a loader-maintenance cache; nothing in
+the build environment or a broker build (cargo, rustc, rust-lld, cc) reads
+them. The record of D itself keeps their full content, so D's record is
+still a complete identity. Any other difference is a rebuild mismatch;
+only a new recipe revision reviewed with this section can change V.
+
+Durable location. ghcr.io/tarasovartem/qa-agent-controller-v1-build-env, a
+GitHub Container Registry package of the repository owner, linked to
+TarasovArtem/qa-ai-agent (the registry requires the lowercase owner name).
+Consumers pull only by digest
+(ghcr.io/tarasovartem/qa-agent-controller-v1-build-env@sha256:...); tags,
+if any, are informational and never trust anchors. Retention: a manifest
+whose digest appears in a release-approved build record is never deleted
+while that record's broker artifact is release-approved, installed on any
+host, or within the release's own retention; package settings must not
+auto-delete it. The package must be readable by every release-qualification
+party; its visibility, and publication itself, are decided by the later
+publication approval and are NOT AUTHORIZED here. Selecting this location
+adds no product or release decision: it is the registry of the repository
+whose GitHub Release §20.3.5 already names.
+
+build-env.digest. Written only by post-push verification step 9, after D
+has been pushed to the durable location, fetched by digest with its served
+bytes hashed to D, and its content record found rebuild-equivalent to the
+independent publication-time rebuild. Then build-env.digest contains D, as
+defined above, and nothing else. Every broker build uses exactly
+ghcr.io/tarasovartem/qa-agent-controller-v1-build-env@D; tag resolution is
+never a trust anchor. There is no circularity: containerfileDigest is a
+property of the recipe blob and does not depend on D; D exists only after
+publication; build-env.digest is a later commit's file that stores D; the
+broker build and its build record consume D. C2 and C3 define this
+procedure; no value of D, B, build-env.digest or buildEnvContentDigest
+exists yet, and none can be produced without the separately authorized
+publication, which remains implementation-time qualification evidence.
+
+Independent rebuild and verification (release qualification). An
+independent party:
+
+1. checks out the exact source commit;
+2. extracts the exact versioned recipe from it;
+3. verifies containerfileDigest;
+4. verifies that the recipe's FROM digest is the base digest of the build
+   record and that it resolves at docker.io to an amd64 linux image
+   manifest with those bytes;
+5. uses only the recipe's snapshot URLs and package versions (apt verifies
+   the Debian signatures);
+6. lets the recipe verify the Rust component hashes (any mismatch stops the
+   build);
+7. rebuilds the image with the recorded builder identity and the
+   post-push verification step-7 command (OCI layout output, no push);
+8. performs post-push verification steps 2–6 for D at the durable
+   location; the content record of D must be byte-identical to the
+   qualified record (equal buildEnvContentDigest), and the record of its
+   own rebuild must be rebuild-equivalent to it (manifest digests of
+   independent rebuilds are not expected to equal D and are never compared
+   as anchors);
+9. runs the §20.3.4 independent broker builds in a fresh container from D
+   and compares artifact digests.
+
+A failure at any step BLOCKS release qualification. Two matching broker
+artifacts never qualify an image that fails steps 1–8.
+
+Build record. QaAgentControllerBuildRecord v1, all keys required, CRS-1
+canonical bytes, buildRecordDigest = "sha256:" + hex SHA-256 over them (no
+new hash domain): {kind:"QaAgentControllerBuildRecord", schemaVersion:1,
+contractVersion, brokerVersion, brokerBuild, sourceCommit,
+containerfileDigest, baseImage {reference:"docker.io/library/debian",
+manifestDigest}, debianSnapshot {debian, debianSecurity}, environmentPackages
+[{package, version}], rustComponents [{name, sha256}],
+buildEnvImage:"ghcr.io/tarasovartem/qa-agent-controller-v1-build-env",
+buildEnvDigest, buildEnvContentDigest, buildEnvPublication,
+buildEnvBuilder, cargoTomlSha256, cargoLockSha256,
+rustToolchainTomlSha256, rustflags, builds [{party, artifactSha256}] (at
+least the two §20.3.4 hosts and the release-qualification party),
+artifactSha256}. artifactSha256 is the raw SHA-256 of the artifact bytes
+(the SHA256SUMS form); every builds[] value must equal it; brokerSha256
+(§5.4) is computed over the same bytes. The record is release-qualification
+evidence and is never read by the client or the broker.
+
+C3 build-environment evidence (closed; every member required):
+
+- buildEnvDigest = D (registry-served platform manifest digest).
+- buildEnvPublication = {repository:"ghcr.io/tarasovartem/qa-agent-controller-v1-build-env",
+  manifestMediaType:"application/vnd.oci.image.manifest.v1+json",
+  manifestSize, builderReportedDigest (the Buildx containerimage.digest),
+  configDigest, configSize, layers [{digest, size, diffId}] (manifest
+  order)}; every value is taken from the post-push verification of D.
+- buildEnvBuilder = {client {implementation:"docker-buildx", version},
+  engine {implementation:"docker", version}, buildkit
+  {image:"docker.io/moby/buildkit", imageDigest (B), version}, driver
+  "docker-container", builderConfig null, frontend {syntaxDirective null,
+  implementation "dockerfile.v0 built into the recorded BuildKit image"},
+  platform "linux/amd64", exporter {type "image", push true, ociMediatypes
+  true, compression "gzip", forceCompression false}, attestations
+  {provenance false, sbom false}, options {noCache true, pull true,
+  buildArgs [], secrets [], ssh [], buildContexts [], entitlements [],
+  cacheFrom [], cacheTo [], labels [], annotations [], target null},
+  clientEnvironment {buildxNoDefaultAttestations "1", sourceDateEpoch
+  null}}. Only the four version strings and B are host-observed values
+  (versions as the tools print them: `docker buildx version`, `docker
+  version --format '{{.Server.Version}}'`, buildkitd --version in the
+  builder); every other member is the fixed constant shown, and a build
+  whose observed configuration differs from a constant is not a qualified
+  build. Any change of any member is a new build-environment qualification
+  (new build, new push, new verification, new D).
+
+Requalification. A new broker build and requalification are mandatory when
+any of these changes: the recipe bytes (containerfileDigest); the base
+image digest; a Debian snapshot; the package set or a package version; a
+Rust component or toolchain hash; the image manifest digest
+(build-env.digest) or buildEnvContentDigest; any buildEnvBuilder member
+(builder implementation or version, BuildKit image digest or version,
+driver, frontend, exporter, media-type, compression, attestation or build
+option); the rebuild-equivalence set V; Cargo.lock; the direct or
+transitive dependency graph; RUSTFLAGS or the release profile; any
+security-relevant build-environment setting (user, paths, environment,
+network mode, linker). No image becomes qualified merely because it
+produces a reproducible artifact.
+
+#### 20.3.5 Distribution, install, upgrade and removal
+
+- npm relationship: none. The npm package never contains, downloads,
+  builds, installs or upgrades the broker, sudoers file, enrollment, view
+  or mounts, and has no postinstall. The client knows only the fixed paths
+  and the contract literal.
+- Artifact format: one file, qa-agent-controller-v1-<brokerVersion>-x86_64-linux-musl,
+  plus SHA256SUMS. Publication channel, if and when release-approved: a
+  GitHub Release of TarasovArtem/qa-ai-agent tagged
+  controller-v1/<brokerVersion>, built by a separately approved workflow.
+  Trust anchor: the release-approved §5.4 record's brokerSha256 plus
+  reproducible rebuild from the tagged commit. Signatures, if release
+  approval adds them, are additive and never replace the digest check.
+- Install (operator, root, a manual documented procedure; no installer
+  script, so the single-artifact rule holds): verify SHA-256 against the
+  approved record; install -o root -g root -m 0755 to
+  /usr/local/libexec/.qa-agent-controller-v1.new; rename to
+  /usr/local/libexec/qa-agent-controller-v1 (same directory, atomic); write
+  compatibility.json, enrollment.json and enrollment-public.json; install
+  the §20.2.3 sudoers file after visudo -cf; provision B (§5.6.3); qualify;
+  enable enrollment last.
+- Upgrade, downgrade and removal: exactly §5.3 (disable, drain, revoke the
+  rule, atomic replacement, requalify, re-enable; no ABI fallback, no
+  journal migration). Every new artifact digest needs a new
+  release-approved §5.4 record and a new view (compatibilityDigest
+  changes). Removal leaves protected history per §5.3; nothing outside the
+  fixed paths is touched.
+
+#### 20.3.6 Required Linux/systemd environment
+
+Mandatory primitives (broker-checked or qualification-checked; no
+fallback): unified cgroup v2 only; openat2 with RESOLVE_BENEATH,
+RESOLVE_NO_SYMLINKS and RESOLVE_NO_XDEV; statx STATX_MNT_ID and
+STATX_ATTR_MOUNT_ROOT; pidfd_open and pidfd_send_signal; nsfs namespace
+files; memfd_create with F_SEAL_SEAL/SHRINK/GROW/WRITE; close_range;
+SO_PEERCRED on AF_UNIX stream sockets; D-Bus GetConnectionCredentials
+ProcessFD (dbus-daemon >= 1.15.8/1.16.0 or dbus-broker >= 34; D-Bus
+specification revision 0.42); systemd >= 255 (SetLoginEnvironment, used by
+the §6.1 table, first appears in v255:
+[systemd.exec v257 source](https://raw.githubusercontent.com/systemd/systemd/v257/man/systemd.exec.xml));
+the upstream sudo project >= 1.9.15 (not sudo-rs or another
+reimplementation); Yama kernel.yama.ptrace_scope >= 1 set by the operator
+(L4); filesystems per §5.6.2/§5.6.3.
+
+Reference target (the only one this design names): **Debian 13 (trixie)
+amd64**: kernel 6.12 series and systemd 257
+([release notes](https://www.debian.org/releases/trixie/release-notes/whats-new.en.html)),
+sudo 1.9.16p2 ([package](https://packages.debian.org/trixie/sudo)),
+dbus-daemon 1.16.2 ([package](https://packages.debian.org/trixie/dbus-daemon)).
+These are distribution facts, not qualification: eligibility exists only
+for an exact recorded tuple after Stage 5 qualification.
+
+| Class | Environment | Disposition |
+|---|---|---|
+| A. Development/build | Any x86-64 Linux, including containers, WSL2 and GitHub-hosted runners, with the pinned toolchain: unit tests, parser fuzzing, canonical vectors, unprivileged protocol tests | SUPPORTED for build and unprivileged tests only; never qualification evidence |
+| B. Integration | Disposable Debian 13 VM (KVM/QEMU/libvirt or an equivalent cloud VM) with systemd as PID 1, real sudo, a dedicated thick-provisioned virtual disk for B, root for the harness | QUALIFICATION-ONLY |
+| C. Privileged adversarial | As B, plus snapshot/revert between runs, extra local accounts (other user, same-account attacker processes), reboot, daemon-reexec, kill injection and filesystem/mount manipulation; nested virtualization neither required nor relied upon | QUALIFICATION-ONLY |
+| D. Release qualification / execute | Dedicated self-hosted runner host (bare metal, or a dedicated VM that is itself the qualified host; the hypervisor is outside the claim) running Debian 13 amd64 with the exact recorded tuple; runner account with no elevation path except §20.2.3, proven by od06-priv-surface-v1 (§20.2.7); dedicated B device; operator-held root | SUPPORTED (reference target, only after qualification) |
+| Ubuntu 24.04 LTS | Its dbus-daemon 1.14 series lacks ProcessFD; N1 would need an owner decision | DEFERRED |
+| Other distributions (RHEL/Alma/Rocky 10, Fedora, other Ubuntu releases, Arch, ...) | Not analysed | DEFERRED |
+| Any host whose sudo is not upstream sudo (for example sudo-rs) | §20.2 evidence is upstream-specific | REFUSED |
+| GitHub-hosted runners for execute | Runner account has generic passwordless sudo (violates §5.1/L4); no dedicated B; provider-controlled | REFUSED (class A only) |
+| Containers (Docker, Podman, LXC, Kubernetes) | Fail N1–N3 by design | REFUSED |
+| WSL2 (any distribution, including docker-desktop) | Windows-hosted shared utility VM, per-distribution namespaces, 9p/drvfs filesystems | REFUSED |
+| Windows / macOS hosts | No Linux containment | REFUSED |
+| aarch64 | No artifact | DEFERRED |
+
+Root privilege is needed by the operator for provisioning and by the
+classes B–D qualification harness, never by the client or Stage 5 product
+code. The current Windows host can prove none of this.
+
+#### 20.3.7 Negative tests and qualification evidence (DG-3)
+
+Artifact with PT_INTERP or DT_NEEDED -> release blocked; digest mismatch
+with the record -> INCOMPATIBLE; a copied or replaced broker executed from
+another path, so that /proc/self/exe differs in dev/ino from the fixed path
+-> CALLER_REFUSED at C1a.2, and a broker replaced at the fixed path -> the
+C1a.2 owner/mode/link-count checks and the C7 brokerSha256 content check
+(C2 correction, Security INFO-2: dev/ino equality alone does not detect a
+bind mount of another file onto the fixed path, because the path and
+/proc/self/exe then name the same mounted inode; creating that mount needs
+CAP_SYS_ADMIN over the mount namespace, a broker outside the initial user
+namespace fails C1a.4, so only root can do it and it is outside the
+non-root attacker claim; brokerSha256 at C7 still verifies the content of
+the file at the fixed path, which is the executed file. STATX_MNT_ID is
+not added as a broker invariant by this correction); group-writable
+/usr/local ancestor -> refused; brokerBuild mismatch -> INELIGIBLE;
+non-reproducible rebuild -> release blocked; a build linked by a host cc or
+ld instead of the pinned rust-lld, a build outside the build-env.digest
+container, an extra or missing environment variable or RUSTFLAGS entry, or an
+artifact containing a host build path or build ID -> not a qualified build
+(release blocked); a zbus version other than 5.13.2, a direct dependency
+outside the allowlist, a git/path/alternative-registry source or a registry
+checksum mismatch -> release blocked; bus reply without ProcessFD on the
+reference host -> N1 failure (§5.6.1); unsolicited unicast D-Bus
+signals and method calls from another account during observation are
+dropped; DBUS_* in the caller environment has no effect; differential
+fuzzing of the Rust JSON parser against the product strict parser; P0 frame
+fuzzing (L1); panic paths behave as a crash per §7.4.
+
+Unsolicited D-Bus flood (C2, Security INFO-4; adversarial qualification,
+linked to L1/L7, not closing them): from the runner account and from a
+second local account, sustained unicast signals, method calls and errors
+addressed to the broker's unique name, including messages that imitate
+systemd1 interfaces, paths and member names and messages at the bus
+max_message_size, during every phase P1–P6 and during RECONCILE. Required
+observations: no such message is ever used (the sender filter drops it);
+broker resident memory stays within the §20.3.3 bound computed from the
+zbus queue count, 64 and the recorded max_message_size; no phase exceeds
+its §6.4 bound, and no manager wait is starved by the flood (C16: a
+flood-caused expiry is a qualification failure under vector (73), never
+the existing outcome of that phase); no flood yields PASSED, TEST_FAILED
+or a changed observation;
+the global broker invocation count is unchanged by the flood (L7 stays
+OPEN).
+
+Build provenance (C2): a recipe blob with a changed byte, CRLF line
+endings or a BOM -> containerfileDigest mismatch, not qualified; FROM by
+tag only or by another digest; an image built from deb.debian.org or
+another moving mirror; a Rust tarball with one flipped byte (sha256sum
+fails, build stops); rustup or a distribution rust package present in the
+image; an image with an extra package or a changed file under opt/rust,
+usr or etc -> content record mismatch; an independent rebuild whose content
+record differs -> release blocked; build-env.digest pointing at an image
+not pushed to the durable location or not re-pulled and re-verified -> not
+qualified; two byte-identical broker artifacts from an unprovenanced image
+-> not qualified; any §20.3.4a requalification input changed without a new
+build record -> release blocked.
+
+Build-environment identity and publication (C3): an image differing from
+the qualified one only in a file, mode, owner, symlink target, hard link
+or extended attribute under /var, /root, /tmp, /build, /run, /dev or a
+top-level symlink (/bin, /lib, /lib64, /sbin) -> different content record;
+an extra setuid bit anywhere -> different record; a layer adding a device
+node, FIFO or file with security.capability -> FAIL; a whiteout or opaque
+marker removing a lower-layer file -> the applied tree, not the tar
+members, is recorded; a member under a parent that is a symlink -> FAIL;
+two rebuilds differing only in the bytes of a V file -> rebuild-equivalent;
+differing in any other byte or in a V file's mode -> mismatch; an image
+config with a Healthcheck (including NONE), OnBuild trigger, Volume,
+Shell, StopSignal, Label, ExposedPort, ArgsEscaped true, a different User,
+Env order or value, WorkingDir, Entrypoint or Cmd, or an extra config or
+top-level member -> FAIL or a different record; a push that produces an
+image index, a Docker schema2 manifest, a zstd or estargz layer, an
+attestation manifest or a subject -> FAIL (never unwrapped); D taken from
+the Buildx metadata or from tag resolution without fetching by digest and
+hashing the served bytes -> not qualified; served bytes whose SHA-256
+differs from the requested digest, a Content-Type other than the OCI image
+manifest, a blob whose digest, size or diff_id differs -> FAIL; a registry
+that serves a re-serialized manifest whose bytes still pass every check ->
+D is the served-bytes digest and builderReportedDigest records the
+difference; a changed BuildKit image digest, Buildx, BuildKit or engine
+version, driver, exporter option or attestation setting -> new
+build-environment qualification; SOURCE_DATE_EPOCH or a build argument
+present in the client environment -> not a qualified build.
+
+C7 admission commit lock vectors (§20.3.8 AL0–AL7): two concurrent
+CREATEs for distinct roots and for the same root, with the broker paused
+at each AL6 step, so that the other waits at AL1 and then, under its own
+hold, observes either no INTENT (after COMMITTED) or a dead holder's
+INTENT and rolls it back before creating its own. At no observed instant
+does S hold two INTENTs. A holder killed at each AL6 step leaves at most
+its single INTENT, which the next CREATE at AL2–AL3 and the next
+RECONCILE at R4 (1) roll back. A CREATE or RECONCILE that finds an INTENT
+while another live broker holds the lock never touches it (blocked at
+AL1). A claim, run tombstone or package tombstone of the current INTENT
+seen by a waiting broker never yields REPLAY or a root refusal after that
+INTENT is rolled back. A stray claim or tombstone with no INTENT or
+COMMITTED transaction is class D at AL4. A long Cases A–H wait in C5
+holds no admission commit lock (another CREATE reaches AL6 meanwhile)
+and no X lock (C9, H8).
+
+C8 lock hierarchy vectors (§20.3.8 H1–H7). For each vector, lock-order
+instrumentation on the broker shows no instant at which a process holds
+an X lock while waiting for GLOBAL, no X lock held at any GLOBAL
+acquisition, no X acquisition while GLOBAL is held, and no wait-for cycle;
+a live INTENT is never classified D or touched outside GLOBAL; a dead
+INTENT is rolled back by the next GLOBAL holder; S never holds two
+INTENTs; every failure stays fail-closed with the existing outcome.
+(1) CREATE vs CREATE (C9, H8): A in C5 (3) commits a durable transition
+of a COMMITTED attempt Y (for example ORPHANED) under Y's X and releases
+X before its Cases A–H wait; while A waits holding no lock, B runs
+AL1–AL7 to COMMITTED; A re-acquires Y's X, re-reads and revalidates Y's
+head before any further write, releases X with its durable
+post-condition before its own AL1 and, under GLOBAL, sees B's
+transaction COMMITTED and no INTENT. At no instant does A hold X during
+the wait. (2) CREATE vs RECONCILE (C9, H8): RECONCILE(X) at R5 commits
+ORPHANED under X and releases X before its Cases A–H wait; CREATE in C5
+(3), holding no GLOBAL, acquires X only for short spans during that
+wait, re-reads the head under each hold, and releases X before AL1;
+when both act on X, one terminal writer wins and the other, on its next
+X re-acquisition, re-reads the terminal head, discards its pre-wait plan
+and takes the committed-outcome path (R7, or A-REL in C5); and RECONCILE
+waiting at R4 (1) without a deadline while CREATE is in AL6 obtains
+GLOBAL after AL7.
+(3) RECONCILE vs RECONCILE of the same X and of different X: the second
+waits for X (holding nothing) or for GLOBAL (holding no X); neither
+waits for both. (4) Dead INTENT: a CREATE killed at each AL6 step; the
+next holder at AL2–AL3 or R4 (1) rolls it back, never a pre-global scan.
+(5) A-RES of X under X while another broker performs AL1–AL7: the
+GLOBAL holder never waits for X; the A-RES holder, when it is a CREATE,
+releases X before its own AL1 and before any Cases A–H wait of the
+A-INC that follows (H8). (6) Crash holding GLOBAL only (each AL6
+and T-rollback step): the kernel releases GLOBAL; at most one INTENT
+prefix remains for the next holder. (7) Crash holding X only (each
+transition, terminal and A-RES step): at most one P/F prefix remains
+(A-RES). (8) GLOBAL → X: no layout v1 path acquires it (H3); the probe
+asserts that, and a broker killed while holding GLOBAL with any X still
+held by another live broker leaves only the states of (6) and (7), each
+recovered by its own row. (9) Pre-global scan observes another live
+broker's INTENT-era S6 (INTENT), S2 (directory only), and S2 with S3
+entry 0 and S4, each with the writer paused inside AL6: the scanner
+(C5 (3) or R4 (3)) classifies none of them T or D, mutates nothing,
+takes no X lock on them, and its CREATE decides them only at AL2 after
+the writer's AL7 (COMMITTED, so not an INTENT) or death (T rollback).
+RECONCILE of an executionId whose S6 the R4 (1) hold scan did not see
+COMMITTED is REFUSED/INPUT_MISMATCH (or REFUSED/INELIGIBLE when that
+scan found class D) and never acquires its X lock.
+
+C9 short-X and namespace-membership vectors (§20.3.8 H8, H9). The lock
+instrumentation of the C8 vectors also shows that no X lock is held
+during any lifecycle, manager or client wait, and that every journal or
+state write after a wait follows an X acquisition made after that wait.
+(10) Concurrent CREATE namespace race: CREATE A completes its C5 (1)
+GLOBAL hold scan; CREATE B then runs AL1–AL7, commits S6 COMMITTED for
+Y, and its P2 publishes unit qa-agent-exec-v1-Y.service; A's
+unit-namespace scan enumerates that unit, reads S6 of Y and finds it
+COMMITTED. A does not quarantine the runner, takes no X lock of Y, writes
+nothing for Y and leaves Y's disposition to its AL2–AL4 rescan, where Y
+is COMMITTED. (11) Exact valid COMMITTED S6 of Y plus a unit named for Y:
+known member, with no other conclusion drawn. (12) S6 of Y with phase
+INTENT plus a unit named for Y (writer paused in AL6, unit injected by
+the probe): not accepted as membership; the unit is an unknown member
+and the existing runner quarantine applies; the INTENT itself is still
+not classified or touched outside GLOBAL (H6). (13) A unit named for Y
+with S6 absent, with S6 malformed (schema, phase value, a non-regular
+file, a symlink), or with S6 whose executionId differs from Y: unknown
+member, runner quarantine, nothing written. (14) S6 COMMITTED membership
+proof for Y followed by a change of Y's head (B commits a transition):
+any later action on Y by A or a RECONCILE(Y) re-reads Y's head under Y's
+X and never uses the membership read as head, controller or manager
+evidence. (15) RECONCILE(X) releases X before a Cases A–H wait; during
+the wait another broker commits X's next transition or terminal head;
+on re-acquiring X the RECONCILE re-reads S4, finds it changed, discards
+its pre-wait plan without writing anything from it, and re-runs the
+classification order and Cases A–H from the new committed view (a
+terminal head takes the R7 committed-outcome path; an A-RES prefix is
+rolled back first; class D is refused). The S4-unchanged case continues
+the plan, with the dependent manager and cgroup facts re-observed under
+X. Each failure stays fail-closed with the existing outcome.
+
+C10 namespace-proof membership vectors (§20.3.8 H9 sites (i)–(v)). The
+lock instrumentation of the C8 and C9 vectors also shows that no site
+takes an X lock of an enumerated Y. It also shows that every site reads
+the S6 of each matching unit only after the enumeration that returned
+that unit. In each vector, P is the attempt the proof concerns, and
+B is an independent CREATE that runs AL1–AL7, commits S6 COMMITTED for
+Y and publishes qa-agent-exec-v1-Y.service in its P2. No GLOBAL hold
+scan of the proving broker saw Y. (16) P1S proof race: CREATE A for P is
+in P1S and takes the PRESUBMIT_FAILURE path (recheck failure or S
+exhaustion), and in a second run the CLIENT_LOST path. B publishes Y's
+unit before A's proof enumerates. A reads S6 of Y, finds it COMMITTED
+and classifies Y a known member. P's own unit is absent, so the proof
+holds: EXECUTION_ERROR PRESUBMIT_FAILURE (respectively CLIENT_LOST) 7
+with emptyBy=not-submitted. There is no per-attempt QUARANTINED, no
+runner quarantine, nothing is written for Y and no X of Y is taken. (17)
+Case E in CREATE: CREATE A at C5 (3) A-INC applies Case E to a
+PREPARED/NOT_SENT attempt P left by a crashed broker. B publishes Y
+after A's C5 (1) scan. A's Case E proof classifies Y a known member, and
+P becomes EXECUTION_ERROR PRESUBMIT_FAILURE 7, not QUARANTINED. (18) Case
+E in RECONCILE: RECONCILE(P) applies Case E at R5. B publishes Y after
+R4 (1), and Y's S6 was absent from that scan. The result is the same as
+(17). (19) Reboot clean namespace: after a reboot, P's unit is missing
+(Case D). B commits and publishes Y in the new boot before the
+proof's enumeration. Y is a known member and does not fail the reboot
+proof. P takes the existing Case D boot-change outcome, error 7, when
+the other boot-change conditions hold, and H otherwise, exactly as
+before C10. (20) Own unit: at each of sites (ii)–(v), a unit named for P
+is present. H9 is not applied to it. The no-unit part fails although
+P's S6 is COMMITTED, and the site's existing outcome applies (QUARANTINED
+7; Case D H). (21) Known member at every site: at each of sites (i)–(v),
+a matching unit plus an exact valid COMMITTED S6 of its Y gives a known
+member. There is no false per-attempt or runner quarantine, and no other
+conclusion is drawn. (22) Fail closed at every site: at each of sites
+(i)–(v), a matching unit for Y with S6 in phase INTENT (writer paused in
+AL6), absent, malformed (schema or phase value), non-regular, a symlink,
+or naming an executionId other than Y gives an unknown member. The proof
+fails with the site's existing outcome, the existing runner quarantine
+applies, nothing is written for Y, and the INTENT is not classified or
+touched outside GLOBAL. (23) Invalid name: at each of sites (i)–(v), a
+unit with the qa-agent-exec-v1- prefix whose name falls outside the
+exact grammar (31 or 33 hex characters, uppercase hex, a non-hex
+character, a type other than .service, or a trailing suffix) gets no S6
+read and is never bound. It keeps the existing unbound/unknown-member
+fail-closed handling, with no wildcard kill. (24) Membership followed by
+a head change: at any site, the proving broker classifies Y a known
+member, and B then commits Y's next transition. Any later decision on Y
+(by the proving broker or by RECONCILE(Y)) re-reads Y's head under Y's
+X (H8) and never uses the membership read as head, controller or manager
+evidence. If the proving broker of sites (iv) or (v) waits before its
+terminal write, it makes the proof again under the re-acquired X of P.
+At sites (ii) and (iii) no such wait exists (H10 (f), C11).
+
+C11 P1S terminal-evidence vectors (§20.3.8 H10). D-Bus instrumentation
+records every bus message the broker sends, and a monotonic clock
+records the E origin and the reply. B is as in (16)–(24). (25) Success
+path: the reservation is COMMITTED with PREPARED/NOT_SENT, every P1S check
+passes, and SUBMITTING is written. Zero D-Bus calls are observed between
+the COMMITTED fsync and the durable SUBMITTING write, with no
+enumeration. P2 begins only after SUBMITTING. (26) Recheck failure: the
+P1S recheck fails, and the selection is made before any D-Bus call (no
+SUBMITTING write or further P1S step follows, and S is not restarted). B
+has already published Y with a valid COMMITTED S6. Within E, exactly one
+ListUnitsByPatterns is observed. It returns Y. The exact S6 of Y is read
+and Y is a known member. P's unit is absent, so the result is
+PRESUBMIT_FAILURE 7 with emptyBy=not-submitted, not a false QUARANTINED.
+StartTransientUnit is never sent for P. (27) CLIENT_LOST: client loss is
+detected in P1S, and CLIENT_LOST is selected before the enumeration. One
+E-bounded call follows, with the same H9 algorithm. A foreign COMMITTED Y
+does not quarantine P. The result is the existing CLIENT_LOST 7, durably
+committed even with no client left to read it, and returned by a later
+RECONCILE. There is no submission, retry or StartTransientUnit. (28) S
+exhaustion: S expires, PRESUBMIT_FAILURE is selected, submission is
+disabled, the E origin is recorded after the selection, and the one call
+is made. The proof is not skipped, and its time is not charged to S. (29)
+E success: the reply arrives within E. Every matching unit is evaluated
+under H9. With no own unit and all foreign members known, the namespace
+is clean and the selected outcome is written. Otherwise the existing
+fail-closed handling applies. (30) E timeout or failure: in separate
+runs, the reply is delayed past E (manager paused, full queue), the
+manager returns a D-Bus error, the reply is malformed or comes from a
+non-manager sender, and the reply lists 257 matching units. Each gives
+QUARANTINED 7, with exactly one call, no retry, no other manager method,
+no PRESUBMIT_FAILURE and no submission. A late reply is discarded. (31)
+Bad S6: the call succeeds within E, and a matching Y has an INTENT,
+absent, malformed, non-regular or symlink S6, or one naming another
+executionId. The existing H9 fail-closed handling applies (vector (22)),
+with no C11-specific outcome. (32) No start ever: across (26)–(31) and a
+broker SIGKILL at each H10 step, StartTransientUnit(P) is observed
+neither before the selection, nor during E, nor afterwards, including
+on a later RECONCILE of P. A SIGKILL leaves PREPARED/NOT_SENT for Case E
+(H10 (h)). A clean proof never leads to a SUBMITTING write. (33) E cannot
+revive S: after the selection (S expired or not) no SUBMITTING write,
+envelope or recheck step, new reservation, S restart, extension or reset,
+or retry of the same execution is observed. The only observable results
+are a terminal record (PRESUBMIT_FAILURE, CLIENT_LOST or QUARANTINED) or a
+crash left for Case E.
+
+C12 terminal X acquisition vectors (§20.3.8 H10 (i)–(l)). The
+instrumentation of (25)–(33) also records lock acquisition and release
+instants of P's X and GLOBAL for every broker, as well as the monotonic
+instants of the selection, the X acquisition, the E origin, the reply and
+the terminal fsync. B, C and D are concurrent brokers. (34) S exhausted,
+X free: S expires and PRESUBMIT_FAILURE is selected, which disables
+submission. P's X is free and is acquired at once. The (k) re-read finds
+the reservation's PREPARED/NOT_SENT S4 and no additional object. The E
+origin follows. Exactly one ListUnitsByPatterns is observed, then the H9
+evidence, then the terminal result. Nothing after the selection is
+charged to S. (35) S exhausted, X held: after the selection, B holds P's
+X in one finite H8 span (for example Case E of RECONCILE(P) R5). A waits
+for P's X and holds no GLOBAL and no other X. B completes its durable
+post-condition and releases. A later acquires P's X, runs (k), and only
+then records the E origin. No D-Bus call by A is observed before its
+acquisition. If B's span committed a terminal outcome, vector (39)
+applies. (36) CLIENT_LOST near S expiry with X contention: the client is
+lost while little or no S remains, CLIENT_LOST is selected, and B holds
+P's X. A waits. No S restart, extension or reset is observed, and the
+selection stays CLIENT_LOST (with an A-RES residue, vector (42) applies;
+with a committed outcome, vector (45), C13). After acquisition and (k), E starts, and the
+evidence and the existing durable CLIENT_LOST 7 (or the fail-closed
+QUARANTINED 7) follow, with no client needed to observe them. A later
+RECONCILE returns that record (R7), unchanged. (37) Repeated contenders:
+while A waits for P's X, B, C, D and others repeatedly acquire and release
+P's X, each in one finite H8 span. No wait-for cycle is observed. A holds
+no lock while it waits. Every holder span observed is finite. The test
+asserts no FIFO order and no fixed elapsed-time bound for A, and the
+contract claims neither. A is never refused, timed out or retried, and E
+does not begin before A holds X. (38) No progress while waiting: across
+(34)–(37), between the selection and A's acquisition of P's X, no
+SUBMITTING write, StartTransientUnit, remaining P1S step, retry, new
+reservation or return to the success path is observed, and no D-Bus
+message is sent by A. (39) Changed state after acquisition: during A's
+wait, B commits a terminal outcome for P (Case E PRESUBMIT_FAILURE or
+QUARANTINED). Under the acquired X, A's (k) re-read finds the terminal
+head. A discards its pre-wait plan and writes nothing. It makes no
+ListUnitsByPatterns call, does not start E and does not overwrite B's
+outcome, which a later RECONCILE returns unchanged (R7). In a separate
+run, B dies after writing an A-RES candidate for P. A's (k) re-read finds
+the additional object, and H10 (k) (3) applies (C13: vectors (42)–(47)).
+In neither run is a SUBMITTING write or StartTransientUnit observed. (40) Maximum namespace:
+the one reply lists exactly 256 matching units, none of them named for
+P. Exactly 256 S6 reads are observed after the reply, one per matching
+unit, with no second enumeration and no other D-Bus call. The reads are
+counted as local evidence work and are not cut off by E. The terminal
+fsync is observed only after the last read. A 257-unit reply is vector
+(30): QUARANTINED 7 with no S6 read. (41) E is manager-call-only: A waits
+for P's X longer than 5000 ms. No E origin is recorded during the wait.
+After acquisition and (k), a manager reply delayed by 4900 ms after the
+E origin is accepted. This shows that the X wait consumed no E and that
+E bounded only the call.
+
+C13 sticky-reason vectors (§20.3.8 H10 (b), (k) (3)). The instrumentation
+of (25)–(41) also records every protected-store unlink, fsync and read
+made by A under P's X, the instants of the rollback's last durable step
+and of the post-rollback re-read, and the S11 status and reason. In
+(42)–(44) B is a concurrent RECONCILE(P) R5 or another CREATE's C5 (3)
+that starts the Case E PRESUBMIT_FAILURE terminal commit for P while A
+waits for P's X, and is SIGKILLed after a non-empty F prefix (in separate
+runs: F1; F1 + F4; F1 + F4 + F5). (42) CLIENT_LOST and A-RES: A selects
+CLIENT_LOST and abandons submission. After acquisition, A's (k) re-read
+classifies exact A-RES. A rolls back exactly that prefix in reverse
+order and never touches S4 or entry 0. Its fresh re-read under the same
+X shows S4 byte-equal to the reservation value, entry 0 PREPARED/NOT_SENT
+and no additional object. The E origin is recorded only after that
+re-read. Exactly one ListUnitsByPatterns follows, and it is the site (iii)
+enumeration. A clean proof gives CLIENT_LOST 7 with
+emptyBy=not-submitted, not PRESUBMIT_FAILURE. A failed proof gives
+QUARANTINED 7. (43) PRESUBMIT_FAILURE and A-RES: the same runs with A
+selecting PRESUBMIT_FAILURE (recheck failure, and separately S
+exhaustion). A clean proof gives PRESUBMIT_FAILURE 7 at site (ii). A
+failed proof gives QUARANTINED 7. There is one call at most. (44) Failed
+evidence after restoration: for each original reason, each failure of
+vectors (30) and (31), and an own unit or unknown member, gives
+QUARANTINED 7. There is no retry, no second call, and no CLIENT_LOST or
+PRESUBMIT_FAILURE record. (45) Committed outcome first: during A's
+CLIENT_LOST (and separately PRESUBMIT_FAILURE) wait, B commits Case E
+PRESUBMIT_FAILURE 7 or QUARANTINED 7 for P. A's (k) re-read finds the
+terminal head and takes branch (2). A rolls back nothing and writes
+nothing. It makes no ListUnitsByPatterns call, records no E origin and
+overwrites nothing. A later RECONCILE returns B's record unchanged (R7).
+(46) Class D first: after acquisition, P's state is class D (for example
+two entries above the pointer, or an S5 that does not name candidate
+n+1). The existing class-D disposition applies. No terminal record is
+written from A's plan, and no ListUnitsByPatterns call or E origin is
+observed. Submission stays abandoned. (47) Post-rollback non-original
+state: a test fixture changes P's protected store after the rollback's
+last durable step and before the fresh re-read (in separate runs: a
+byte change of S4; an extra object of P). The re-read does not prove
+H10 (k) (3) (iv). The selected reason is not forced, and the existing
+H8 (f) classification and disposition decide the result under H10 (k)
+(3) (v) (C14): a disposition that needs no namespace proof applies
+unchanged (vector (52)), and one that needs a Case E proof gives
+QUARANTINED 7 with no call (vector (53)). No H10 call, no other
+ListUnitsByPatterns and no E origin are observed. (48) One-call bound: over the full path
+of selection, X wait, initial re-read, exact A-RES, rollback,
+post-rollback re-read, restoration and evidence, the D-Bus log shows at
+most one ListUnitsByPatterns. None is sent before or during the
+rollback or during either re-read, and no site (iv) enumeration follows
+the one call. Across (42)–(47) no run shows two calls. (49) Crash
+boundary: A is SIGKILLed in separate runs during the rollback, after the
+rollback and before the fresh re-read, after the re-read and before the
+E origin, after the E origin and before the call, during the call, and
+after the evidence and before the terminal write is durable. Each run
+leaves PREPARED/NOT_SENT, possibly with an exact A-RES prefix. The next
+RECONCILE(P) rolls back any residue and applies Case E at site (iv). The
+result is PRESUBMIT_FAILURE 7 or QUARANTINED 7, even where A had
+selected CLIENT_LOST. No CLIENT_LOST is reconstructed, no new durable
+object or field is observed, and StartTransientUnit(P) is never sent.
+
+C14 precedence and zero-call vectors (§20.3.8 H10 (k) (1), (3) (i),
+(3) (v)). The instrumentation of (25)–(49) also records the rank of the
+H10 (k) precedence that A takes, every record and incident A commits,
+and the S consumption counter. Each vector runs once with A selecting
+PRESUBMIT_FAILURE and once with A selecting CLIENT_LOST, unless it says
+otherwise. In each, P's X is contended after the selection: a test
+fixture holds it in a finite span and then releases it. (50) Valid
+unchanged branch (1) (Vector A): the fixture leaves P's protected store
+byte-unchanged. After acquisition, A's re-read shows S4 byte-equal to
+the reservation value, no additional object, a structurally valid
+committed view, K1–K5 holding, and the exact original A-INC
+PREPARED/NOT_SENT classification. A takes rank [3], branch (1). The E
+origin follows. Exactly one ListUnitsByPatterns is observed, as the
+site (ii) or (iii) enumeration, followed by the H9 evidence and the
+selected PRESUBMIT_FAILURE 7 or CLIENT_LOST 7, or QUARANTINED 7 on
+failed evidence (ordinary H10 one-call and evidence semantics). (51)
+Broken K with S4 unchanged (Vector B; resolves ARCH-S5-C13-m01): during
+the wait the fixture leaves S4 byte-identical and adds no object of P,
+but breaks a K relation. In separate runs it removes P's S8 claim (K3),
+replaces the S8 bytes with a claim naming another bindingDigest (K3),
+and replaces the S9 tombstone bytes with a mismatched executionId (K2).
+A's re-read classifies class D. A takes rank [2], branch (3) (i), and not
+branch (1). The existing class-D disposition applies. The H10 call count
+is 0, no E origin is recorded, and no CLIENT_LOST or PRESUBMIT_FAILURE
+record is written from the stale plan. Submission stays abandoned. (52)
+Branch (3) (v) without a namespace proof (Vector C): as in vector (47),
+A's initial re-read finds exact A-RES and A rolls it back. Between the
+rollback's last durable step and the fresh re-read, the fixture removes
+P's S8 claim. The re-read does not prove (3) (iv), and (3) (v) runs H8
+(f). The resulting disposition is the existing class-D refusal, which
+needs no namespace proof. It applies unchanged under (3) (v) (A). Zero
+ListUnitsByPatterns calls, no E origin and no selected-reason record are
+observed. (53) Branch (3) (v) where Case E needs a proof (Vector D): as
+in vector (52), but the fixture instead writes a new exact A-RES F1
+candidate of P after the rollback. The re-read does not prove (3) (iv).
+Under (3) (v) H8 (f) rolls the candidate back (a local step) and the
+incomplete head reaches Case E, which would need a clean-namespace
+proof. A makes no ListUnitsByPatterns call and no other D-Bus call,
+records no E origin, consumes or restarts no S, and makes no retry. The
+proof is NOT ESTABLISHED, and A commits the existing Case E fail-closed
+QUARANTINED 7 through the existing terminal/QUARANTINED commit. The
+record's status/reason pair and the incident are those of the existing
+Case E proof failure: status QUARANTINED, reason CLEANUP_UNPROVEN, and
+S13 incident reason CLEANUP_UNPROVEN (H9 failed-proof reason, C15). No
+new reason or field is observed. No
+CLIENT_LOST or PRESUBMIT_FAILURE record is written. A later RECONCILE
+returns the QUARANTINED record (R7), with the claim retained. (54) S
+exhausted (Vector E): vector (53) with PRESUBMIT_FAILURE selected by S
+exhaustion. The result is identical: QUARANTINED / CLEANUP_UNPROVEN / 7
+(C15), zero D-Bus calls, no
+E origin, and no S restart, extension, reset or borrowing. The S
+consumption counter does not advance after the selection. (55) Site (iv)
+attribution (Vector F): across the runs of (25)–(54) and their later
+RECONCILEs, every site (iv) enumeration in the D-Bus log is made by a
+CREATE at C5 (3) A-INC or by a RECONCILE at R5. None is made by a live
+H10 invocation, and (53) and (54) show no enumeration by A. (56) Whole
+invocation (Vector G): over each run of (42)–(54), from the selection to
+the terminal write or the end of the invocation, A makes at most one
+ListUnitsByPatterns. Runs through branch (1) or (3) (iv) show exactly one
+before evidence failure, and runs through (2), (3) (i) or (3) (v) show
+zero. No run shows two. (57) Crash before the C14 commit (Vector H): A
+is SIGKILLed in separate runs of (53) after the reclassification and
+before the QUARANTINED commit begins, and after a non-empty prefix of
+that commit, before it is durable. Each run leaves PREPARED/NOT_SENT,
+possibly with an exact A-RES prefix. The next RECONCILE(P) uses the
+existing durable recovery. It rolls back any residue and applies
+ordinary Case E at site (iv) with that site's own allowance. Its one
+enumeration gives PRESUBMIT_FAILURE 7 on a clean proof, or QUARANTINED /
+CLEANUP_UNPROVEN / 7 otherwise (C15). Neither A's in-memory (3) (v) disposition nor its selected
+CLIENT_LOST is reconstructed, no new durable object or field is
+observed, and StartTransientUnit(P) is never sent.
+
+C15 failed-proof reason vectors (§20.3.8 H9 failed-proof reason). The
+instrumentation of (25)–(57) also records, for every QUARANTINED commit,
+the exact S11 status and reason bytes, the recomputed recordDigest, the
+S13 base incident reason and, when a client is connected, the final
+QUARANTINED frame's record.reason and frame reason. In (25)–(57), every
+QUARANTINED 7 that results from a site (ii)–(iv) proof that is NOT
+ESTABLISHED, or from H10 (k) (3) (v) (B), carries reason
+CLEANUP_UNPROVEN. (58) Case E success (Vector 1): a crash leaves P
+PREPARED/NOT_SENT, and ordinary Case E runs at site (iv), once by CREATE
+C5 (3) and once by RECONCILE R5. The no-send/no-unit/clean-namespace
+proof is established. The result is EXECUTION_ERROR, reason
+PRESUBMIT_FAILURE, exit 7, emptyBy=not-submitted. There is no QUARANTINED
+record and no S13. (59) Case E failure (Vector 2): as (58), but a test
+fixture makes the proof NOT ESTABLISHED (an unknown member of the
+namespace). The result is QUARANTINED, reason CLEANUP_UNPROVEN, exit 7.
+The root claim is retained, there is no release and no retry, and the
+S13 incident reason is CLEANUP_UNPROVEN. (60) H10 PRESUBMIT_FAILURE with
+failed evidence (Vector 3): a live P1S invocation selects
+PRESUBMIT_FAILURE, and H10 (k) (1) holds. The one site (ii) call times
+out past E. The result is QUARANTINED / CLEANUP_UNPROVEN / 7, never
+PRESUBMIT_FAILURE. (61) H10 CLIENT_LOST with failed evidence (Vector 4):
+as (60), with CLIENT_LOST selected and the site (iii) call failing. The
+result is QUARANTINED / CLEANUP_UNPROVEN / 7, never CLIENT_LOST. Both
+(60) and (61) also run through the exact restoration of H10 (k) (3)
+(iv), with the same result. (62) Zero-call path (Vector 5): vector (53)
+and vector (54). There are 0 D-Bus calls, no E origin and no S
+borrowing. The proof is NOT ESTABLISHED, and the result is QUARANTINED /
+CLEANUP_UNPROVEN / 7. No new reason, site or allowance is observed.
+(63) Low-level causes (Vector 6): in separate runs of (59), (60) and
+(61), the proof fails through each of these causes: a manager timeout
+past E or past the site (iv) allowance; a manager D-Bus error; a
+malformed reply; a reply from a non-manager sender; 257 matching units;
+a unit named for P; and a matching unit whose S6 cannot establish
+membership (INTENT, absent, malformed, non-regular or mismatched). Every
+run gives QUARANTINED / CLEANUP_UNPROVEN / 7. None gives
+CONTROLLER_FAILURE, MISSING_UNIT_PROOF or STATE_INCONSISTENT. In a
+control run the fixture also breaks a K relation of P before the proof
+is reached. The existing class-D disposition then applies unchanged (H10
+(k) [2], vector (51)), and no CLEANUP_UNPROVEN record is written. (64)
+Record consistency (Vector 7): for one run of (59) and one of (60) with
+a connected client, the S11 status is QUARANTINED and the S11 reason is
+CLEANUP_UNPROVEN. recordDigest recomputes over those exact bytes. The
+S13 reason and the QUARANTINED frame's record.reason and frame reason
+are CLEANUP_UNPROVEN. A tampered copy carrying any other QUARANTINED
+reason fails the recordDigest recomputation. (65) MISSING_UNIT_PROOF
+preserved (Vector 8): the existing §7.4 S2 SUBMITTING/BOUND fixture
+removes the controller state of a bound unit. The outcome is the
+existing MISSING_UNIT_PROOF disposition (removal or boot proof gives
+error 7, otherwise QUARANTINED). C15 changes neither that outcome nor
+its reason.
+
+C16 receive-path isolation vectors (§20.3.3 RP1–RP8; mandatory Stage 5
+qualification, not optional). Pinned environment: zbus exactly 5.13.2
+with the Cargo.lock graph of §20.3.4, the qualified system bus
+configuration of the reference host (RP7 facts recorded), and the exact
+RP1–RP3 broker receive topology. Attacker: a second local Linux account
+with no sudo permission, no QA enrollment and no protected-store access.
+It has the system-bus access the stock configuration grants for sending
+unicast signals, and it discovers the broker's unique name through
+ListNames where the bus permits. It does not cooperate, and its traffic
+need not use valid systemd interfaces. Each flooded run has a no-flood
+control run of the same fixture. A flood is more than 64 unsolicited
+messages, sustained for the whole interval during which the named
+legitimate manager call is outstanding. It includes signals and method
+calls with arbitrary and with exact-imitation systemd1 interfaces, paths
+and members, PropertiesChanged on the exact bound unit path, and
+messages at the recorded max_message_size. The instrumented build
+records, per channel of the zbus broadcaster map, the number of queued
+items that came from a non-manager sender, and every suspension of the
+socket reader. (66) Topology (Vector M0): the broker source contains no
+call that RP1 forbids, and exactly one RP2 construction with all five
+rule dimensions fixed. In every phase P0–P6 and in RECONCILE, the
+instrumented map shows the unfiltered channel with 0 active receivers,
+the method-return channel active only while a call is outstanding, and at
+most one RP2 channel, and only while a unit path is bound. (67) H10 under
+E (Vector M1): a live P1S H10 invocation makes its one site (ii) or
+(iii) ListUnitsByPatterns under E on a clean namespace, during a flood.
+The reply is consumed within E as in the control run. The non-manager
+item count is 0 on every channel, and the outcome equals the control
+outcome (PRESUBMIT_FAILURE 7 or CLIENT_LOST 7, emptyBy=not-submitted):
+no E expiry, no QUARANTINED, no CLEANUP_UNPROVEN. (68) Case E site (iv)
+(Vector M2): ordinary Case E at site (iv), once in CREATE C5 (3) A-INC
+and once in RECONCILE R5, during a flood. The result equals the control
+run (PRESUBMIT_FAILURE 7 on a clean proof). (69) P4 empty confirmation
+(Vector M3): P4 after a client-loss stop and after a RuntimeMaxUSec
+deadline, during a flood that covers StopUnit, KillUnit escalation where
+the fixture needs it, Properties.GetAll and the empty confirmation. The
+result equals the control run (CLIENT_LOST 7, or TIMED_OUT 8 on the
+proven deadline), with no QUARANTINED. (70) Every other call (Vector
+M4): a flood is held during each of GetNameOwner,
+GetConnectionCredentials, the RP2 AddMatch, StartTransientUnit,
+GetUnit, RefUnit, Properties.GetAll, ResetFailedUnit and UnrefUnit
+outside H10, and during the §7.3 attached observation with RP2 active,
+including attacker PropertiesChanged on the bound path. Every reply is
+consumed with the control-run semantics, no observation changes, and the
+PASSED path of the control run is reached unchanged. (71) Replies and
+header variants (Vector M5): the attacker sends method_return and error
+messages whose reply_serial covers the broker's outstanding call serials,
+and messages with every header field the bus accepts, including header
+field codes outside 1–9. The bus delivers none of the unsolicited
+replies (RP7 (b)), the broker's socket reader is never terminated (RP7
+(c)), and the recorded Features property contains HeaderFiltering (RP7
+(a)). (72) Manager-origin bound (Vector M6): with RP2 active, the
+workload inside the unit, as the runner account, tries to make the
+manager emit PropertiesChanged for its own unit: sd_notify under
+NotifyAccess=none, rapid descendant forks and exits, and cgroup activity.
+This runs during outstanding manager calls, with and without a flood. The
+RP2 queue occupancy stays below its capacity 64 and the reader is never
+suspended by a full channel. (73) Failure semantics (Vector M7): in
+(66)–(72), any run in which the flood alone causes a manager timeout, an
+E expiry, a §6.4 phase expiry, CLEANUP_UNPROVEN, CONTROLLER_FAILURE,
+MISSING_UNIT_PROOF, STATE_INCONSISTENT, QUARANTINED, any durable
+transition, claim retention or root blocking, or any outcome different
+from its control run, BLOCKS Stage 5 qualification and Controlled
+Release. The run is never reclassified as an ordinary manager failure or
+accepted as a residual. In a coincidence control run, a fixture pauses
+the manager past E during a flood. The result is QUARANTINED /
+CLEANUP_UNPROVEN / 7, from the genuine delay, as in vector (30) without
+a flood. The flood itself is classified as nothing.
+
+C16 quarantine reason vectors (§20.3.8 QR). Each run records the S11
+status and reason bytes, the recomputed recordDigest, the S13 base
+incident reason and, with a client connected, the final QUARANTINED
+frame's record.reason and frame reason. (74) Case A (Vector A): an
+ORPHANED ACTIVE attempt whose stop/kill/whole-tree empty proof cannot be
+established (fixture: an uninterruptible task keeps cgroup.events
+populated=1 past P4), with no SC conflict. Result: QUARANTINED /
+CLEANUP_UNPROVEN / 7. (75) Case B (Vector B): an incomplete FAILED unit
+whose authenticated InvocationID differs from controller.invocationId
+(SC (c3)). Result: QUARANTINED / STATE_INCONSISTENT / 7. In a control
+run the unit's facts agree and only the drain is unprovable. Result:
+QUARANTINED / CLEANUP_UNPROVEN / 7, not STATE_INCONSISTENT. (76) Case C
+(Vector C): an incomplete INACTIVE unit with a populated control group
+that cannot be confirmed empty. Result: QUARANTINED / CLEANUP_UNPROVEN /
+7. (77) Case D (Vector D): a bound unit is removed, and neither the §6.3
+removal proof nor the reboot proof (including H9 site (v)) is
+established. Result: QUARANTINED / MISSING_UNIT_PROOF / 7. (78) Case G
+cleanup (Vector E): a timeout during absence whose empty or durable
+cleanup proof is not established, with the unit present and no SC
+conflict. Result: QUARANTINED / CLEANUP_UNPROVEN / 7. (79) Case G
+conflict (Vector F): as (78), but in the same boot the authenticated
+manager unique owner differs from controller.managerId (SC (c1)).
+Result: QUARANTINED / STATE_INCONSISTENT / 7. (80) P4 (Vector G): P4
+empty confirmation fails within its 30000 ms with no SC conflict and the
+unit present. Result: QUARANTINED / CLEANUP_UNPROVEN / 7. (81) §7.3
+controller failure with containment proven (Vector H): Result=oom-kill
+with the empty proof established. Result: EXECUTION_ERROR /
+CONTROLLER_FAILURE / 7 (existing row), with no QUARANTINED record. In a
+control run the empty proof fails. Result: QUARANTINED /
+CLEANUP_UNPROVEN / 7, never CONTROLLER_FAILURE. (82) §7.3 identity
+conflict (Vector I): the ControlGroup or cgroup dev/inode of the bound
+unit differs from the controller record (SC (c4)), and the empty proof
+fails. Result: QUARANTINED / STATE_INCONSISTENT / 7. In a control run an
+unauthenticated sender imitates the conflicting fact. It is dropped
+(RP4, RP6), no SC conflict exists, and the result is that of the run
+without the imitation. (83) §7.4 S2 (Vector J): SUBMITTING/BOUND, the
+controller state disappears, and the removal/boot proof is not
+established. Result: QUARANTINED / MISSING_UNIT_PROOF / 7. With the
+proof established, the existing error 7 disposition is unchanged.
+(84) §7.4 S3 (Vector K): the same for STARTED. Result: QUARANTINED /
+MISSING_UNIT_PROOF / 7. (85) C15 preserved (Vector L): vectors (59)–(63)
+rerun unchanged give QUARANTINED / CLEANUP_UNPROVEN / 7, including a run
+in which the own unit is absent and the clean-namespace proof fails.
+None gives MISSING_UNIT_PROOF or STATE_INCONSISTENT. (86) Record
+consistency (Vector M): for one run each of (74), (75), (77), (79),
+(80), (82) and (83) with a connected client, the S11 status is
+QUARANTINED and the S11 reason is the vector's reason. recordDigest
+recomputes over those exact bytes. The S13 base incident reason (K5)
+and the final frame's record.reason and frame reason equal it. A
+tampered copy carrying another QUARANTINED reason fails the recordDigest
+recomputation. Across (74)–(86) no reason, status, outcome or exit
+outside the existing sets is observed, and no QUARANTINED record carries
+CONTROLLER_FAILURE.
+
+#### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
+
+This subsection is the single normative layout of the broker protected
+store S = /var/lib/qa-agent-controller-v1 (§5.2) and the closed recovery
+matrix for its crash states. JR (§20.2.7) consumes it; the broker
+implements it. It introduces no object class, lifecycle or journal state,
+schema, schema version, record reason, broker frame, exit code, refusal
+enum, hash domain, CLI command or flag, broker operation or maintenance
+service. Every class below is an object that §§5–7 and §11.1–§11.3 already
+require, and every recovery action is a step of the existing CREATE C5 or
+RECONCILE R4–R7 (§5.6.4) or, for the T rows, of the CREATE C7 admission
+commit lock protocol (C7). C7 makes this recovery product-reachable
+through the §20.4.10 command, which selects the existing RECONCILE
+operation; that command is the only CLI addition.
+
+Layout identity. The layout is identified by the single closed literal
+`od06-journal-layout-v1`. It is a compiled constant of the broker for
+contractVersion "qa-agent-controller-v1" (journal version 1, §4.1), and
+the od06-priv-surface-v1 JR reader compiles the same literal and accepts
+exactly that one value. It is not caller-controlled, not an enrollment or
+request field, not selectable and not free-form, and S holds no layout,
+version or metadata file: the identity is a property of the reviewed
+broker build (brokerSha256, §5.4) and of the qualification procedure,
+recorded only as journal.layout in QaAgentControllerPrivilegeSurface v1
+(§20.2.7). Any change to a class, path, schema or relation below is a new
+reviewed layout literal, a new broker build and therefore a new §5.4
+record and requalification; never an in-place compatibility rule. No new
+hash domain is introduced for it. C7 changes S3, S5, S8, S12, S13, K1, K3,
+K5 and the recovery matrix while no broker build exists and nothing has
+been qualified under the literal, so C7 amends the proposed literal
+od06-journal-layout-v1 itself (the C5 precedent for od06-priv-surface-v1,
+§20.13); the new-literal rule above binds from the first reviewed broker
+build and is not engaged.
+
+Inventory. The durable protected objects required by §§5–7 and
+§11.1–§11.3 are: attempt entries and their current pointer (§11.2); the
+reservation transaction and its companions "PREPARED/claims/tombstones/
+data/directories" (§7, §11.2); the live root claim (§7, §11.2); the two
+consumed tombstones (§7, §11.2); AutomationExecutionRecord v2 (§7.3 step
+9, §11.3); the incident, which in Controlled-v1 is its immutable base
+revision only (§7.2 QUARANTINED, §11.2; C7). Also referenced, with no stored object of their own (see
+"Non-record state"): the admission and per-attempt operation locks (§7),
+runner quarantine (§5.4, §7, §7.4) and crash/boot history (§5.2, §6.3).
+
+Classes. Paths are relative to S. X is an executionId
+(^[0-9a-f]{32}$). k is the 64 lowercase hex digits of an H key value
+(key = "sha256:" + k). Every file is a regular file, root:root 0600,
+link count 1; every directory is root:root 0700 (§5.2, JR1). Readers of
+every class: the broker (CREATE P1–P6 including C5, RECONCILE R4–R7) and,
+read-only, JR; the client never reads S. "Evidence" means JR parses and
+cross-checks the class (JR3, JR4); "structural" means type, owner and mode
+only.
+
+| Class | Exact path grammar | Content / schema | Producer and creation point | Cardinality | Retention / removal | Key correspondence | JR |
+|---|---|---|---|---|---|---|---|
+| S0 store root | `.` (S itself) | Directory | Operator install (§5.2, §5.3) | Exactly one | Never removed by the broker (§5.3 retains history) | — | Structural |
+| S1 fixed directories | Exactly `attempts`, `transactions`, `claims`, `tombstones`, `tombstones/run`, `tombstones/package`, `records`, `incidents` | Directory | Broker, mkdirat immediately before the first object of its class is written, under the lock held for that write, parent fsynced | At most one each; absent means the class is empty | Never | — | Structural |
+| S2 attempt directory | `attempts/<X>` | Directory | Broker, reservation step 2 | At most one per X; exists iff `transactions/<X>.json` exists (K1) | Only by T rollback | X = transaction executionId | Structural |
+| S3 attempt entry | `attempts/<X>/<s>.json`, s ^[0-9]{8}$ | QaAgentExecutionAttempt v1 (§11.2) | Broker: entry 0 at reservation step 3 (PREPARED, NOT_SENT); entry n+1 at each §7 transition | Committed: entries 0..n, n named by S4, contiguous, n < 1024 (the committed view, C8); outside it at most the one exact A-RES candidate n+1, never committed until S4 names it (C8) | Never; entry 0 only by T rollback; an entry n+1 above the pointer only by A-RES rollback (C7) | executionId = X; sequence = s | Evidence (JR3) |
+| S4 current pointer | `attempts/<X>/current.json` | Exactly {executionId, sequence, journalDigest} (§11.2) | Broker: reservation step 4 (create-only), then replaced through S5 after every new entry | Exactly one per S2 once written; no other head file | Only by T rollback | executionId = X; sequence = highest committed n, as named by the durable S4 itself (C8: not the highest physical file; an exact A-RES candidate n+1 does not invalidate S4 and becomes committed only by the S5 rename over S4); journalDigest = entry n's | Evidence (head selector, JR3) |
+| S5 pointer staging | `attempts/<X>/current.json.next` | The next S4 value | Broker, inside one invocation holding X's operation lock continuously from entry n+1 through the rename (C7), immediately renamed over S4 | Zero outside a live broker invocation | Consumed by the rename, or by A-RES rollback (C7) | Names entry n+1 | Never at quiescence: INELIGIBLE; class A-RES when it is the exact pointer candidate of an uncommitted entry n+1, otherwise class D (C7; §11.2 temp rule otherwise unchanged) |
+| S6 transaction | `transactions/<X>.json` | Transaction (§11.2) {schemaVersion 1, executionId, rootKey, consumedKeys, bindingDigest, phase} | Broker: reservation step 1 (INTENT, create-only); step 9 (COMMITTED, replaced through S7) | EXACTLY ONE per consumed attempt (phase COMMITTED); at most one INTENT in all of S (the admission commit lock serializes reservations, AL0–AL7, C7) | COMMITTED: retained permanently, never removed; INTENT: only as the last step of T rollback | executionId = X; rootKey = RootKey of binding.root; consumedKeys = the two §11.2 consumed keys of the binding, fixed order; bindingDigest = binding.bindingDigest | Evidence (JR4) |
+| S7 transaction staging | `transactions/<X>.json.next` | S6 with phase COMMITTED, every other member equal | Broker, reservation step 8, renamed over S6 at step 9 | Zero outside a live broker invocation | Consumed by the rename, or by T rollback | Equal to S6 except phase | Never at quiescence: INELIGIBLE; class T-B |
+| S8 live root claim | `claims/<k>.json`, k from rootKey | {schemaVersion:1, key, executionId, bindingDigest} (§11.2) | Broker, reservation step 5 | At most one per rootKey (file name) and at most one per executionId; presence fixed by K3 | Non-QUARANTINED terminal: P6 or R7 release; QUARANTINED: retained permanently, no Controlled-v1 release path (C7); uncommitted INTENT: T rollback | key = transaction rootKey; executionId, bindingDigest = transaction's | Evidence (JR4) |
+| S9 consumed-run tombstone | `tombstones/run/<k>.json`, k from consumedKeys[0] | Same schema as S8 | Broker, reservation step 6 | EXACTLY ONE per consumed attempt; one per key (file name) | Never (no-retry, §7); only T rollback of an uncommitted INTENT | key = consumedKeys[0] | Evidence (JR4) |
+| S10 consumed-package tombstone | `tombstones/package/<k>.json`, k from consumedKeys[1] | Same schema as S8 | Broker, reservation step 7 | EXACTLY ONE per consumed attempt; one per key | As S9 | key = consumedKeys[1] | Evidence (JR4) |
+| S11 execution record | `records/<X>.json` | AutomationExecutionRecord v2 (§11.3) | Broker, terminal commit step (i) | EXACTLY ONE iff the head is terminal or QUARANTINED (K4) | Never; only A-RES removal of an uncommitted residue | executionId = X; recordDigest = head outcomeDigest | Evidence (JR4) |
+| S12 incident directory | `incidents/<X>` | Directory holding only its S13 base | Broker, QUARANTINED terminal commit step (ii), immediately before its S13 base (C7) | Exactly one per X whose head is QUARANTINED; none for any other head, except A-RES residue (C7) | Never; only A-RES removal of an uncommitted one | X = incident executionId | Structural |
+| S13 incident base | `incidents/<X>/00000000.json`, the only revision name in Controlled-v1 (C7) | QaAgentExecutionIncident v1 (§11.2), resolvedAt null and cleanup null | Broker, QUARANTINED terminal commit step (ii) only (C7: no later-inconsistency or resolution producer exists) | Exactly one per S12; no other revision | Never; only A-RES removal of an uncommitted base | executionId = X; rootDigest = binding.root.digest; reason = the S11 reason | Evidence (JR4) |
+
+Write discipline. A create-only object (S3, the initial S4, the INTENT
+S6, S8–S11, S13) is written into an O_TMPFILE descriptor of its target
+directory, fully written and fsynced, then linkat-ed to its final name
+(which fails if the name exists) and the directory is fsynced; no visible
+temporary name exists for it. Only two objects are ever replaced: S4,
+through S5, and S6 once, INTENT → COMMITTED, through S7. The staging file
+is created the same way and renameat-ed over the final name, then the
+directory is fsynced. No other temporary, staging or partial file is ever
+created in S, and none is permitted at qualification quiescence. Orders,
+each step durable before the next:
+
+- Reservation (CREATE C7 reservation commit, under the admission commit
+  lock held continuously per AL6–AL7, C7):
+  1 S6 INTENT; 2 S2; 3 S3 entry 0; 4 S4; 5 S8; 6 S9; 7 S10; 8 S7;
+  9 rename S7 over S6 and fsync `transactions`. Step 9 is the reservation
+  commit (§6.4 P1S origin, §7.2 ACCEPTED backing). Before it nothing is
+  reserved (§7.4 S0).
+- Transition (X's operation lock, held continuously from the first write
+  to the directory fsync after the rename, C7): S3 entry n+1, then S5 and
+  its rename over S4. The rename is the transition's commit; the backing
+  frame and every manager action that depends on the transition follow
+  its durable commit (§7.2; §4.3 item 7 SUBMITTING before D-Bus; §7
+  ORPHANED before stop).
+- Terminal commit (§7.3 step 9, X's operation lock, held continuously
+  from (i) to the directory fsync after (iv), C7): (i) S11; (ii) for
+  QUARANTINED only, S12 and then the S13 base; (iii) the terminal S3
+  entry n+1 with outcomeDigest = recordDigest; (iv) S5 and its rename over
+  S4, which is the terminal commit; then the TERMINAL or QUARANTINED frame.
+- Release (P6, or R7): the §7.3 step 10 steps, ending with unlink of S8
+  and fsync of `claims`; non-QUARANTINED terminal heads only.
+
+Non-record state. The admission lock (C7: the admission commit lock,
+AL0–AL7 below) is flock(LOCK_EX) on the S0 directory descriptor; the
+per-attempt operation lock is flock(LOCK_EX) on the `attempts/<X>`
+descriptor. Both descriptors are opened O_CLOEXEC and the broker creates
+no child process while holding either lock (C7). Both are kernel-held,
+released at process exit and never represented by a file; under QZ2 no broker process exists,
+so no lock is held, and JR never calls flock. Runner quarantine (§5.4, §7,
+§7.4) has no stored object: it is the fail-closed condition the broker
+re-derives at every invocation from its persisting cause (a class D state
+of S, an unreadable newer schema, an unknown namespace unit, or a storage
+failure re-observed by F2 or a failing fsync), and it ends only by the
+existing operator remediation (§5.3). That remediation never clears a
+per-attempt QUARANTINED outcome, its incident or its claim (C7; §5.3
+retains quarantine history). Crash and boot history is the S3
+entries themselves (controller.bootId, timeline). Layout v1 has no
+metadata, version, marker, lock or index file. Any entry of S outside
+S0–S13 is INELIGIBLE for JR and class D for the broker.
+
+Cross-object relations. Head = the S3 entry named by S4. "Consumed" =
+the S6 of X has phase COMMITTED.
+
+Committed view (C8, normative). S4 is the sole durable proof of the
+committed attempt head (the C7 commit point, unchanged). If S4 names
+sequence n, the COMMITTED VIEW of X is S4 plus attempt entries 0..n, and
+n is the highest COMMITTED sequence, whatever other files exist. K2, JR3
+and the S4 class row validate the committed view only. A physically
+present entry n+1 is outside the committed view when, and only when, the
+complete protected-store state proves it part of an exact A-RES candidate
+prefix (P or F, A-RES rule below); `current.json.next` (S5) is outside
+the committed view only as the exact pointer candidate of that same
+entry n+1 within that same proven prefix. A-RES candidate objects are
+outside the committed view until S4 commits them. This exception exists
+only for A-RES classification and recovery. It makes no other
+above-pointer object legal: every other object above the pointer, and
+every malformed or non-exact candidate, is class D.
+
+Classification order (C8, closed; no implementation-selected order). For
+each X, the broker (C5 (3), R4 (3)) and JR4 classify in exactly this
+order: (1) validate the durable S4 committed view (S4 schema, entries
+0..n per JR3, K2 and the K3–K5 relations for head n); a failure is class
+D; (2) inspect every additional object of X (entries above n, S5, and
+for an incomplete head an S11, S12 or S13); (3) decide whether those
+additional objects form exactly one non-empty exact A-RES prefix; (4) if
+yes, the class is A-RES; (5) otherwise class D. No step rejects an
+additional object before step (3) has decided it, and no additional
+object is ever evaluated as committed history. With no additional
+object, the class follows from head n (A-INC, A-REL or committed
+terminal/QUARANTINED).
+
+- K1 Transaction and attempt. For every X, S2 exists iff S6 exists,
+  except inside a T-class state. Every S2 holds only S3 entries and S4
+  (and S5 only inside a live invocation or as an A-RES residue, C7).
+- K2 Consumed attempt (C8: validates the committed view). S4 names
+  exactly one committed entry n; entries 0..n form the complete
+  JR3-valid committed chain with no committed gap or duplicate; n is the
+  highest COMMITTED sequence. Any physically present entry above n fails
+  closed (class D), except that exactly one entry n+1, and an S5 only as
+  the exact pointer candidate of that same n+1 transition, are outside
+  the committed view and excluded from K2 while, and only while, the
+  complete protected-store state independently satisfies an exact A-RES
+  prefix (classification order above); a malformed or non-exact
+  candidate stays class D. Binding is identical in every committed
+  entry (and, by the A-RES rule, in the candidate); S6 executionId, rootKey,
+  consumedKeys and bindingDigest equal the values derived from that
+  binding; S9 at consumedKeys[0] and S10 at consumedKeys[1] exist, each
+  exactly {1, key, X, bindingDigest}. No other tombstone names X, and
+  every tombstone is accounted for by exactly one consumed attempt or by
+  the single INTENT (K6). Missing, duplicate, extra or mismatched: class
+  D.
+- K3 Claim. For a consumed X, the S8 at its rootKey, exactly {1, rootKey,
+  X, bindingDigest}, MUST exist when the head is incomplete (PREPARED,
+  SUBMITTING, CONTROLLER_BOUND, STARTED, OBSERVED, ORPHANED) and whenever
+  the head is QUARANTINED (C7: retained permanently; Controlled-v1 has no
+  incident resolution and no QUARANTINED release). When the head is
+  terminal and not QUARANTINED it is absent (normal) or present
+  (RELEASE-PENDING, class A-REL: the only state in which a
+  non-QUARANTINED terminal attempt holds its claim, §7.4 S6). Every S8
+  names exactly one X under these rules or the single INTENT (K6); any
+  other claim (naming no attempt or transaction, another bindingDigest,
+  another root, or a second claim for one X) is an orphan: class D.
+- K4 Record. Head terminal (PASSED, TEST_FAILED, TIMED_OUT,
+  EXECUTION_ERROR) or QUARANTINED ⇒ exactly one S11 with: executionId X;
+  binding identical to the attempt binding; controller identical to the
+  head controller (null only if never bound); timeline identical to the
+  head timeline; cleanup identical to the head cleanup; status equal to
+  the head state; process and the stdout/stderr members of capture equal
+  to the same-named head observation members where the head observation
+  is non-null; a valid §11.3 status/reason pair, with PRESUBMIT_FAILURE
+  only for a head with submission NOT_SENT and controller null, and a
+  QUARANTINED status only with one of the four §11.3 QUARANTINED reasons
+  (CONTROLLER_FAILURE, MISSING_UNIT_PROOF, CLEANUP_UNPROVEN,
+  STATE_INCONSISTENT); recordDigest
+  recomputing; and head outcomeDigest = recordDigest. TERMINAL statuses
+  require non-null cleanup; QUARANTINED permits null cleanup (§11.3).
+  Head incomplete ⇒ no S11, except the A-RES residue. Missing, duplicate
+  or mismatched record, or a record naming no attempt: class D.
+- K5 Incident (C7). Head QUARANTINED ⇒ exactly one S12 holding exactly
+  one S13 base `00000000.json` with executionId X, rootDigest =
+  binding.root.digest, reason = the S11 reason, createdAt UTC, resolvedAt
+  null, cleanup null and an incidentDigest that recomputes. Head terminal
+  and not QUARANTINED, or head incomplete ⇒ no S12 and no S13, except an
+  A-RES residue of an incomplete head. Controlled-v1 has no resolution
+  revision and no later-inconsistency incident, because no broker path
+  produces either. A missing or second base, any other revision name
+  (including 00000001), a non-null resolvedAt or cleanup, an incident of
+  a committed head that is not QUARANTINED, an S12 holding anything other
+  than its base, or an incident naming no attempt: class D.
+- K6 INTENT. At most one S6 has phase INTENT. Its companions are the
+  objects of reservation steps 2–8 that carry its executionId X. A
+  present companion matches only if it is exactly what that step writes:
+  S2 holds nothing but S3 entry 0 and S4; entry 0 is a valid PREPARED,
+  NOT_SENT, sequence-0 entry whose binding yields the INTENT's rootKey,
+  consumedKeys and bindingDigest; S4 names entry 0; S8, S9 and S10 sit at
+  the INTENT's keys, each exactly {1, key, X, bindingDigest}; S7 equals
+  the INTENT except phase COMMITTED. S4 present requires entry 0; entry 0
+  present requires S2. No S11, S12 or S13 exists for X.
+- K7 Closure. Every object of S is accounted for by K1–K6. Anything else
+  (unknown name, duplicate identity, impossible companion set,
+  unsupported schema, phase or version, ambiguous ownership) is class D.
+
+Recovery matrix (closed). The broker applies it in CREATE C5 and in
+RECONCILE R4; JR4 only classifies with it. Identity always comes from the
+protected objects themselves; it is never inferred from target files,
+unit names, cgroups, client state or caller hints.
+
+| Class | Exact condition | Resolver (enrollment enabled or not) | Disposition |
+|---|---|---|---|
+| T-A complete INTENT | The single INTENT, structurally valid, with every K6 companion present and matching | Any RECONCILE R4 (1); CREATE C5 (1) and, authoritatively, CREATE C7 AL3 (C7); always under the admission commit lock | Roll back |
+| T-B torn or partial INTENT | The single INTENT, structurally valid, with any K6-consistent subset of its companions, including S7 | As T-A | Roll back |
+| T-C INTENT without attempt | T-B with no S2, S3 or S4 (a valid pre-PREPARED crash state) | As T-A | Roll back |
+| A-INC incomplete consumed attempt | K2 holds, head incomplete, K3 claim present | RECONCILE(X) R4–R7; CREATE C5 pre-create reconciliation | §7 Cases A–H to a terminal or QUARANTINED commit |
+| A-RES uncommitted residue (C7) | K2 holds for X over the committed view (C8), the head n named by S4 is incomplete with entries 0..n chain-complete (JR3), and the objects of X beyond that committed state form a non-empty exact prefix of one candidate transition P or F of the A-RES rule below | RECONCILE(X) R4 (3); CREATE C5 for each attempt it reconciles | A-RES rollback under X's operation lock back to durable head n, then A-INC |
+| A-REL release pending | K2, K4 and K5 hold, head terminal and not QUARANTINED, K3 claim present | RECONCILE(X) R6/R7; CREATE C5 | Remaining release steps only |
+| D corrupt or unknown | Anything else: an INTENT whose own schema, digests or keys are invalid; two INTENTs; a companion mismatching its INTENT; an INTENT key already holding another executionId's claim or tombstone; an S5, an entry above the pointer, a record or an incident object that is not part of an exact A-RES prefix (C7: for example an S5 that is not the pointer candidate of entry n+1, two entries above the pointer, an S12 without its S11, an S11 beside a non-terminal entry n+1, an entry above a terminal or QUARANTINED head); a broken K1–K5 relation; any K7 object. A state matching an exact A-RES prefix is never D (C8 disjointness) | None automatic | CREATE C5: REFUSED/INELIGIBLE exit 5 before reservation; RECONCILE R4: REFUSED/INELIGIBLE, no write and no manager action; runner quarantine until the existing operator remediation (§5.3, §7); JR INELIGIBLE |
+
+Rollback (T-A, T-B, T-C), under the admission commit lock and from a scan
+made under that same hold (AL2, C7): unlink, each only if
+present and only if it matches (K6), S7, S10, S9, S8, S4, S3 entry 0, S2,
+fsyncing the parent after each, and finally S6, then fsync
+`transactions`. A crash during rollback leaves a T-B or T-C state, and
+rollback is idempotent. Rollback, never roll-forward, follows from the
+existing commit point: the reservation exists only from the COMMITTED
+rename (§6.4 P1S origin); ACCEPTED is backed only by COMMITTED (§7.2);
+§7.4 S0 is "nothing reserved"; no SUBMITTING entry, D-Bus call, unit or
+leaf can exist before COMMITTED; and a pre-commit request is
+unconsumed and may be retried (§6.4). The claim and tombstones written
+under an uncommitted INTENT were never consumption (C7 replaces the C6
+claim that admission never reads them). Admission does read them, but
+only under the admission commit lock (AL2–AL4) and only through the
+closed T-A/T-B/T-C relations, which roll them back before the AL5
+conflict check; before COMMITTED they are never consumption-authoritative,
+and a claim or tombstone that cannot be proven to belong to the single
+INTENT or to a COMMITTED transaction is class D (fail closed). Rollback
+therefore weakens no no-retry rule, and committed tombstones (K2) are
+never removed.
+
+A-RES rule (C7, crash-idempotent). Committedness of an attempt's objects
+is decided only by its durable head, never by object existence: for X
+with S4 naming entry n, the committed objects are S4, entries 0..n and
+the objects K1–K5 require for head n. Nothing else of X is committed,
+whatever exists. When head n is incomplete, the write orders above allow
+exactly two candidate transitions, each an ordered list:
+
+- P, a non-terminal transition: P1 S3 entry n+1; P2 S5.
+- F, a terminal commit: F1 S11; F2 S12 and F3 its S13 base, both only
+  when the S11 status is QUARANTINED; F4 S3 entry n+1; F5 S5.
+
+The uncommitted objects of X are A-RES residue only when they are exactly
+a non-empty prefix of P or of F (F2 and F3 omitted from the list when the
+S11 status is not QUARANTINED), and every present object corresponds
+exactly:
+
+- Entry n+1: the JR3 per-entry schema and field rules; file name and
+  sequence n+1, with n + 1 < 1024; executionId X; previousDigest =
+  entry n's journalDigest; journalDigest recomputes; binding identical;
+  state an allowed §7 successor of entry n's state, with the JR3 field
+  rules for that state; no entry above n+1 exists. Under P its state is
+  incomplete and no S11, S12 or S13 of X exists. Under F its state equals
+  the S11 status, its outcomeDigest equals recordDigest, and S11 meets K4
+  against it as if it were the head.
+- S11: the K4 schema and recomputing recordDigest; executionId X; binding
+  identical to the attempt binding; a valid §11.3 status/reason pair whose
+  status is an allowed §7 successor of entry n's state.
+- S12 and S13: present only for a QUARANTINED S11 status; S12 holds
+  nothing, or only S13 `00000000.json`; S13 meets K5 against S11.
+- S5: exactly the S4 schema with {executionId X, sequence n+1,
+  journalDigest of entry n+1}.
+
+Every other combination is class D. The case lists close the required
+probes: P1 alone (entry n+1 linked, pointer not updated); P1 + P2; F1
+alone (record only); F1 + F4 (record and terminal entry, non-QUARANTINED);
+F1 + F2 (record and empty incident directory); F1 + F2 + F3 (record and
+incident base); F1 + F2 + F3 + F4; and either list complete up to S5
+(terminal entry and pointer staging). An empty S12 is residue only as the
+F2 end of a prefix with a present QUARANTINED S11, and an S12 holding
+only S13 `00000000.json` only as F2 + F3. An S12 without its S11, beside
+a non-QUARANTINED S11, or holding any other or second file is class D.
+When the head is terminal or QUARANTINED, an entry above the pointer
+or an S5 is class D (a committed terminal head has no successor), and its
+S11, S12 and S13 are committed objects under K4 and K5, never residue.
+
+A-RES and D are disjoint (C8). If the complete store state of X matches
+an exact non-empty P or F prefix over an incomplete head n, the class is
+A-RES and never also D: K2 and JR3 validate the committed view, which
+ends at n; S4 correctly names the highest committed n; and the candidate
+objects are outside the committed view, so no K relation and no JR3 rule
+reads them as committed history. Conversely, class D stays mandatory for:
+more than one entry above the pointer; a wrong chain or journalDigest; an
+impossible successor; a wrong executionId; a different binding; a wrong
+outcomeDigest/recordDigest relation; an S5 naming anything except
+candidate n+1; any unrelated staging file; any residue beside a terminal
+or QUARANTINED committed head; and every malformed, ambiguous or
+non-exact prefix. The eight required probes listed above are therefore
+each A-RES and none is D.
+
+A-RES rollback runs under X's operation lock, from a scan made under that
+hold. The plan is the present prefix; the broker removes it in reverse
+list order, each step durable before the next: S5 (unlinkat, fsync
+`attempts/<X>`); entry n+1 (unlinkat, fsync `attempts/<X>`); S13
+(unlinkat, fsync `incidents/<X>`); S12 (unlinkat AT_REMOVEDIR, fsync
+`incidents`); S11 (unlinkat, fsync `records`). It then re-reads S4 and
+requires it byte-equal to the value read at classification. It never
+touches S4, entries 0..n, S2, S6, S8, S9, S10 or any object of another
+executionId. Afterwards head n continues as A-INC. Inside a live H10
+terminal-evidence invocation, H10 (k) (3) (iii)–(v) decide what follows
+the rollback (C13); the rollback itself is unchanged.
+
+Crash idempotence. Creation and rollback both move along the same list,
+one durable step at a time, and X's operation lock excludes every other
+broker writer of X, so a residue observed by a lock holder was left by a
+process that died. Every state a crash can leave is again a prefix of the
+same list over the same head n. That holds during the original
+transition or terminal commit, during any rollback step, and between an
+unlink and its directory fsync (the object then survives or not). The
+result is either a shorter A-RES residue, which the next RECONCILE(X) R4
+or CREATE C5 rolls back to completion, or the empty prefix: durable head
+n with no residue (A-INC). Repeated recovery therefore converges in at
+most five removals and never moves the head. ENOENT from a planned
+unlinkat, including the AT_REMOVEDIR of a planned S12, means that object
+is already removed. Only an object that S4 proves uncommitted can be
+planned. ENOTEMPTY on S12, or any other error, stops the rollback with
+class D. ENOENT never masks a committed object: committed objects are
+never planned. A missing committed object (an entry 0..n, S4, or for a
+terminal head its S11 or incident base) is a broken K relation, class D
+at classification. No outcome is rewritten: the candidate outcome was
+never committed, and by the write orders no frame and no manager action
+depended on it. No COMMITTED transaction and no committed tombstone is
+touched, and the attempt stays consumed. A rolled-back terminal
+candidate is re-decided by Cases A–H from head n, exactly as §7.4 S5
+already treats a proposal that was not made durable ("a valid PASS is
+lost, never inferred").
+
+Admission commit lock protocol (C7). The admission commit lock is the
+only lock under which an INTENT is created, read for recovery or rolled
+back, and no T-row decision is ever taken from a scan made without it.
+
+- AL0 Without the lock: C1–C6, including the C5 A-INC, A-RES and A-REL
+  work, whose writes and manager actions run under short per-attempt
+  operation lock spans and whose manager waits (Cases A–H) run with no
+  lock held (C9, lock hierarchy H8), and the non-mutating C7 checks (the §5.4 compatibility/pair part,
+  §4.3 items 3–6 data checks, qualification and launch-size checks).
+  Every per-execution operation lock taken in AL0 is fully released,
+  with its durable post-condition complete, before AL1 (C8, lock
+  hierarchy H4).
+- AL1 Immediately before the reservation mutation, CREATE acquires
+  flock(LOCK_EX) on the S0 descriptor (blocking; the wait is inside P1
+  and counted against A). Precondition (C8): the set of per-execution
+  operation locks held by the broker is empty.
+- AL2 Under that hold it rescans `transactions`, `claims`,
+  `tombstones/run` and `tombstones/package` completely and, for any
+  INTENT found, its `attempts/<X>`. No earlier scan is reused.
+- AL3 It applies the T rows store-wide. A single INTENT in T-A, T-B or
+  T-C is rolled back under this hold. Any other INTENT state (two
+  INTENTs, a mismatching companion, an invalid INTENT, an INTENT key
+  holding another executionId's object) is class D: the lock is released
+  and CREATE is REFUSED/INELIGIBLE exit 5 with nothing written.
+- AL4 Every remaining claim and tombstone must name an executionId whose
+  S6 is COMMITTED, with the matching rootKey or consumedKeys entry and
+  bindingDigest (the K2/K3 key correspondence). Anything else is class D,
+  refused as in AL3.
+- AL5 Against this scan it re-checks the request's rootKey (an S8 at it:
+  the existing §4.3 item 6 claim refusal), both consumedKeys (an S9 or
+  S10 at either: REFUSED/REPLAY), the §7.1 executionId non-reuse rule (an
+  S2 or S6 for it), the §7 capacity bounds, and remaining A (past it:
+  REFUSED/RECOVERY_BUDGET_EXHAUSTED). Each refusal releases the lock with
+  nothing written.
+- AL6 Only then does it perform reservation steps 1–9 (S6 INTENT, S2,
+  S3 entry 0, S4, S8, S9, S10, S7, rename of S7 over S6, then fsync of
+  `transactions`), holding the lock continuously. The span contains no
+  manager call, client frame or other lifecycle wait.
+- AL7 It releases the lock only after step 9 is durable; the ACCEPTED
+  frame and P1S follow the release. If a step of AL6 fails, the broker
+  rolls its own INTENT back under the same hold and releases only after
+  that rollback is durable. The CREATE is then REFUSED before the
+  reservation commit (§5.6.4). If the rollback also fails, or the
+  process dies, the lock ends with the process and the INTENT stays for
+  the next holder (§7.4 S0: the client gets no REFUSED and exits 7).
+
+The T rows of CREATE C5 (1) and RECONCILE R4 (1) use the same lock:
+AL1, AL2 and AL3, then release. RECONCILE waits for it without a separate
+deadline, because every holder's span contains only bounded
+protected-store I/O (§6.4: a host whose storage stalls fails
+qualification). These earlier holds only make pre-create reconciliation
+start from a store without an INTENT; AL2–AL3 at CREATE C7 are
+authoritative.
+
+At most one INTENT (proof). (a) An S6 INTENT is created only in AL6,
+while holding the lock. (b) AL3 established, under the same continuous
+hold, that no INTENT exists. (c) No other process can create one before
+the holder releases. The holder releases only after its own INTENT is
+COMMITTED or durably rolled back, or by dying, since the descriptor is
+O_CLOEXEC and no child holds it. (d) So whenever the lock is free, no
+live process owns any INTENT in S. The next holder, CREATE at AL2–AL3 or
+RECONCILE at R4 (1), sees that INTENT and rolls it back, or refuses
+(class D), before any new INTENT can exist. The same argument makes T
+rollback safe: an INTENT observed under the lock never belongs to a live
+writer. Claims and tombstones are created only in AL6. While a holder is
+inside AL2–AL6, the set its AL5 check read can therefore only shrink, by
+a P6 or A-REL release of a terminal attempt's claim, and a shrink never
+makes that check unsafe.
+
+R4 and C5 order. R4 is, after R1a–R3: (1) under a hold of the admission
+commit lock with its own rescan (AL1–AL3, then release; C7), the
+T rows of the matrix over the whole store, independent of the requested
+executionId and of attempt ownership, for the single enrolled caller
+authenticated at R1a; (2) lookup of X (absent after (1):
+REFUSED/INPUT_MISMATCH, §20.4.7) and the ownership check; (3) under X's
+operation lock, the A-RES row for X and K1–K5 for X (class D: refusal as
+above). CREATE C5 performs (1), then (3) and Cases A–H for every
+incomplete attempt it reconciles, and the A-REL release of every
+release-pending claim, before §5.6.4 step C6 (W3 free space, W5
+binding). CREATE C7 then runs AL1–AL7, whose AL2–AL3 are the
+authoritative T-row pass (C7). Neither R1a nor R4 reads the enrollment
+enabled flag (§5.6.4 R1a).
+
+C8 authority of the steps after the release. R4 (2) is decided from the
+R4 (1) scan made under the hold: X is present only if that scan saw an
+S6 of X with phase COMMITTED, which is retained permanently and never
+reverts, so the fact stays true after the release; X absent from that
+scan, after its T rows, is REFUSED/INPUT_MISMATCH as before; an INTENT of
+X seen there was rolled back or made the invocation class D by R4 (1).
+R4 (3) acquires X's operation lock only after that release. CREATE C5 (3)
+likewise reconciles and releases only executionIds whose S6 the C5 (1)
+scan saw COMMITTED. Every other object seen after the release is handled
+by lock hierarchy H6 (deferred to the GLOBAL-protected rescan). No step
+reads anything new for this; it fixes which earlier scan is authority.
+The one exception is the namespace membership read of H9 (C9, made at
+every namespace enumeration and clean-namespace proof since C10), which
+reads an exact S6 only to prove that a unit is not an unknown member. The
+GLOBAL hold scan fixes only which executionIds exist and are COMMITTED;
+the head, controller and manager facts of X are always re-read under X
+(H8).
+
+Lock hierarchy (C8, normative). GLOBAL is the admission commit lock
+(flock on the S0 descriptor); X is the per-execution operation lock of
+one executionId (flock on `attempts/<X>`).
+
+- H1 Order. The only permitted mixed order is GLOBAL → X: a broker that
+  holds both acquired GLOBAL first. X → GLOBAL is forbidden; no
+  execution path holds an X lock while it waits for GLOBAL. There is no
+  lock upgrade from X to GLOBAL.
+- H2 One X at a time. A broker holds at most one X lock at any instant
+  and never waits for an X lock while holding another.
+- H3 Closed lock use in layout v1:
+
+  | Path | GLOBAL | X |
+  |---|---|---|
+  | CREATE C5 (1) and RECONCILE R4 (1): rescan, T rows, T rollback | Held | None |
+  | CREATE C5 (3) A-INC, A-RES, A-REL; RECONCILE R4 (3), R5–R7 | None | One COMMITTED attempt's X at a time, short spans only (H8) |
+  | CREATE C5 unit-namespace scan, including the H9 membership read | None | None |
+  | Clean-namespace proofs H9 (ii)–(v) (P1S PRESUBMIT_FAILURE and CLIENT_LOST, Case E in C5 (3) and R5, §6.3 reboot), including their H9 membership reads (C10) | None | Only the proof attempt's own X, inside its short span (H8); never an X of an enumerated Y |
+  | Any lifecycle, manager or client wait (Cases A–H, §6.4 P3–P5) | None | None (H8) |
+  | CREATE C7 AL1–AL7, including the AL3 T rollback and AL6 reservation steps 1–9 | Held | None |
+  | The CREATE's own transitions, terminal commit and P6 release after AL7 | None | Its own X, short spans only (H8) |
+
+  No closed path of layout v1 acquires an X lock while holding GLOBAL.
+  AL6 and T rollback need none: GLOBAL alone excludes every writer of an
+  INTENT-era object, because every X-lock writer (transition, terminal
+  commit, A-RES rollback, Cases A–H, release) requires an S6 with phase
+  COMMITTED, and INTENT → COMMITTED happens only under GLOBAL. Any future
+  path that needs both must acquire them GLOBAL → X; C8 adds none. That
+  also keeps every GLOBAL span free of a wait on an X holder, so the
+  AL6 bounded span and the deadline-free RECONCILE wait for GLOBAL stay
+  valid.
+- H4 Empty X set before GLOBAL. Before any GLOBAL acquisition (CREATE
+  C5 (1), CREATE C7 AL1, RECONCILE R4 (1)) the broker holds no X lock.
+  Every X lock taken earlier in the invocation (only C5 (3) qualifies) is
+  fully released, with its completed durable post-condition (a durable
+  transition, terminal commit, A-RES rollback or release per the write
+  orders), and is never carried across AL1.
+- H5 No upgrade. A path that, while holding X, discovers that it needs
+  GLOBAL releases X, does not reuse any observation made under that X
+  hold as authority, and re-enters its closed lock sequence at the next
+  GLOBAL step (CREATE: AL1 and the full AL2 rescan; RECONCILE: a fresh
+  invocation from R4 (1)); then, if still necessary, it takes X in
+  GLOBAL → X order or after releasing GLOBAL. No closed step of layout v1
+  under X needs GLOBAL.
+- H6 Pre-global scans. A scan made without GLOBAL (CREATE C5 (3) and its
+  unit-namespace scan, whose units are decided by H9; RECONCILE R4 (3))
+  may observe INTENT-era-possible
+  objects: an S6 with phase INTENT; an S7; an S2 and its S3, S4 or S5
+  whose executionId the last GLOBAL hold scan of the invocation did not
+  see COMMITTED; and a claim or tombstone that scan did not prove to
+  belong to a COMMITTED S6. Such a scan does not classify them as T;
+  does not classify them as D merely because their writer may be live
+  (it does not apply K1, K6, K7 or the store-wide accounting clauses of
+  K2 and K3 to them, and under X it evaluates K1–K5 only over objects
+  naming X); does not mutate them; never acquires their X lock; and
+  defers their authoritative disposition to the GLOBAL-protected rescan
+  (AL2–AL4 of the same CREATE, or the R4 (1) or C5 (1) of a later
+  invocation). They are only OBSERVED / DEFERRED TO GLOBAL RESCAN: control
+  flow, not a journal state, matrix class, durable reason, output value
+  or refusal.
+- H7 Authoritative rescan. Only a scan made under GLOBAL decides whether
+  an INTENT is T-A, T-B, T-C or class D, and INTENT-era objects are
+  mutated only under GLOBAL. GLOBAL is never released while authoritative
+  INTENT mutation continues: a T rollback is durable, or the process has
+  died, before the release (AL3, AL7). If T recovery ever needed the
+  INTENT's X lock it would take it only while holding GLOBAL (H1); layout
+  v1 T rollback takes none (H3).
+- H8 Short X spans (C9; the §7 rule "short per-attempt operation locks
+  … never held across lifecycle waits" governs and is not superseded).
+  (a) An X span contains only protected-store I/O of X, the H9
+  membership reads of a clean-namespace proof made in that span (C10;
+  lockless, acquiring no lock), and the
+  individual manager or cgroup calls and reads that §7 serializes with
+  X's journal transitions (for example a StopUnit or KillUnit call, a
+  unit-property read, a cgroup.events read), each within its existing
+  §6.3/§6.4 allowance. The one exception is the P1S terminal-evidence
+  ListUnitsByPatterns of H10 (C11), which has no §6.3/§6.4 allowance and
+  is admitted only within the E allowance of H10, at sites (ii) and (iii).
+  H10 gives no allowance to any other manager call. A single bounded,
+  synchronous, read-only manager call is not a lifecycle wait. It never contains a lifecycle wait: a wait for a
+  unit state, job or deactivation change, the §6.4 P3 execution
+  interval, the P4 stop/SIGKILL and empty-confirmation intervals, P5
+  proposal receipt, any client frame, any Cases A–H wait, or a wait for
+  GLOBAL or for another X. (b) Before such a wait the holder completes
+  the durable post-condition of its span (a durable transition, terminal
+  commit, A-RES rollback or release per the write orders; for example
+  ORPHANED durable before stop, §7) and then releases X. During the wait
+  it holds no X and no GLOBAL, writes no protected-store object and uses
+  no protected-store read as authority. (c) To act on the result of the
+  wait, the broker re-acquires X before any journal or state mutation and
+  before any manager action that depends on it. That acquisition is a
+  blocking acquisition with no lock held (H1, H2, H4 unchanged). In CREATE
+  it is inside P1 or the CREATE's own phase budget and is counted against
+  them, as for AL1. In RECONCILE it is inside its §6.3 bound. The one
+  exception (C12) is the acquisition of P's X after an irrevocable H10 (b)
+  selection. That acquisition is the terminal X acquisition
+  synchronization interval of H10 (j). It is counted against no phase
+  budget (not S, not E, not A), extends or starts none, and the contract
+  claims no upper bound on its elapsed time. (d) Under the re-acquired
+  X the broker re-reads, from the protected-store descriptors, S4, the
+  committed view and every additional object of X, applies the
+  classification order and K1–K5 for X again, and re-observes the live
+  manager and cgroup facts that its next write or manager action depends
+  on. (e) A snapshot made before the latest X acquisition (the pre-wait
+  head, an earlier classification, the wait's own observations) is never
+  authority for a journal write, terminal commit, release, A-RES rollback
+  or manager action. The wait result only says when to re-check. (f) If
+  S4 is byte-equal to the value that was durable when the broker
+  released its previous X span (including any transition that span
+  committed), and no
+  additional object of X exists, the plan continues from the facts
+  re-observed under (d). Otherwise the previous plan is discarded,
+  nothing from it is written, and the broker re-runs the closed
+  classification and disposition from the new committed view: A-RES is
+  rolled back first; an incomplete head goes through Cases A–H; a
+  terminal or QUARANTINED head takes the committed-outcome path (R7, or
+  A-REL in C5) and is never rewritten; class D is refused as before. This
+  is the existing §7 rule that one terminal writer wins, others return the
+  committed record, and an attached CREATE observes the transition and
+  cannot accept a late PASS. One qualification (C13): inside a live H10
+  terminal-evidence invocation, the A-RES branch is followed by the
+  mandatory post-rollback re-read of H10 (k) (3) (iii). Only a re-read
+  proving that invocation's exact original PREPARED/NOT_SENT state
+  resumes its own H10 path (H10 (k) (3) (iv)) instead of Cases A–H.
+  Every other result keeps the disposition of this clause, with two
+  qualifications inside a live H10 invocation (C14). First, S4 equality
+  and no additional object do not by themselves continue the H10 plan:
+  H10 (k) (1) also requires a valid committed view, valid K1–K5 and the
+  exact original classification, and class D outranks it. Second, a
+  disposition that would need a Case E namespace proof makes no
+  enumeration there and gives QUARANTINED / CLEANUP_UNPROVEN / 7 (H10 (k)
+  (3) (v) (B); H9 failed-proof reason, C15). (g) Termination: a head moves only forward
+  along the §7 successor table, with at most 1024 entries, and every
+  wait is inside an existing phase budget, except the single terminal
+  acquisition of H10 (j) (C12). That one is outside every budget, happens
+  once per invocation and is never repeated by a loop. So re-acquisition
+  adds no unbounded loop. A finite holder span means each individual
+  hold ends. It does not bound how long a particular waiter waits
+  (deadlock freedom is not starvation freedom, see the deadlock proof
+  below). A discarded plan does not reset any deadline. H8
+  introduces no timeout, and no timeout serves to resolve a deadlock
+  (deadlock freedom below is structural). The C11 allowance E of H10
+  bounds one manager call and resolves no lock wait.
+- H9 Unit-namespace membership (C9; scope C10). H9 is the single
+  membership rule of every Controlled-v1 enumeration of the unit
+  namespace qa-agent-exec-v1-* (§4.3 item 6, §6.2) and of every
+  clean-namespace proof. Its closed sites are: (i) the CREATE C5
+  unit-namespace scan (§6.2, §7); (ii) the §6.4 P1S PRESUBMIT_FAILURE
+  no-send/no-unit/clean-namespace proof; (iii) the equivalent proof for
+  P1S CLIENT_LOST (§6.4, §7.4 S1); (iv) the Case E no-unit/clean-namespace
+  proof wherever Case E is applied, in CREATE C5 (3) A-INC and in
+  RECONCILE R5 (§7), and at no other site (C14: a Case E disposition
+  reached inside a live P1S H10 invocation through H10 (k) (3) (v) is not
+  site (iv); it makes no enumeration and its proof is NOT ESTABLISHED,
+  giving QUARANTINED / CLEANUP_UNPROVEN / 7, C15); (v) the clean-namespace part of the §6.3 reboot
+  proof, wherever it is used (Case D and every other path that relies on
+  boot-change). The emptyBy=not-submitted proof of §11.1 and §11.3 is the
+  record-level statement of (ii)–(iv) and is made only by them. Every
+  other normative text that requires a clean namespace or an
+  unknown-member check refers to one of these sites; no site has a
+  membership rule of its own. Each enumeration runs this one algorithm:
+  (1) It first enumerates the units of the namespace (the bounded
+  read-only ListUnitsByPatterns of §6.3, at most 256 units, §7; at sites
+  (ii) and (iii) this is exactly the one E-bounded call of H10, C11). (2) A
+  unit with the qa-agent-exec-v1- prefix whose name does not match the
+  whole-string grammar ^qa-agent-exec-v1-[0-9a-f]{32}\.service$ has no
+  executionId. H9 makes no read for it and never binds it; it keeps the
+  existing unbound/unknown-member fail-closed handling (§6.2 runner
+  quarantine, no wildcard kill, nothing written). (3) For each matching
+  unit it extracts the executionId Y from the name. Then it makes one
+  descriptor-anchored lockless read of `transactions/<Y>.json`: openat on
+  the `transactions` descriptor of S, with O_NOFOLLOW, requiring a regular
+  file, root:root 0600 and link count 1 (the layout file rule above). This
+  read is made unconditionally for every matching unit at every site,
+  whether or not a GLOBAL hold scan precedes the site and whatever such a
+  scan saw. The absence of a preceding GLOBAL snapshot never makes a
+  legitimate concurrent COMMITTED unit unknown. (C9 skipped the read at
+  C5 for a Y that the C5 (1) scan saw COMMITTED. Because COMMITTED is
+  permanent, the unconditional read yields the same classification for
+  every intact S6, so the C9 resolution of the C5 scan is unchanged.) (4)
+  The unit
+  is a known member only if that read yields exactly the S6 schema with
+  phase COMMITTED and executionId Y. An exact COMMITTED S6 is an immutable,
+  permanent transaction fact: it never reverts, is never rewritten and is
+  never rolled back (H3, K2). A unit is created only after the
+  reservation commit (§6.4 P1S, P2), so a legitimate unit observed first
+  always reads back COMMITTED. Within every enumeration the order
+  unit-before-S6 is therefore mandatory. (5) The read is proof authority
+  only for "this
+  unit is not an unknown member". It is not authority for any journal or
+  protected-store mutation, T or D classification, A-RES or other
+  recovery, claim or tombstone action, terminal decision, manager or
+  controller action, controller-binding match, or retry, and no site
+  acquires an X lock for Y. (6)
+  Every mutable head, controller and manager fact of Y stays subject to
+  H8 and Cases A–H under Y's X, and Y's transaction and companions are
+  decided by the GLOBAL-protected rescan (H6, H7). (7) An S6 of Y with phase
+  INTENT, an absent S6, a malformed or non-regular S6, or an S6 whose
+  executionId is not Y does not make the unit legitimate. The unit is an
+  unknown member, with the existing fail-closed handling (§6.2 runner
+  quarantine, no wildcard kill, nothing written). An INTENT S6 is still
+  not classified or touched outside GLOBAL (H6).
+  Proof's own attempt. At sites (ii)–(v) the proof concerns one attempt
+  P. The unit named for P is never classified by H9: its presence fails
+  the no-unit part whatever P's S6 says (P's S6 is COMMITTED by
+  construction), with the site's existing outcome. The namespace is clean
+  for P exactly when no unit is named for P and every other enumerated
+  unit is a known member under (4). An unknown member fails the proof
+  with the site's existing outcome (QUARANTINED 7 with reason
+  CLEANUP_UNPROVEN at (ii)–(iv), C15; at (v), no boot-change proof, so
+  the existing Case D outcome applies) and with the existing §6.2 runner
+  quarantine. A known member never fails it.
+  Failed-proof reason (C15; owner decision
+  OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C15). This paragraph governs exactly
+  one outcome class, the PREPARED/NOT_SENT proof-failure class. Its
+  members are the cases where the head is PREPARED with submission
+  NOT_SENT, the outcome requires the no-send/no-unit/clean-namespace
+  proof of site (ii), (iii) or (iv), or the Case E proof that H10 (k) (3)
+  (v) (B) cannot make, and that proof is NOT ESTABLISHED. The proof is
+  NOT ESTABLISHED whatever the low-level cause. Causes include: no
+  complete authenticated enumeration reply within the site's allowance
+  (manager timeout or blocked queue, manager or D-Bus failure, malformed
+  reply, reply not from the authenticated manager, more than 256 units;
+  H10 (e)); the unit named for P is present; an unknown member under H9
+  (2) or (7), including an S6 read that cannot establish membership;
+  protected evidence that the proof needs cannot be read; and a site
+  that has no legal allowance for the enumeration (H10 (k) (3) (v) (B),
+  zero calls). For every member of this class the outcome is exactly:
+  status QUARANTINED, reason CLEANUP_UNPROVEN, exit 7. CLEANUP_UNPROVEN
+  is the existing §11.3 QUARANTINED reason. Here it means that the
+  required proof that the attempt sent nothing, has no unit and left the
+  namespace clean could not be established. The reason follows the
+  failed proof class, never the low-level cause. Inside this class a
+  manager-call failure is not CONTROLLER_FAILURE, an unprovable or
+  present unit is not MISSING_UNIT_PROOF, and an unknown member or
+  unreadable evidence is not STATE_INCONSISTENT. The H10 (b) selection
+  of PRESUBMIT_FAILURE or CLIENT_LOST never overrides this reason. A
+  clean proof keeps its existing outcome: PRESUBMIT_FAILURE 7 at site
+  (ii) and site (iv), and CLIENT_LOST 7 at site (iii), with
+  emptyBy=not-submitted. There is no implementation choice.
+  Scope of the class. It applies only where this proof is the deciding
+  failure. A rule that already decides the input first keeps its outcome.
+  These rules are a committed outcome (H10 (k) [1], R7, A-REL), class D
+  or another write-forbidding state (H10 (k) [2], the H8 (f) class-D
+  refusal) and the dispositions of H10 (k) (3) (v) (A). Outside the class
+  nothing changes. CONTROLLER_FAILURE keeps its existing controller and
+  systemd failure dispositions (§7.3 table). MISSING_UNIT_PROOF keeps its
+  existing dispositions after submission or binding, including the §7.4
+  S2 SUBMITTING/BOUND controller-state-disappears row. STATE_INCONSISTENT
+  keeps its existing structural and store dispositions. Every other
+  existing use of CLEANUP_UNPROVEN, and site (v) with its Case D outcome,
+  is unchanged. A missing or present unit of a PREPARED/NOT_SENT head
+  is never relabelled MISSING_UNIT_PROOF.
+  Record, journal, incident and frame. The broker commits the class
+  through the existing terminal/QUARANTINED commit under P's X. It writes
+  the existing AutomationExecutionRecord v2 (§11.3, K4) with status
+  QUARANTINED and reason CLEANUP_UNPROVEN. Every other member
+  (binding, controller, timeline, process, result, capture, cleanup)
+  takes the value that the existing §11.3 and K4 rules already give for
+  this PREPARED/NOT_SENT QUARANTINED head; C15 adds no member rule.
+  recordDigest is the existing v2 digest of that exact record, so it
+  covers the CLEANUP_UNPROVEN bytes. The S11 reason is CLEANUP_UNPROVEN.
+  The S13 base incident reason is the S11 reason (K5), so it is
+  CLEANUP_UNPROVEN. If a client is connected, the final QUARANTINED
+  frame carries that record, and its reason is the record reason
+  (§11.3), CLEANUP_UNPROVEN. S11, recordDigest, S13 and the frame never
+  differ, and the broker writes no other reason bytes for this class.
+  The existing permanent QUARANTINED semantics apply unchanged: root
+  claim retained, no ordinary release, no retry, incident resolution
+  UNSUPPORTED_IN_CONTROLLED_V1, and the §6.2 runner quarantine for an
+  unknown member. Crash. The reason is chosen when the commit is made,
+  from the durable state and the proof result of that commit's own
+  span. An in-memory choice is never durable authority. A crash before
+  the QUARANTINED commit is durable leaves PREPARED/NOT_SENT (H10 (h)).
+  The next CREATE C5 (3) or RECONCILE R5 applies ordinary Case E at site
+  (iv). It gives PRESUBMIT_FAILURE 7 on a clean proof and QUARANTINED /
+  CLEANUP_UNPROVEN / 7 when the proof is again NOT ESTABLISHED. No hidden
+  state is needed. C15 adds no reason, status, outcome, exit code,
+  schema, field, incident type, journal state, broker operation, H9
+  site, D-Bus allowance, CLI/API/config surface, timeout or hash domain.
+  Placement. Sites (ii)–(v) run inside a short span of P's own X (H3, H8).
+  Their enumeration and H9 reads are part of the live facts that span
+  re-observes before its write (H8 (a), (d)). The H9 read takes no lock,
+  so H1, H2 and H4 are unchanged. A membership result is never carried
+  across an X release: after any wait the proof is made again under the
+  re-acquired X (H8 (e)). That redo applies only at sites (iv) and (v).
+  At sites (ii) and (iii), H10 keeps the enumeration, the H9 reads and the
+  terminal write in one X span with no wait, so a second enumeration is
+  never needed and is forbidden. Site (i) holds no lock. The §20.2.7 OW predicate
+  is a qualification-time rule under QZ2, not a runtime namespace proof,
+  and is unchanged.
+  This lockless authority applies to S6 for namespace membership only. It
+  extends to no other protected-store object and to no other decision.
+- H10 P1S terminal-evidence enumeration (C11, owner option (a); qualifies
+  the §6.4 P1S sentence "no D-Bus call is made", §20.0). This is the only
+  rule that lets a D-Bus call happen in P1S.
+  (a) Normal path. Until a terminal failure decision of (b) is made, and
+  on every P1S that reaches the SUBMITTING write, the broker makes zero
+  D-Bus calls (manager or bus driver), with no H9 enumeration. No manager
+  interaction is allowed while P1S can still proceed toward SUBMITTING.
+  P2 begins only at the durable SUBMITTING write, as in §6.4.
+  (b) Irrevocable selection. The terminal-evidence path starts only after
+  the broker has irrevocably selected one of the two existing P1S
+  terminal paths: PRESUBMIT_FAILURE (a recheck failure, a step failure or
+  S exhaustion) or P1S CLIENT_LOST (§6.4, §7.4 S1). The selection is
+  in-memory control flow, not a journal state, reason or output value. It
+  is final for that invocation, with exactly the meaning below. From it on, the SUBMITTING write, every
+  remaining P1S step (envelope work, post-reservation recheck,
+  propertiesDigest), StartTransientUnit, a new reservation and a retry of
+  the same execution are unreachable. Nothing durable is written for the
+  selection. The durable head stays PREPARED with submission NOT_SENT
+  until the terminal write of (f). S exhaustion enters this path. It does
+  not skip the proof.
+  Meaning of "irrevocable" (C13, owner option 2). It has exactly two
+  parts. (1) The abandonment of submission is irrevocable in every
+  branch and in every later state. (2) The selected existing reason,
+  PRESUBMIT_FAILURE or CLIENT_LOST, is the reason this invocation writes,
+  but only on its own H10 path. That path continues on the valid
+  unchanged exact original state of (k) (1) (C14: S4 equality and no
+  additional object are not enough; the committed view, K1–K5 and the
+  exact original classification must also be proven), or after the
+  closed benign recovery of (k) (3) (ii)–(iv): exact A-RES, exact
+  rollback, mandatory fresh re-read, and the exact original
+  PREPARED/NOT_SENT state proven restored. The selected reason
+  is not a general outcome override. It has no authority over an outcome
+  already committed by another broker ((k) (2)), over class D or another
+  state that forbids this invocation's terminal write ((k) (3) (i)),
+  including one whose S4 is unchanged, over any state of (k) (3) (v),
+  including the QUARANTINED 7 given there when a Case E namespace proof
+  cannot be made (C14), or over the QUARANTINED 7 of failed evidence
+  ((e), (f)). Both of those QUARANTINED 7 outcomes carry reason
+  CLEANUP_UNPROVEN (H9 failed-proof reason, C15). The reason is
+  invocation-local. It is never written and never reconstructed from
+  PREPARED/NOT_SENT, and it does not survive the invocation ((h)).
+  (c) The one call. Holding P's X for the terminal span (C12: acquired at
+  the end of the synchronization interval of (j), outside S and E, and
+  revalidated under (k)), and only if (k) leaves the terminal plan in
+  force (branch (1), or the exact restoration of branch (3) (iv), C13),
+  the broker makes exactly one read-only
+  org.freedesktop.systemd1 Manager ListUnitsByPatterns call. Its arguments
+  are those of every other H9 enumeration, and it serves solely as the
+  H9 (1) enumeration of site (ii) or (iii). No other method is allowed on
+  this path: not StartTransientUnit, StopUnit, KillUnit, ResetFailedUnit,
+  GetUnit, Properties.GetAll, RefUnit or UnrefUnit, no other manager
+  mutation, launch, relaunch, retry or submission operation, and no
+  bus-driver call. There is no fallback method, no second enumeration and
+  no polling loop. An A-RES rollback of (k) (3) (ii) and every re-read of
+  (k) make no D-Bus call. Branch (3) (v) of (k) never makes this call or
+  any other D-Bus call (C14). After an exact restoration the one call is
+  still the site (ii) or (iii) enumeration of the original selection,
+  never a Case E site (iv) enumeration (C13). The H9 reads of `transactions/<Y>.json` are
+  protected-store reads, not D-Bus calls. P has no bound unit (controller
+  null), so the P6 release of this path makes none of the RefUnit,
+  ResetFailedUnit or UnrefUnit calls of the §6.4 P6 row. That release is
+  protected-store I/O and leaf removal only.
+  (d) E. E = 5000 ms is a fixed internal broker constant. It is not
+  configurable and is not part of ProjectProfile, config, a CLI option,
+  the environment or any public API, schema or output field. E applies
+  only to the call of (c). Its origin is the monotonic instant after the
+  selection of (b), after P's X is held and after the (k) revalidation,
+  immediately before the call is issued. On the A-RES path of (k) (3) the
+  (k) revalidation is complete only when the initial re-read has found
+  the exact A-RES, the rollback is durable, and the mandatory
+  post-rollback re-read has proven the exact original state of (k) (3)
+  (iv) (C13). E bounds that manager call and
+  nothing else (C12). It does not include the synchronization interval of
+  (j), the (k) re-reads, an A-RES rollback of (k) (3) (ii), the H9 S6
+  reads of (l), the terminal fsync or the release I/O. An X wait longer than 5000 ms consumes no E, because E has
+  not begun. Once X is held and (k) is complete, the call still gets the
+  full 5000 ms. The call must return a complete reply within E of that
+  origin. The broker enforces E with its own monotonic deadline on the
+  blocking call, and a late reply is discarded unused. E never renews or
+  resets. It never extends, restarts or resets S, grants no further P1S
+  progress, and permits neither SUBMITTING nor StartTransientUnit. No
+  unused time moves from S to E or from E to S. E is added to no other
+  budget (A, T, R or any other phase).
+  (e) Evidence failure. If the call does not return a complete reply
+  within E (timeout or blocked queue), fails at the manager or D-Bus
+  layer, returns a reply that is malformed or not from the authenticated
+  manager, or returns more units than the existing 256-unit namespace
+  bound (§7), then the clean-namespace proof is NOT ESTABLISHED. The
+  existing proof-failure outcome applies: QUARANTINED 7 (§6.4), with
+  reason CLEANUP_UNPROVEN (H9 failed-proof reason, C15), whether (b)
+  selected PRESUBMIT_FAILURE or CLIENT_LOST, and never
+  CONTROLLER_FAILURE because the manager call failed. There is
+  no retry, no alternate API and no downgrade to PRESUBMIT_FAILURE, and
+  no new reason, outcome, exit code, refusal code or state exists.
+  (f) After a complete reply. H9 (2)–(7) and its own-attempt rule apply
+  unchanged: exact grammar, own-unit handling, exact Y extraction,
+  descriptor-anchored lockless S6 reads, COMMITTED S6 as membership-only
+  proof, no X of any Y. No unit named for P and every other matching unit
+  a known member means the namespace is clean. The broker then writes the
+  selected existing outcome of (b) (PRESUBMIT_FAILURE 7, or CLIENT_LOST 7, with
+  emptyBy=not-submitted), also after an exact restoration under (k) (3)
+  (iv). Otherwise the existing fail-closed handling
+  applies (QUARANTINED 7 with reason CLEANUP_UNPROVEN, C15, whatever
+  reason (b) selected, with the §6.2 runner quarantine for an unknown
+  member). The enumeration, the H9 reads and this terminal write are one
+  span of P's X, with no wait and no X release between them. A clean
+  proof is terminal evidence only. It never authorizes submission or a
+  return to P1S progress. The order is always
+  selection → evidence → terminal outcome.
+  (g) CLIENT_LOST without a client. The client may be gone, so no TERMINAL
+  or QUARANTINED frame may be delivered and no synchronous exit is
+  observed. The broker still runs (c)–(f) and commits the outcome
+  durably. A later RECONCILE returns that committed record (R7) and never
+  re-evaluates it.
+  (h) Crash. If the broker dies at any point of (b)–(f) before the
+  terminal write is durable, the head stays PREPARED/NOT_SENT. The next
+  CREATE C5 (3) or RECONCILE R5 applies Case E (H9 site (iv)) with that
+  site's own existing allowance. E is not carried over and does not apply
+  there. The same holds on the A-RES path of (k) (3) (C13), and for a
+  crash before the QUARANTINED 7 of (k) (3) (v) (B) is durable (C14): the
+  later invocation uses the existing durable recovery and ordinary Case
+  E at site (iv), and reconstructs neither the selected reason nor the
+  in-memory (k) (3) (v) disposition. A crash during
+  the rollback leaves a shorter exact A-RES prefix, or the empty prefix,
+  over the same head (A-RES crash idempotence). A crash after the
+  rollback and before the fresh re-read, after the re-read and before the
+  E origin, after the E origin and before the call, during the call, or
+  after the evidence and before the terminal write is durable leaves
+  PREPARED/NOT_SENT, with at most such a residue. In every case the next
+  CREATE C5 (3) or RECONCILE R5 rolls back any residue and applies Case E
+  at site (iv), with PRESUBMIT_FAILURE 7 or QUARANTINED /
+  CLEANUP_UNPROVEN / 7 (C15), even when the crashed invocation had
+  selected CLIENT_LOST. The selected reason is
+  authority only while the invocation that made it is alive. No later
+  invocation reconstructs it from PREPARED/NOT_SENT, and no journal field,
+  state, record or other durable object carries it.
+  (i) Timing (C12; replaces the C11 text that presented
+  P0+P1+S+E plus I/O as the terminal-path bound). Successful CREATE
+  timing is unchanged. Neither E nor the interval of (j) is added to a
+  successful P1S. A P1S terminal-evidence path ends without P2–P5. Its
+  budgeted execution work is P0+P1+S+E, that is
+  <=5000+120000+30000+5000 ms, plus the bounded local work of (k) and (l)
+  and the existing terminal commit/release I/O (P6, without manager
+  calls). That figure excludes synchronization contention while the
+  broker waits for P's X. It is not a complete wall-clock bound, and the
+  contract claims no hard wall-clock completion time for a terminal P1S
+  path under adversarial repeated X contention. The terminal-side
+  timeline is, in order:
+  TL1. P0, P1 and S budgeted work, up to the selection of (b);
+  TL2. the terminal X acquisition synchronization interval of (j), outside
+  S and E, with no hard wall-clock bound under adversarial repeated
+  contention;
+  TL3. after X is held, the H8 re-read and revalidation of (k), including
+  on the A-RES path of (k) (3) the initial re-read, the exact A-RES
+  rollback and the mandatory post-rollback re-read (C13);
+  TL4. the E-bounded manager call of (c) and (d), E <= 5000 ms, only
+  after the original H10 evidence path is in force under (k) (1) or (k)
+  (3) (iv);
+  TL5. the bounded H9 local protected-store evidence processing of (l);
+  TL6. the existing durable terminal commit/release I/O of (f) and P6.
+  None of TL2–TL6 is charged to S. Only TL4 is charged to E. §6.4 "none
+  is borrowed from another" holds. The TL2 interval is not borrowed S, not
+  borrowed E and not a new phase budget. It is a synchronization interval
+  outside every budget counter. No unused S moves to E and no unused E
+  moves to S. As for every other protected-store I/O, kernel storage
+  stalls in TL3, TL5 and TL6 are not abortable and get no hard real-time
+  bound (§6.4: a host whose storage stalls fails qualification).
+  (j) Terminal X acquisition synchronization interval (C12). This interval
+  begins at the irrevocable selection of (b), PRESUBMIT_FAILURE (including
+  S exhaustion) or P1S CLIENT_LOST. It ends when P's X is acquired. It is
+  the H8 (c) blocking acquisition of P's X, made with no lock held. If X
+  is free, it ends at once. While it lasts:
+  (1) It is not charged to S or E. It neither extends, resets nor restarts
+  S, and it does not start E.
+  (2) It grants no P1S progress authority. The SUBMITTING write,
+  StartTransientUnit, every remaining P1S step, a retry and a new
+  reservation stay forbidden, as in (b).
+  (3) It cannot change the selected terminal path back to the success
+  path or to the other terminal path. The control-flow direction stays
+  monotonic. A later (k) revalidation can end the path without this
+  invocation's selected-reason write (committed outcome, class D, or
+  another state of (k) (3) (v), which may give QUARANTINED 7, C14, with
+  reason CLEANUP_UNPROVEN under (3) (v) (B), C15). It
+  never switches this invocation's own H10 write to the other reason
+  (C13, (b)).
+  (4) The waiting broker holds no GLOBAL and no other X, and it attempts
+  no lock upgrade (H1, H2, H4 unchanged).
+  The interval precedes the terminal span of (f). It is not a wait inside
+  that span and not an after-wait redo under H9 Placement, so it does not
+  require a second enumeration. Every holder of P's X (for example
+  RECONCILE(P) R5, or another CREATE's C5 (3), running Case E, §7.4 S1)
+  holds it for one finite closed H8 span. Such a span has no lifecycle,
+  client or manager-state wait and no indefinite polling. It contains a
+  finite set of local protected-store and manager actions, and its
+  durable post-condition is complete before X is released (H8 (a), (b)).
+  So no single holder can legally keep P's X for an unbounded lifecycle
+  interval. That does not give the waiter a hard elapsed-time bound.
+  flock acquisition order and fairness are not an architectural
+  guarantee. Controlled-v1 does not claim FIFO X admission, starvation
+  freedom under adversarial repeated contention, or a hard wall-clock
+  upper bound on acquiring X. When a holder releases, the waiter stays
+  eligible to acquire according to kernel flock behavior, with no
+  contract-level ordering guarantee. It does not necessarily acquire next.
+  Correctness does not depend on how long the interval lasts. No timeout,
+  deadline, state, reason, outcome, exit code, refusal code or retry path
+  is introduced for it.
+  (k) Revalidation after acquisition (C12; applies H8 (d)–(f)). Under the
+  acquired X, and before the E origin, the broker re-reads from the
+  protected-store descriptors S4, the committed view and every additional
+  object of P. It then applies the classification order and K1–K5 for P
+  again. The pre-wait terminal plan is never mutation authority by itself
+  (H8 (e)). There are three branches. Their precedence is closed (C13)
+  and exhaustive (C14). Highest first:
+  [1] an outcome already committed: (2);
+  [2] class D or another state that forbids this invocation's terminal
+  write, also when S4 is byte-equal and no additional object exists:
+  (3) (i);
+  [3] the valid unchanged exact original state: (1);
+  [4] exact A-RES followed by exact restoration: (3) (ii)–(iv); a
+  post-rollback re-read that does not prove (iv) goes to [5];
+  [5] every other state: (3) (v).
+  The broker evaluates [1]–[5] in this order on the fresh protected-store
+  read, and the first that matches applies. Every revalidation result
+  matches exactly one disposition. There is no branch outside this order,
+  and no lower rank applies to a result that a higher rank matches.
+  (1) The fresh revalidation under X proves all of the following: (1a)
+  S4 is byte-equal to the PREPARED/NOT_SENT value of P's reservation
+  commit, which is the last value this broker made durable for P; (1b)
+  no additional object of P exists; (1c) the committed view is
+  structurally valid; (1d) the applicable K1–K5 relations hold for P;
+  and (1e) the resulting classification is exactly the same incomplete
+  A-INC PREPARED/NOT_SENT state of this invocation's attempt. Only then
+  does the terminal plan stay in force, and (c)–(f) follow with the
+  selected outcome at the original H9 site (ii) or (iii). (1a) and (1b)
+  alone never select (1) (C14). If (1a) and (1b) hold but (1c), (1d) or
+  (1e) fails, (1) does not apply. A failure of (1c) or (1d) is class D,
+  and [2] applies through (3) (i). Any other classification goes to (3)
+  (v). The stale pre-wait plan is discarded in both cases.
+  (2) P's head is already terminal or QUARANTINED. For example, a concurrent
+  Case E by RECONCILE R5 or by another CREATE's C5 (3) committed
+  PRESUBMIT_FAILURE or QUARANTINED during the interval. The plan is
+  discarded and nothing from it is written. The committed outcome is
+  never rewritten or overwritten. No H10 call is made and E never
+  begins. The committed-outcome path applies (R7-compatible). If a client
+  is still connected, it gets the committed record in the existing
+  TERMINAL or QUARANTINED frame. This branch outranks the selection of
+  (b).
+  (3) Any other view (C13 closes this branch; owner option 2; C14: this
+  includes a view with S4 byte-equal and no additional object that fails
+  (1)). The pre-wait plan is discarded and nothing from it is written.
+  The broker applies the H8 (f) classification order for P, and exactly
+  one of the following applies, with no implementation choice:
+  (i) Class D, or another existing state that forbids this invocation's
+  terminal write, including a view with S4 byte-equal and no additional
+  object whose committed view or K1–K5 relations fail (C14). This rank
+  ([2]) outranks (1). The existing class-D or fail-closed disposition of
+  H8 (f) applies as before. The selection of (b) has no authority over
+  it, and neither CLIENT_LOST nor PRESUBMIT_FAILURE is forced. No terminal
+  write is made from the H10 plan, no H10 call is made and E never
+  begins. Submission stays abandoned. C14 adds no class and no reason.
+  (ii) Exact A-RES of P. The broker performs the existing A-RES rollback,
+  unchanged, under the same X. It removes exactly the proven uncommitted
+  prefix, in reverse list order, each step durable before the next, with
+  the existing unlink and fsync rules and the S4 byte check. It never
+  removes a committed object. The rollback makes no D-Bus call. C13 does
+  not redefine A-RES.
+  (iii) Mandatory post-rollback re-read. After the rollback is durable,
+  and still under the same X with no release, the broker again re-reads
+  from the protected-store descriptors S4, the committed view and every
+  additional object of P. It applies the classification order and the
+  applicable K1–K5 relations for P again. This re-read makes no D-Bus
+  call. The rollback plan, or a result inferred from it, is never
+  authority for (iv). Only this fresh protected-store read is.
+  (iv) Exact restoration. The re-read of (iii) must prove all of the
+  following: S4 is byte-equal to the PREPARED/NOT_SENT value of P's
+  reservation commit (the branch (1) value); the committed view is that
+  head's; no additional object of P remains; and the classification is
+  again the same incomplete PREPARED/NOT_SENT attempt state. If it
+  does, this invocation resumes its own H10 path with the selection of
+  (b) unchanged. (c)–(f) follow at the original H9 site: (ii) for
+  PRESUBMIT_FAILURE, (iii) for CLIENT_LOST. This invocation does not
+  apply the A-INC continuation of the A-RES rule or the Cases A–H (Case
+  E) disposition of H8 (f). Its enumeration is not an H9 site (iv)
+  enumeration, and the E of (d) bounds it as at sites (ii) and (iii);
+  (h) concerns only a later invocation after a crash. The E origin
+  of (d) comes only after this proof. A clean proof writes the selected
+  reason, PRESUBMIT_FAILURE 7 or CLIENT_LOST 7. Generic Case E
+  PRESUBMIT_FAILURE never replaces a selected CLIENT_LOST only because a
+  transient A-RES residue appeared and was safely removed. A proof that
+  is NOT ESTABLISHED, or that finds the own unit or an unknown member,
+  is QUARANTINED 7 with reason CLEANUP_UNPROVEN under (e) and (f) (C15),
+  whatever the selected reason. There is no retry.
+  (v) Any other result. This covers a view that matches none of (2),
+  (3) (i), (1) or exact A-RES, and a post-rollback re-read that does not
+  prove (iv). The selection of (b) gets no authority, H10 (c)–(f) and E
+  do not apply, no reason is forced, and there is no return to (iv). The
+  broker runs the existing H8 (f) classification and disposition for P
+  under the same X. Exactly one of the following then applies, decided by
+  whether that existing disposition needs a manager or unit-namespace
+  proof (C14, closed):
+  (A) No such proof needed. The existing disposition applies unchanged.
+  This covers, for example, the class-D refusal or the committed-outcome
+  path reached through this reclassification. Local protected-store steps
+  of H8 (f) that need no manager call, such as an A-RES rollback, also
+  stay unchanged.
+  (B) A Case E no-send/no-unit/clean-namespace proof needed (H8 (f): an
+  incomplete head that reaches Case E). Inside this live P1S H10
+  invocation that proof cannot legally be made. This invocation is not
+  CREATE C5 (3) or RECONCILE R5, so it is not H9 site (iv). H10 (c) and E
+  serve only sites (ii) and (iii) through (1) and (3) (iv). No other D-Bus
+  allowance exists in P1S (§6.4, (a)). The broker therefore makes no
+  ListUnitsByPatterns call and no other D-Bus call. It does not use (c),
+  does not start E, and does not consume, restart, extend or borrow S. It
+  makes no retry and starts no second invocation. The proof is NOT
+  ESTABLISHED for this invocation, and the existing Case E fail-closed
+  outcome applies: QUARANTINED 7 (§6.4 "otherwise QUARANTINED 7"; §7.4
+  S1). The broker commits it under the same X through the existing
+  terminal/QUARANTINED commit, with the same record and reason as that
+  existing Case E proof-failure outcome: status QUARANTINED, reason
+  CLEANUP_UNPROVEN, exit 7 (H9 failed-proof reason, C15; no reason is
+  chosen from the cause of the missing proof), and with the existing permanent
+  QUARANTINED semantics (claim retained, no release, incident resolution
+  unsupported). The selected CLIENT_LOST or PRESUBMIT_FAILURE is not
+  written and does not override this result, as a failed proof outranks
+  the selected reason under (3) (iv). The sticky path is not re-entered.
+  The result is the same when S was already exhausted at the selection.
+  In every branch the abandonment of submission by (b) stays
+  irrevocable. Revalidation never re-enables the SUBMITTING write,
+  StartTransientUnit, P1S progress, a retry or a new reservation, and it
+  never undoes the fact that this invocation has abandoned submission.
+  The selected reason is written only through (1) or (3) (iv). This
+  invocation makes at most one ListUnitsByPatterns in total, never two.
+  That one can only be the call of (c), after the revalidation, through
+  (1) or (3) (iv), as the site (ii) enumeration for PRESUBMIT_FAILURE or
+  the site (iii) enumeration for CLIENT_LOST, under E. Branch (2), (3)
+  (i), (3) (v) (A) and (B), the rollback of (3) (ii) and the re-reads of
+  (k) make no call (C14). Once the call of (c) has been made, nothing in
+  this invocation permits another enumeration. Zero calls is therefore the
+  result of every path that needs no H10 terminal evidence, not only of
+  an outcome already committed.
+  (l) Local evidence work (C12). After the one complete reply that (e)
+  accepts (at most the existing 256-unit namespace bound, §7; a reply with
+  more units is NOT ESTABLISHED under (e) before any S6 read), H9
+  (2)–(7) process every matching unit. That is at most 256
+  descriptor-anchored lockless reads of `transactions/<Y>.json`, one per
+  matching unit, with no second enumeration, no D-Bus call, no lock, no
+  wait and no retry. This work is structurally finite. The count is
+  bounded by 256. Each read is one read of one regular, root:root 0600,
+  link-count-1 file in the root-only protected store. The broker is that
+  file's only writer, and its only valid content is the closed fixed-key
+  S6 schema (§20.2.7 JR4). The work is local evidence processing. It is
+  not part of E and is not timed by E: once the reply has arrived within
+  E, reads that end after origin + 5000 ms do not make the proof NOT
+  ESTABLISHED. It is not charged to S. The terminal write of (f) follows
+  only after this evidence is complete. C12 adds no byte limit, deadline
+  or configuration for these reads, and H9 authority is not widened. The
+  carried C9 Architecture INFO on an explicit byte bound for the lockless
+  S6 read stays open.
+- QR Quarantine reason partition (C16; owner decision
+  OD-CONTROLLED-V1-STAGE5-SECURITY-C16; resolves SEC-S5-C15-L01). QR
+  binds the AutomationExecutionRecord v2 reason of every existing route
+  that ends in QUARANTINED (§7 Case H). It binds reasons only. The
+  existing rules first decide, unchanged, whether a route ends in
+  PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR, QUARANTINED, class D,
+  runner quarantine or REFUSED, and QR applies only after an existing
+  rule has decided QUARANTINED for the attempt head. QR converts no error
+  path into quarantine and no quarantine into an error. It uses only the
+  existing §11.3 reasons CLEANUP_UNPROVEN, MISSING_UNIT_PROOF and
+  STATE_INCONSISTENT. Closed order, first match wins:
+  [Q0] PREPARED/NOT_SENT proof-failure class (H9 failed-proof reason,
+  C15) -> CLEANUP_UNPROVEN, unchanged. Q1–Q3 are not evaluated for this
+  class. An own unit absent or present, an unknown member or unreadable
+  evidence there is neither MISSING_UNIT_PROOF nor STATE_INCONSISTENT.
+  [Q1] Trusted-state conflict (SC) -> STATE_INCONSISTENT. A trusted
+  fact is only: (t1) a protected-store fact of P from a structurally
+  valid committed view with K1–K5 holding; (t2) a fact in a reply that
+  passed every §20.3.3 RP6 and §5.6.1 validation, from the
+  authenticated manager or the bus driver; (t3) a cgroup.events read
+  through the §5.6.1 N5 anchor; (t4) the current boot ID. SC holds
+  exactly when the route's decision meets one of these conflicts:
+  (c1) in the boot recorded in controller.bootId, the authenticated
+  manager unique owner differs from controller.managerId; (c2) in an
+  attached observation (§7.3), the current boot ID differs from
+  controller.bootId; (c3) the bound unit's authenticated InvocationID
+  differs from controller.invocationId; (c4) its ControlGroup differs
+  from controller.cgroupPath, or the cgroup dev/inode reached through
+  N5 differs from controller.cgroupDev/cgroupIno; (c5) a closed §7.3
+  field of the bound unit (ActiveState, SubState, Result, ExecMainCode,
+  ExecMainStatus, ActiveEnterTimestampMonotonic) differs from the value
+  already durably recorded for the same InvocationID in P's journal.
+  These are the existing §7.3 "managerId/boot/InvocationID/cgroup/
+  property change" class. The §7 Case B "ambiguity" is read as exactly
+  SC. Not SC: a fact from an unauthenticated or unvalidated message (it
+  is dropped and is not a fact, RP4, RP6); a fact that could not be
+  obtained (timeout, D-Bus error, malformed reply, unreadable
+  cgroup.events); an unknown namespace member; a protected-store
+  structure that is not valid (class D, refused, no record); and a boot
+  change that Case D, Case G or H9 site (v) uses as its §6.3 reboot
+  proof.
+  [Q2] Missing unit, proof not established (MU) -> MISSING_UNIT_PROOF.
+  MU holds exactly when Q0 and Q1 do not, P's protected journal holds
+  the durable SUBMITTING write (submission is not NOT_SENT; an ORPHANED
+  head counts only if that write precedes it), the authenticated
+  manager has established that the unit named for P does not exist
+  (NoSuchUnit to GetUnit, or its absence from a complete validated
+  ListUnitsByPatterns reply), and both the §6.3 removal proof and the
+  §6.3 reboot proof (including H9 site (v)) are NOT ESTABLISHED. This
+  includes a site (v) failure inside a Case D route (C15 "at (v) ... the
+  existing Case D outcome"). A head without a durable SUBMITTING write is
+  never MU, whatever its unit's presence.
+  [Q3] Containment or cleanup not established (CP) -> CLEANUP_UNPROVEN.
+  CP holds exactly when the head is QUARANTINED by an existing rule and
+  Q0, Q1 and Q2 do not hold. Every existing QUARANTINED rule that is not
+  Q0–Q2 fails on a stop, kill, whole-tree empty, admission/migration
+  closure, population, no-job or durable-cleanup proof (§6.3 "Failure
+  QUARANTINED7", §6.4 P4, §7.3 "else QUARANTINED", §7 Cases A–C and G,
+  Case H "stop/cleanup", §11.3 "prove actual subtree empty or
+  quarantine"). An identity or manager fact that could not be obtained
+  is not SC; it leaves the containment proof for P NOT ESTABLISHED, so
+  it is CP. A manager-call failure is only the mechanism; it never
+  selects CONTROLLER_FAILURE.
+  QR never selects CONTROLLER_FAILURE, so no reachable QUARANTINED route
+  carries it. CONTROLLER_FAILURE stays the reason of the existing §7.3
+  controller/systemd failure row's EXECUTION_ERROR 7 whenever empty is
+  proven, for every trigger that row names (including an identity
+  change), unchanged. §11.3 still permits it with QUARANTINED; no
+  producer exists.
+  Route application (status rules unchanged; reason only where the
+  existing rule already reaches QUARANTINED):
+
+  | Existing route | QUARANTINED reason under QR |
+  |---|---|
+  | §6.4 P1S, §7 Case E PREPARED/NOT_SENT, §7.4 S1, H9 sites (ii)–(iv), H10 (k) (3) (v) (B) | Q0 CLEANUP_UNPROVEN (C15, unchanged) |
+  | §7 Case A failure H (stop/kill/whole-tree empty/containment cleanup) | SC: STATE_INCONSISTENT; else unit authenticated-absent with removal/reboot proof NOT ESTABLISHED: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7 Case B ambiguity H | STATE_INCONSISTENT (ambiguity = SC) |
+  | §7 Case B other H (drain/empty not established, no SC) | MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN (never STATE_INCONSISTENT) |
+  | §7 Case C failure H (population/jobs/stop/kill/empty/cleanup) | SC: STATE_INCONSISTENT; else MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7 Case D otherwise H | SC: STATE_INCONSISTENT; else MISSING_UNIT_PROOF |
+  | §7 Case E SUBMITTING uncertainty | The reason of the Case A–D route it reaches |
+  | §7 Case F | No H route of its own: it defers to the manager deadline and later Cases A–D, and takes the reason of the route reached |
+  | §7 Case G otherwise H | SC: STATE_INCONSISTENT; else MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7 Case H stop/cleanup/identity fails | Q1–Q3 in order: SC STATE_INCONSISTENT, MU MISSING_UNIT_PROOF, otherwise CLEANUP_UNPROVEN |
+  | §6.3 "Failure QUARANTINED7", §6.4 P4 "QUARANTINED7 if empty unproven", §7.2 and §7.3 broker-initiated stop, start failure, timeout and signal paths through P4 | SC: STATE_INCONSISTENT; else MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7.3 controller/systemd failure row, "else QUARANTINED" | Identity/state-change trigger that is SC: STATE_INCONSISTENT; else CLEANUP_UNPROVEN; never CONTROLLER_FAILURE |
+  | §7.4 S2 and S3 controller state disappears, "else QUARANTINED" | MISSING_UNIT_PROOF (SC first: STATE_INCONSISTENT) |
+  | §7.4 "reconcile error 7 or H" and the §7.3 orphan/reconcile row | The reason of the Case A–H route the reconcile reaches |
+  | §6.2 unknown-member runner quarantine, class D, store corruption, §7.4 S5/S6 runner quarantine and release failure | No attempt QUARANTINED record is written; QR does not apply; unchanged |
+
+  Record, journal, incident and frame. For every QR route the broker
+  commits through the existing terminal/QUARANTINED commit: S11 status
+  QUARANTINED; S11 reason = the QR reason; recordDigest = the existing
+  v2 digest of that exact record; S13 base incident reason = the S11
+  reason (K5); final QUARANTINED frame record.reason and frame reason =
+  the record reason. Every other record member takes the value that the
+  existing §11.3 and K4 rules give. No other reason bytes are written for
+  the route. The reason is chosen when the commit is made, from the
+  durable state and the facts of that commit's own span. An in-memory
+  choice is never durable authority, and a crash before the commit is
+  durable leaves the prior durable state for the existing recovery (same
+  rule as C15). Permanent QUARANTINED semantics are unchanged: claim
+  retained, no release, no retry, incident resolution
+  UNSUPPORTED_IN_CONTROLLED_V1. STATE_INCONSISTENT's producers are
+  exactly the existing Q1 conflict routes. QR adds no reason, status,
+  outcome, exit code, state, schema, field, incident type, broker
+  operation, H9 site, D-Bus allowance, timeout or hash domain. A QR route
+  whose only cause is unrelated D-Bus traffic is not an outcome; it is
+  the §20.3.3 qualification failure (vector (73)).
+
+Deadlock freedom (proof). Under H1–H4 a broker waiting for GLOBAL holds
+no lock, and a broker waiting for an X lock holds no X lock and, in
+layout v1, no GLOBAL. A GLOBAL holder waits for no lock (H3), and an X
+holder waits for neither GLOBAL (H1) nor another X (H2). By H8 no
+lifecycle, manager or client wait happens while any X is held, so an X
+span is finite, like a GLOBAL span. H9 takes no lock, inside or outside
+an X span, so it adds no wait-for edge. The one H10 call (C11) takes no
+lock and is bounded by E, so it adds no wait-for edge either. Every wait-for
+chain therefore ends at a holder that waits for no lock, so no cycle
+exists; a GLOBAL holder's span is bounded protected-store I/O (AL6), and
+crash releases every kernel lock at process exit. Pre-global scans never
+mutate or retain locks on INTENT-era objects (H6), so a live INTENT is
+never misclassified as D or rolled back outside GLOBAL, and a dead one
+is rolled back by the next GLOBAL holder (at-most-one-INTENT proof
+above, unchanged). No timeout is introduced for lock waits. The C11
+constant E bounds only the H10 manager call.
+
+Deadlock freedom is not starvation freedom (C12). The proof above shows
+that no wait-for cycle exists, and it stays structural. A broker waiting
+for an X holds no GLOBAL and no other X. An X holder waits for no GLOBAL
+and holds no other X. H8 forbids lifecycle waits under X. The H10
+constant E is never used to break a broker lock cycle, and it does not
+resolve X contention: its origin comes after X is held (H10 (d)). The
+proof does not show that a particular waiter acquires its lock within a
+fixed elapsed time. flock fairness is not an architectural guarantee.
+When contenders keep racing (vector (37)), a waiter such as the terminal
+acquisition of H10 (j) may lack a hard elapsed-time guarantee. That is
+not a deadlock: every holder's span stays finite, and the waiter holds no
+lock that any holder needs. Controlled-v1 claims deadlock freedom. It
+does not claim starvation freedom or a fixed X-acquisition time, and it
+adds no timeout to obtain either. RECONCILE's deadline-free wait for
+GLOBAL (AL0–AL7) is unchanged.
+
+R7 for a committed outcome. When RECONCILE(X) finds a head that is
+already terminal or QUARANTINED, R5 has no case to apply and R7 writes no
+entry, record or incident and never rewrites the outcome or re-evaluates
+PASS. For a non-QUARANTINED terminal head with its claim present (A-REL),
+R6 and R7 perform only the remaining §7.3 step 10 work, in that order:
+ResetFailedUnit on the bound unit only if it is loaded, failed and still
+matches the stored controller binding (otherwise skipped); leaf removal
+under R6 (W1, W2, W4; on their failure the leaf stays, §5.6.3, and the
+claim release still proceeds); then unlink of the S8 claim and fsync of
+`claims`. No workload is rerun and no tombstone is touched. For a
+QUARANTINED head R6 does not access the leaf and R7 releases nothing: the
+claim, leaf and incident are retained permanently in Controlled-v1, and
+RECONCILE never clears, downgrades or rewrites the quarantine, recreates a
+workload or retries (C7). Either way R7 then sends the
+committed record in a TERMINAL or QUARANTINED frame (§7.4 S6 "reconcile
+returns it").
+
+Disabled-enrollment recovery procedure (normative). Qualification never
+invokes it; it occurs outside a qualification run:
+
+1. The qualification run ends INELIGIBLE and produces no record; JR4
+   reports the class and executionId.
+2. Enrollment stays disabled (QZ1 is never weakened); CREATE remains
+   impossible.
+3. The enrolled account, authenticated by the broker through the exact
+   §20.2.3/§20.2.4 chain (SO_PEERCRED, §20.2.5), runs
+   `qa-agent reconcile --execution <executionId>` (§20.4.10, C7) for the
+   executionId JR4 reported; it sends the existing RECONCILE request. For
+   a T class that executionId is the INTENT's own: R4 (1) rolls it back
+   store-wide, R4 (2) then finds no attempt, and the command exits 4
+   EXECUTION_NOT_FOUND, which for a T class is the expected completion.
+   Because R4 (1) is store-wide, any other executionId would serve too.
+4. RECONCILE runs R1a–R7 under the stored protected binding, without the
+   enrollment enabled flag.
+5. It gains no CREATE or start authority: no reservation, claim, PREPARED
+   or SUBMITTING entry and no StartTransientUnit (§5.6.4).
+6. Afterwards no account process remains; the runner returns to the
+   required quiescent state (QZ1, QZ2).
+7. A new qualification run starts from QZ1 and JR observation 1.
+
+Product invocation (C7, owner decision C7-02; supersedes the C6 paragraph
+that relied on local client state, record-copy removal and a raw reconcile
+frame without a product producer). The normative product path is
+`qa-agent reconcile --execution <executionId> [--json]` (§20.4.10). It
+reaches RECONCILE for the requested executionId whatever the local client
+state is: no marker, an INVALID, stale or foreign marker,
+BOUND_RECONCILABLE or BOUND_RECORDED. It reads and writes no local
+execution file, and it never requires deleting or rewriting a marker or
+`<output.dir>/execution/<executionId>.json` first. The implicit RECONCILE
+that `qa-agent execute` selects for a BOUND_RECONCILABLE marker (§20.4.5
+step 3c, §20.4.7) stays compatible and unchanged, but it is not the
+recovery path. Local files remain non-authoritative copies; the broker's
+protected store and tombstones decide every CREATE. These two client
+paths are the only producers of the §4.2 reconcile frame. The broker
+authenticates the account, not the program, and grants a reconcile frame
+nothing beyond RECONCILE (R-1/R-2 same-principal scope, unchanged). C7
+adds no broker operation, frame, journal state, reason, refusal enum or
+exit code for it.
+
+Incident resolution in Controlled-v1 (C7, owner decision C7-03).
+INCIDENT RESOLUTION IS NOT SUPPORTED (design disposition
+UNSUPPORTED_IN_CONTROLLED_V1, never an output value). QUARANTINED is a
+durable fail-closed outcome. Its record, terminal head and immutable S13
+base stay exactly as committed, with resolvedAt and cleanup null. No
+resolution revision (`00000001.json`) is ever produced. The live claim is
+retained permanently, so the root stays blocked for every later CREATE;
+that is the intended R1 behaviour. The leaf is not removed. No
+Controlled-v1 actor resolves, clears, downgrades or rewrites a
+quarantine: not RECONCILE (R4–R7, including §20.4.10), not CREATE C5, not
+qualification (JR is read-only), not the runner or client, and not
+runner-quarantine remediation. No maintenance command exists. The
+QaAgentExecutionIncident v1 schema keeps its resolvedAt and cleanup keys
+unchanged; in R1 they are always null. No R1 invariant depends on a
+resolution. Any incident-resolution, decommission or quarantine-recovery
+workflow is FUTURE. It needs a separate Product Owner design decision and
+Security review, and, because it would add an S13 revision or change K3
+or K5, a new layout literal (layout identity above).
+
+### 20.4 DG-4 — execute CLI and configuration
+
+#### 20.4.1 Reconstructed gap
+
+Today execute is kind "reserved": trailing arguments are not interpreted,
+and it exits 5 before root/config reads (args.js/cli.js). Stage 4 commands
+use --run/--package and refuse --json. Config v1 has no execute block. §4.2
+names a later closed execute={timeoutMs,sutEnvironmentNames} revision and
+authorizes no CLI option. Nothing defines the grammar, reconcile surface,
+client state, output or exits.
+
+#### 20.4.2 Alternatives
+
+| Option | Verdict |
+|---|---|
+| Minimal: execute --run --package, no new flag, implicit reconcile through local attempt state | **SELECTED** |
+| Explicit --reconcile flag or "execute reconcile" subcommand | Rejected: new option or word; a rerun without it needs a second refusal path; the §20.4.7 guard already prevents accidental reconcile of a live attempt |
+| --execution <id> selector | Rejected for execute: new selector concept; executionId is client-generated and recorded locally |
+| Separate recovery-only `qa-agent reconcile --execution <id> [--json]` (C7) | **SELECTED** by owner decision C7-02 as the normative recovery path (§20.4.10): always RECONCILE, never CREATE, independent of local client state |
+| Additive execute key under schemaVersion 1 | Rejected: two incompatible meanings of "v1" across product versions |
+| Free-form spec/grep/browser/framework/timeout flags | Rejected (mission and §4.2) |
+
+#### 20.4.3 Grammar
+
+    qa-agent execute --run <id> --package <NNNN> [--root <dir>] [--config <path>] [--json]
+    qa-agent execute --help
+
+Command spec: kind "execute", capability "execute", requiresRun,
+requiresPackage, flags exactly [json, root, config, help, run, package].
+--run: RUN_ID_PATTERN; --package: four digits, not 0000 (existing messages
+and codes). --offline, --history, --version and positional arguments are
+refused with the existing usage codes (exit 2); duplicate and unknown
+options as today (exit 2). --help prints execute help (stating "disabled in
+this release" while disabled) and exits 0, reading nothing. --offline is
+refused because it would suggest test-network isolation, which R-5 denies.
+No other flag exists. This replaces the reserved route only when Stage 5
+implementation is merged; until then today's reserved behaviour is
+unchanged. After that change a malformed execute command line exits 2
+(usage), not 5, as for the Stage 4 commands.
+
+#### 20.4.4 Configuration schema v2
+
+qa-agent.config.json schemaVersion 2 = the exact v1 schema plus one optional
+top-level key, execute; schemaVersion 1 files keep exactly today's closed
+schema (an execute key in a v1 file is CONFIG_SCHEMA_INVALID, exit 3). The
+product accepts 1 and 2, never writes config and never migrates it.
+
+| Key | Rule |
+|---|---|
+| execute | Optional closed object {timeoutMs?, sutEnvironmentNames?}; unknown key -> CONFIG_SCHEMA_INVALID 3 |
+| execute.timeoutMs | Integer 1000..600000; default 600000 |
+| execute.sutEnvironmentNames | Array of 0..32 unique strings, each matching ^SUT_[A-Z][A-Z0-9_]{0,59}$; default []; normalized to bytewise sorted order |
+
+Effective execute config: the values of a v2 execute block, otherwise the
+defaults (a v1 file with capabilities.execute=true executes with T=600000
+and no SUT variables). Schema validity stays separate from capability (a v2
+execute block is valid while execute is disabled). info reports
+contracts.config = 2 (highest accepted); config validate reports the file's
+schemaVersion. Older product versions refuse v2 files (exit 3); that is the
+expected forward incompatibility. Whether the names are a subset of the
+enrolled sutNames remains a broker check (§4.3 item 5).
+
+Runtime SUT values: for each effective name, the client reads exactly that
+variable from its own environment; missing -> exit 3
+EXECUTE_SUT_ENVIRONMENT_INVALID; empty allowed; a value or total over the
+§9.1 bounds, or containing NUL -> the same code. No other variable is read
+for the workload; nothing is inherited wholesale.
+
+#### 20.4.5 Validation order and exits
+
+The order is exactly the productization §10.7 pipeline, usage (2) → config
+(3) → authority (5) → input (4) → provider (6) → execution (7/8/10), with no
+Stage-5-specific exception and no change to the numeric taxonomy. Within a
+stage the steps run in the listed order. The first failing step ends the
+invocation and determines the exit and reason code, so simultaneous failures
+always resolve to the earliest stage and, within it, the earliest step.
+
+| # | Stage | Step | Applies to | Exit / code |
+|---|---|---|---|---|
+| 1 | Usage | §20.4.3 grammar | All | 2 (existing usage codes) |
+| 2a | Config | Root resolution and containment, config load, closed v1/v2 schema (§20.4.4), output.dir containment; the current canonical root digest (Stage 4 root-identity-v1) is computed here | All | 3 (existing config codes) |
+| 2b | Config | Effective execute config; each effective SUT variable present in the client's own environment and within §9.1 bounds (§20.4.4) | All (values are sent only on CREATE) | 3 EXECUTE_SUT_ENVIRONMENT_INVALID |
+| 3a | Authority | RELEASE_CAPABILITIES.execute disabled | All | 5 CAPABILITY_NOT_ENABLED_IN_RELEASE; nothing after this step runs |
+| 3b | Authority | Platform linux, Stage 4 principal, Stage 4 storage eligibility | All | 5 EXECUTE_PLATFORM_UNSUPPORTED / existing REVIEWER_IDENTITY_UNAVAILABLE |
+| 3c | Authority | Local-state classification (§20.4.7): BOUND_RECORDED, BOUND_LIVE, BOUND_RECONCILABLE, NONE or INVALID | All | BOUND_RECORDED -> 5 EXECUTION_ALREADY_RECORDED; BOUND_LIVE -> 5 EXECUTION_IN_PROGRESS; INVALID emits nothing here (deferred to 4a); operation = RECONCILE iff BOUND_RECONCILABLE, otherwise CREATE |
+| 3d | Authority | capabilities.execute opt-in | CREATE (every classification except BOUND_RECONCILABLE) | 5 CAPABILITY_NOT_REQUESTED |
+| 3e | Authority | §20.1.5 steps 3–5: compatibility.json, public view, root entry for the step-2a root digest | CREATE | 5 EXECUTE_INCOMPATIBLE / EXECUTE_RUNNER_NOT_ELIGIBLE |
+| 3f | Authority | /usr/bin/sudo under PP (advisory early refusal, §20.2.4) | All | 5 EXECUTE_BROKER_UNAVAILABLE |
+| 4a | Input | Local state INVALID (from 3c) | All | 4 EXECUTION_CLIENT_STATE_INVALID |
+| 4b | Input | §8.1 binding reconstruction | CREATE | 4 (existing Stage 4/applied codes, EXECUTION_BINDING_MISMATCH) |
+| 4c | Input | §20.1.5 step 6 fingerprint member bytes, then steps 7–8 | CREATE | 4 EXECUTION_FINGERPRINT_MISMATCH |
+| 5 | Provider | None consumed; AI_* and providers.allow are not evaluated | — | — |
+| 6a | Execution | Durable attempt marker (§20.4.7) | CREATE | 1 on I/O failure (internal), before sudo |
+| 6b | Execution | sudo spawn failure (ENOENT/EACCES) before any byte is sent (a race after 3f) | All | 5 EXECUTE_BROKER_UNAVAILABLE; a CREATE marker is removed |
+| 6c | Execution | Broker REFUSED | All | SCHEMA_INVALID -> 1; INPUT_MISMATCH -> 4; CALLER_REFUSED, INELIGIBLE, REPLAY, INCOMPATIBLE, RECOVERY_BUDGET_EXHAUSTED -> 5 |
+| 6d | Execution | Validated TERMINAL/QUARANTINED | All | §9.3 table (0, 10, 8, 7) |
+| 6e | Execution | Client-side protocol violation, EOF before a final frame, sudo exit without a frame | All | 7 (synchronous orphan; marker retained) |
+
+Why this is the product-wide order and not an exception:
+
+- Applicability, not reordering: 3d, 3e, 4b, 4c and 6a are CREATE-only,
+  mirroring §5.6.4 rule (a) (reconcile needs no opt-in, binding,
+  fingerprint or execute-block authority). Whether a step applies is
+  decided by 3c before the step's stage completes, so no CREATE-only check
+  ever runs after a later-stage failure. INVALID state is treated as
+  CREATE for applicability: it can never be reconciled, so a 5 from 3d/3e
+  precedes the 4 from 4a, exactly as the tie rule requires.
+- Config-stage checks precede operation selection, so 2a and 2b apply to
+  RECONCILE as well: a reconcile needs a valid config and the effective SUT
+  variables present, but sends no SUT value and uses no execute-block value.
+  This is the only operational consequence of the tie rule for RECONCILE.
+- 3c reads input files but emits only authority-class refusals (5); every
+  input-class defect it finds is reported at 4a. The tie rule orders failing
+  checks, and no 4 is emitted before stage 3 has passed.
+- 6b and 6c are dispositions of the single privileged attempt. They occur
+  only after every client stage passed, so they never compete with a
+  client-detected failure; the broker's own fixed order (§5.6.4, §20.2.5)
+  selects its single refusal. The numeric mappings are unchanged.
+
+Release-disabled invariant: with RELEASE_CAPABILITIES.execute disabled, an
+invocation performs only steps 1–3a. It reads the command line, the root
+directory identity, the target's config file and its own environment (2b
+reads and discards the effective SUT values), and nothing else: no run
+evidence, local execution state, compatibility.json, public view or
+/usr/bin/sudo; no write; no sudo spawn and no broker or privileged action.
+A malformed command line still exits 2 and an invalid config 3, per the
+product-wide tie rule; every invocation that passes steps 1–2b exits 5 at
+3a.
+
+No interactive TTY is required and the Stage 4 CI/TTY refusals do not
+apply: execute never prompts and never reads its own stdin. CI use is
+allowed only on a qualified runner; Stage 4 prohibitions are unaffected.
+
+#### 20.4.6 Output and executionId exposure
+
+--json: stdout carries exactly one envelope (existing CLI output schema 1)
+{schemaVersion, command:"execute", ok, exitCode, runId, artifacts, errors,
+execution}; execution = null until step 3c selects an operation (and for
+every failure at or before 3c), otherwise exactly {operation:
+"create"|"reconcile", executionId, packageOrdinal, status, reason,
+recordPath, recordDigest}, with status, reason, recordPath and recordDigest
+null until a validated TERMINAL/QUARANTINED. Human mode: one line on
+ACCEPTED ("execution <executionId> accepted (unit <unitName>)") and a final
+status line with the record path. In both modes the broker's raw stdout/
+stderr frames (§9.2) are written to the client's stderr only, bounded as in
+§9.2 and never persisted by the product. executionId is printed, recorded
+in the marker and in the record filename; it is never an execute input
+(C7: it is the sole input of `qa-agent reconcile`, §20.4.10).
+
+#### 20.4.7 Client state, CREATE versus RECONCILE
+
+Directory <output.dir>/execution/ (output.dir containment rules; created
+non-recursively; no symlink). Files have closed schemas and are created
+with O_EXCL and fsynced together with the directory:
+
+- attempt-<runId>-<NNNN>.json = QaAgentExecutionClientAttempt v1, exact keys
+  {kind:"QaAgentExecutionClientAttempt", schemaVersion:1, executionId,
+  runId, packageOrdinal, rootDigest, product, bindingDigest, clientBootId,
+  clientPid, clientStartTime, createdAt}; product is the client's own
+  installed {name, version} (the binding product grammar); bindingDigest is
+  the step-4c value sent in the CREATE request; clientBootId is the
+  lowercase canonical UUID from /proc/sys/kernel/random/boot_id; clientPid
+  a safe integer; clientStartTime the decimal string of field 22 of
+  /proc/self/stat; createdAt UTC. Bytes are the CRS-1 canonical encoding.
+  Written immediately before the sudo spawn of a CREATE (step 6a).
+- <executionId>.json = the exact AutomationExecutionRecord v2 bytes from a
+  validated TERMINAL/QUARANTINED frame of this invocation's attempt,
+  written only after the R-checks below pass on the received record.
+
+These files are local evidence copies and a recovery hint, never authority;
+the broker's protected journal and tombstones decide.
+
+Step 3c reads only two names: the marker file for the invocation's --run
+and --package, and, if that marker is BOUND, the record file named by
+marker.executionId. Files of other (run, package) pairs are never read and
+never influence the decision. Each read file must be a regular file opened
+without following symlinks beneath the non-symlink execution directory,
+link count 1, owner = the client's effective UID, size <= 1048576 (marker)
+or the §11.3 record bound, strict JSON in canonical encoding with the
+closed schema.
+
+Marker binding (all required for BOUND; any failure is INVALID):
+
+- M1 The marker's file-name runId and NNNN equal marker.runId and
+  marker.packageOrdinal.
+- M2 marker.runId = --run and marker.packageOrdinal = --package.
+- M3 marker.rootDigest = the current canonical root digest from step 2a
+  (a marker copied from, or restored for, another root, or written before
+  the root's identity changed, never matches).
+- M4 marker.product = the client's own product {name, version} (a marker
+  written by another product version is foreign, consistent with the
+  Stage 4 "run created by another product version" input refusal).
+- M5 marker.executionId matches the §7.1 executionId grammar and
+  marker.bindingDigest is H. bindingDigest is not recomputed at 3c: it
+  needs §8.1 reconstruction (input stage), RECONCILE needs no binding
+  (rule (a)), and it is compared with the record below.
+
+Record binding (all required for BOUND_RECORDED; any failure is INVALID):
+
+- R1 The record file name is marker.executionId + ".json" and
+  record.executionId = marker.executionId.
+- R2 record.recordDigest verifies over the record (§11.3 domain).
+- R3 record.binding.bindingDigest = marker.bindingDigest and verifies over
+  record.binding (§11.1 execution-binding domain).
+- R4 record.binding.runId, packageOrdinal and root.digest equal M2/M3's
+  current values; record.binding.product = marker.product; and
+  record.binding.principal = the step-3b Stage 4 principal.
+- R5 record.status and reason are a valid §11.3 pair.
+
+Review, apply, package and plan identities (reviewRecordId, applyRecordId
+and the binding digests) are bound by R3 through bindingDigest and are not
+re-derived at 3c. That is sufficient: R4 fixes (root, run, package), and the
+broker's tombstone for that triple refuses every further CREATE (REPLAY)
+whatever apply identity a different record claimed, so a record cannot make
+the client skip a CREATE that the broker would allow.
+
+| Local state for (run, package) | Classification at 3c | Action |
+|---|---|---|
+| No marker file | NONE | CREATE with a fresh executionId |
+| M1–M5 pass; record present and R1–R5 pass | BOUND_RECORDED | Exit 5 EXECUTION_ALREADY_RECORDED (no broker call, no re-execution) |
+| M1–M5 pass; no record; clientBootId = current boot_id and a process with clientPid, owned by the client's UID, whose /proc stat field 22 = clientStartTime exists | BOUND_LIVE | Exit 5 EXECUTION_IN_PROGRESS (no broker call) |
+| M1–M5 pass; no record; that process is not live (or another boot) | BOUND_RECONCILABLE | RECONCILE(marker.executionId) |
+| Any M-check fails; a record file present for a BOUND marker but any R-check fails; a non-regular, symlinked, hard-linked, foreign-owned, oversize, non-canonical or schema-invalid marker or record | INVALID | Exit 4 EXECUTION_CLIENT_STATE_INVALID at 4a (no broker call), unless an earlier step refused |
+
+A copied, restored, foreign or stale marker or record therefore never
+selects RECONCILE, EXECUTION_IN_PROGRESS or EXECUTION_ALREADY_RECORDED for
+an unrelated execution; it fails closed as INVALID with the existing code.
+The broker still re-checks everything on RECONCILE (R1a–R7) and binds the
+executionId to its protected attempt.
+
+The liveness guard is a same-account UX safeguard that stops a second
+invocation from reconciling (stopping) an attached attempt; it is not a
+security boundary. Deleting local files cannot re-authorize execution: a
+new CREATE for a consumed (root, run, package) is REFUSED/REPLAY by the
+broker's tombstones, which remain authoritative.
+
+A pre-reservation REFUSED on CREATE (proven unreserved, §7.2) and a
+step-6b spawn failure remove the attempt file, so a retry after
+remediation is a fresh CREATE. Reconcile clarification (refines §5.6.4 R4,
+no new enum): an executionId with no protected attempt after transaction
+recovery is REFUSED/INPUT_MISMATCH with no journal write or manager action;
+the client then removes the attempt file and exits 4 EXECUTION_NOT_FOUND.
+
+#### 20.4.8 Capability and activation boundary
+
+RELEASE_CAPABILITIES.execute stays {enabled:false}. Stage 5 implementation
+(separately authorized) may add the grammar, config v2, client and broker
+behind that gate; every execute invocation that passes steps 1–2b then
+exits 5 CAPABILITY_NOT_ENABLED_IN_RELEASE at step 3a, under the §20.4.5
+release-disabled invariant (no local state, protected file, sudo or broker
+access). info platform.executeDecision stays "PENDING_OD_06" until
+activation. Activation is exactly a separate,
+Product-Owner-authorized change that sets enabled:true (and the info
+decision value) after Stage 5 implementation, Linux/native/adversarial/
+installed-package qualification and independent Security review;
+Controlled Release remains a further separate decision. Target opt-in can
+never override the release gate. `qa-agent reconcile` (§20.4.10, C7) sits
+behind the same gate and adds no capability.
+
+#### 20.4.9 Negative tests (DG-4)
+
+Every refused flag and duplicate; --json with stdout purity; --help with an
+invalid config (exit 0, nothing read); disabled release with well-formed and
+malformed trailing input (after implementation: 2 for malformed, 3 for an
+invalid config, otherwise 5 at 3a with a syscall trace showing no read of
+local execution state, compatibility.json, the public view or
+/usr/bin/sudo and no spawn; before: byte-identical reserved behaviour); v1
+file with an execute key; v2 bounds (999, 600001, 33 names, duplicate,
+lowercase, `SUT_` alone, 61-character suffix); missing SUT variable; oversize
+value; v1 defaults. Precedence pairs (§20.4.5), each asserting the earlier
+stage's code: usage + invalid config -> 2; invalid config + disabled
+release -> 3; missing SUT variable + disabled release -> 3; disabled
+release + INVALID local state -> 5 CAPABILITY_NOT_ENABLED_IN_RELEASE with
+the state unread; missing opt-in + INVALID local state -> 5
+CAPABILITY_NOT_REQUESTED; stale public view + INVALID local state -> 5;
+BOUND_RECONCILABLE + missing opt-in + stale view -> RECONCILE proceeds;
+INVALID local state + binding mismatch -> 4
+EXECUTION_CLIENT_STATE_INVALID; binding mismatch + fingerprint drift -> 4
+EXECUTION_BINDING_MISMATCH. Local-state identity (§20.4.7): every
+classification row; each M1–M5 and R1–R5 check failing alone (marker
+renamed to another run or package, marker copied from another root,
+marker from another product version, malformed executionId, record from
+another execution, record with a bindingDigest differing from the marker,
+record whose binding names another run, package, root or principal, record
+digest altered), each -> 4 with no broker call; forged pid/start time;
+stale boot; deleted record and deleted attempt (broker REPLAY); RECONCILE
+without opt-in; the INPUT_MISMATCH not-found path; sudo absent at 3f and
+removed between 3f and 6b.
+
+#### 20.4.10 Explicit recovery command qa-agent reconcile (C7, owner decision C7-02)
+
+Grammar:
+
+    qa-agent reconcile --execution <executionId> [--json]
+    qa-agent reconcile --help
+
+Command spec: kind "reconcile", capability "execute" (the same release
+gate; no new capability), neither requiresRun nor requiresPackage, flags
+exactly [execution, json, help]. --execution is a value flag that only
+this command accepts. Its value must match the §4.2 executionId grammar
+^[0-9a-f]{32}$. A missing --execution, or a value outside that grammar,
+is the existing USAGE_INVALID. A missing value is USAGE_MISSING_VALUE,
+a duplicate USAGE_DUPLICATE_OPTION and an unknown option
+USAGE_UNKNOWN_OPTION. --run, --package, --root, --config, --offline and
+--history are USAGE_OPTION_NOT_APPLICABLE, --version is USAGE_CONFLICT,
+and any positional argument is USAGE_UNEXPECTED_ARGUMENT. All of these
+exit 2 with existing codes. `qa-agent execute` does not accept
+--execution (USAGE_OPTION_NOT_APPLICABLE, exit 2), and reconcile accepts
+none of execute's selectors, so a command line selects exactly one of
+the two commands; there is no combined form. --offline is refused for
+the same R-5 reason as for execute; the command makes no network access.
+--help prints reconcile help (stating "disabled in this release" while
+disabled), reads nothing and exits 0. Until Stage 5 implementation is
+merged, "reconcile" stays an unknown command (USAGE_UNKNOWN_COMMAND,
+exit 2), byte-identical to today.
+
+Operation. The command always builds exactly the §4.2 reconcile request
+{schemaVersion:1, contractVersion, operation:"reconcile", executionId}
+and never a create request. It never reserves, never causes
+StartTransientUnit, launches no framework or test and sends no SUT value.
+It uses the existing §20.2.4 sudo spawn, and the broker authenticates it
+through C1a.1–C1a.5 as R1a (SO_PEERCRED, §20.2.5) exactly as any
+RECONCILE. R1a does not read the enrollment enabled flag, so the command
+works while enrollment is disabled. The request carries no root,
+bindingDigest, controller identity, unitName, reservation key or outcome,
+and the closed §4.2 schema gives the caller no way to send one. The
+broker loads the protected attempt for the requested executionId at
+R4 (2). It validates the grammar, protected attempt identity, stored
+binding, ownership, the allowed RECONCILE state and the §20.3.8 recovery
+matrix itself. An executionId with no protected attempt after R4 (1) is
+the existing REFUSED/INPUT_MISMATCH (§20.4.7). On an attempt still
+attached to a live CREATE, the command is the existing §4.2 cancellation
+("Cancellation calls reconcile from another one-shot invocation"; §7
+Case A); there is no client-side liveness guard.
+
+Local-state independence. The command reads no root, config, environment
+variable, run evidence, marker, record copy, compatibility.json or public
+view, and writes no local file. Local client state never selects the
+operation and is never recovery authority. The command therefore behaves
+identically with no marker, an INVALID, stale or foreign marker,
+BOUND_RECONCILABLE or BOUND_RECORDED, and nothing has to be deleted or
+rewritten first. A later `qa-agent execute` keeps its §20.4.7 behaviour:
+for BOUND_RECONCILABLE it re-runs the idempotent RECONCILE and writes the
+record copy; for BOUND_RECORDED it exits 5 EXECUTION_ALREADY_RECORDED;
+for an S0 marker it gets INPUT_MISMATCH, removes the marker and exits 4.
+
+Validation order: the productization §10.7 pipeline, unchanged tie rule;
+step numbers follow §20.4.5.
+
+| # | Stage | Step | Exit / code |
+|---|---|---|---|
+| 1 | Usage | Grammar above | 2 (existing usage codes) |
+| 2 | Config | None: no root, config or environment is read | — |
+| 3a | Authority | RELEASE_CAPABILITIES.execute disabled | 5 CAPABILITY_NOT_ENABLED_IN_RELEASE; nothing after this step runs |
+| 3b | Authority | Platform linux only (the Stage 4 principal and storage parts concern local evidence that this command never reads) | 5 EXECUTE_PLATFORM_UNSUPPORTED |
+| 3f | Authority | /usr/bin/sudo under PP (advisory early refusal, §20.2.4) | 5 EXECUTE_BROKER_UNAVAILABLE |
+| 4 | Input | None client-side (the executionId grammar is step 1) | — |
+| 5 | Provider | None consumed | — |
+| 6b | Execution | sudo spawn failure (ENOENT/EACCES) before any byte is sent | 5 EXECUTE_BROKER_UNAVAILABLE |
+| 6c | Execution | Broker REFUSED | SCHEMA_INVALID -> 1; INPUT_MISMATCH -> 4 EXECUTION_NOT_FOUND; CALLER_REFUSED, INELIGIBLE, REPLAY, INCOMPATIBLE, RECOVERY_BUDGET_EXHAUSTED -> 5 |
+| 6d | Execution | Validated TERMINAL/QUARANTINED | §9.3 table (0, 10, 8, 7) |
+| 6e | Execution | Client-side protocol violation, EOF before a final frame, sudo exit without a frame | 7 |
+
+Release-disabled invariant: with RELEASE_CAPABILITIES.execute disabled,
+the command performs only steps 1 and 3a. It reads only its command line:
+no file, environment variable, /usr/bin/sudo or broker. A malformed
+command line still exits 2; every other invocation exits 5 at 3a.
+
+Frame validation. The §7.2 RECONCILE row applies: exactly one structural
+frame, frameSequence 0, disposition REFUSED, TERMINAL or QUARANTINED,
+operation "reconcile" and executionId equal to --execution. For TERMINAL
+or QUARANTINED, the record's recordDigest recomputes, record.executionId
+equals --execution, status and reason are a valid §11.3 pair, the frame
+reason equals the record reason, and attemptDigest is H. With no local
+binding there is no client binding comparison. The exit reports the
+broker's committed outcome for that executionId: RECONCILE accepts no
+proposal and R5 never yields PASSED or TEST_FAILED (§7.3), so exit 0 or
+10 only reports an outcome committed earlier (R7), never a new one.
+Anything else is step 6e.
+
+Output. With --json, stdout carries exactly one envelope (existing CLI
+output schema 1) {schemaVersion, command:"reconcile", ok, exitCode,
+runId, artifacts:[], errors, execution}. execution is null for every
+failure before the broker is invoked (steps 1–3f and 6b); otherwise it is
+exactly the §20.4.6 object {operation:"reconcile", executionId,
+packageOrdinal, status, reason, recordPath, recordDigest}. recordPath is
+always null, because no local copy is written. packageOrdinal, status,
+reason and recordDigest are null until a validated TERMINAL/QUARANTINED;
+then packageOrdinal and runId come from record.binding. Human mode prints
+one final line with executionId, status and reason. No raw frame exists
+on this path (RECONCILE has no STARTED to EXITED window).
+
+| Protected state of the executionId, after R4 (1) | Result |
+|---|---|
+| Any T class in S | Rolled back store-wide at R4 (1); the executionId then follows its own row |
+| No protected attempt (including the rolled-back INTENT's own executionId) | REFUSED/INPUT_MISMATCH -> 4 EXECUTION_NOT_FOUND |
+| A-RES | Rollback to head n, then as A-INC |
+| A-INC | §7 Cases A–H to a terminal or QUARANTINED commit -> §9.3 (7, 8, or QUARANTINED 7) |
+| A-REL | Remaining release only; committed record -> §9.3 |
+| Terminal, clean | Committed record, nothing written -> §9.3 |
+| QUARANTINED | Committed record, nothing written or released, quarantine unchanged -> 7 |
+| Class D | REFUSED/INELIGIBLE -> 5, no write and no manager action |
+| Caller not the enrolled owner, or any R1a failure | REFUSED/CALLER_REFUSED (or the existing R1a outcome) -> 5 |
+
+Negative tests (C7): every refused option and duplicate; --execution
+missing, empty, uppercase, 31 and 33 hex digits, and non-hex; a
+positional argument; --execution on execute; --help with no other read;
+the disabled release, with a syscall trace showing only the command line
+read; --json stdout purity. Each with enrollment disabled and, in turn,
+no marker, an INVALID marker, a marker of another run, BOUND_RECONCILABLE
+and BOUND_RECORDED for the same executionId, with no local file removed
+and none read or written (trace): a T-A INTENT (exit 4 EXECUTION_NOT_FOUND,
+store CLEAN afterwards); each A-RES probe of §20.2.7; A-INC; A-REL; a
+clean terminal attempt (record returned, no write); a QUARANTINED attempt
+(record returned, claim, incident and leaf byte-unchanged); class D
+(exit 5, no write); an unknown executionId (exit 4); a different account
+(CALLER_REFUSED 5). The request bytes on the socket are always exactly
+the four §4.2 reconcile keys.
+
+### 20.5 Trust-boundary data map
+
+The §12 mission chain (client -> Stage 4 reconstruction -> binding -> sudo
+-> C1a -> broker reconstruction -> compatibility/qualification -> protected
+reservation -> P1S -> StartTransientUnit -> observation -> proposal ->
+durable terminal -> release/reconcile) crosses these boundaries:
+
+| Datum | Source / owner | Permissions | Validator | Canonical form / hash domain | Failure |
+|---|---|---|---|---|---|
+| Caller identity | Kernel SO_PEERCRED of the client socketpair | Kernel-recorded | Broker C1a.5 | — | CALLER_REFUSED 5 |
+| Parent elevation structure | Kernel /proc + pidfd | root-readable | Broker C1a.4 | dev/ino equality | CALLER_REFUSED 5 |
+| Request frame | Client | Socket, in-kernel | Broker P0, C7 | Strict JSON §4.2 | SCHEMA_INVALID / INPUT_MISMATCH; non-socket fd 0 (P0 recvmsg ENOTSOCK): CALLER_REFUSED 5 |
+| enrollment.json | Operator | root:root 0600 | Broker C1a.3 | Strict JSON §5.2 | §5.2 mapping |
+| compatibility.json | Operator (release record) | root:root 0644, PP | Client advisory; broker C1a.3 + C7 | Canonical; execution-compatibility:v1 | INCOMPATIBLE 5 |
+| enrollment-public.json | Operator | root:root 0644, PP | Client advisory; broker C7-PV byte equality | Canonical; no own digest | INELIGIBLE 5 |
+| Fingerprint member bytes | Target repository (runner) | Runner-owned | Client §20.4.5 step 4c; broker C7 and P1S on dR | Raw sha256; execution-fingerprint:v1 | 4 pre-reservation; PRESUBMIT_FAILURE 7 |
+| Stage 4 evidence | Runner output dir | Runner-owned | Client §8.1; broker §4.3 item 3 | Existing Stage 4 domains | 4 |
+| Config execute block | Target repository | Runner-owned | Client §20.4.5 step 2a | Strict JSON | 3 |
+| SUT values | Client environment | Process memory, socket, memfd | Client §20.4.5 step 2b; broker item 5 | Never hashed or persisted | 3 / broker refusal |
+| Broker frames | Broker | Socket | Client §7.2 | §11.3 | 7 |
+| Result proposal | Client | Socket | Broker §7.2/§9.4 | §11.2 | RESULT_INVALID 7 |
+| Manager D-Bus messages | PID 1 via system bus | Bus policy | Broker sender filter + N1 | — | CONTROLLER_FAILURE / QUARANTINED |
+| Record copy / attempt marker | Client | Runner-owned | Client §20.4.7 M1–M5 / R1–R5 against the current invocation | automation-execution-record:v2; execution-binding:v1 | Not authority; INVALID -> 4; never read by `qa-agent reconcile` (C7) |
+| Explicit reconcile executionId (C7) | Operator command line of `qa-agent reconcile` | Process argv | Client §20.4.10 step 1 grammar; broker R1a–R4 against the protected store | §4.2 ID grammar; no hash | 2 usage; broker refusal per §20.4.10 |
+| Q enumeration evidence record | Operator qualification tooling | Operator-retained | Operator review before writing enrollment | None (data); output is fingerprint.files | Qualification FAIL |
+| Privilege-surface record | od06-priv-surface-v1 run by the operator as root (read-only), with the PS-F F0 probe running as the account's exact uid/gid; C4: the procedure reads the protected journal and systemd unit state read-only for QZ and OW (never writes them; read-only manager queries only); C5: the journal is read only through the descriptor-anchored, closed read contract JR (no write, repair, recovery or lock), and each run retains QaAgentControllerJournalSnapshot v1; C6: JR classifies every path and relation against the closed layout od06-journal-layout-v1 (§20.3.8) | Operator-retained, root-owned | Operator: PS-A–PS-F requirements plus byte equality at every verification (§20.2.7); JR D1 = D2 within each run; never read by client or broker | CRS-1; content-digest privilegeSurfaceDigest and journalSnapshotDigest | Host INELIGIBLE until requalified |
+| Build-environment recipe | This repository (versioned Containerfile) | Git history | Release qualification: containerfileDigest over the git blob | Raw SHA-256 of blob bytes | Not a qualified recipe |
+| Build-environment image and content record | Authorized build qualification; direct Buildx push to the durable GHCR location | Registry, by digest only | Post-push verification: registry-served manifest bytes hashed to D, blobs verified, content record from the layers, rebuild equivalence with an independent rebuild (§20.3.4a) | D = SHA-256 of the served platform manifest bytes; QaAgentBuildEnvContent content-digest | Not qualified / release BLOCKED |
+| Broker build record | Release-qualification parties | Release evidence | Release qualification (§20.3.4, §20.3.4a) | CRS-1; content-digest buildRecordDigest | Release BLOCKED |
+
+No implicit trust transfer: every datum the client reads from a root-owned
+file is advisory and is recomputed or byte-compared by the broker from its
+own root-owned inputs.
+
+### 20.6 New closed values, governance and debt
+
+New closed values (all proposed): the file
+/usr/local/share/qa-agent-controller-v1/enrollment-public.json and schema
+QaAgentControllerPublicEnrollment v1; step C7-PV; sub-steps C1a.1–C1a.5;
+the exact sudoers Defaults line; the compiled literal /usr/bin/sudo; adapter
+mandatory member lists; the brokerBuild format; source path
+native/qa-agent-controller-v1/; config schemaVersion 2 with the execute
+block; the execute command spec; client files QaAgentExecutionClientAttempt
+v1 (with the product key) and the record copy; local-state
+classifications NONE, BOUND_RECORDED, BOUND_LIVE, BOUND_RECONCILABLE,
+INVALID and checks M1–M5/R1–R5 (client-internal, not output values); the
+§20.0.1 runner disposition table; the sudo topology invariant T1–T5 and the
+log_exit_status Defaults entry; procedure literal od06-q-enum-v1 and its
+evidence record; exact zbus 5.13.2; exact Rust 1.85.0 toolchain pins; the
+rust-lld linker rule; native/qa-agent-controller-v1/build-env.digest and the
+exact build environment and RUSTFLAGS; CLI reason codes
+EXECUTE_SUT_ENVIRONMENT_INVALID,
+EXECUTE_PLATFORM_UNSUPPORTED, EXECUTION_BINDING_MISMATCH,
+EXECUTE_INCOMPATIBLE, EXECUTE_RUNNER_NOT_ELIGIBLE,
+EXECUTION_FINGERPRINT_MISMATCH, EXECUTE_BROKER_UNAVAILABLE,
+EXECUTION_ALREADY_RECORDED, EXECUTION_IN_PROGRESS,
+EXECUTION_CLIENT_STATE_INVALID, EXECUTION_NOT_FOUND. C2 adds: invariant
+PS-0 and procedure literal od06-priv-surface-v1 with requirement sections
+PS-A–PS-E and record QaAgentControllerPrivilegeSurface v1
+(privilegeSurfaceDigest); the od06-q-enum-v1 non-root rule; the
+no-ancillary-data rule (no SO_PASSCRED/SO_PASSPIDFD/SO_PASSSEC, no
+SCM_RIGHTS acceptance); the zbus no-raise rule for max_queued; the recipe
+native/qa-agent-controller-v1/Containerfile (revision 1) and
+containerfileDigest; the pinned base digest, Debian snapshot runs and
+package versions of §20.3.4a; record QaAgentBuildEnvContent v1
+(buildEnvContentDigest); the durable location
+ghcr.io/tarasovartem/qa-agent-controller-v1-build-env; record
+QaAgentControllerBuildRecord v1 (buildRecordDigest). C3 adds: requirement
+section PS-F (F0 effective-access probe, F1 writable-object rule with the
+mount-type classes and the set Σ, F2 RC predicate, token rule, LC closure,
+root-execution classes R-SD..R-SSH and source-package set N, F3 group
+rule, F4 mount rule) and the record keys filesystem, rootExecution and
+mounts plus groups.gshadow; the P0 ENOTSOCK mapping (existing
+CALLER_REFUSED/5); the selected Buildx/BuildKit publication model and
+the normative definition of D; the C3 QaAgentBuildEnvContent v1 shape
+(layer-applied full root filesystem, empty exclusion set, closed image
+config) and rebuild equivalence with set V; build-record members
+buildEnvPublication and buildEnvBuilder. C4 adds, inside PS-F: the
+quiescence state QZ1–QZ4; the broker-chain rule of B4; the closed
+extended-attribute result table with ACL classes posix and none; the
+pseudo-filesystem endpoint table PE (rows PE-AA-ADMIN, PE-AA-QUERY,
+PE-PSI, PE-PSI-CG, PE-NSPID) and the denial probe F0w; the ACL rules
+(a) and (b); the own workload service predicate OW; the semantic
+conditions S1–S4 and PS-F verification events; and the record keys
+filesystem.mountClasses, filesystem.kernel and filesystem.pseudoEndpoints.
+C5 adds, inside PS-F: the exact exception AA-NULL (N1–N6, one object,
+not a PE row); the protected-journal read contract JR (JR1–JR6) and the
+journalSnapshotDigest; the durable-binding requirement of OW (2); the
+record keys filesystem.apparmor and journal; and the run-evidence object
+QaAgentControllerJournalSnapshot v1. C6 adds: the layout literal
+od06-journal-layout-v1 and the record member journal.layout; the class
+paths S0–S13, including the staging names `current.json.next` and
+`<executionId>.json.next` and the fixed directory names; the write
+discipline and write orders; relations K1–K7; the recovery classes T-A,
+T-B, T-C, A-INC, A-RES, A-REL and D and the JR4 result CLEAN
+(qualification and broker-internal classifications, never output values,
+frames, journal states or reasons); and the disabled-enrollment recovery
+procedure. C7 adds: the command `qa-agent reconcile` with the value flag
+--execution and its command spec (kind "reconcile", capability
+"execute", §20.4.10), reusing existing usage codes, CLI reason codes,
+exits and the CLI output schema 1 envelope; the A-RES rule (candidate
+transitions P and F, exact-prefix residue, reverse-order crash-idempotent
+rollback); the admission commit lock protocol AL0–AL7; and the
+Controlled-v1 incident rule (base revision `00000000.json` only, no
+resolution revision, disposition UNSUPPORTED_IN_CONTROLLED_V1, which is
+never an output value). Every new digest uses
+the existing raw content-digest convention over CRS-1 or file bytes. No new
+exit code, frame, journal state, record reason, refusal enum or hash
+domain; C6 adds no CLI command or flag, broker operation or maintenance
+service; C7 adds exactly the one command and one flag above, and no
+broker operation, frame, journal state, record reason, refusal enum, exit
+code, usage code, CLI reason code or maintenance service. C8 adds no
+closed value of any kind: the committed view, the classification order
+and the lock hierarchy H1–H7 are broker-internal rules, and OBSERVED /
+DEFERRED TO GLOBAL RESCAN is control flow, never a state, class, reason
+or output value. C9 adds no closed value of any kind either. The short-X rule H8
+and the unit-namespace membership rule H9 are broker-internal locking
+and read rules. "Known member" and "unknown member" keep their existing
+§6.2 meaning and are never a state, class, reason or output value. C10
+adds no closed value either: it widens only the sites of the
+broker-internal rule H9, and "clean namespace" keeps its existing
+meaning of a proof, never a state, class, reason or output value. C11
+adds exactly one broker-internal fixed constant, E = 5000 ms (§20.3.8
+H10). It is not a config, ProjectProfile, CLI, environment, schema,
+public API or output value. The irrevocable terminal selection is
+control flow, never a state, class, reason or output value. C12 adds no
+closed value, constant or timeout. The terminal X acquisition
+synchronization interval (H10 (j)) is a named timing and accounting
+interval, never a phase budget, state, class, reason, outcome, exit code
+or output value. C13 adds no closed value, constant, timeout, state,
+reason, outcome, exit code, journal field or durable object. The sticky
+selected reason of H10 (b) and (k) (3) is invocation-local control flow
+over the existing PRESUBMIT_FAILURE and CLIENT_LOST reasons. C14 adds no
+closed value, constant, timeout, state, class, reason, outcome, exit
+code, journal field, D-Bus allowance, H9 site or durable object. The H10
+(k) precedence ranks and the (3) (v) (A)/(B) split are invocation-local
+control flow over the existing class D, A-INC, A-RES, PRESUBMIT_FAILURE,
+CLIENT_LOST and QUARANTINED 7. C15 adds no closed value, constant,
+timeout, state, class, reason, status, outcome, exit code, schema,
+field, incident type, journal state, broker operation, D-Bus allowance,
+H9 site or hash domain. The H9 failed-proof reason binds the existing
+§11.3 reason CLEANUP_UNPROVEN to the existing PREPARED/NOT_SENT
+proof-failure QUARANTINED 7. C16 adds no closed value, constant,
+timeout, state, class, reason, status, outcome, exit code, schema,
+field, incident type, journal state, broker operation, D-Bus method or
+allowance, H9 site, hash domain, host policy or residual acceptance. The
+§20.3.3 RP1–RP8 receive topology narrows the existing zbus usage and the
+existing PropertiesChanged AddMatch. The §20.3.8 QR partition binds the
+existing §11.3 reasons STATE_INCONSISTENT, MISSING_UNIT_PROOF and
+CLEANUP_UNPROVEN to existing QUARANTINED routes. No public export, bin or package-file change is proposed; the
+public CLI/config surface changes only as documented in §20.4, at Stage 5
+implementation.
+
+TSB-F02: **OPEN / LOW / CONDITIONAL**; current supported surface trigger
+FALSE (no code changed); proposed execute trigger FALSE. §20 revalidation:
+caller authentication, the public view read, the C7-PV comparison, the Rust
+broker, the CLI grammar, config v2 and the client state files are kernel-
+or broker-side checks, data reads and CLI parsing. They add no import or
+call edge to either approval gate, #23F, apply.js, gate symbols or legacy
+execution; the §10 proposed graph is unchanged. C1 revalidation: the
+od06-q-enum-v1 qualification tooling is operator-run and outside the
+product import graph; the §20.4.5 reorder, the §20.4.7 M/R identity checks,
+the sudo topology invariant, the exact build environment and the zbus pin
+are CLI ordering, local data reads, qualification observations and native
+build inputs; none adds an import or call edge to either approval gate,
+to #23F, apply.js, gate symbols or legacy execution. Current trigger FALSE;
+proposed trigger FALSE. C2 revalidation: od06-priv-surface-v1 is
+operator-run qualification tooling outside the product import graph; the
+ancillary-data and zbus queue rules are broker-internal socket handling;
+the Containerfile and the build-environment provenance chain are native
+build inputs outside the package.json "files" allowlist; none adds an
+import or call edge to either approval gate, #23F, apply.js, gate symbols
+or legacy execution. Current trigger FALSE; proposed trigger FALSE. C3
+revalidation: PS-F and the F0 probe are operator-run qualification tooling;
+the ENOTSOCK mapping is broker-internal P0 handling with an existing
+outcome; the publication model, the definition of D, the content record and
+the builder evidence are native build-environment qualification inputs; none
+adds an import or call edge to either approval gate, #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. C4 revalidation: QZ, OW, F0w, PE, the
+extended-attribute table, the ACL rules and S1–S4 are operator-run
+qualification tooling and qualification-time read-only observations of
+broker and manager state. None adds an import or call edge to either
+approval gate, to #23F, apply.js, gate symbols or legacy execution, and no
+code changes. Current trigger FALSE; proposed trigger FALSE. C5
+revalidation: AA-NULL, JR, the OW durable-binding requirement and the
+journal snapshot evidence are operator-run qualification tooling and
+read-only observations of kernel, journal and manager state. None adds an
+import or call edge to either approval gate, to #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. C6 revalidation: the protected-store layout, the
+recovery matrix and the R4/R7 clarifications are broker-internal storage
+and recovery rules, JR's use of them is operator-run qualification
+tooling, and the disabled-enrollment procedure uses only the existing
+RECONCILE path of the client and broker. None adds an import or call
+edge to either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. C7 revalidation: `qa-agent reconcile` is CLI parsing plus the
+existing execute client's sudo spawn of the existing RECONCILE request;
+it reads no Stage 4 evidence, approval record or local execution state.
+The A-RES rule, the admission commit lock protocol and the Controlled-v1
+incident rule are broker-internal storage and recovery rules. None adds an
+import or call edge to either approval gate, to #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. C8 revalidation: the committed view, the
+classification order and the lock hierarchy are broker-internal storage,
+classification and locking rules; they add no import or call edge to
+either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. C9 revalidation: H8 and H9 are broker-internal locking and
+protected-store read rules; they add no import or call edge to either
+approval gate, to #23F, apply.js, gate symbols or legacy execution, and
+no code changes. Current trigger FALSE; proposed trigger FALSE. C10
+revalidation: the H9 scope extension is a broker-internal protected-store
+read rule; it adds no import or call edge to either approval gate,
+to #23F, apply.js, gate symbols or legacy execution, and no code changes.
+Current trigger FALSE; proposed trigger FALSE. C11 revalidation: H10 is a
+broker-internal bound on one read-only manager call. It adds no import
+or call edge to either approval gate, to #23F, apply.js, gate symbols or
+legacy execution, and no code changes. Current trigger FALSE; proposed
+trigger FALSE. C12 revalidation: H10 (i)–(l) are broker-internal timing,
+lock-accounting and revalidation rules. They add no import or call edge
+to either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. C13 revalidation: H10 (b) and (k) (3) are broker-internal outcome
+precedence and revalidation rules over existing reasons. They add no
+import or call edge to either approval gate, to #23F, apply.js, gate
+symbols or legacy execution, and no code changes. Current trigger FALSE;
+proposed trigger FALSE. C14 revalidation: H10 (k) (1), (3) (i) and
+(3) (v) are broker-internal precedence and zero-call fail-closed rules
+over existing classes and outcomes. They add no import or call edge to
+either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. C15 revalidation: the H9 failed-proof reason selects one existing
+record reason for an existing broker-internal fail-closed outcome. It
+adds no import or call edge to either approval gate, to #23F, apply.js,
+gate symbols or legacy execution, and no code changes. Current trigger
+FALSE; proposed trigger FALSE. C16 revalidation: the receive-path
+isolation rules are broker-internal D-Bus receive topology, and the QR
+partition selects existing record reasons for existing broker-internal
+QUARANTINED routes. They add no import or call edge to either approval
+gate, to #23F, apply.js, gate symbols or legacy execution, and no code
+changes. Current trigger FALSE; proposed trigger FALSE. No closure,
+re-rating or remediation.
+
+Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
+CARRIED TO STAGE 5**. Design linkage only, no closure claim:
+
+| ID | Linkage |
+|---|---|
+| L1 | Rust, forbid(unsafe_code) outside one sys module, in-repository strict JSON parser, zbus parser; fuzzing and differential tests are qualification inputs (§20.3.7); C2 adds the unsolicited-D-Bus flood qualification and the ancillary-data refusal (§20.2.5, §20.3.3) as inputs, not closure |
+| L2, L3, I1 | Unchanged; C1a.1–C1a.5 make the CALLER_REFUSED cases enumerable for the I1 tabulation |
+| L4 | Yama >= 1 and no same-account command agents are §20.3.6 qualification items; §20.2.5 records same-account socket creation as existing R-1/R-2 territory |
+| L5, L6 | B on a dedicated thick-provisioned, non-CoW device (classes B–D); the inode floor still has to be qualified |
+| L7 | Unchanged; the Rust one-shot process imposes no implicit cap; the C2 unsolicited-D-Bus bound (§20.3.3, §20.3.7) creates no broker process and does not answer L7 |
+| I2 | C1a.4 user-namespace equality is additional initial-namespace evidence, not closure |
+| I3, I5 | Unchanged (R-4 / R-5) |
+| I4 | §20.2.4 specifies no-relay stdio, EOF/EPIPE and signal-forwarding semantics; real-sudo observation remains open |
+
+### 20.7 Qualification boundary and STOP conditions
+
+Design-specified: every mechanism in §20.1–§20.4. Still requiring real
+Linux evidence on the exact tuple: the §20.2.4a T1–T5 sudo topology
+(forked sudo parent, descriptor pass-through) and signal relay; SO_PEERCRED
+values observed at the broker; ProcessFD from the bus through zbus 5.13.2;
+a reproducible static build under §20.3.4; zbus behaviour against the
+qualified systemd; canonical-encoding equivalence; od06-q-enum-v1 output
+and its determinism for each adapter version; every §12 and §20 negative
+vector; the od06-priv-surface-v1 record, its requirements and its
+reboot/daemon-reexec stability on the exact host, including the PS-F walk,
+probe answers, root-execution enumeration and N attribution on the
+reference host; the build-environment
+image built from the §20.3.4a recipe, its content record, its publication
+at the durable location (separately approved), the registry-served D and
+the builder identity values (versions, B), and an independent rebuild with
+rebuild equivalence; the P0 ENOTSOCK outcome observed on the broker;
+the unsolicited-D-Bus flood bounds; C7: the A-RES crash probes and their
+re-run convergence (§20.2.7 vectors), the admission commit lock vectors
+(§20.3.7) and the §20.4.10 reconcile vectors on the reference host;
+C8: the committed-view vectors (§20.2.7) and the lock hierarchy vectors
+(§20.3.7) on the reference host; C9: the short-X and namespace-membership
+vectors (10)–(15) (§20.3.7) and the C9 forms of vectors (1), (2) and
+(5) on the reference host; C10: the namespace-proof membership vectors
+(16)–(24) (§20.3.7) on the reference host; C11: the P1S terminal-evidence
+vectors (25)–(33) (§20.3.7) on the reference host; C12: the terminal X
+acquisition vectors (34)–(41) (§20.3.7) on the reference host; C13: the
+sticky-reason vectors (42)–(49) (§20.3.7) on the reference host; C14:
+the precedence and zero-call vectors (50)–(57) (§20.3.7) on the
+reference host; C15: the failed-proof reason vectors (58)–(65)
+(§20.3.7) on the reference host; C16: the receive-path isolation
+vectors (66)–(73) with the RP7 qualified-bus facts recorded, and the
+quarantine reason vectors (74)–(86) (§20.3.7), on the reference host.
+A failed vector (66)–(73) blocks Stage 5 qualification and Controlled
+Release.
+Nothing here is runner certification.
+
+Stage 5 implementation must STOP for an owner decision if: the qualified
+sudo build, PAM stack and plugin set cannot satisfy T1–T5 under §20.2.3
+(sudo direct-execs the broker, does not pass fds 0/1 through or allocates a
+pty); the client's Node build does not yield socketpair stdio; the
+reference host's bus lacks ProcessFD; zbus 5.13.2 cannot deliver ProcessFD
+through the blocking API on the reference host; a reproducible static build
+is not achievable with the §20.3.4 environment (including a link failure
+with the pinned rust-lld, which is never answered by falling back to a host
+linker); a dependency outside the §20.3.4 direct allowlist, or a transitive
+crate that fails the transitive controls, becomes necessary; Q cannot be
+enumerated for an adapter version under od06-q-enum-v1 (including any
+limit, unsupported construct or config-closure completeness failure); the
+§20.4.5 order cannot be implemented without departing from the
+productization §10.7 tie rule; the reference host cannot satisfy
+od06-priv-surface-v1 (for example a default service, socket, device node,
+setuid file or Defaults entry that fails PS-A–PS-D, or a default writable
+object outside Σ, filesystem type outside the F1 classes, root-executing
+unit from a source package outside N or root process the F2 attribution
+cannot place, that fails PS-F and cannot be removed; C4: a filesystem type
+whose observed ACL result contradicts its class; a writable
+pseudo-filesystem endpoint outside PE, or a PE row whose authority basis
+or F0w result does not hold on the qualified kernel; an LSM that would
+have to be disabled; C5: an AppArmor `.null` object on the qualified
+kernel whose facts differ from AA-NULL N1–N4 or whose authority basis
+does not hold; a journal layout, schema or history that JR cannot
+validate without a new compatibility rule, a write, a repair or a
+recovery step in qualification tooling; C6: a protected-store object
+outside the od06-journal-layout-v1 classes, or a crash state outside the
+§20.3.8 matrix that the existing RECONCILE R4–R7 cannot resolve while
+enrollment is disabled; C7: a crash state of an incomplete head that is
+neither CLEAN, an exact A-RES prefix nor class D, a reservation that
+cannot go from INTENT to durable COMMITTED inside one continuous AL6 hold
+without a manager or client wait, a recovery that `qa-agent reconcile`
+cannot reach through the existing RECONCILE, or any need to clear a
+quarantine for R1 viability; or a non-volatile LC file that the host rewrites in
+normal operation)
+— never answered by widening an allowlist without a new procedure literal
+and review; the §20.3.4a recipe cannot build, its pinned base digest,
+snapshot or package versions become unavailable, an independent rebuild
+yields a content record that is not rebuild-equivalent (including a
+nondeterministic path outside V), or the pinned builder pushes an index or
+any media type other than the selected one — never answered by an opaque
+or hand-edited image, by unwrapping an index or by widening V or the
+exclusion set in place; the unsolicited-D-Bus bound cannot be met without a new
+numeric production limit; the §20.3.3 receive-path isolation (RP1–RP7)
+cannot be met by the pinned zbus 5.13.2 receive path and the qualified
+bus without a host D-Bus ACL or policy, a zbus patch or fork, a
+dependency or version change, a new transport or an accepted residual,
+or a hostile unrelated D-Bus flood causes any outcome (vector (73)) —
+never answered by raising max_queued, unbounded queues, a longer E or
+other deadline, retries or memory limits; a QUARANTINED route reaches no
+QR reason, or more than one, under §20.3.8 QR without a new reason or a
+status change; or any TSB-F02 edge would become TRUE or INDETERMINATE.
+
+### 20.8 Delivery boundary
+
+Documentation change of this file plus, from C2, the versioned
+build-provenance design artifact native/qa-agent-controller-v1/Containerfile
+(no broker source, no Cargo file, nothing built or published; C3, C4,
+C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15 and C16 leave it byte-unchanged and change this file only). No source,
+test, workflow, package, ROADMAP lifecycle, security disposition or
+activation change. Next:
+independent exact-head HEAVY Architecture review; only if APPROVED,
+independent exact-head HEAVY Security review on the same HEAD; then separate
+Product Owner acceptance and merge authorization. Merge NOT AUTHORIZED;
+Stage 5 implementation NOT AUTHORIZED; execute DISABLED; Controlled Release
+NOT APPROVED.
+
+### 20.9 Architecture corrective C1 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C1 — APPROVED. Reviewed
+HEAD de37be62c16daf10413736cb489efc11abc4ff60 (tree
+ec55590fbc24917f9ba4a57ee6813fd25ce9a441, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c); independent HEAVY Architecture
+result CHANGES REQUIRED, 0 MAJOR / 7 MINOR / 11 INFO. C1 is documentation
+only, this file only, and resolves exactly the seven MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-m01 sudo parent topology | The unconditional fork claim is removed; the upstream direct-exec conditions are stated; log_exit_status is added as a forcing input only; the closed T1–T5 qualification invariant makes any direct-exec, interposition or unqualified change INELIGIBLE; runtime C1a.4 refuses a direct-exec topology; no environment fallback; SO_PEERCRED unchanged | §20.2.3, §20.2.4, §20.2.4a, §20.2.6, §20.7 |
+| ARCH-S5-m02 Q enumeration | Closed procedure od06-q-enum-v1: producer, time, fixed Node parameters, literal entrypoints, edge grammar, CommonJS/ESM resolution of the exact Node version, member kinds, dynamic and unresolved boundaries, config-closure completeness, link/mount rules, set semantics, limits, persistence and requalification triggers | §20.0, §20.1.4, §20.1.4a, §20.1.8, §20.7 |
+| ARCH-S5-m03 reproducible build | Exact Rust 1.85.0 toolchain with component hashes; rust-lld from the pinned toolchain as the only target linker; one OCI build image pinned by digest; fixed paths, environment, RUSTFLAGS and path remaps (source, registry, rustup, target); no build ID or host metadata; two-host plus third-party verification; non-reproducible -> release qualification BLOCKED | §20.3.4, §20.3.7, §20.7 |
+| ARCH-S5-m04 zbus contract | Exact zbus 5.13.2, with the ProcessFD surface verified in the published sources (absent through 5.5.0); direct allowlist separated from the Cargo.lock transitive closure, which truthfully includes tracing and the async-io set; explicit transitive controls | §20.3.3, §20.3.4, §20.3.7, §20.7 |
+| ARCH-S5-m05 runner dispositions | §3 rows added to the §20.0 supersession table; §20.0.1 assigns each §3 DEFERRED class exactly one of DEFERRED, REFUSED, QUALIFICATION-ONLY or SUPPORTED (named reference target only); §3 text kept as history | §20.0, §20.0.1 |
+| ARCH-S5-m06 validation precedence | §20.4.5 follows productization §10.7 usage -> config -> authority -> input -> provider -> execution with no exception; CREATE-only steps are applicability rules decided at 3c; release-disabled invariant preserved without reordering; simultaneous-failure pairs tested; numeric taxonomy unchanged | §20.4.5, §20.4.6, §20.4.8, §20.4.9 |
+| ARCH-S5-m07 local-state identity | Marker gains product; M1–M5 bind the marker to run, package, current root digest, product and grammar; R1–R5 bind the record to the marker, its bindingDigest, run, package, root, product and principal; copied, restored, foreign or stale state is INVALID (existing exit 4 code); broker tombstones stay authoritative | §20.4.7, §20.4.9, §20.5 |
+
+The 11 INFO findings are preserved on the review record: none is closed,
+absorbed, re-rated or converted into scope by C1. No INFO-driven
+clarification was needed to make m01..m07 correct. Unchanged: execute
+DISABLED; Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW /
+CONDITIONAL with current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5
+OPEN / PRESERVED / CARRIED TO STAGE 5; process-lifecycle containment only;
+R-1..R-5; AT-07/TB-01; FUTURE guards; Stage 4 semantics; TAP-2; CRS-1;
+PPI-1; #23F; both approval gates; the broker create/reconcile architecture;
+the DG-1..DG-4 selected options. No new exit code, broker frame, journal
+state, record reason, refusal enum or hash domain. Next: independent
+exact-head HEAVY Architecture re-review of the C1 HEAD; only if APPROVED,
+independent exact-head HEAVY Security review; then separate Product Owner
+design acceptance. Merge NOT AUTHORIZED.
+
+### 20.10 Security corrective C2 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C2 — APPROVED. Reviewed HEAD
+101122bff15b0c227de76908a1b5e82c4a4269f9 (tree
+d6045fa2722f5e0cf81963f15779bbdc2cae3a78, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Independent HEAVY Architecture
+review of that HEAD: APPROVED, 0 MAJOR / 0 MINOR / 7 INFO. Independent
+HEAVY Security review of the same HEAD: CHANGES REQUIRED, 0 CRITICAL / 0
+MAJOR / 2 MINOR / 7 INFO. C2 changes this file and adds exactly one file,
+native/qa-agent-controller-v1/Containerfile, a versioned build-provenance
+design artifact (no broker source, no Cargo file, nothing built or
+published).
+
+| Finding | Resolution | Where |
+|---|---|---|
+| SEC-S5-m01 effective privilege surface | Invariant PS-0 (the §20.2.3 rule is the only authorized elevation path); closed procedure od06-priv-surface-v1: sudo build, sudo.conf, complete include-resolved sudoers source set with integrity, sudo's own parsed policy (cvtsudoers JSON, full and runner-matched), canonicalized sudo -l evidence, sudoers NSS, PAM; account, private primary group and an empty supplementary set (closed rule, not a name list); observed process credentials; doas and polkit absence, run0/systemd-run probes, su/root credentials, setuid/setgid/capability files, host-control endpoints and D-Bus policy; remote/dynamic sources INELIGIBLE; procedure-completeness rule; closed record, CRS-1 encoding, content digest, retention, qualification-only (never read at runtime; SO_PEERCRED unchanged); verification events, requalification triggers and negative tests | §20.2.3, §20.2.7, §20.3.6, §20.5, §20.6, §20.7 |
+| SEC-S5-m02 build-environment provenance | Versioned recipe with real pinned base digest, Debian snapshot runs and package versions, hash-verified Rust 1.85.0 components, fixed environment and no rustup; containerfileDigest over the git blob; closed image build procedure; content record and digest; durable GHCR location by digest only (publication NOT AUTHORIZED); build-env.digest written only after push, re-pull and content equality; nine-step independent rebuild; closed build record; requalification inputs. No image digest is claimed | Containerfile; §20.3.4, §20.3.4a, §20.3.7, §20.5, §20.6, §20.7 |
+| INFO-2 bind-mount expectation | dev/ino no longer claimed to detect a bind mount; copied/replaced broker caught by C1a.2 and brokerSha256; bind mount needs root (outside the non-root claim); STATX_MNT_ID not added | §20.3.7 |
+| INFO-3 SO_PASSCRED / SCM_RIGHTS | No SO_PASSCRED/SO_PASSPIDFD/SO_PASSSEC; no ancillary data; passed descriptors closed and treated as a malformed frame under existing semantics; SO_PEERCRED the only credential source | §20.2.5 |
+| INFO-4 unsolicited D-Bus flood | Untrusted (sender filter), memory bounded by pinned zbus queues and the recorded bus message size (no new limit), time bounded by §6.4, never PASS, L7 unchanged; adversarial qualification added | §20.3.3, §20.3.7 |
+| INFO-6 Q enumerator privilege | od06-q-enum-v1 MUST NOT RUN AS ROOT; unprivileged user; access failure is qualification FAIL; no privileged workaround | §20.1.4a |
+
+Preserved, not corrected, closed, waived or re-rated: Security INFO-1 (P0
+reads fd 0 before AF_UNIX validation), INFO-5 (R4 not-found / client
+evidence-copy race) and INFO-7 (same-principal RECONCILE cancellation
+semantics), each OPEN / PRESERVED / NON-BLOCKING. The Architecture C1
+resolutions ARCH-S5-m01..m07 and the 7 Architecture INFO findings are
+unchanged; C2 does not reopen DG-1..DG-4. Unchanged: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED
+/ CARRIED TO STAGE 5; process-lifecycle containment only (no filesystem
+sandboxing, network isolation, secret isolation, same-account isolation or
+malicious-test sandboxing); R-1..R-5; AT-07/TB-01; FUTURE guards; Stage 4
+review/apply semantics; TAP-2; CRS-1; PPI-1; #23F; both approval gates. No
+new exit code, broker frame, journal state, record reason, refusal enum or
+hash domain. Next: fresh independent exact-head HEAVY Architecture
+re-review of the C2 HEAD; only if APPROVED on that HEAD, fresh independent
+exact-head HEAVY Security re-review; then separate Product Owner design
+acceptance. Merge NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED.
+
+### 20.11 Architecture corrective C3 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C3 — APPROVED. Reviewed HEAD
+3d3809482cad9d3f1659f0be3de85b12abe2e805 (tree
+eb77cbcfdee63cd0c13ea975b34ce733cf47cf1e, parent
+101122bff15b0c227de76908a1b5e82c4a4269f9, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 4 MINOR /
+10 INFO; the core design was found valid. C3 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical to
+C2 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C3 resolves exactly
+the four MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C2-m01 PS-0 completeness | PS-0 states the root-execution half explicitly. New PS-F: F0 kernel effective-access probe (exact uid/gid, no supplementary groups, no capabilities, no_new_privs, PID 1 namespaces, unconfined, no helper; refusal or inability = INELIGIBLE); F1 closed whole-host walk (mount-type classes, proc and automount rules, symlinks never followed, shadowed and bind-mounted content, uninspectable = INELIGIBLE), writable-object rule with the exact sticky set Σ under `fs.protected_*`, ACL retrieval with runner-naming entries INELIGIBLE, package-managed mutable state walked without exemption; F2 RC predicate, token rule and LC closure over the closed Debian 13 root-execution classes (systemd incl. drop-ins, generators, timers and manager-consumed inputs; cron, anacron, at; every PAM stack incl. pam_exec, pam_env, pam_xauth, pam_namespace, pam_motd; udev; D-Bus activation; kernel usermode helpers; root shell files; apt/dpkg hooks; sshd commands), source-package set N and root process attribution (unknown mechanism = INELIGIBLE); F3 gshadow/newgrp/sg rule; F4 fstab, setuid mount helpers, fuse.conf/fusermount3 proof, user-namespace propagation and mount services. C6 (i)–(iii) and B4 use the probe. Record keys filesystem, rootExecution, mounts and groups.gshadow; PS-F requalification triggers and negative tests. Qualification-only evidence; SO_PEERCRED unchanged | §20.2.7, §20.5, §20.6, §20.7 |
+| ARCH-S5-C2-m02 content record completeness | QaAgentBuildEnvContent v1 is computed from the verified config and layer blobs by a closed layer-application algorithm over the entire root filesystem (whiteouts, hard links, symlinks, member types, pax/GNU headers, xattrs incl. ACLs, unsupported types FAIL), with an exact and empty exclusion set because no container is created; the full execution-relevant image config is closed (Healthcheck, OnBuild, Volumes, Shell, StopSignal, Labels, ExposedPorts, ArgsEscaped required absent or fixed; unknown members FAIL); identity statement; rebuild equivalence over the exact set V instead of path exclusion | §20.3.4a, §20.3.7 |
+| ARCH-S5-C2-m03 recvmsg ENOTSOCK | A P0 recvmsg ENOTSOCK on fd 0 is REFUSED CALLER_REFUSED exit 5, the early equivalent of C1a.5, with no reservation, protected-store access, enrollment read, manager call or cgroup read; never SCHEMA_INVALID; no new reason, exit or frame; all other P0 semantics unchanged; anti-spoofing table, negative tests, supersession table and data map aligned. No approved exit-precedence rule conflicts: the broker's own fixed order selects its single refusal (§20.4.5 row 6c) | §20.0, §20.2.1, §20.2.5, §20.2.6, §20.5 |
+| ARCH-S5-C2-m04 OCI exporter and D | One model: Buildx with a docker-container BuildKit builder pinned by image digest, image exporter pushing directly to GHCR with oci-mediatypes, gzip, provenance and SBOM off, every security-relevant option fixed; one OCI image manifest, never an index (an index FAILS); D normatively the SHA-256 of the registry-served platform manifest bytes, with nine-step post-push verification (registry discovery, fetch by digest, hash, strict manifest, blob and diff_id checks, content record, independent OCI-layout rebuild, equivalence, then build-env.digest); tag informational; closed builder evidence; build record binds D, buildEnvPublication and buildEnvBuilder; no circularity; publication still NOT AUTHORIZED | §20.3.4a, §20.3.7, §20.5, §20.6, §20.7 |
+
+No publication, registry authentication, push, package or release occurred;
+no value of D or B exists, and producing one remains implementation-time
+qualification under a separate authorization.
+
+Preserved: the 10 Architecture INFO findings of the C2 re-review stay on
+the review record and are not closed, waived, re-rated or absorbed; no
+INFO-driven clarification was made beyond what m01..m04 strictly required.
+The Architecture C1 resolutions ARCH-S5-m01..m07 are unchanged. The
+Security C2 direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are
+preserved (INFO-3 with only the m03 ENOTSOCK correction); Security INFO-1,
+INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING (the ENOTSOCK rule
+changes only the non-socket outcome and does not answer INFO-1). DG-1..DG-4
+are not reopened. Unchanged: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5;
+process-lifecycle containment only; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; both approval gates; Stage 4 review/apply
+authority; the existing public API; execute reserved in production code. No
+new exit code, broker frame, journal state, record reason, refusal enum or
+hash domain. Next: fresh independent exact-head HEAVY Architecture
+re-review of the C3 HEAD; only if APPROVED on that HEAD, fresh independent
+exact-head HEAVY Security re-review; then separate Product Owner design
+acceptance. Merge NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED.
+
+### 20.12 Architecture corrective C4 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C4 — APPROVED. Reviewed HEAD
+dd00e38f05f225248c031290438b76bf979ab38c (tree
+914b03876459a020203316fe25080e27575d026a, parent
+3d3809482cad9d3f1659f0be3de85b12abe2e805, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR /
+8 INFO; ARCH-S5-C2-m02, m03 and m04 RESOLVED; ARCH-S5-C2-m01 not resolved,
+because the PS-F coverage was closed but could not be implemented on the
+reference host. C4 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2 and C3
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C4 resolves exactly
+the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C3-m01 PS-F feasibility | Closed extended-attribute result table. Every walked type gets an ACL class (posix or none). ENODATA means no ACL. EOPNOTSUPP on a class-none object means no ACL can apply. Results inconsistent with the class, other errors and unclassified types are INELIGIBLE. security.capability ENODATA or EOPNOTSUPP means no file capability, matching the kernel exec path. Implementation chooses no mapping. Closed pseudo-filesystem endpoint table PE (AppArmor .load/.replace/.remove with an F0w denial observation, AppArmor .access, /proc/pressure and cgroup2 pressure files, ns_last_pid with an F0w denial observation). Each row has exact paths and the kernel authority basis showing no PS-0 host-control. Mode bits never qualify an endpoint. Every other writable pseudo-filesystem object is INELIGIBLE. LSMs stay enabled. ACL semantics are kernel-effective: present access is F0 alone, so read-only ACLs (journald user:u:r--) pass. Default ACLs fail only on future write Wfut, with the kernel's create-time inheritance stated. Privileged executables fail on account-specific execute authority. Record keys filesystem.mountClasses, kernel and pseudoEndpoints; negative and positive vectors | §20.2.7 F0, F1, record, vectors; §20.6; §20.7 |
+| ARCH-S5-C3-m02 self-generated runtime state | Own workload service OW: closed six-part predicate. The name regex is necessary but never sufficient. OW also requires the protected journal attempt with the exact executionId and live binding equality (boot ID, InvocationID, transient flag, cgroup, properties digest). It requires the §6.1 closed property set, the non-root enrolled identity, current journal state, and no added systemd authority. Lookalike or foreign transient units stay INELIGIBLE. OW units are excluded from the record. The broker-chain rule for B4 and process attribution follows T1–T5. Normative quiescence QZ1–QZ4: enrollment disabled; runner stopped and cgroup empty; no incomplete attempt; only inactive or failed empty OW units of terminal or QUARANTINED attempts retained. Raw-event triggers are replaced by semantic conditions S1–S4 (recorded state, kernel-effective F0 change, unknown root path, recorded input) plus operator verification events. Normal root-owned log, journal and runtime files are not conditions. Volatile LC files (sha256 null) are conditions only through their recorded entry, RC tokens or object class, never through content | §20.2.7 B4, F1, F2, record, lifecycle, conditions, vectors; §20.5; §20.6 |
+
+od06-priv-surface-v1 has never been run and no host has been qualified
+under it. C4 amends the proposed design of that literal before any
+qualification, so the PS-E rule that a revision is a new literal is not
+engaged. After the first qualification under it, any change requires a
+new literal.
+
+Preserved: the 8 Architecture INFO findings of the C3 re-review and the
+10 carried C2 Architecture INFO findings stay on the review record. None
+is closed, waived, re-rated or absorbed. No INFO-driven clarification was
+made beyond what C3-m01/m02 strictly required (layer hardlink wording,
+builder version-string wording, concurrent tag push, retained rebuild
+inputs, package provisioning list, sshd PAM environment and process
+attribution INFO untouched; the process attribution sentence gains only
+the broker-chain and OW clauses that m02 requires). Also unchanged:
+ARCH-S5-C2-m02, m03 and m04 stay RESOLVED; the Architecture C1 resolutions
+ARCH-S5-m01..m07 stand; the Security C2 direction SEC-S5-m01/m02 and
+corrections INFO-2/3/4/6 are preserved; Security INFO-1, INFO-5 and INFO-7
+stay OPEN / PRESERVED / NON-BLOCKING; DG-1..DG-4 are not reopened. Further
+unchanged items: execute DISABLED; Controlled Release NOT APPROVED;
+TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed triggers FALSE;
+§19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5;
+process-lifecycle containment only; R-1..R-5; AT-07/TB-01; FUTURE guards;
+Stage 4 review/apply authority; TAP-2; CRS-1; PPI-1; #23F; both approval
+gates. No new exit code, broker frame, journal state, record reason,
+refusal enum or hash domain; the privilege boundary is not widened. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C4 HEAD;
+only if APPROVED on that HEAD, fresh independent exact-head HEAVY Security
+re-review; then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.13 Architecture corrective C5 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C5 — APPROVED. Reviewed HEAD
+fb468a1e1836ed532336a37350e8aef044a4b44c (tree
+9f2dccf2704c0ddba1c1ad3e23e393d601bf85a1, parent
+dd00e38f05f225248c031290438b76bf979ab38c, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR /
+7 INFO; ARCH-S5-C3-m02 RESOLVED. C5 is documentation only, this file
+only; native/qa-agent-controller-v1/Containerfile is byte-identical to
+C2, C3 and C4 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C5
+resolves exactly the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C4-m01 AppArmor .null vs closed PS-F | One exact exception AA-NULL, separate from PE (PE rows stay regular-file rules), for /sys/kernel/security/apparmor/.null only. All of these are required: exact canonical path on the securityfs mount at /sys/kernel/security; character device; rdev 1:3 with major 1 mapped to `mem`; uid 0, gid 0, st_mode exactly S_IFCHR \| 0666; running kernel and AppArmor facts (enabled, LSM list) equal to the recorded values; and the stated kernel authority basis (memory-driver null minor, as /dev/null) giving no PS-0 host-control. No general character-device, AppArmor-device, major/minor-only or securityfs exception. F1 rule (v) and C6 (ii) reference it by name. Record key filesystem.apparmor; PASS and INELIGIBLE vectors (wrong path, alternate securityfs path, lookalike elsewhere, regular-file lookalike, wrong type, wrong rdev, wrong owner, wrong mode, AppArmor or kernel facts different) | §20.2.7 F1, C6, record, vectors; §20.6; §20.7 |
+| ARCH-S5-C4-m02 protected-journal read contract | Closed read-only contract JR. JR1: descriptor-anchored open of /var/lib/qa-agent-controller-v1 after QZ1/QZ2, with no symlinks, exact owner, mode and type, and O_NOATIME. JR2: deterministic enumeration into the fixed §11.2 layout classes. JR3: exact QaAgentExecutionAttempt v1 schema (14 keys, closed enums, nullability), contiguous sequences, previousDigest chain, journalDigest recomputation, single head, and binding/controller/submission consistency per state. JR4: transaction schemaVersion 1 with phase exactly INTENT or COMMITTED; only an intact COMMITTED transaction that matches its attempt, tombstones and claims is evidence; INTENT is always INELIGIBLE, with no recovery. JR5: lost, corrupt or ambiguous history is INELIGIBLE and never reconstructed. JR6: canonical snapshot and journalSnapshotDigest, with a full re-read before the record and D1 = D2 required. Qualification never writes, repairs, recovers or locks. OW (2) requires an actual durable controller binding that matches the live unit (unitName, boot ID, InvocationID, Transient, cgroup path/dev/ino, properties digest, contract version). State order, name, cgroup path, timing and executionId text never prove ownership. A SUBMITTING-to-terminal or QUARANTINED attempt without a binding never makes a unit OW. QZ3 and QZ4 are rewritten on the validated snapshot. Record key journal (stable schema identifiers) and the run-evidence object QaAgentControllerJournalSnapshot v1, kept outside the byte-compared record so that normal attempts are not conditions; no journal content is copied; not authority. Journal and OW vectors | §20.2.7 F1 QZ/JR, F2 OW, record, vectors; §20.5; §20.6; §20.7 |
+
+od06-priv-surface-v1 has still never been run and no host has been
+qualified under it, so C5 amends the proposed literal before any
+qualification and the PS-E new-literal rule is not engaged. No new journal
+state, attempt or transaction version, record reason, broker frame, exit
+code, refusal enum or hash domain; broker P1, RECONCILE and §7.4 recovery
+semantics are unchanged and are not duplicated in qualification tooling.
+
+Preserved: the 7 Architecture INFO findings of the C4 re-review
+(including the PE-PSI-CG premise, the AppArmor authority wording, file
+capability revision 1, F0w audit side effects, verification cadence, the
+procedure literal freeze point and the sudo startup race) and every
+carried Architecture INFO finding from earlier reviews stay on the review
+record. None is closed, waived, re-rated or absorbed. Only wording that
+C4-m01 and C4-m02 strictly require was changed. ARCH-S5-C3-m02 stays
+RESOLVED, and the C5 changes to OW and QZ only tighten it.
+ARCH-S5-C3-m01, ARCH-S5-C2-m02, m03 and m04 stay RESOLVED, and the
+Architecture C1 resolutions ARCH-S5-m01..m07 stand. The Security C2
+direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved.
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED /
+NON-BLOCKING. DG-1..DG-4 are not reopened. SO_PEERCRED remains the only
+runtime caller identity source. Further unchanged items: execute
+DISABLED; Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW /
+CONDITIONAL with current and proposed triggers FALSE; §19.1 L1–L7 and
+I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01;
+FUTURE guards; Stage 4 review/apply authority; TAP-2; CRS-1; PPI-1; #23F;
+both approval gates. The privilege boundary is not widened. Next: fresh
+independent exact-head HEAVY Architecture re-review of the C5 HEAD; only
+if APPROVED on that HEAD, fresh independent exact-head HEAVY Security
+re-review; then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.14 Architecture corrective C6 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C6 — APPROVED. Reviewed HEAD
+841268c46e38eb095df7e49ff0e8775080f8c579 (tree
+dc476fac473b1877ffec017ed2790fd8eb9aece6, parent
+fb468a1e1836ed532336a37350e8aef044a4b44c, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR;
+ARCH-S5-C4-m01 RESOLVED. C6 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2–C5
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C6 resolves exactly
+the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C5-m01 closed protected-store layout and cardinality | One closed layout, literal od06-journal-layout-v1, compiled into the qa-agent-controller-v1 broker and the JR reader, recorded as journal.layout, never caller- or enrollment-selected; no layout file and no new hash domain. Inventory of every durable protected object of §§5–7 and §11.1–§11.3 and fourteen classes S0–S13, each with exact path grammar, type, owner, group, mode, schema, producer, readers, creation point, cardinality, retention and removal, key correspondence and JR role: attempt entries, the single pointer `attempts/<X>/current.json`, exactly one transaction per consumed attempt (COMMITTED retained permanently, at most one INTENT), claims keyed by RootKey, exactly two tombstones, AutomationExecutionRecord v2 at `records/<X>.json` as a validated evidence class, incident base and at most one resolution revision. Write discipline: O_TMPFILE + linkat for create-only objects, exactly two staging names for the only replaced objects, none permitted at quiescence. Locks are kernel flock on fixed directory descriptors (no file); runner quarantine is derived (no file). Relations K1–K7 close attempt → pointer → transaction → claim → tombstones → incident → record, including RELEASE-PENDING versus orphan claims, record ↔ terminal head (executionId, binding, controller, timeline, cleanup, status/reason, recordDigest, outcomeDigest) and the terminal/QUARANTINED distinction. Unknown or unclassifiable files are INELIGIBLE / class D. JR2, JR3 and JR4 rewritten on the exact layout | §20.3.8; §20.2.7 JR2, JR3, JR4, record journal, vectors; §20.0; §20.5; §20.6 |
+| ARCH-S5-C5-m02 recovery while enrollment is disabled | QZ1 unchanged and qualification stays read-only; the existing RECONCILE is the only resolver outside the run and needs no enabled flag (R1a). Closed recovery matrix: T-A/T-B/T-C (complete, partial, attempt-less INTENT) always rolled back, never rolled forward, because the reservation commit is the COMMITTED rename; A-INC through Cases A–H; A-RES removal of an uncommitted terminal residue; A-REL remaining release only; D never auto-recovered (refusal, runner quarantine, operator path). R4 performs the T rows store-wide; R7 on a committed outcome writes nothing and performs only the remaining §7.3 step 10 release. §7.4 S0/S6, §6.4 P6, §7 and §5.6.3 "next P1" texts superseded so that CREATE C5 and RECONCILE R4–R7 both resolve them. QZ3 separates "qualification accepts" (CLEAN only) from "state is recoverable"; JR4 is a validator that reports the class. Normative seven-step procedure and its invocation through the existing client state; no new interface | §20.3.8; §20.2.7 QZ3, JR4, vectors; §20.0; §20.6; §20.7 |
+
+Decision basis for rollback: §6.4 (P1S origin at the COMMITTED fsync;
+pre-commit requests are unconsumed and may be retried), §7.2 (ACCEPTED
+backed only by COMMITTED) and §7.4 S0 ("nothing reserved"). The §11.2
+rule that temporary or ambiguous attempt files quarantine is kept
+unchanged; it is now the class D treatment of S5 residue and of an entry
+above the pointer. The incident resolution procedure itself is not
+defined or changed; C6 fixes only its durable result (revision path and
+the claim relation).
+
+No new journal state, attempt, transaction, record or incident schema or
+version, record reason, broker frame, broker operation, exit code,
+refusal enum, hash domain, CLI command, CLI flag or maintenance service.
+SO_PEERCRED remains the only runtime caller identity source; JR remains
+read-only and non-authoritative; no retry semantics are weakened;
+committed tombstones stay durable; terminal outcomes are never rewritten.
+
+Preserved: the Architecture INFO findings of the C5 re-review (including
+AA-NULL nodev wording, JR1 NO_XDEV, OW managerId/brokerSha256
+commentary, JournalSnapshot retention identity, the total JR read-size
+bound and operational cleanup for unbound retained units) and every
+carried Architecture INFO finding stay on the review record, none closed,
+waived, re-rated or absorbed. ARCH-S5-C4-m01 stays RESOLVED and AA-NULL
+is unchanged; ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the
+Architecture C1 resolutions ARCH-S5-m01..m07 stand. The Security C2
+direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved;
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C6 HEAD;
+only if APPROVED on that HEAD, fresh independent exact-head HEAVY
+Security re-review; then separate Product Owner design acceptance and
+merge authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.15 Architecture corrective C7 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C7 — APPROVED, with binding
+owner decisions C7-02 (official recovery command) and C7-03 (no incident
+resolution in Controlled-v1). Reviewed HEAD
+f784884e1f9a3f42b15e817bf270807c25d407c4 (tree
+3b78644a0e0e829e27a34026c488d1925f77c511, parent
+841268c46e38eb095df7e49ff0e8775080f8c579, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 4 MINOR
+/ 6 INFO. C7 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2–C6
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C7 resolves exactly
+the four MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C6-m01 crash-idempotent uncommitted residue recovery | Committedness is decided only by the durable S4 head. A-RES is extended from "record and incident" to the two candidate transitions of an incomplete head: P (entry n+1, then S5) and F (S11, S12, S13 base, terminal entry n+1, S5). Exact correspondence rules apply (chain, digests, executionId, binding, allowed successor, outcomeDigest = recordDigest, the S5 pointer candidate, no later sequence). Only an exact non-empty prefix is residue; everything else, and any successor of a terminal head, is class D. Rollback runs in reverse list order under X's operation lock, each unlink durable before the next, followed by an S4 byte-equality re-check. Because creation and rollback move along the same list, every crash point leaves a prefix and repeated RECONCILE converges. ENOENT counts as "already removed" only for planned (provably uncommitted) objects, and a missing committed object is class D at classification. Empty S12 is closed. The transition and terminal-commit lock spans are continuous; frames and manager actions follow the durable commit | §20.3.8 classes S3, S5, write discipline, K1, matrix A-RES and D, A-RES rule; §20.2.7 JR2 and vectors; §20.0 |
+| ARCH-S5-C6-m02 product-reachable RECONCILE | Owner decision C7-02: the single recovery-only command `qa-agent reconcile --execution <executionId> [--json]`. Closed grammar with existing usage codes; it is mutually exclusive with execute and has no --offline or network access. It sits behind the existing release gate, with no new capability. It always sends the existing §4.2 reconcile request and never CREATE. It needs no enabled enrollment (R1a) and authenticates through the existing sudo/SO_PEERCRED chain. It accepts no caller root, binding, controller, unit or key authority. It reads and writes no local client file, so it works with no marker, an INVALID marker, BOUND_RECONCILABLE and BOUND_RECORDED, with no deletion prerequisite. Exits and output reuse §20.4.5 6b–6e, §20.4.7 EXECUTION_NOT_FOUND, §9.3 and the CLI output schema 1 envelope. The implicit marker-driven RECONCILE stays compatible. No new broker operation, frame, journal state, reason, refusal enum or exit | §20.4.10; §20.3.8 procedure step 3 and product invocation; §20.4.2, §20.4.6, §20.4.8; §20.5; §20.6; §20.0 |
+| ARCH-S5-C6-m03 incident-resolution disposition | Owner decision C7-03: incident resolution is UNSUPPORTED_IN_CONTROLLED_V1. S13 is exactly the immutable base `00000000.json` with resolvedAt and cleanup null, and there is no resolution revision. The QUARANTINED claim is retained permanently, and K3/K5 no longer reference "resolved". No later-inconsistency incident exists, because no existing broker path produces one: such a state is class D. RECONCILE, CREATE, qualification, runner, client and runner-quarantine remediation never clear a quarantine, and no maintenance command exists. Any resolution workflow is FUTURE, with a separate PO decision, Security review and a new layout literal. QUARANTINED blocking its root is intended fail-closed R1 behaviour | §20.3.8 inventory, S8, S12, S13, K3, K5, R7, incident rule; §20.2.7 vectors; §20.0 |
+| ARCH-S5-C6-m04 exact one-INTENT serialization | Admission commit lock protocol AL0–AL7. Slow C5 work (Cases A–H) and the non-mutating C7 checks run without the lock. The lock is acquired immediately before the reservation mutation. Under it the broker rescans, runs the store-wide T rows (rollback or class D), checks that every claim and tombstone corresponds to a COMMITTED transaction, and re-checks the rootKey, both consumed keys, executionId non-reuse, capacity and remaining A. It then holds the lock continuously from S6 INTENT through S2, S3, S4, S8, S9, S10, S7 and the durable COMMITTED rename and fsync, and releases only then, or after its own durable rollback, or at death (O_CLOEXEC, no child). The proof: whenever the lock is free, no INTENT has a live owner, and the next CREATE or RECONCILE removes it before another can exist. INTENT-era claims and tombstones are read only under the lock and only through T-A/T-B/T-C, never as consumption authority; the false "never reads" statement is replaced | §20.3.8 S6, write discipline, non-record state, rollback, AL protocol, R4/C5 order; §20.3.7 vectors; §20.0 |
+
+Layout literal: od06-journal-layout-v1 has never been compiled into a
+broker build or qualified, so C7 amends the proposed literal itself (the
+§20.13 C5 precedent); the new-literal rule binds from the first reviewed
+build. The C6 record's sentence that C6 "fixes only [the incident
+resolution's] durable result" is historical and superseded by the
+Controlled-v1 incident rule.
+
+No new journal state, attempt, transaction, record or incident schema or
+version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, hash domain or maintenance
+service. The only additions are the one CLI command and its one flag.
+SO_PEERCRED remains the only runtime caller identity source; JR remains
+read-only and non-authoritative; AA-NULL is unchanged;
+AutomationExecutionRecord v2 stays a first-class validated class with
+outcomeDigest = recordDigest; exactly two tombstones; COMMITTED remains
+the reservation and consumption commit point; INTENT is always rolled
+back, never rolled forward; no retry semantics are weakened; committed
+tombstones stay durable; terminal outcomes are never rewritten.
+
+Preserved: the 6 Architecture INFO findings of the C6 re-review and every
+carried Architecture INFO finding (including retained-history growth,
+JR1 NO_XDEV, AA-NULL nodev wording, snapshot evidence retention and
+qualification timing) stay on the review record, none closed, waived,
+re-rated or absorbed. ARCH-S5-C5-m01/m02 (as amended above), ARCH-S5-C4-m01,
+ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the Architecture C1
+resolutions ARCH-S5-m01..m07 stand. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING. DG-1..DG-3
+are not reopened; DG-4 changes only by the owner-authorized §20.4.10
+command. Further unchanged items: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE
+5; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1; PPI-1; #23F; Stage 4
+authority; both approval gates. Next: fresh independent exact-head HEAVY
+Architecture re-review of the C7 HEAD; only if APPROVED on that HEAD,
+fresh independent exact-head HEAVY Security re-review; then separate
+Product Owner design acceptance and merge authorization. Merge NOT
+AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED.
+
+### 20.16 Architecture corrective C8 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C8 — APPROVED. Reviewed HEAD
+80a5dc54b417a8905bc68171d2195af5669e1773 (tree
+4e53c7f14c031dd58646019057df60eead06c1b3, parent
+f784884e1f9a3f42b15e817bf270807c25d407c4, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR
+/ 6 INFO. C8 is documentation only, this file only;
+native/qa-agent-controller-v1/Containerfile is byte-identical to C2–C7
+(git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C8 resolves exactly
+the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C7-m01 K2/JR3/S4 committed-view contradiction with A-RES | S4 stays the sole durable commit marker. The committed view of X is S4 plus entries 0..n, with n named by S4 the highest committed sequence. K2, JR3 and the S4 class row validate only that view; "highest" means highest committed, never highest physical file. Exactly one entry n+1, and an S5 only as its exact pointer candidate, is outside the committed view while, and only while, the complete store state proves an exact A-RES prefix; A-RES candidate objects are outside the committed view until S4 commits them. A closed classification order (committed view, additional objects, exact-prefix decision, A-RES, otherwise D) means no rule rejects a candidate before A-RES decides it. A-RES and D are disjoint: the eight crash-prefix probes are A-RES and never D, and the D list (two entries above the pointer, wrong chain, digest, successor, executionId, binding or outcomeDigest/recordDigest, an S5 naming anything except n+1, unrelated staging, residue beside a terminal head, any non-exact prefix) is unchanged. The candidate also meets the JR3 per-entry rules and n + 1 < 1024 | §20.3.8 S3, S4, committed view, classification order, K2, A-RES rule and disjointness, matrix A-RES and D; §20.2.7 JR3 and vectors; §20.0 |
+| ARCH-S5-C7-m02 GLOBAL / X lock ordering | Lock hierarchy H1–H7. GLOBAL → X is the only mixed order, and X → GLOBAL and lock upgrade are forbidden. A broker holds at most one X. A closed lock-use table shows that no layout v1 path acquires X under GLOBAL: AL6 and T rollback need none, because every X-lock writer requires COMMITTED. No X is held at any GLOBAL acquisition (AL1 precondition: empty X set; C5 (3) locks are released with durable post-conditions). Pre-global scans treat INTENT-era-possible objects as OBSERVED / DEFERRED TO GLOBAL RESCAN, which is control flow only: not T, not D, not mutated, X never taken. Only the GLOBAL-protected rescan decides T-A/T-B/T-C/D, and GLOBAL is never released mid-mutation. R4 (2) and C5 (3) take their authority from the preceding GLOBAL hold scan, since COMMITTED is permanent. A deadlock-freedom proof and nine concurrent vectors cover CREATE/CREATE, CREATE/RECONCILE, RECONCILE/RECONCILE, a dead INTENT, A-RES during admission, crash holding GLOBAL, X or GLOBAL → X, and pre-global observation of a live S6, S2 or S3. No timeout is added; RECONCILE still waits without a deadline | §20.3.8 AL0, AL1, R4/C5 authority, lock hierarchy, deadlock proof; §20.3.7 vectors; §20.0; §20.6; §20.7 |
+
+The layout literal od06-journal-layout-v1 is still uncompiled and
+unqualified, so C8 refines the proposed literal itself (the §20.13 and
+§20.15 precedent). No class, path, schema or write order changes.
+
+C8 adds no journal state, attempt, transaction, record or incident schema
+or version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, CLI command or flag, hash
+domain, timeout or maintenance service. Unchanged: S4 as the durable
+commit marker; the P/F write orders; reverse-order A-RES rollback with
+each step durable; the ENOENT rule; permanent COMMITTED transactions;
+exactly two consumed tombstones; no retry; AutomationExecutionRecord v2
+with outcomeDigest = recordDigest; the one-INTENT invariant and the
+AL0–AL7 span (C8 adds only the AL0 release and AL1 precondition); INTENT
+rollback, never roll-forward; the Controlled-v1 incident rule (incident
+resolution UNSUPPORTED_IN_CONTROLLED_V1; QUARANTINED claim retained);
+the §20.4.10 command `qa-agent reconcile --execution <executionId>
+[--json]` and marker independence; AA-NULL; JR read-only and
+non-authoritative; SO_PEERCRED as the only runtime caller identity
+source.
+
+Preserved: the 6 Architecture INFO findings of the C7 re-review
+(release-gate explanatory note, CLI `--help` precedence, layout literal
+freeze-point recommendation, permanent QUARANTINED capacity effect, AL1
+timed-acquisition implementation note, pre-existing reconcile
+cancellation race) and every carried Architecture INFO finding stay on
+the review record. None is closed, waived, re-rated or absorbed.
+ARCH-S5-C6-m01..m04 (C6-m01 and C6-m04 as refined above), ARCH-S5-C5-m01/m02,
+ARCH-S5-C4-m01, ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the
+Architecture C1 resolutions ARCH-S5-m01..m07 stand. The Security C2
+direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved;
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C8 HEAD;
+only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh independent
+exact-head HEAVY Security re-review; then separate Product Owner design
+acceptance and merge authorization. Merge NOT AUTHORIZED; Stage 5
+implementation NOT AUTHORIZED; OCI publication NOT AUTHORIZED.
+
+### 20.17 Architecture corrective C9 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C9 — APPROVED. Reviewed HEAD
+621899e8d2592d1b27eccb0197a11eb7004db971 (tree
+eb0365a60ce4fd4662753e32ea80f7660fbbbbe5, parent
+80a5dc54b417a8905bc68171d2195af5669e1773, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR
+/ 4 new INFO; ARCH-S5-C7-m01 and ARCH-S5-C7-m02 RESOLVED. C9 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C8 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C9 resolves exactly the two
+MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C8-m01 short X lock consistency | The §7 rule stands and is not superseded. Per-attempt X locks are short-lived and are never held across lifecycle, manager or client waits. H8: an X span contains only protected-store I/O of X and the individual manager/cgroup calls and reads that §7 serializes with its transitions. X is released, with its durable post-condition complete, before every Cases A–H, §6.4 P3–P5 or client wait. X is re-acquired, holding no other lock, before any journal/state mutation or dependent manager action. The wait for it counts against A or the CREATE phase budget, or falls inside the RECONCILE §6.3 bound. Under the re-acquired X, S4, the committed view, the additional objects and the dependent live manager/cgroup facts are re-read and revalidated. A pre-wait snapshot is never mutation authority. A changed S4 or a new additional object discards the earlier plan, and the closed classification order and Cases A–H disposition run again (A-RES first; terminal head: committed-outcome path; D refused). Termination follows from the forward-only successor table and the existing phase budgets. H1 GLOBAL → X, the X → GLOBAL prohibition, H2, H4, the no-upgrade rule H5 and the deadlock-freedom proof are preserved (the proof now states that no X span contains a wait). No timeout is introduced or used for deadlock resolution. C8 vectors (1), (2) and (5) are rewritten so that X is never held during a wait | §20.3.8 AL0, C8 authority paragraph, H3 table, H8, deadlock proof; §20.3.7 C7 sentence, C8 vectors (1), (2), (5), C9 vectors (14), (15); §20.0; §20.6; §20.7 |
+| ARCH-S5-C8-m02 concurrent unit namespace membership | H9: the unit-namespace scan holds no lock. It enumerates matching units first, then, for each unit whose executionId the preceding GLOBAL hold scan did not see COMMITTED, it makes one descriptor-anchored lockless read of that exact S6 (openat on the `transactions` descriptor, O_NOFOLLOW, regular file, root:root 0600, link count 1). An exact valid S6 with phase COMMITTED and that executionId is an immutable, permanent fact. A unit exists only after the reservation commit, so a legitimate unit observed first always reads back COMMITTED. Only then is the unit a known member. The read proves membership only. It gives no authority for journal or protected-store mutation, T/D classification, recovery, claim/tombstone action, terminal decision, manager action or binding match, and the scan takes no X lock. Mutable head, controller and manager facts stay under H8 and Cases A–H, and the transaction is decided by the GLOBAL-protected rescan (H6, H7). An INTENT, absent, malformed, non-regular or mismatched S6 keeps the existing unknown-member runner quarantine, and the INTENT itself is still untouched outside GLOBAL. The lockless authority extends to no other protected-store object | §20.3.8 C8 authority paragraph, H3 table, H6, H9, deadlock proof; §20.3.7 C9 vectors (10)–(14); §20.0; §20.6; §20.7 |
+
+The layout literal od06-journal-layout-v1 is still uncompiled and
+unqualified, so C9 refines the proposed literal itself (the §20.13,
+§20.15 and §20.16 precedent). No class, path, schema or write order
+changes.
+
+C9 adds no journal state, attempt, transaction, record or incident schema
+or version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, CLI command or flag, hash
+domain, timeout or maintenance service. Unchanged: the resolutions of
+ARCH-S5-C7-m01 (committed view, classification order, A-RES/D
+disjointness) and ARCH-S5-C7-m02 (H1–H7, as extended by H8 and H9 without
+weakening any of them); ARCH-S5-C6-m02/m03 and every earlier
+resolution; S4 as the sole durable commit marker; the P/F write orders;
+the one-INTENT invariant and proof and the AL0–AL7 span; INTENT
+rollback, never roll-forward; permanent COMMITTED transactions; exactly
+two consumed tombstones; no retry; AutomationExecutionRecord v2 with
+outcomeDigest = recordDigest; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; the Controlled-v1
+incident rule (incident resolution UNSUPPORTED_IN_CONTROLLED_V1;
+QUARANTINED claim retained); AA-NULL; JR read-only and
+non-authoritative; RECONCILE's deadline-free wait for GLOBAL.
+
+Preserved: the 4 new Architecture INFO findings of the C8 re-review
+(the re-read under X explicit only for A-RES; K1 absent from
+classification-order step (1); RECONCILE not-found linearizing at R4 (1);
+the pre-existing C5 scope covering live attempts committed by other
+CREATEs), the 6 C7 Architecture INFO findings and every carried
+Architecture INFO finding stay on the review record. None is closed,
+waived, re-rated or absorbed. H8 (d) states the re-read under X
+generally only because C8-m01 requires it; this text does not close the
+first C8 INFO, which is the reviewer's to disposition. ARCH-S5-C7-m01/m02,
+ARCH-S5-C6-m01..m04, ARCH-S5-C5-m01/m02, ARCH-S5-C4-m01,
+ARCH-S5-C3-m01/m02, ARCH-S5-C2-m02/m03/m04 and the Architecture C1
+resolutions ARCH-S5-m01..m07 stand. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C9 HEAD;
+only if APPROVED on that HEAD, fresh independent exact-head HEAVY
+Security re-review (Security STOP until then); then separate Product
+Owner design acceptance and merge authorization. Merge NOT AUTHORIZED;
+Stage 5 implementation NOT AUTHORIZED; execute activation NOT
+AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.18 Architecture corrective C10 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C10 — APPROVED. Reviewed HEAD
+d487f806ed4d092d756419eeaccb41ef3144f297 (tree
+682187767350d83d4b9cd5514efca251e9c9b30c, parent
+621899e8d2592d1b27eccb0197a11eb7004db971, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 4 new INFO; ARCH-S5-C8-m01 and ARCH-S5-C8-m02 RESOLVED. C10 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C9 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C10 resolves exactly the one
+MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C9-m01 H9 scope excludes clean-namespace proofs | H9 is the single membership rule of every Controlled-v1 namespace enumeration and clean-namespace proof, with closed sites: (i) the CREATE C5 scan; (ii) the P1S PRESUBMIT_FAILURE no-send/no-unit/clean-namespace proof; (iii) the equivalent P1S CLIENT_LOST proof; (iv) Case E in CREATE C5 (3) and in RECONCILE R5; (v) the §6.3 reboot clean namespace. The emptyBy=not-submitted proof of §11.1/§11.3 is the record-level form of (ii)–(iv). One algorithm applies at every site. Units are enumerated first. A name outside the exact 32-hex grammar gets no read and keeps the existing unbound/unknown fail-closed handling. For each matching unit, Y is extracted and `transactions/<Y>.json` is read once, descriptor-anchored and lockless, unconditionally, whether or not a GLOBAL snapshot preceded the site. Only an exact valid immutable S6 with phase COMMITTED and executionId Y makes the unit a known member. That read is membership authority only: no journal mutation, T/D classification, recovery, claim/tombstone mutation, terminal decision, controller/manager action or retry. Mutable facts stay under H8 and Cases A–H. INTENT, absent, malformed, non-regular or mismatched S6 keeps the existing fail-closed handling. The proof's own unit is never classified by H9 and always fails the no-unit part. A clean namespace means no own unit and no unknown member. Sites (ii)–(v) make the reads inside the proof attempt's own short X span (H8 (a) admits them; no lock is taken, and no X of Y is taken), and redo them after any wait. Vectors (16)–(24) | §20.3.8 C8 authority paragraph, H3 table, H8 (a), H9, deadlock proof; §20.3.7 C10 vectors (16)–(24); §20.0; §20.6; §20.7; §20.8 |
+
+The layout literal od06-journal-layout-v1 is still uncompiled and
+unqualified, so C10 refines the proposed literal itself (the §20.13–§20.17
+precedent). No class, path, schema or write order changes, and no
+fail-closed outcome changes: a known member was never a defined failure
+cause, and every unknown-member, invalid-name, own-unit and proof failure
+keeps its existing outcome.
+
+C10 adds no journal state, attempt, transaction, record or incident schema
+or version, record reason, broker frame, broker operation, exit code,
+refusal enum, usage code, CLI reason code, CLI command or flag, hash
+domain, timeout or maintenance service. Unchanged: the resolutions of
+ARCH-S5-C8-m01 (H8 short X) and ARCH-S5-C8-m02 (H9 at the C5 scan, whose
+classification the unconditional read leaves unchanged); H1–H8 and H9
+except the scope extension above; ARCH-S5-C7-m01 (committed view,
+classification order, A-RES/D disjointness) and every earlier
+resolution; S4 as the sole durable commit marker; the one-INTENT
+invariant and proof; GLOBAL → X only, no X → GLOBAL, no lock upgrade;
+INTENT rollback, never roll-forward; COMMITTED as the consumption commit
+point; permanent COMMITTED transactions; exactly two consumed tombstones;
+no retry; AutomationExecutionRecord v2; SO_PEERCRED as the only runtime
+caller identity source; the §20.4.10 command `qa-agent reconcile
+--execution <executionId> [--json]` and marker independence; incident
+resolution UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED
+fail-closed semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the 4 new Architecture INFO findings of the C9 re-review
+(prefix units outside the name grammar not restated; no explicit byte
+bound on the lockless S6 read; H8 (f) not naming the committed-outcome
+path of the attached CREATE after AL7; H9 not cross-checking
+keys/bindingDigest), the carried C8 and C7 Architecture INFO findings
+and every other carried Architecture INFO finding stay on the review
+record. None is closed, waived, re-rated or absorbed. H9 (2) and vector
+(23) restate the existing invalid-name handling only because the closed
+H9 scope requires it; that text does not close the first C9 INFO, which
+is the reviewer's to disposition. Every earlier Architecture resolution
+stands. The Security C2 direction SEC-S5-m01/m02 and corrections
+INFO-2/3/4/6 are preserved; Security INFO-1, INFO-5 and INFO-7 stay OPEN /
+PRESERVED / NON-BLOCKING. DG-1..DG-4 are not reopened. Further unchanged
+items: execute DISABLED; Controlled Release NOT APPROVED; TSB-F02 OPEN /
+LOW / CONDITIONAL with current and proposed triggers FALSE; §19.1 L1–L7
+and I1–I5 OPEN / PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01;
+FUTURE guards; TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both
+approval gates. Next: fresh independent exact-head HEAVY Architecture
+re-review of the C10 HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on
+that HEAD, fresh independent exact-head HEAVY Security review (Security
+STOP until then); then separate Product Owner design acceptance and
+merge authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.19 Architecture corrective C11 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C11 — APPROVED (owner
+option (a)). Reviewed HEAD fc201f3ffe182e8222eb9a7148018dddabca8684
+(tree 373e2f968b48ed0d6c6fa79bbe489f7cd6620c21, parent
+d487f806ed4d092d756419eeaccb41ef3144f297, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 3 new INFO; ARCH-S5-C9-m01 RESOLVED. C11 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical
+to C2–C10 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C11
+resolves exactly the one MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C10-m01 H9 P1S enumeration contradicts §6.4 "During all of P1S ... no D-Bus call is made" | §20.0 qualifies, not removes, that sentence and the §12 "no D-Bus call observed during P1S" vector. Normal and successful P1S make zero D-Bus calls. Only after the broker irrevocably selects PRESUBMIT_FAILURE or P1S CLIENT_LOST is exactly one read-only ListUnitsByPatterns allowed, solely as the H9 (ii)/(iii) enumeration. It is bounded by the fixed internal E = 5000 ms, whose origin is after the selection and after P's X is held, immediately before the call. There is no retry, no fallback, no second enumeration and no other method. E never renews, extends, restarts or resets S, and no time is borrowed between them. A call that misses E, fails, or returns malformed or over-bound evidence leaves the proof NOT ESTABLISHED, and the outcome is the existing QUARANTINED 7. Submission stays NOT_SENT, P2 does not begin, and StartTransientUnit is unreachable. H8 (a) admits that call only within E. H9 (1), its Placement clause and vector (24) confine the after-wait redo to sites (iv)/(v). §20.3.3 names E as that call's bound. The terminal-path timing is S + E + the existing terminal commit/release I/O, and successful timing is unchanged. Vectors (25)–(33) | §20.3.8 H8 (a), H8 (g), H9 (1) and Placement, new H10, deadlock proof; §20.3.3; §20.3.7 C10 vector (24) and C11 vectors (25)–(33); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reading §6.4 with §20.0 and H10 finds one
+rule. Before the selection and on success there is no D-Bus call. On the
+terminal-evidence path there is exactly one E-bounded read-only
+ListUnitsByPatterns, and nothing else. No site (i)–(v) is removed from
+H9, and unknown-unit detection is not deferred to a later CREATE.
+
+C11 adds one broker-internal fixed constant (E) and no journal state,
+attempt, transaction, record or incident schema or version, record
+reason, broker frame, broker operation, exit code, refusal enum, usage
+code, CLI reason code, CLI command or flag, config or ProjectProfile
+field, environment variable, public API field, hash domain or
+maintenance service. Unchanged: the resolutions of ARCH-S5-C9-m01 (H9
+sites (i)–(v), unconditional S6 read, own-unit rule, clean namespace =
+no own unit and no unknown member), ARCH-S5-C8-m01 (H8 short X) and
+ARCH-S5-C8-m02 (H9 at the C5 scan); H1–H9 except the wording
+reconciliations above; ARCH-S5-C7-m01 (committed view, classification
+order, A-RES/D disjointness) and every earlier resolution; S4 as the
+sole durable commit marker; the one-INTENT invariant and proof; GLOBAL →
+X only, no X → GLOBAL, no lock upgrade; INTENT rollback, never
+roll-forward; COMMITTED as the consumption commit point; permanent
+COMMITTED transactions; exactly two consumed tombstones; no retry;
+AutomationExecutionRecord v2; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED fail-closed
+semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the 3 new Architecture INFO findings of the C10 re-review
+(no runtime detection of a recreated or lookalike unit of a terminal or
+bindingless COMMITTED Y; vector (20) labelling the site (v) own-unit
+outcome "Case D H"; H8 (a) admitting the enumeration call only
+implicitly), the carried C9 INFO findings (no explicit byte bound on the
+lockless S6 read; H8 (f) not naming the committed-outcome path of the
+attached CREATE after AL7; H9 not cross-checking keys/bindingDigest), the
+carried C8 and C7 Architecture INFO findings and every other carried
+Architecture INFO finding stay on the review record. None is closed,
+waived, re-rated or absorbed. H8 (a) now names the P1S terminal-evidence
+call explicitly because resolving the MINOR finding requires it. That
+text does not close the third C10 INFO, which is the reviewer's to
+disposition. Every earlier Architecture resolution stands. The Security
+C2 direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved;
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C11
+HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh
+independent exact-head HEAVY Security review (Security STOP until
+then); then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.20 Architecture corrective C12 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C12 — APPROVED (owner
+decision: no new X timeout). Reviewed HEAD
+9cdae941c405cd9dcdf6ca96624b626bb4164a9a (tree
+0429f7561b924ac10901be09a75f8cc326763229, parent
+fc201f3ffe182e8222eb9a7148018dddabca8684, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 5 new INFO; ARCH-S5-C10-m01 RESOLVED. C12 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical
+to C2–C11 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C12
+resolves exactly the one MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C11-m01 terminal-path X(P) acquisition outside the H10 (i) P0+P1+S+E bound; H9 S6 reads unaccounted | The acquisition of P's X after an irrevocable PRESUBMIT_FAILURE (including S exhaustion) or P1S CLIENT_LOST selection is the named terminal X acquisition synchronization interval (H10 (j)). It ends when X is held. It is charged to neither S nor E, does not extend, reset or restart S, does not start E, is not a phase budget and is not borrowed. It grants no P1S progress, SUBMITTING, StartTransientUnit, retry or new reservation, and it cannot change the selected path. The waiter holds no GLOBAL and no other X and makes no lock upgrade. Every X holder's H8 span is finite and closed, so a single hold ends. flock fairness is not assumed, and no FIFO admission, starvation freedom or hard X-acquisition wall-clock bound is claimed. Deadlock freedom stays structural and is distinguished from starvation freedom. E never resolves X contention. Under the acquired X, the H8 re-read and revalidation (H10 (k)) precede the E origin. An unchanged PREPARED/NOT_SENT view keeps the plan. A committed terminal or QUARANTINED head takes the committed-outcome path with no call, no E and no overwrite. Any other change gets H8 (f) unchanged. E = 5000 ms bounds only the one ListUnitsByPatterns call, and an X wait longer than E consumes none of it. The up-to-256 descriptor-anchored H9 S6 reads are structurally finite local evidence work outside E and S (H10 (l)). H10 (i) now states P0+P1+S+E plus local work and I/O as budgeted execution work that excludes X contention, with the ordered timeline TL1–TL6, not as a complete wall-clock bound. No timeout, deadline, state, reason, outcome, exit code, refusal code or retry path is added. Vectors (34)–(41) | §20.3.8 H8 (c), H8 (g), H10 (c), (d), (i), new (j)–(l), deadlock proof; §20.3.7 C12 vectors (34)–(41); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reading H8 (c) with H10 finds one rule
+for the terminal acquisition of P's X. It is a separately named interval
+outside S and E, with no timeout and no claimed elapsed-time bound. It is
+followed by revalidation, then the E origin, the one E-bounded call, the
+bounded H9 S6 reads, and the existing terminal commit/release I/O. No
+text still presents P0+P1+S+E plus I/O as a complete terminal-path
+wall-clock bound. The C11 record sentence "The terminal-path timing is
+S + E + the existing terminal commit/release I/O" stays as history and
+is read through the §20.0 C12 row.
+
+C12 adds no constant, timeout, deadline, journal state, attempt,
+transaction, record or incident schema or version, record reason, broker
+frame, broker operation, outcome, exit code, refusal enum, usage code, CLI
+reason code, CLI command or flag, config or ProjectProfile field,
+environment variable, public API field, hash domain or maintenance
+service. Unchanged: the resolution of ARCH-S5-C10-m01. A normal or
+successful P1S makes zero D-Bus calls. The terminal-failure evidence is
+exactly one read-only ListUnitsByPatterns, bounded by E = 5000 ms (fixed,
+internal, non-configurable, non-renewable, non-resettable), with no retry
+and no other manager method. StartTransientUnit stays unreachable, and H9
+sites (ii) and (iii) stay present. The enumeration is not removed. A
+path reaches no call only when no H10 terminal evidence is required: a
+terminal outcome is already committed (H10 (k) (2)), or the revalidated
+state has a disposition that needs no such evidence, such as class D
+(corrected by C13 under C12 review INFO-A; record wording only, no
+behaviour change). Also unchanged: the resolutions of ARCH-S5-C9-m01, ARCH-S5-C8-m01
+(H8 short X) and ARCH-S5-C8-m02; H1–H9 except the wording
+reconciliations above; ARCH-S5-C7-m01 and every earlier resolution; S4
+as the sole durable commit marker; the one-INTENT invariant and proof;
+GLOBAL → X only, no X → GLOBAL, no lock upgrade; INTENT rollback, never
+roll-forward; COMMITTED as the consumption commit point; permanent
+COMMITTED transactions; exactly two consumed tombstones; no retry;
+AutomationExecutionRecord v2; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED fail-closed
+semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the 5 new Architecture INFO findings of the C11 re-review
+stay on the review record: (1) the P1S N1 re-run legal only on retained
+P1 credentials; (2) H10's implicit single invocation connection and
+retained manager unique name; (3) H10 not stating that the H8 (d)–(f)
+re-read precedes the E origin, or the concurrent-Case-E-committed case;
+(4) "manager wait" wording against a bounded call under X; (5) the §6.4
+P6 row and §7.3 step 10 not listed in §20.0. Also preserved are the
+carried C10 INFO findings (INFO-1, INFO-2, and INFO-3 as narrowed by the
+C11 re-review), the 3 carried C9 INFO findings (including no explicit
+byte bound on the lockless S6 read, which H10 (l) cites and does not
+resolve), the carried C8 and C7 Architecture INFO findings, and every
+other carried Architecture INFO finding. None is closed, waived, re-rated
+or absorbed. H10 (k) now states the re-read before the E origin and the
+committed-outcome branch, because ARCH-S5-C11-m01 requires the after-wait
+revalidation to be explicit. That text does not close C11 INFO (3),
+which is the reviewer's to disposition. Every earlier Architecture
+resolution stands. The Security C2 direction SEC-S5-m01/m02 and
+corrections INFO-2/3/4/6 are preserved; Security INFO-1, INFO-5 and
+INFO-7 stay OPEN / PRESERVED / NON-BLOCKING. DG-1..DG-4 are not reopened.
+Further unchanged items: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO
+STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1; PPI-1; #23F;
+Stage 4 authority; both approval gates. Next: fresh independent
+exact-head HEAVY Architecture re-review of the C12 HEAD; only if
+APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh independent
+exact-head HEAVY Security review (Security STOP until then); then
+separate Product Owner design acceptance and merge authorization. Merge
+NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; execute activation
+NOT AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.21 Architecture corrective C13 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C13 — APPROVED (owner
+option 2: sticky original terminal reason after exact benign A-RES
+recovery). Reviewed HEAD cc4b51b83514d04a3d8f222ca44ac467bb941e69 (tree
+602b2aa5fa04a0ac0cf4e765c314f7b7cec778b1, parent
+9cdae941c405cd9dcdf6ca96624b626bb4164a9a, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 2 new INFO; ARCH-S5-C11-m01 RESOLVED; C11 INFO (3) RESOLVED. C13 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C12 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C13 resolves exactly the one
+MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C12-m01 H10 (k) branch 3 leaves the record reason undefined (CLIENT_LOST against Case E PRESUBMIT_FAILURE) after an A-RES rollback | "Irrevocable" now has one meaning (H10 (b)). Submission abandonment is always irrevocable. The selected existing reason is sticky only on the invocation's own H10 path: the unchanged view of (k) (1), or the closed benign recovery of (k) (3) (ii)–(iv). That recovery is exact A-RES, the existing exact, idempotent, reverse-order rollback under the same X, a mandatory fresh protected-store re-read under that X, and proof that S4 is byte-equal to the reservation's PREPARED/NOT_SENT value with the expected committed view, no additional object and the same classification. It then resumes the original site (ii) (PRESUBMIT_FAILURE) or (iii) (CLIENT_LOST), never Case E site (iv). Generic Case E PRESUBMIT_FAILURE never replaces a selected CLIENT_LOST because a transient residue was removed. Closed precedence, highest first: (A) an outcome already committed wins, with no write, no call and no E; (B) class D or another state forbidding the write keeps its existing disposition, with no forced reason and no H10 call; (C)/(D) exact A-RES, then exact restoration, then the original evidence path; (E) any other post-cleanup state gets H8 (f) unchanged with no reason override. Failed evidence stays QUARANTINED 7 for either reason, with no retry. At most one ListUnitsByPatterns per invocation, never two. The rollback and the re-reads make none. E = 5000 ms begins only after the rollback is durable and the restoration is proven; the rollback and the re-reads are TL3, outside S and E. The selected reason is invocation-local. It is never written and never reconstructed from PREPARED/NOT_SENT. After a crash at any point, a later CREATE C5 (3) or RECONCILE R5 applies Case E. No reason, outcome, exit code, state, journal field, schema, frame, operation, CLI option, API, config field, environment variable, hash domain or timeout is added. Vectors (42)–(49) | §20.3.8 H8 (f), A-RES rule cross-reference, H10 (b), (c), (d), (f), (h), (i), (j) (3), (k); §20.3.7 C12 vectors (36), (39) and new C13 vectors (42)–(49); §20.0; §20.6; §20.8; §20.20 |
+
+Resolution test. An implementer reading H10 (k) with H8 (f) and the
+A-RES rule finds one outcome for the failure trace of the finding. A
+selects CLIENT_LOST. B begins a Case E PRESUBMIT_FAILURE commit and
+crashes, leaving an exact A-RES prefix. A acquires X, rolls the prefix
+back, re-reads and finds the exact original PREPARED/NOT_SENT state. A
+then makes the one site (iii) call and writes CLIENT_LOST 7, or
+QUARANTINED 7 if the proof fails. If B had committed, A writes nothing.
+If the state is class D, or does not return to the exact original, the
+existing disposition decides and the selected reason decides nothing.
+
+INFO-A of the C12 re-review (the §20.20 sentence presenting an already
+committed outcome as the only zero-call path) is corrected in the
+§20.20 record wording and by the H10 (k) closing paragraph. Class D and
+other dispositions that need no H10 evidence are also zero-call paths.
+This is record consistency only and adds no behaviour.
+
+C13 adds no constant, timeout, deadline, journal state, attempt,
+transaction, record or incident schema or version, record reason,
+broker frame, broker operation, outcome, exit code, refusal enum, usage
+code, CLI reason code, CLI command or flag, config or ProjectProfile
+field, environment variable, public API field, hash domain, durable
+object or maintenance service. Unchanged: the resolutions of
+ARCH-S5-C11-m01 (H10 (i)–(l) timing architecture, the terminal X
+acquisition synchronization interval, no fairness assumption, no hard
+X wall-clock bound, deadlock freedom distinguished from starvation
+freedom), ARCH-S5-C10-m01 (H10 option (a), successful P1S makes zero
+D-Bus calls, E = 5000 ms), ARCH-S5-C9-m01 (H9 membership-only rule),
+ARCH-S5-C8-m01 (H8 short X), ARCH-S5-C8-m02 and ARCH-S5-C7-m01
+(committed view, classification order, A-RES/D disjointness), and every
+earlier resolution. The A-RES rule itself is not redefined. Also
+unchanged: S4 as the sole durable commit marker; the one-INTENT
+invariant and proof; GLOBAL → X only, no X → GLOBAL, no lock upgrade;
+INTENT rollback, never roll-forward; COMMITTED as the consumption
+commit point; permanent COMMITTED transactions; exactly two consumed
+tombstones; no retry; AutomationExecutionRecord v2; SO_PEERCRED as the
+only runtime caller identity source; the §20.4.10 command `qa-agent
+reconcile --execution <executionId> [--json]` and marker independence;
+incident resolution UNSUPPORTED_IN_CONTROLLED_V1 and permanent
+QUARANTINED fail-closed semantics; AA-NULL; JR read-only and
+non-authoritative.
+
+Preserved: the other new Architecture INFO finding of the C12 re-review
+(the §6.4 sentence "every instant from reservation through submission is
+inside a bounded phase" not named in the §20.0 C12 row) stays on the
+review record. Also preserved are C11 INFO (1), (2), (4) and (5), the
+carried C10 INFO findings, the remaining carried C9 INFO findings
+(including no explicit byte bound on the lockless S6 read), the carried
+C8 and C7 Architecture INFO findings, and every other carried
+Architecture INFO finding. None is closed, waived, re-rated or absorbed.
+Every earlier Architecture resolution stands. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C13
+HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh
+independent exact-head HEAVY Security review (Security STOP until
+then); then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.22 Architecture corrective C14 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C14 — APPROVED (owner
+decision: no new D-Bus allowance; existing fail-closed QUARANTINED 7
+when a delegated disposition would need a Case E namespace proof that
+cannot legally be made). Reviewed HEAD
+6517536aba8f1a31ccb5cedb8e5bbf8662db3d8d (tree
+76de3b4a9ff3c366f2b4ddda4db267fe02c71251, parent
+cc4b51b83514d04a3d8f222ca44ac467bb941e69, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR
+/ 1 new INFO; ARCH-S5-C12-m01 RESOLVED. C14 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical
+to C2–C13 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C14
+resolves exactly the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C13-m01 H10 (k) branch (1) sits outside the closed precedence and keeps the terminal plan on S4 equality and no additional object alone, although the committed view or K1–K5 may make the state class D | The precedence is exhaustive, highest first: [1] committed outcome (2); [2] class D or another write-forbidding state (3) (i); [3] the valid unchanged exact original state (1); [4] exact A-RES and exact restoration (3) (ii)–(iv); [5] every other state (3) (v). The first rank that matches the fresh read applies, every result matches exactly one, and no branch lies outside the order. Branch (1) now needs, on the fresh revalidation under X, S4 byte-equal to the reservation's PREPARED/NOT_SENT value, no additional object of P, a structurally valid committed view, valid applicable K1–K5 relations, and exactly the same A-INC PREPARED/NOT_SENT classification of this invocation's attempt. S4 equality and no additional object alone never select it. With S4 byte-equal and no additional object but a broken committed view or K relation, the state is class D and [2] wins: the plan is discarded, no H10 call is made, E never begins, nothing is written from the stale plan, and the selected reason has no override authority. No class or reason is added. Vectors (50), (51) | §20.3.8 H8 (f), H10 (b), (j) (3), (k) precedence, (1), (3), (3) (i); §20.3.7 C14 vectors (50), (51), (56); §20.0 |
+| ARCH-S5-C13-m02 H10 (k) (3) (v) delegates to generic H8 (f), whose Case E needs a clean-namespace proof that has no site or allowance inside a live P1S H10 invocation | Branch (3) (v) runs the existing H8 (f) classification and disposition, then splits by proof need. (A) An existing disposition that needs no manager or unit-namespace proof applies unchanged. (B) A disposition that would need a Case E no-send/no-unit/clean-namespace proof makes no ListUnitsByPatterns call and no other D-Bus call, does not use (c), does not start E, and does not consume, restart, extend or borrow S. It makes no retry. The proof is NOT ESTABLISHED, and the existing Case E fail-closed QUARANTINED 7 is committed through the existing terminal/QUARANTINED commit, with that outcome's existing record, reason and permanent QUARANTINED semantics. The selected CLIENT_LOST or PRESUBMIT_FAILURE does not override it, and the sticky path is not re-entered. The result is identical when S was exhausted. H9 site (iv) stays CREATE C5 (3) A-INC and RECONCILE R5 only; a live H10 (3) (v) is not site (iv). The only possible H10 call is the call of (c) at site (ii) or (iii), so a whole invocation makes at most one ListUnitsByPatterns, never two. A crash before that QUARANTINED 7 is durable leaves PREPARED/NOT_SENT for the existing durable recovery and ordinary Case E at site (iv). No in-memory C14 disposition or selected reason is reconstructed. Vectors (52)–(57) | §20.3.8 H8 (f), H9 site (iv), H10 (b), (c), (h), (k) (3) (v) and closing paragraph; §20.3.7 C13 vector (47) and C14 vectors (52)–(57); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reading H10 (k) with H8 (f) and H9
+finds one outcome for each trace. A selects a terminal reason, waits for
+P's X and acquires it. If S4 is unchanged, no object was added and the
+committed view and K1–K5 are valid with the exact original
+classification, A makes the one site (ii) or (iii) call. If S4 is
+unchanged but K3 is broken, A refuses as class D with no call and no
+record from the plan. If the state reaches (3) (v) and H8 (f) leads to
+Case E, A makes no call and commits QUARANTINED 7. Nothing in the
+contract is left for the implementer to invent: no allowance, site or
+outcome.
+
+C14 adds no D-Bus allowance, H9 site, constant, timeout, deadline,
+journal state, class, attempt, transaction, record or incident schema or
+version, record reason, broker frame, broker operation, outcome, exit
+code, refusal enum, usage code, CLI reason code, CLI command or flag,
+config or ProjectProfile field, environment variable, public API field,
+hash domain, durable object or maintenance service. Unchanged: the
+resolutions of ARCH-S5-C12-m01 (C13 owner option 2 sticky reason, exact
+A-RES restoration, same-live-invocation scope, crash boundary),
+ARCH-S5-C11-m01 (H10 (i)–(l) timing architecture, the terminal X
+acquisition synchronization interval, no flock fairness assumption, no
+hard X acquisition bound), ARCH-S5-C10-m01 (H10 option (a), successful
+P1S makes zero D-Bus calls, E = 5000 ms), ARCH-S5-C9-m01 (H9
+membership-only rule), ARCH-S5-C8-m01 (H8 short X), ARCH-S5-C8-m02 and
+ARCH-S5-C7-m01 (committed view, classification order, A-RES/D
+disjointness), and every earlier resolution. Class D semantics and the
+A-RES rule are not redefined. Also unchanged: S4 as the sole durable
+commit marker; the one-INTENT invariant and proof; GLOBAL → X only, no
+X → GLOBAL, no lock upgrade; INTENT rollback, never roll-forward;
+COMMITTED as the consumption commit point; permanent COMMITTED
+transactions; exactly two consumed tombstones; no retry;
+AutomationExecutionRecord v2; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED fail-closed
+semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the new Architecture INFO finding of the C13 re-review
+(vectors (42)–(44) do not cover QUARANTINED F prefixes or P-transition
+residue) is carried on the review record. C14 does not close it and does
+not widen vectors (42)–(44). Also preserved are the carried INFO
+findings of the C12 re-review, C11 INFO (1), (2), (4) and (5), the
+carried C10 INFO findings, the remaining carried C9 INFO findings
+(including no explicit byte bound on the lockless S6 read), the carried
+C8 and C7 Architecture INFO findings, and every other carried
+Architecture INFO finding. None is closed, waived, re-rated or absorbed.
+Every earlier Architecture resolution stands. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C14
+HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh
+independent exact-head HEAVY Security review (Security STOP until
+then); then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.23 Architecture corrective C15 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C15 — APPROVED (binding
+owner decision: for the PREPARED/NOT_SENT no-send/no-unit/clean-namespace
+proof-failure class, the canonical existing QUARANTINED reason is
+CLEANUP_UNPROVEN). Reviewed HEAD
+ec68309af50b2205947d27e846e16317544d6a02 (tree
+8452e3e9ab30ef3efd27ea1806bdc46c08772ca9, parent
+6517536aba8f1a31ccb5cedb8e5bbf8662db3d8d, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 3 INFO; ARCH-S5-C13-m01 and ARCH-S5-C13-m02 RESOLVED. C15 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C14 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C15 resolves exactly the one
+MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C14-m01 C14 fixes PREPARED/NOT_SENT + required no-send/no-unit/clean-namespace proof NOT ESTABLISHED → QUARANTINED 7, but no normative Case E rule selects the AutomationExecutionRecord v2 reason among CONTROLLER_FAILURE, MISSING_UNIT_PROOF, CLEANUP_UNPROVEN and STATE_INCONSISTENT | New H9 failed-proof reason paragraph. For the PREPARED/NOT_SENT proof-failure class (site (ii) P1S PRESUBMIT_FAILURE, site (iii) P1S CLIENT_LOST, site (iv) Case E in CREATE C5 (3) and RECONCILE R5, and the zero-call H10 (k) (3) (v) (B)) the outcome is exactly QUARANTINED / CLEANUP_UNPROVEN / 7. The reason follows the failed proof class, not the low-level cause. Manager timeout or failure, malformed or unauthenticated reply, more than 256 units, own unit present, unknown member, unreadable membership evidence and no legal allowance at the site all give CLEANUP_UNPROVEN. None of them gives CONTROLLER_FAILURE, MISSING_UNIT_PROOF or STATE_INCONSISTENT. The H10 (b) selection never overrides it: PRESUBMIT_FAILURE or CLIENT_LOST plus failed evidence gives CLEANUP_UNPROVEN. A clean proof keeps PRESUBMIT_FAILURE 7 (sites (ii), (iv)) or CLIENT_LOST 7 (site (iii)). A rule that decides the input first (committed outcome, class D or another write-forbidding state, (3) (v) (A)) keeps its outcome. The S11 reason is CLEANUP_UNPROVEN, recordDigest is the existing v2 digest of that exact record, the S13 incident reason is CLEANUP_UNPROVEN through K5, and the final QUARANTINED frame reason is the record reason. Permanent QUARANTINED semantics, the claim retention, the crash boundary (H10 (h)) and the reason partition outside the class are unchanged, including MISSING_UNIT_PROOF for the §7.4 S2 SUBMITTING/BOUND controller-state-disappears row. Vectors (58)–(65) | §20.3.8 H8 (f), H9 site (iv), own-attempt rule and failed-proof reason, H10 (b), (e), (f), (h), (j) (3), (k) (3) (iv), (3) (v) (B); §20.3.3; §20.3.7 C14 vectors (53), (54), (57) and C15 vectors (58)–(65); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reaching a PREPARED/NOT_SENT outcome
+whose no-send/no-unit/clean-namespace proof is NOT ESTABLISHED (in P1S
+H10 at site (ii) or (iii), in Case E at site (iv), or with zero calls
+under H10 (k) (3) (v) (B)) writes status QUARANTINED, reason
+CLEANUP_UNPROVEN and exit 7, whatever the cause and whatever reason was
+selected. The same reason appears in S11, the recordDigest input, S13 and
+the final frame. No reason choice is left to the implementer.
+
+C15 adds no record reason, status, outcome, exit code, schema or schema
+version, record or incident field, incident type, journal state, class,
+broker frame, broker operation, H9 site, D-Bus allowance, constant,
+timeout, deadline, refusal enum, usage code, CLI reason code, CLI
+command or flag, config or ProjectProfile field, environment variable,
+public API field, hash domain, durable object or maintenance service.
+CLEANUP_UNPROVEN existed in §11.3 and K4 before C15. No other reason
+mapping changes: CONTROLLER_FAILURE, MISSING_UNIT_PROOF,
+STATE_INCONSISTENT, every other use of CLEANUP_UNPROVEN and site (v)
+keep their existing dispositions. Unchanged: the resolutions of
+ARCH-S5-C13-m01 and ARCH-S5-C13-m02 (C14 exhaustive precedence [1]–[5],
+branch (1) validation, the (3) (v) (A)/(B) split and its zero-call rule,
+no new D-Bus allowance, H9 site (iv) at CREATE C5 (3) A-INC and
+RECONCILE R5 only), ARCH-S5-C12-m01 (C13 sticky reason, exact A-RES
+restoration, same-live-invocation scope, crash boundary),
+ARCH-S5-C11-m01 (H10 (i)–(l) timing, the terminal X acquisition
+synchronization interval, no flock fairness assumption),
+ARCH-S5-C10-m01 (H10 option (a), E = 5000 ms), ARCH-S5-C9-m01 (H9
+membership-only rule), ARCH-S5-C8-m01 (H8 short X), ARCH-S5-C8-m02 and
+ARCH-S5-C7-m01 (committed view, classification order, A-RES/D
+disjointness), and every earlier resolution. Also unchanged: H8, H9 and
+H10 apart from the reason binding; at most one ListUnitsByPatterns per
+H10 invocation; the crash boundary; AutomationExecutionRecord v2;
+permanent QUARANTINED fail-closed semantics and incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1; SO_PEERCRED as the only runtime caller
+identity source; AA-NULL; JR read-only and non-authoritative.
+
+Carried, not closed: the three INFO findings of the C14 re-review stay
+on the review record and are not widened or absorbed by C15: (1) the
+completeness of the (3) (v) (A)/(B) split relies on reachability facts
+that are not stated; (2) a post-rollback class D may flow through [5]
+(A) rather than [2], with the same outcome; (3) the C13 coverage INFO
+(vectors (42)–(44) do not cover QUARANTINED F prefixes or P-transition
+residue). Also preserved are the carried INFO findings of the C12 and
+C11 re-reviews, the carried C10, C9, C8 and C7 INFO findings, and every
+other carried Architecture INFO finding. None is closed, waived,
+re-rated or absorbed. The Security C2 direction SEC-S5-m01/m02 and
+corrections INFO-2/3/4/6 are preserved; Security INFO-1, INFO-5 and
+INFO-7 stay OPEN / PRESERVED / NON-BLOCKING. DG-1..DG-4 are not
+reopened. Further unchanged items: execute DISABLED; Controlled Release
+NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO
+STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1; PPI-1;
+#23F; Stage 4 authority; both approval gates. Next: fresh independent
+exact-head HEAVY Architecture re-review of the C15 HEAD; only if
+APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh independent
+exact-head HEAVY Security review (Security STOP until then); then
+separate Product Owner design acceptance and merge authorization. Merge
+NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; execute
+activation NOT AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT
+AUTHORIZED.
+
+### 20.24 Security corrective C16 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-SECURITY-C16 — APPROVED (binding
+owner decisions: do not accept the M01 residual, add no host-wide D-Bus
+ACL, fix the broker receive path; bind existing QUARANTINED routes to
+existing reasons through one closed partition, with no new reason).
+Reviewed HEAD 593ec7740c7023cb0a24e3479104c0edf5598a9f (tree
+2f47d993f32255bf3fc2e7714e4bcb7154f4fdca, parent
+ec68309af50b2205947d27e846e16317544d6a02, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Security review of that HEAD: CHANGES REQUIRED, 0 CRITICAL / 0 HIGH / 1
+MEDIUM / 1 LOW, 2 design-blocking. The Architecture C15 re-review of
+that HEAD was APPROVED 0 MAJOR / 0 MINOR. C16 creates a new HEAD, so that
+exact-head approval does not carry to it. C16 is documentation only,
+this file only; native/qa-agent-controller-v1/Containerfile is
+byte-identical to C2–C15 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C16 resolves exactly the two
+findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| SEC-S5-C15-M01 (MEDIUM, design-blocking) An unprivileged local account floods the broker's unique name; a full active zbus subscriber queue stops socket reads; a legitimate manager reply is delayed past its deadline (including H10 E = 5000 ms) and the root is permanently QUARANTINED / CLEANUP_UNPROVEN / 7: attacker-triggerable permanent per-root denial of service | Receive-path isolation. Pinned zbus 5.13.2 source evidence Z1–Z8: the rule check precedes enqueue in the socket reader; the unfiltered and method-return channels start inactive with await_active false; async-broadcast 0.7 drops a message for an inactive channel at once; only conversions from a Connection activate the unfiltered channel; replies use only the per-call method-return receiver; a well-known sender is not checked client-side; request_name, Proxy receive_*, Proxy property caches and the object server create implicit active queues; header-parse errors end the reader. Normative RP1–RP8: those APIs are forbidden for the whole broker lifetime; one exact-filtered PropertiesChanged subscription only (signal, authenticated manager unique name, Properties interface, PropertiesChanged member, exact bound unit path), none while no unit path is bound; pre-queue rejection at the reader's rule check and the inactive drop; reply independence for every blocking manager and bus-driver call; RP6 trusted-sender validation unchanged; RP7 qualified-bus facts (HeaderFiltering, requested-reply enforcement, reader liveness) recorded as evidence with no new policy; no threshold fix. Mandatory vectors (66)–(73): H10 E, Case E site (iv), P4 and every other call under a >64-message flood from a second unprivileged account, against no-flood controls; any flood-caused outcome blocks Stage 5 qualification and Controlled Release | §20.3.3; §20.3.7 C2 flood paragraph and vectors (66)–(73); §20.0; §20.6; §20.7; §20.8 |
+| SEC-S5-C15-L01 (LOW, design-blocking) Several existing QUARANTINED / Case H routes have a deterministic status but no deterministic AutomationExecutionRecord.reason, so the security evidence, recordDigest and incident reason depend on implementation choice | §20.3.8 QR closed partition over existing reasons only: Q0 C15 class CLEANUP_UNPROVEN (unchanged); Q1 trusted-state conflict SC (c1)–(c5) -> STATE_INCONSISTENT; Q2 authenticated absence of a submitted unit with removal and reboot proof NOT ESTABLISHED -> MISSING_UNIT_PROOF; Q3 every other QUARANTINED route -> CLEANUP_UNPROVEN. Route table for §6.3, §6.4 P4, Cases A–H, §7.3 and §7.4 S2/S3; Case F has no H route of its own. CONTROLLER_FAILURE is never a QUARANTINED reason and stays the existing §7.3 EXECUTION_ERROR reason when empty is proven. S11, recordDigest, S13 (K5) and the final frame carry the QR reason. Status rules unchanged. Vectors (74)–(86) | §20.3.8 QR; §20.3.7 vectors (74)–(86); §20.0; §20.6; §20.7 |
+
+Resolution test (M01). An implementer cannot open an unfiltered or
+catch-all receive path, a well-known-sender subscription, an object
+server, a name request, a cached proxy or a proxy signal stream. The one
+permitted subscription admits only the authenticated manager's
+PropertiesChanged on the bound path. A message from any other sender is
+rejected at the zbus reader before any queue, so no flood can delay a
+manager reply. If qualification shows otherwise, the release is
+blocked, not accepted. Resolution test (L01). An implementer reaching
+any existing QUARANTINED route applies Q0–Q3 in order and gets exactly
+one existing reason, with the same bytes in S11, the recordDigest input,
+S13 and the final frame. No reason choice is left to the implementer.
+
+Interaction. Under a hostile unrelated flood the correct result is no
+security outcome caused by the flood (vector (73)). The flood is never
+classified as CLEANUP_UNPROVEN, CONTROLLER_FAILURE, MISSING_UNIT_PROOF
+or STATE_INCONSISTENT. A genuine independent manager or containment
+failure at the same time is classified under the ordinary contract,
+including QR.
+
+Changed prior fact, reported: the Security C2 INFO-4 disposition (§20.10
+row "time bounded by §6.4") is refined, not closed. Unrelated traffic no
+longer occupies any zbus queue and cannot consume a phase or E bound.
+INFO-4 stays a preserved Security C2 correction. No other Security or
+Architecture INFO fact changes.
+
+C16 adds no record reason, status, outcome, exit code, schema or schema
+version, record or incident field, incident type, journal state, class,
+broker frame, broker operation, D-Bus method or allowance, H9 site,
+constant, timeout, deadline, refusal enum, CLI command or flag, config
+field, environment variable, public API field, hash domain, durable
+object, host policy or residual acceptance. Preserved unchanged: C15
+(PREPARED/NOT_SENT failed proof -> QUARANTINED / CLEANUP_UNPROVEN / 7);
+C14 (exhaustive H10 (k) precedence [1]–[5] and the zero-call (3) (v)
+(B)); C13 (sticky reason only after exact A-RES restoration, same live
+invocation, crash boundary); C12 (terminal X acquisition
+synchronization interval); C11 (bounded H10 evidence exception, E = 5000
+ms); C10 and every earlier Architecture resolution; at most one H10
+ListUnitsByPatterns per invocation; H9 site (iv) at CREATE C5 (3) A-INC
+and RECONCILE R5 only; successful P1S makes zero D-Bus calls; permanent
+QUARANTINED semantics and incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1; GLOBAL -> X only, never X -> GLOBAL; one
+INTENT; S4 commit authority; A-RES/D disjointness; crash recovery;
+SO_PEERCRED as the only runtime caller identity source; C1a; AA-NULL;
+JR read-only and non-authoritative.
+
+Carried, not closed: §19.1 L1–L7 and I1–I5 stay OPEN / PRESERVED /
+CARRIED TO STAGE 5. In particular C16 does not qualify the L4 runner
+user manager or agent, adds no L5/L6 storage floor and adds no L7 global
+broker cap. Security INFO-1, INFO-5 (including the enabled=false check
+order) and INFO-7, the Architecture INFO-A security disposition, the
+same-account/agent qualification INFO, the Debian snapshot HTTP note and
+the storage exhaustion note stay OPEN / PRESERVED / NON-BLOCKING. Every
+carried Architecture INFO finding of C7–C14 stays on the record. None is
+closed, waived, re-rated or absorbed. DG-1..DG-4 are not reopened.
+Further unchanged items: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1;
+PPI-1; #23F; Stage 4 authority; both approval gates; SEC-DEP-1 QUEUED;
+WIP 1. Next: fresh independent exact-head HEAVY Architecture re-review
+of the C16 HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD,
+fresh independent exact-head HEAVY Security re-review; then separate
+Product Owner design acceptance and merge authorization. Merge NOT
+AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; execute activation
+NOT AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT
+AUTHORIZED.
