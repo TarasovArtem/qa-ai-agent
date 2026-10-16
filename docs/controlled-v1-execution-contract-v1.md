@@ -2430,6 +2430,7 @@ only the sentences listed here, and only as stated:
 | §6.4 "Each phase has its own origin and finite bound; none is borrowed from another" and the §6.4 synchronous create observation, as read for a P1S terminal path; §20.3.8 (C9) H8 (c) "counted against them" and H8 (g) "every wait is inside an existing phase budget"; and (C11) H10 (c) "H8 (c) acquisition and accounting unchanged", H10 (i) "synchronous bound is P0+P1+S+E plus ... I/O" and the C11 row above, all as applied to the acquisition of P's X after an irrevocable P1S terminal selection | §20.3.8 H10 (i)–(l) (C12): qualified, not removed. That acquisition is the named terminal X acquisition synchronization interval (H10 (j)). It runs from the irrevocable PRESUBMIT_FAILURE or P1S CLIENT_LOST selection until P's X is held. It is charged to neither S nor E, extends or restarts nothing, is not a phase budget and is not borrowed from one. It grants no progress, submission or StartTransientUnit, and the waiter holds no other lock. flock fairness is not assumed. No FIFO admission, starvation freedom or hard X-acquisition wall-clock bound is claimed, and deadlock freedom stays structural. Under the acquired X, the H8 re-read and revalidation (H10 (k)) precede the E origin. A terminal outcome already committed is never overwritten. E = 5000 ms bounds only the one manager call. The up-to-256 H9 S6 reads are bounded local evidence work outside E and S (H10 (l)). P0+P1+S+E plus I/O is budgeted execution work, not total contention-inclusive wall-clock time. No timeout, state, reason, outcome, exit or retry is added |
 | §20.3.8 (C11/C12) H10 (b) "final for that invocation", H10 (j) (3), H10 (k) "In every branch the selection of (b) stays irrevocable" and branch (3) "H8 (f) applies unchanged ... the proof uses the one call of (c)", H10 (c) "only if (k) leaves the terminal plan in force", vector (36) "the selection stays CLIENT_LOST" and the second run of vector (39); H8 (f) "an incomplete head goes through Cases A–H" and the A-RES rule "Afterwards head n continues as A-INC", as applied inside a live H10 terminal-evidence invocation; the §20.20 C12 resolution text "Any other change gets H8 (f) unchanged"; and the §20.20 sentence "The only path that reaches no call is one where a terminal outcome is already committed" | §20.3.8 H10 (b) and (k) (3) (C13, owner option 2): qualified, not removed. "Irrevocable" means two things. Submission abandonment is always irrevocable. The selected PRESUBMIT_FAILURE or CLIENT_LOST is sticky only on the invocation's own H10 path: the unchanged view of (k) (1), or exact A-RES, exact rollback under the same X, a mandatory fresh re-read, and the exact original PREPARED/NOT_SENT proven restored ((k) (3) (ii)–(iv)). That path resumes the original site (ii) or (iii), never Case E site (iv). Closed precedence, highest first: an already committed outcome; class D or another state forbidding the write; exact restoration; otherwise H8 (f) unchanged, with no reason override. Failed evidence stays QUARANTINED 7. At most one ListUnitsByPatterns per invocation, never two; the rollback and the re-reads make none, and E begins only after the restoration is proven. The selected reason is invocation-local and never durable. After a crash a later CREATE or RECONCILE applies Case E. Zero calls is the result of every path needing no H10 evidence (committed outcome, class D and other dispositions without evidence). No new reason, outcome, state, field, call or timeout |
 | §20.3.8 (C13) H10 (k) "There are three branches. Their precedence is closed (C13), highest first: an outcome already committed (2); class D ... ((3) (i)); exact A-RES followed by exact restoration ((3) (ii)–(iv)); every other state ((3) (v))", branch (1) "S4 is byte-equal ... and no additional object of P exists. The terminal plan stays in force", branch (3) "Any other changed view", branch (3) (v) "The existing H8 (f) classification and disposition govern, with their own existing sites and allowances", the closing sentence "or, only under (3) (v), the one enumeration that an existing H8 (f) disposition itself requires at its own site and under that site's own allowance", vector (47) "the existing H8 (f) classification and disposition decide the result", H9 site (iv) "wherever Case E is applied" as applied inside a live H10 invocation, the C13 row above "Closed precedence ... otherwise H8 (f) unchanged", and the §20.21 record text "(E) any other post-cleanup state gets H8 (f) unchanged" | §20.3.8 H10 (k) (1), (3) (i), (3) (v), H8 (f) and H9 (C14): qualified, not removed. The precedence is exhaustive, highest first: [1] committed outcome (2); [2] class D or another write-forbidding state (3) (i), also when S4 is byte-equal and no additional object exists; [3] the valid unchanged exact original state (1); [4] exact A-RES and exact restoration (3) (ii)–(iv); [5] every other state (3) (v). Branch (1) needs S4 byte-equal, no additional object, a structurally valid committed view, valid K1–K5 and the exact original A-INC PREPARED/NOT_SENT classification; S4 equality and no additional object alone never select it. Under (3) (v) an existing H8 (f) disposition that needs no namespace proof applies unchanged; one that would need a Case E no-send/no-unit/clean-namespace proof makes no ListUnitsByPatterns or other D-Bus call, uses neither (c), E nor S, and gives the existing Case E fail-closed QUARANTINED 7 through the existing commit (proof NOT ESTABLISHED). The selected reason does not override it. H9 site (iv) stays CREATE C5 (3) A-INC and RECONCILE R5 only. At most one ListUnitsByPatterns per invocation, only the call of (c) at site (ii) or (iii). No new D-Bus allowance, H9 site, class, reason, outcome, state, exit code, field, schema or timeout |
+| §6.4 P1S "If that no-send proof fails, the outcome is QUARANTINED 7" and "otherwise QUARANTINED 7"; §7 Case E "no-send/no-unit proof -> error7 PRESUBMIT_FAILURE, else H" and Case H "QUARANTINED7/root claims"; §7.4 S1 "else QUARANTINED"; §11.3 "QUARANTINED only CONTROLLER_FAILURE/MISSING_UNIT_PROOF/CLEANUP_UNPROVEN/STATE_INCONSISTENT"; §20.3.3 "the outcome is the existing QUARANTINED 7"; §20.3.8 (C11–C14) H9 site (iv) and own-attempt "QUARANTINED 7 at (ii)–(iv)", H10 (b), (e), (f), (h), (j) (3), (k) (3) (iv) and (3) (v) (B) "with the same record and reason as that existing Case E proof-failure outcome"; and the §20.3.7 vectors (25)–(57), including vector (53) "those of the existing Case E proof failure", all as applied to a PREPARED/NOT_SENT outcome whose no-send/no-unit/clean-namespace proof is NOT ESTABLISHED (record reason unspecified among the four QUARANTINED reasons) | §20.3.8 H9 failed-proof reason (C15, owner decision): qualified, not removed. For the PREPARED/NOT_SENT proof-failure class (sites (ii)–(iv) and H10 (k) (3) (v) (B)) the outcome is exactly QUARANTINED, reason CLEANUP_UNPROVEN, exit 7. This holds whatever the low-level cause: manager timeout or failure, malformed or unauthenticated reply, more than 256 units, own unit present, unknown member, unreadable membership evidence, or no legal allowance at the site. It also holds whatever PRESUBMIT_FAILURE or CLIENT_LOST was selected. A clean proof keeps PRESUBMIT_FAILURE 7 (sites (ii), (iv)) or CLIENT_LOST 7 (site (iii)). Case H for Case E therefore has the reason CLEANUP_UNPROVEN, and the other Case H uses keep their existing reasons. S11 reason, recordDigest, S13 incident reason (K5) and final QUARANTINED frame reason are all CLEANUP_UNPROVEN. A rule that decides the input first (committed outcome, class D or another write-forbidding state, H10 (k) (3) (v) (A)) keeps its outcome. CONTROLLER_FAILURE, MISSING_UNIT_PROOF (including the §7.4 S2 controller-state-disappears row), STATE_INCONSISTENT and site (v) are unchanged. No new reason, status, outcome, exit, schema, field, incident type, state, operation, H9 site, D-Bus allowance, CLI/API/config, timeout or hash domain |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -4345,7 +4346,9 @@ needs a durable OBSERVED backed by the authenticated manager's properties
 ever read as manager evidence. The one P1S terminal-evidence
 ListUnitsByPatterns of §20.3.8 H10 (C11) is bounded by E = 5000 ms, not
 by S. If a full queue delays its reply past E, the clean-namespace proof
-is not established and the outcome is the existing QUARANTINED 7. It does not bypass L7: the traffic creates
+is not established and the outcome is the existing QUARANTINED 7, with
+reason CLEANUP_UNPROVEN, not CONTROLLER_FAILURE (§20.3.8 H9 failed-proof
+reason, C15). It does not bypass L7: the traffic creates
 no broker process, so the open L7 concurrency question is unchanged.
 
 #### 20.3.4 Dependencies, toolchain, build and linkage
@@ -5241,11 +5244,14 @@ records no E origin, consumes or restarts no S, and makes no retry. The
 proof is NOT ESTABLISHED, and A commits the existing Case E fail-closed
 QUARANTINED 7 through the existing terminal/QUARANTINED commit. The
 record's status/reason pair and the incident are those of the existing
-Case E proof failure, and no new reason or field is observed. No
+Case E proof failure: status QUARANTINED, reason CLEANUP_UNPROVEN, and
+S13 incident reason CLEANUP_UNPROVEN (H9 failed-proof reason, C15). No
+new reason or field is observed. No
 CLIENT_LOST or PRESUBMIT_FAILURE record is written. A later RECONCILE
 returns the QUARANTINED record (R7), with the claim retained. (54) S
 exhausted (Vector E): vector (53) with PRESUBMIT_FAILURE selected by S
-exhaustion. The result is identical: QUARANTINED 7, zero D-Bus calls, no
+exhaustion. The result is identical: QUARANTINED / CLEANUP_UNPROVEN / 7
+(C15), zero D-Bus calls, no
 E origin, and no S restart, extension, reset or borrowing. The S
 consumption counter does not advance after the selection. (55) Site (iv)
 attribution (Vector F): across the runs of (25)–(54) and their later
@@ -5263,10 +5269,61 @@ that commit, before it is durable. Each run leaves PREPARED/NOT_SENT,
 possibly with an exact A-RES prefix. The next RECONCILE(P) uses the
 existing durable recovery. It rolls back any residue and applies
 ordinary Case E at site (iv) with that site's own allowance. Its one
-enumeration gives PRESUBMIT_FAILURE 7 on a clean proof, or QUARANTINED 7
-otherwise. Neither A's in-memory (3) (v) disposition nor its selected
+enumeration gives PRESUBMIT_FAILURE 7 on a clean proof, or QUARANTINED /
+CLEANUP_UNPROVEN / 7 otherwise (C15). Neither A's in-memory (3) (v) disposition nor its selected
 CLIENT_LOST is reconstructed, no new durable object or field is
 observed, and StartTransientUnit(P) is never sent.
+
+C15 failed-proof reason vectors (§20.3.8 H9 failed-proof reason). The
+instrumentation of (25)–(57) also records, for every QUARANTINED commit,
+the exact S11 status and reason bytes, the recomputed recordDigest, the
+S13 base incident reason and, when a client is connected, the final
+QUARANTINED frame's record.reason and frame reason. In (25)–(57), every
+QUARANTINED 7 that results from a site (ii)–(iv) proof that is NOT
+ESTABLISHED, or from H10 (k) (3) (v) (B), carries reason
+CLEANUP_UNPROVEN. (58) Case E success (Vector 1): a crash leaves P
+PREPARED/NOT_SENT, and ordinary Case E runs at site (iv), once by CREATE
+C5 (3) and once by RECONCILE R5. The no-send/no-unit/clean-namespace
+proof is established. The result is EXECUTION_ERROR, reason
+PRESUBMIT_FAILURE, exit 7, emptyBy=not-submitted. There is no QUARANTINED
+record and no S13. (59) Case E failure (Vector 2): as (58), but a test
+fixture makes the proof NOT ESTABLISHED (an unknown member of the
+namespace). The result is QUARANTINED, reason CLEANUP_UNPROVEN, exit 7.
+The root claim is retained, there is no release and no retry, and the
+S13 incident reason is CLEANUP_UNPROVEN. (60) H10 PRESUBMIT_FAILURE with
+failed evidence (Vector 3): a live P1S invocation selects
+PRESUBMIT_FAILURE, and H10 (k) (1) holds. The one site (ii) call times
+out past E. The result is QUARANTINED / CLEANUP_UNPROVEN / 7, never
+PRESUBMIT_FAILURE. (61) H10 CLIENT_LOST with failed evidence (Vector 4):
+as (60), with CLIENT_LOST selected and the site (iii) call failing. The
+result is QUARANTINED / CLEANUP_UNPROVEN / 7, never CLIENT_LOST. Both
+(60) and (61) also run through the exact restoration of H10 (k) (3)
+(iv), with the same result. (62) Zero-call path (Vector 5): vector (53)
+and vector (54). There are 0 D-Bus calls, no E origin and no S
+borrowing. The proof is NOT ESTABLISHED, and the result is QUARANTINED /
+CLEANUP_UNPROVEN / 7. No new reason, site or allowance is observed.
+(63) Low-level causes (Vector 6): in separate runs of (59), (60) and
+(61), the proof fails through each of these causes: a manager timeout
+past E or past the site (iv) allowance; a manager D-Bus error; a
+malformed reply; a reply from a non-manager sender; 257 matching units;
+a unit named for P; and a matching unit whose S6 cannot establish
+membership (INTENT, absent, malformed, non-regular or mismatched). Every
+run gives QUARANTINED / CLEANUP_UNPROVEN / 7. None gives
+CONTROLLER_FAILURE, MISSING_UNIT_PROOF or STATE_INCONSISTENT. In a
+control run the fixture also breaks a K relation of P before the proof
+is reached. The existing class-D disposition then applies unchanged (H10
+(k) [2], vector (51)), and no CLEANUP_UNPROVEN record is written. (64)
+Record consistency (Vector 7): for one run of (59) and one of (60) with
+a connected client, the S11 status is QUARANTINED and the S11 reason is
+CLEANUP_UNPROVEN. recordDigest recomputes over those exact bytes. The
+S13 reason and the QUARANTINED frame's record.reason and frame reason
+are CLEANUP_UNPROVEN. A tampered copy carrying any other QUARANTINED
+reason fails the recordDigest recomputation. (65) MISSING_UNIT_PROOF
+preserved (Vector 8): the existing §7.4 S2 SUBMITTING/BOUND fixture
+removes the controller state of a bound unit. The outcome is the
+existing MISSING_UNIT_PROOF disposition (removal or boot proof gives
+error 7, otherwise QUARANTINED). C15 changes neither that outcome nor
+its reason.
 
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
@@ -5852,7 +5909,8 @@ one executionId (flock on `attempts/<X>`).
   H10 (k) (1) also requires a valid committed view, valid K1–K5 and the
   exact original classification, and class D outranks it. Second, a
   disposition that would need a Case E namespace proof makes no
-  enumeration there and gives QUARANTINED 7 (H10 (k) (3) (v) (B)). (g) Termination: a head moves only forward
+  enumeration there and gives QUARANTINED / CLEANUP_UNPROVEN / 7 (H10 (k)
+  (3) (v) (B); H9 failed-proof reason, C15). (g) Termination: a head moves only forward
   along the §7 successor table, with at most 1024 entries, and every
   wait is inside an existing phase budget, except the single terminal
   acquisition of H10 (j) (C12). That one is outside every budget, happens
@@ -5875,7 +5933,7 @@ one executionId (flock on `attempts/<X>`).
   RECONCILE R5 (§7), and at no other site (C14: a Case E disposition
   reached inside a live P1S H10 invocation through H10 (k) (3) (v) is not
   site (iv); it makes no enumeration and its proof is NOT ESTABLISHED,
-  giving QUARANTINED 7); (v) the clean-namespace part of the §6.3 reboot
+  giving QUARANTINED / CLEANUP_UNPROVEN / 7, C15); (v) the clean-namespace part of the §6.3 reboot
   proof, wherever it is used (Case D and every other path that relies on
   boot-change). The emptyBy=not-submitted proof of §11.1 and §11.3 is the
   record-level statement of (ii)–(iv) and is made only by them. Every
@@ -5929,9 +5987,78 @@ one executionId (flock on `attempts/<X>`).
   construction), with the site's existing outcome. The namespace is clean
   for P exactly when no unit is named for P and every other enumerated
   unit is a known member under (4). An unknown member fails the proof
-  with the site's existing outcome (QUARANTINED 7 at (ii)–(iv); at (v),
-  no boot-change proof, so the existing Case D outcome applies) and with
-  the existing §6.2 runner quarantine. A known member never fails it.
+  with the site's existing outcome (QUARANTINED 7 with reason
+  CLEANUP_UNPROVEN at (ii)–(iv), C15; at (v), no boot-change proof, so
+  the existing Case D outcome applies) and with the existing §6.2 runner
+  quarantine. A known member never fails it.
+  Failed-proof reason (C15; owner decision
+  OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C15). This paragraph governs exactly
+  one outcome class, the PREPARED/NOT_SENT proof-failure class. Its
+  members are the cases where the head is PREPARED with submission
+  NOT_SENT, the outcome requires the no-send/no-unit/clean-namespace
+  proof of site (ii), (iii) or (iv), or the Case E proof that H10 (k) (3)
+  (v) (B) cannot make, and that proof is NOT ESTABLISHED. The proof is
+  NOT ESTABLISHED whatever the low-level cause. Causes include: no
+  complete authenticated enumeration reply within the site's allowance
+  (manager timeout or blocked queue, manager or D-Bus failure, malformed
+  reply, reply not from the authenticated manager, more than 256 units;
+  H10 (e)); the unit named for P is present; an unknown member under H9
+  (2) or (7), including an S6 read that cannot establish membership;
+  protected evidence that the proof needs cannot be read; and a site
+  that has no legal allowance for the enumeration (H10 (k) (3) (v) (B),
+  zero calls). For every member of this class the outcome is exactly:
+  status QUARANTINED, reason CLEANUP_UNPROVEN, exit 7. CLEANUP_UNPROVEN
+  is the existing §11.3 QUARANTINED reason. Here it means that the
+  required proof that the attempt sent nothing, has no unit and left the
+  namespace clean could not be established. The reason follows the
+  failed proof class, never the low-level cause. Inside this class a
+  manager-call failure is not CONTROLLER_FAILURE, an unprovable or
+  present unit is not MISSING_UNIT_PROOF, and an unknown member or
+  unreadable evidence is not STATE_INCONSISTENT. The H10 (b) selection
+  of PRESUBMIT_FAILURE or CLIENT_LOST never overrides this reason. A
+  clean proof keeps its existing outcome: PRESUBMIT_FAILURE 7 at site
+  (ii) and site (iv), and CLIENT_LOST 7 at site (iii), with
+  emptyBy=not-submitted. There is no implementation choice.
+  Scope of the class. It applies only where this proof is the deciding
+  failure. A rule that already decides the input first keeps its outcome.
+  These rules are a committed outcome (H10 (k) [1], R7, A-REL), class D
+  or another write-forbidding state (H10 (k) [2], the H8 (f) class-D
+  refusal) and the dispositions of H10 (k) (3) (v) (A). Outside the class
+  nothing changes. CONTROLLER_FAILURE keeps its existing controller and
+  systemd failure dispositions (§7.3 table). MISSING_UNIT_PROOF keeps its
+  existing dispositions after submission or binding, including the §7.4
+  S2 SUBMITTING/BOUND controller-state-disappears row. STATE_INCONSISTENT
+  keeps its existing structural and store dispositions. Every other
+  existing use of CLEANUP_UNPROVEN, and site (v) with its Case D outcome,
+  is unchanged. A missing or present unit of a PREPARED/NOT_SENT head
+  is never relabelled MISSING_UNIT_PROOF.
+  Record, journal, incident and frame. The broker commits the class
+  through the existing terminal/QUARANTINED commit under P's X. It writes
+  the existing AutomationExecutionRecord v2 (§11.3, K4) with status
+  QUARANTINED and reason CLEANUP_UNPROVEN. Every other member
+  (binding, controller, timeline, process, result, capture, cleanup)
+  takes the value that the existing §11.3 and K4 rules already give for
+  this PREPARED/NOT_SENT QUARANTINED head; C15 adds no member rule.
+  recordDigest is the existing v2 digest of that exact record, so it
+  covers the CLEANUP_UNPROVEN bytes. The S11 reason is CLEANUP_UNPROVEN.
+  The S13 base incident reason is the S11 reason (K5), so it is
+  CLEANUP_UNPROVEN. If a client is connected, the final QUARANTINED
+  frame carries that record, and its reason is the record reason
+  (§11.3), CLEANUP_UNPROVEN. S11, recordDigest, S13 and the frame never
+  differ, and the broker writes no other reason bytes for this class.
+  The existing permanent QUARANTINED semantics apply unchanged: root
+  claim retained, no ordinary release, no retry, incident resolution
+  UNSUPPORTED_IN_CONTROLLED_V1, and the §6.2 runner quarantine for an
+  unknown member. Crash. The reason is chosen when the commit is made,
+  from the durable state and the proof result of that commit's own
+  span. An in-memory choice is never durable authority. A crash before
+  the QUARANTINED commit is durable leaves PREPARED/NOT_SENT (H10 (h)).
+  The next CREATE C5 (3) or RECONCILE R5 applies ordinary Case E at site
+  (iv). It gives PRESUBMIT_FAILURE 7 on a clean proof and QUARANTINED /
+  CLEANUP_UNPROVEN / 7 when the proof is again NOT ESTABLISHED. No hidden
+  state is needed. C15 adds no reason, status, outcome, exit code,
+  schema, field, incident type, journal state, broker operation, H9
+  site, D-Bus allowance, CLI/API/config surface, timeout or hash domain.
   Placement. Sites (ii)–(v) run inside a short span of P's own X (H3, H8).
   Their enumeration and H9 reads are part of the live facts that span
   re-observes before its write (H8 (a), (d)). The H9 read takes no lock,
@@ -5982,7 +6109,8 @@ one executionId (flock on `attempts/<X>`).
   including one whose S4 is unchanged, over any state of (k) (3) (v),
   including the QUARANTINED 7 given there when a Case E namespace proof
   cannot be made (C14), or over the QUARANTINED 7 of failed evidence
-  ((e), (f)). The reason is
+  ((e), (f)). Both of those QUARANTINED 7 outcomes carry reason
+  CLEANUP_UNPROVEN (H9 failed-proof reason, C15). The reason is
   invocation-local. It is never written and never reconstructed from
   PREPARED/NOT_SENT, and it does not survive the invocation ((h)).
   (c) The one call. Holding P's X for the terminal span (C12: acquired at
@@ -6032,7 +6160,10 @@ one executionId (flock on `attempts/<X>`).
   layer, returns a reply that is malformed or not from the authenticated
   manager, or returns more units than the existing 256-unit namespace
   bound (§7), then the clean-namespace proof is NOT ESTABLISHED. The
-  existing proof-failure outcome applies: QUARANTINED 7 (§6.4). There is
+  existing proof-failure outcome applies: QUARANTINED 7 (§6.4), with
+  reason CLEANUP_UNPROVEN (H9 failed-proof reason, C15), whether (b)
+  selected PRESUBMIT_FAILURE or CLIENT_LOST, and never
+  CONTROLLER_FAILURE because the manager call failed. There is
   no retry, no alternate API and no downgrade to PRESUBMIT_FAILURE, and
   no new reason, outcome, exit code, refusal code or state exists.
   (f) After a complete reply. H9 (2)–(7) and its own-attempt rule apply
@@ -6043,7 +6174,8 @@ one executionId (flock on `attempts/<X>`).
   selected existing outcome of (b) (PRESUBMIT_FAILURE 7, or CLIENT_LOST 7, with
   emptyBy=not-submitted), also after an exact restoration under (k) (3)
   (iv). Otherwise the existing fail-closed handling
-  applies (QUARANTINED 7, with the §6.2 runner quarantine for an unknown
+  applies (QUARANTINED 7 with reason CLEANUP_UNPROVEN, C15, whatever
+  reason (b) selected, with the §6.2 runner quarantine for an unknown
   member). The enumeration, the H9 reads and this terminal write are one
   span of P's X, with no wait and no X release between them. A clean
   proof is terminal evidence only. It never authorizes submission or a
@@ -6070,8 +6202,9 @@ one executionId (flock on `attempts/<X>`).
   after the evidence and before the terminal write is durable leaves
   PREPARED/NOT_SENT, with at most such a residue. In every case the next
   CREATE C5 (3) or RECONCILE R5 rolls back any residue and applies Case E
-  at site (iv), with PRESUBMIT_FAILURE 7 or QUARANTINED 7, even when the
-  crashed invocation had selected CLIENT_LOST. The selected reason is
+  at site (iv), with PRESUBMIT_FAILURE 7 or QUARANTINED /
+  CLEANUP_UNPROVEN / 7 (C15), even when the crashed invocation had
+  selected CLIENT_LOST. The selected reason is
   authority only while the invocation that made it is alive. No later
   invocation reconstructs it from PREPARED/NOT_SENT, and no journal field,
   state, record or other durable object carries it.
@@ -6120,7 +6253,8 @@ one executionId (flock on `attempts/<X>`).
   path or to the other terminal path. The control-flow direction stays
   monotonic. A later (k) revalidation can end the path without this
   invocation's selected-reason write (committed outcome, class D, or
-  another state of (k) (3) (v), which may give QUARANTINED 7, C14). It
+  another state of (k) (3) (v), which may give QUARANTINED 7, C14, with
+  reason CLEANUP_UNPROVEN under (3) (v) (B), C15). It
   never switches this invocation's own H10 write to the other reason
   (C13, (b)).
   (4) The waiting broker holds no GLOBAL and no other X, and it attempts
@@ -6228,8 +6362,8 @@ one executionId (flock on `attempts/<X>`).
   PRESUBMIT_FAILURE never replaces a selected CLIENT_LOST only because a
   transient A-RES residue appeared and was safely removed. A proof that
   is NOT ESTABLISHED, or that finds the own unit or an unknown member,
-  is QUARANTINED 7 under (e) and (f), whatever the selected reason.
-  There is no retry.
+  is QUARANTINED 7 with reason CLEANUP_UNPROVEN under (e) and (f) (C15),
+  whatever the selected reason. There is no retry.
   (v) Any other result. This covers a view that matches none of (2),
   (3) (i), (1) or exact A-RES, and a post-rollback re-read that does not
   prove (iv). The selection of (b) gets no authority, H10 (c)–(f) and E
@@ -6256,7 +6390,9 @@ one executionId (flock on `attempts/<X>`).
   outcome applies: QUARANTINED 7 (§6.4 "otherwise QUARANTINED 7"; §7.4
   S1). The broker commits it under the same X through the existing
   terminal/QUARANTINED commit, with the same record and reason as that
-  existing Case E proof-failure outcome and with the existing permanent
+  existing Case E proof-failure outcome: status QUARANTINED, reason
+  CLEANUP_UNPROVEN, exit 7 (H9 failed-proof reason, C15; no reason is
+  chosen from the cause of the missing proof), and with the existing permanent
   QUARANTINED semantics (claim retained, no release, incident resolution
   unsupported). The selected CLIENT_LOST or PRESUBMIT_FAILURE is not
   written and does not override this result, as a failed proof outranks
@@ -6962,7 +7098,12 @@ closed value, constant, timeout, state, class, reason, outcome, exit
 code, journal field, D-Bus allowance, H9 site or durable object. The H10
 (k) precedence ranks and the (3) (v) (A)/(B) split are invocation-local
 control flow over the existing class D, A-INC, A-RES, PRESUBMIT_FAILURE,
-CLIENT_LOST and QUARANTINED 7. No public export, bin or package-file change is proposed; the
+CLIENT_LOST and QUARANTINED 7. C15 adds no closed value, constant,
+timeout, state, class, reason, status, outcome, exit code, schema,
+field, incident type, journal state, broker operation, D-Bus allowance,
+H9 site or hash domain. The H9 failed-proof reason binds the existing
+§11.3 reason CLEANUP_UNPROVEN to the existing PREPARED/NOT_SENT
+proof-failure QUARANTINED 7. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -7046,7 +7187,11 @@ proposed trigger FALSE. C14 revalidation: H10 (k) (1), (3) (i) and
 over existing classes and outcomes. They add no import or call edge to
 either approval gate, to #23F, apply.js, gate symbols or legacy
 execution, and no code changes. Current trigger FALSE; proposed trigger
-FALSE. No closure, re-rating or remediation.
+FALSE. C15 revalidation: the H9 failed-proof reason selects one existing
+record reason for an existing broker-internal fail-closed outcome. It
+adds no import or call edge to either approval gate, to #23F, apply.js,
+gate symbols or legacy execution, and no code changes. Current trigger
+FALSE; proposed trigger FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -7091,7 +7236,8 @@ vectors (25)–(33) (§20.3.7) on the reference host; C12: the terminal X
 acquisition vectors (34)–(41) (§20.3.7) on the reference host; C13: the
 sticky-reason vectors (42)–(49) (§20.3.7) on the reference host; C14:
 the precedence and zero-call vectors (50)–(57) (§20.3.7) on the
-reference host.
+reference host; C15: the failed-proof reason vectors (58)–(65)
+(§20.3.7) on the reference host.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -7146,7 +7292,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6, C7, C8, C9, C10, C11, C12, C13 and C14 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7, C8, C9, C10, C11, C12, C13, C14 and C15 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -8011,3 +8157,84 @@ then); then separate Product Owner design acceptance and merge
 authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
 AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
 AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.23 Architecture corrective C15 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C15 — APPROVED (binding
+owner decision: for the PREPARED/NOT_SENT no-send/no-unit/clean-namespace
+proof-failure class, the canonical existing QUARANTINED reason is
+CLEANUP_UNPROVEN). Reviewed HEAD
+ec68309af50b2205947d27e846e16317544d6a02 (tree
+8452e3e9ab30ef3efd27ea1806bdc46c08772ca9, parent
+6517536aba8f1a31ccb5cedb8e5bbf8662db3d8d, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 3 INFO; ARCH-S5-C13-m01 and ARCH-S5-C13-m02 RESOLVED. C15 is
+documentation only, this file only; native/qa-agent-controller-v1/Containerfile
+is byte-identical to C2–C14 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C15 resolves exactly the one
+MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C14-m01 C14 fixes PREPARED/NOT_SENT + required no-send/no-unit/clean-namespace proof NOT ESTABLISHED → QUARANTINED 7, but no normative Case E rule selects the AutomationExecutionRecord v2 reason among CONTROLLER_FAILURE, MISSING_UNIT_PROOF, CLEANUP_UNPROVEN and STATE_INCONSISTENT | New H9 failed-proof reason paragraph. For the PREPARED/NOT_SENT proof-failure class (site (ii) P1S PRESUBMIT_FAILURE, site (iii) P1S CLIENT_LOST, site (iv) Case E in CREATE C5 (3) and RECONCILE R5, and the zero-call H10 (k) (3) (v) (B)) the outcome is exactly QUARANTINED / CLEANUP_UNPROVEN / 7. The reason follows the failed proof class, not the low-level cause. Manager timeout or failure, malformed or unauthenticated reply, more than 256 units, own unit present, unknown member, unreadable membership evidence and no legal allowance at the site all give CLEANUP_UNPROVEN. None of them gives CONTROLLER_FAILURE, MISSING_UNIT_PROOF or STATE_INCONSISTENT. The H10 (b) selection never overrides it: PRESUBMIT_FAILURE or CLIENT_LOST plus failed evidence gives CLEANUP_UNPROVEN. A clean proof keeps PRESUBMIT_FAILURE 7 (sites (ii), (iv)) or CLIENT_LOST 7 (site (iii)). A rule that decides the input first (committed outcome, class D or another write-forbidding state, (3) (v) (A)) keeps its outcome. The S11 reason is CLEANUP_UNPROVEN, recordDigest is the existing v2 digest of that exact record, the S13 incident reason is CLEANUP_UNPROVEN through K5, and the final QUARANTINED frame reason is the record reason. Permanent QUARANTINED semantics, the claim retention, the crash boundary (H10 (h)) and the reason partition outside the class are unchanged, including MISSING_UNIT_PROOF for the §7.4 S2 SUBMITTING/BOUND controller-state-disappears row. Vectors (58)–(65) | §20.3.8 H8 (f), H9 site (iv), own-attempt rule and failed-proof reason, H10 (b), (e), (f), (h), (j) (3), (k) (3) (iv), (3) (v) (B); §20.3.3; §20.3.7 C14 vectors (53), (54), (57) and C15 vectors (58)–(65); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reaching a PREPARED/NOT_SENT outcome
+whose no-send/no-unit/clean-namespace proof is NOT ESTABLISHED (in P1S
+H10 at site (ii) or (iii), in Case E at site (iv), or with zero calls
+under H10 (k) (3) (v) (B)) writes status QUARANTINED, reason
+CLEANUP_UNPROVEN and exit 7, whatever the cause and whatever reason was
+selected. The same reason appears in S11, the recordDigest input, S13 and
+the final frame. No reason choice is left to the implementer.
+
+C15 adds no record reason, status, outcome, exit code, schema or schema
+version, record or incident field, incident type, journal state, class,
+broker frame, broker operation, H9 site, D-Bus allowance, constant,
+timeout, deadline, refusal enum, usage code, CLI reason code, CLI
+command or flag, config or ProjectProfile field, environment variable,
+public API field, hash domain, durable object or maintenance service.
+CLEANUP_UNPROVEN existed in §11.3 and K4 before C15. No other reason
+mapping changes: CONTROLLER_FAILURE, MISSING_UNIT_PROOF,
+STATE_INCONSISTENT, every other use of CLEANUP_UNPROVEN and site (v)
+keep their existing dispositions. Unchanged: the resolutions of
+ARCH-S5-C13-m01 and ARCH-S5-C13-m02 (C14 exhaustive precedence [1]–[5],
+branch (1) validation, the (3) (v) (A)/(B) split and its zero-call rule,
+no new D-Bus allowance, H9 site (iv) at CREATE C5 (3) A-INC and
+RECONCILE R5 only), ARCH-S5-C12-m01 (C13 sticky reason, exact A-RES
+restoration, same-live-invocation scope, crash boundary),
+ARCH-S5-C11-m01 (H10 (i)–(l) timing, the terminal X acquisition
+synchronization interval, no flock fairness assumption),
+ARCH-S5-C10-m01 (H10 option (a), E = 5000 ms), ARCH-S5-C9-m01 (H9
+membership-only rule), ARCH-S5-C8-m01 (H8 short X), ARCH-S5-C8-m02 and
+ARCH-S5-C7-m01 (committed view, classification order, A-RES/D
+disjointness), and every earlier resolution. Also unchanged: H8, H9 and
+H10 apart from the reason binding; at most one ListUnitsByPatterns per
+H10 invocation; the crash boundary; AutomationExecutionRecord v2;
+permanent QUARANTINED fail-closed semantics and incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1; SO_PEERCRED as the only runtime caller
+identity source; AA-NULL; JR read-only and non-authoritative.
+
+Carried, not closed: the three INFO findings of the C14 re-review stay
+on the review record and are not widened or absorbed by C15: (1) the
+completeness of the (3) (v) (A)/(B) split relies on reachability facts
+that are not stated; (2) a post-rollback class D may flow through [5]
+(A) rather than [2], with the same outcome; (3) the C13 coverage INFO
+(vectors (42)–(44) do not cover QUARANTINED F prefixes or P-transition
+residue). Also preserved are the carried INFO findings of the C12 and
+C11 re-reviews, the carried C10, C9, C8 and C7 INFO findings, and every
+other carried Architecture INFO finding. None is closed, waived,
+re-rated or absorbed. The Security C2 direction SEC-S5-m01/m02 and
+corrections INFO-2/3/4/6 are preserved; Security INFO-1, INFO-5 and
+INFO-7 stay OPEN / PRESERVED / NON-BLOCKING. DG-1..DG-4 are not
+reopened. Further unchanged items: execute DISABLED; Controlled Release
+NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN / PRESERVED / CARRIED TO
+STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1; PPI-1;
+#23F; Stage 4 authority; both approval gates. Next: fresh independent
+exact-head HEAVY Architecture re-review of the C15 HEAD; only if
+APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh independent
+exact-head HEAVY Security review (Security STOP until then); then
+separate Product Owner design acceptance and merge authorization. Merge
+NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; execute
+activation NOT AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT
+AUTHORIZED.
