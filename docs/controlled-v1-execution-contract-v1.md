@@ -2429,6 +2429,7 @@ only the sentences listed here, and only as stated:
 | §6.4 P1S "During all of P1S ... no D-Bus call is made", §12 C2 vector "no D-Bus call observed during P1S", §6.4 synchronous create observation sum (P1S terminal paths unspecified), §20.3.3 "every manager wait is already bounded by its §6.4 phase deadline", and §20.3.8 (C10) H8 (a) "each within its existing §6.3/§6.4 allowance" as applied to H9 sites (ii) and (iii), which have no manager-call allowance in P1S | §20.3.8 H10 (C11, owner option (a)): qualified, not removed. Before the terminal failure decision, and on every successful P1S, zero D-Bus calls (manager or bus driver). After the broker has irrevocably selected PRESUBMIT_FAILURE or P1S CLIENT_LOST, exactly one read-only ListUnitsByPatterns is allowed, bounded by the fixed internal E = 5000 ms, solely for the H9 (ii)/(iii) clean-namespace evidence. Every other D-Bus call stays forbidden in P1S. This does not begin P2, submission stays NOT_SENT, and StartTransientUnit is never reachable. Successful CREATE timing is unchanged. The budgeted work of a terminal P1S path is S plus E plus the existing terminal commit/release I/O. As qualified by C12 (next row), that is budgeted work and not a complete wall-clock bound |
 | §6.4 "Each phase has its own origin and finite bound; none is borrowed from another" and the §6.4 synchronous create observation, as read for a P1S terminal path; §20.3.8 (C9) H8 (c) "counted against them" and H8 (g) "every wait is inside an existing phase budget"; and (C11) H10 (c) "H8 (c) acquisition and accounting unchanged", H10 (i) "synchronous bound is P0+P1+S+E plus ... I/O" and the C11 row above, all as applied to the acquisition of P's X after an irrevocable P1S terminal selection | §20.3.8 H10 (i)–(l) (C12): qualified, not removed. That acquisition is the named terminal X acquisition synchronization interval (H10 (j)). It runs from the irrevocable PRESUBMIT_FAILURE or P1S CLIENT_LOST selection until P's X is held. It is charged to neither S nor E, extends or restarts nothing, is not a phase budget and is not borrowed from one. It grants no progress, submission or StartTransientUnit, and the waiter holds no other lock. flock fairness is not assumed. No FIFO admission, starvation freedom or hard X-acquisition wall-clock bound is claimed, and deadlock freedom stays structural. Under the acquired X, the H8 re-read and revalidation (H10 (k)) precede the E origin. A terminal outcome already committed is never overwritten. E = 5000 ms bounds only the one manager call. The up-to-256 H9 S6 reads are bounded local evidence work outside E and S (H10 (l)). P0+P1+S+E plus I/O is budgeted execution work, not total contention-inclusive wall-clock time. No timeout, state, reason, outcome, exit or retry is added |
 | §20.3.8 (C11/C12) H10 (b) "final for that invocation", H10 (j) (3), H10 (k) "In every branch the selection of (b) stays irrevocable" and branch (3) "H8 (f) applies unchanged ... the proof uses the one call of (c)", H10 (c) "only if (k) leaves the terminal plan in force", vector (36) "the selection stays CLIENT_LOST" and the second run of vector (39); H8 (f) "an incomplete head goes through Cases A–H" and the A-RES rule "Afterwards head n continues as A-INC", as applied inside a live H10 terminal-evidence invocation; the §20.20 C12 resolution text "Any other change gets H8 (f) unchanged"; and the §20.20 sentence "The only path that reaches no call is one where a terminal outcome is already committed" | §20.3.8 H10 (b) and (k) (3) (C13, owner option 2): qualified, not removed. "Irrevocable" means two things. Submission abandonment is always irrevocable. The selected PRESUBMIT_FAILURE or CLIENT_LOST is sticky only on the invocation's own H10 path: the unchanged view of (k) (1), or exact A-RES, exact rollback under the same X, a mandatory fresh re-read, and the exact original PREPARED/NOT_SENT proven restored ((k) (3) (ii)–(iv)). That path resumes the original site (ii) or (iii), never Case E site (iv). Closed precedence, highest first: an already committed outcome; class D or another state forbidding the write; exact restoration; otherwise H8 (f) unchanged, with no reason override. Failed evidence stays QUARANTINED 7. At most one ListUnitsByPatterns per invocation, never two; the rollback and the re-reads make none, and E begins only after the restoration is proven. The selected reason is invocation-local and never durable. After a crash a later CREATE or RECONCILE applies Case E. Zero calls is the result of every path needing no H10 evidence (committed outcome, class D and other dispositions without evidence). No new reason, outcome, state, field, call or timeout |
+| §20.3.8 (C13) H10 (k) "There are three branches. Their precedence is closed (C13), highest first: an outcome already committed (2); class D ... ((3) (i)); exact A-RES followed by exact restoration ((3) (ii)–(iv)); every other state ((3) (v))", branch (1) "S4 is byte-equal ... and no additional object of P exists. The terminal plan stays in force", branch (3) "Any other changed view", branch (3) (v) "The existing H8 (f) classification and disposition govern, with their own existing sites and allowances", the closing sentence "or, only under (3) (v), the one enumeration that an existing H8 (f) disposition itself requires at its own site and under that site's own allowance", vector (47) "the existing H8 (f) classification and disposition decide the result", H9 site (iv) "wherever Case E is applied" as applied inside a live H10 invocation, the C13 row above "Closed precedence ... otherwise H8 (f) unchanged", and the §20.21 record text "(E) any other post-cleanup state gets H8 (f) unchanged" | §20.3.8 H10 (k) (1), (3) (i), (3) (v), H8 (f) and H9 (C14): qualified, not removed. The precedence is exhaustive, highest first: [1] committed outcome (2); [2] class D or another write-forbidding state (3) (i), also when S4 is byte-equal and no additional object exists; [3] the valid unchanged exact original state (1); [4] exact A-RES and exact restoration (3) (ii)–(iv); [5] every other state (3) (v). Branch (1) needs S4 byte-equal, no additional object, a structurally valid committed view, valid K1–K5 and the exact original A-INC PREPARED/NOT_SENT classification; S4 equality and no additional object alone never select it. Under (3) (v) an existing H8 (f) disposition that needs no namespace proof applies unchanged; one that would need a Case E no-send/no-unit/clean-namespace proof makes no ListUnitsByPatterns or other D-Bus call, uses neither (c), E nor S, and gives the existing Case E fail-closed QUARANTINED 7 through the existing commit (proof NOT ESTABLISHED). The selected reason does not override it. H9 site (iv) stays CREATE C5 (3) A-INC and RECONCILE R5 only. At most one ListUnitsByPatterns per invocation, only the call of (c) at site (ii) or (iii). No new D-Bus allowance, H9 site, class, reason, outcome, state, exit code, field, schema or timeout |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -5178,8 +5179,11 @@ state: a test fixture changes P's protected store after the rollback's
 last durable step and before the fresh re-read (in separate runs: a
 byte change of S4; an extra object of P). The re-read does not prove
 H10 (k) (3) (iv). The selected reason is not forced, and the existing
-H8 (f) classification and disposition decide the result. No H10 call
-and no E origin are observed. (48) One-call bound: over the full path
+H8 (f) classification and disposition decide the result under H10 (k)
+(3) (v) (C14): a disposition that needs no namespace proof applies
+unchanged (vector (52)), and one that needs a Case E proof gives
+QUARANTINED 7 with no call (vector (53)). No H10 call, no other
+ListUnitsByPatterns and no E origin are observed. (48) One-call bound: over the full path
 of selection, X wait, initial re-read, exact A-RES, rollback,
 post-rollback re-read, restoration and evidence, the D-Bus log shows at
 most one ListUnitsByPatterns. None is sent before or during the
@@ -5194,6 +5198,75 @@ RECONCILE(P) rolls back any residue and applies Case E at site (iv). The
 result is PRESUBMIT_FAILURE 7 or QUARANTINED 7, even where A had
 selected CLIENT_LOST. No CLIENT_LOST is reconstructed, no new durable
 object or field is observed, and StartTransientUnit(P) is never sent.
+
+C14 precedence and zero-call vectors (§20.3.8 H10 (k) (1), (3) (i),
+(3) (v)). The instrumentation of (25)–(49) also records the rank of the
+H10 (k) precedence that A takes, every record and incident A commits,
+and the S consumption counter. Each vector runs once with A selecting
+PRESUBMIT_FAILURE and once with A selecting CLIENT_LOST, unless it says
+otherwise. In each, P's X is contended after the selection: a test
+fixture holds it in a finite span and then releases it. (50) Valid
+unchanged branch (1) (Vector A): the fixture leaves P's protected store
+byte-unchanged. After acquisition, A's re-read shows S4 byte-equal to
+the reservation value, no additional object, a structurally valid
+committed view, K1–K5 holding, and the exact original A-INC
+PREPARED/NOT_SENT classification. A takes rank [3], branch (1). The E
+origin follows. Exactly one ListUnitsByPatterns is observed, as the
+site (ii) or (iii) enumeration, followed by the H9 evidence and the
+selected PRESUBMIT_FAILURE 7 or CLIENT_LOST 7, or QUARANTINED 7 on
+failed evidence (ordinary H10 one-call and evidence semantics). (51)
+Broken K with S4 unchanged (Vector B; resolves ARCH-S5-C13-m01): during
+the wait the fixture leaves S4 byte-identical and adds no object of P,
+but breaks a K relation. In separate runs it removes P's S8 claim (K3),
+replaces the S8 bytes with a claim naming another bindingDigest (K3),
+and replaces the S9 tombstone bytes with a mismatched executionId (K2).
+A's re-read classifies class D. A takes rank [2], branch (3) (i), and not
+branch (1). The existing class-D disposition applies. The H10 call count
+is 0, no E origin is recorded, and no CLIENT_LOST or PRESUBMIT_FAILURE
+record is written from the stale plan. Submission stays abandoned. (52)
+Branch (3) (v) without a namespace proof (Vector C): as in vector (47),
+A's initial re-read finds exact A-RES and A rolls it back. Between the
+rollback's last durable step and the fresh re-read, the fixture removes
+P's S8 claim. The re-read does not prove (3) (iv), and (3) (v) runs H8
+(f). The resulting disposition is the existing class-D refusal, which
+needs no namespace proof. It applies unchanged under (3) (v) (A). Zero
+ListUnitsByPatterns calls, no E origin and no selected-reason record are
+observed. (53) Branch (3) (v) where Case E needs a proof (Vector D): as
+in vector (52), but the fixture instead writes a new exact A-RES F1
+candidate of P after the rollback. The re-read does not prove (3) (iv).
+Under (3) (v) H8 (f) rolls the candidate back (a local step) and the
+incomplete head reaches Case E, which would need a clean-namespace
+proof. A makes no ListUnitsByPatterns call and no other D-Bus call,
+records no E origin, consumes or restarts no S, and makes no retry. The
+proof is NOT ESTABLISHED, and A commits the existing Case E fail-closed
+QUARANTINED 7 through the existing terminal/QUARANTINED commit. The
+record's status/reason pair and the incident are those of the existing
+Case E proof failure, and no new reason or field is observed. No
+CLIENT_LOST or PRESUBMIT_FAILURE record is written. A later RECONCILE
+returns the QUARANTINED record (R7), with the claim retained. (54) S
+exhausted (Vector E): vector (53) with PRESUBMIT_FAILURE selected by S
+exhaustion. The result is identical: QUARANTINED 7, zero D-Bus calls, no
+E origin, and no S restart, extension, reset or borrowing. The S
+consumption counter does not advance after the selection. (55) Site (iv)
+attribution (Vector F): across the runs of (25)–(54) and their later
+RECONCILEs, every site (iv) enumeration in the D-Bus log is made by a
+CREATE at C5 (3) A-INC or by a RECONCILE at R5. None is made by a live
+H10 invocation, and (53) and (54) show no enumeration by A. (56) Whole
+invocation (Vector G): over each run of (42)–(54), from the selection to
+the terminal write or the end of the invocation, A makes at most one
+ListUnitsByPatterns. Runs through branch (1) or (3) (iv) show exactly one
+before evidence failure, and runs through (2), (3) (i) or (3) (v) show
+zero. No run shows two. (57) Crash before the C14 commit (Vector H): A
+is SIGKILLed in separate runs of (53) after the reclassification and
+before the QUARANTINED commit begins, and after a non-empty prefix of
+that commit, before it is durable. Each run leaves PREPARED/NOT_SENT,
+possibly with an exact A-RES prefix. The next RECONCILE(P) uses the
+existing durable recovery. It rolls back any residue and applies
+ordinary Case E at site (iv) with that site's own allowance. Its one
+enumeration gives PRESUBMIT_FAILURE 7 on a clean proof, or QUARANTINED 7
+otherwise. Neither A's in-memory (3) (v) disposition nor its selected
+CLIENT_LOST is reconstructed, no new durable object or field is
+observed, and StartTransientUnit(P) is never sent.
 
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
@@ -5773,7 +5846,13 @@ one executionId (flock on `attempts/<X>`).
   mandatory post-rollback re-read of H10 (k) (3) (iii). Only a re-read
   proving that invocation's exact original PREPARED/NOT_SENT state
   resumes its own H10 path (H10 (k) (3) (iv)) instead of Cases A–H.
-  Every other result keeps the disposition of this clause. (g) Termination: a head moves only forward
+  Every other result keeps the disposition of this clause, with two
+  qualifications inside a live H10 invocation (C14). First, S4 equality
+  and no additional object do not by themselves continue the H10 plan:
+  H10 (k) (1) also requires a valid committed view, valid K1–K5 and the
+  exact original classification, and class D outranks it. Second, a
+  disposition that would need a Case E namespace proof makes no
+  enumeration there and gives QUARANTINED 7 (H10 (k) (3) (v) (B)). (g) Termination: a head moves only forward
   along the §7 successor table, with at most 1024 entries, and every
   wait is inside an existing phase budget, except the single terminal
   acquisition of H10 (j) (C12). That one is outside every budget, happens
@@ -5793,7 +5872,10 @@ one executionId (flock on `attempts/<X>`).
   no-send/no-unit/clean-namespace proof; (iii) the equivalent proof for
   P1S CLIENT_LOST (§6.4, §7.4 S1); (iv) the Case E no-unit/clean-namespace
   proof wherever Case E is applied, in CREATE C5 (3) A-INC and in
-  RECONCILE R5 (§7); (v) the clean-namespace part of the §6.3 reboot
+  RECONCILE R5 (§7), and at no other site (C14: a Case E disposition
+  reached inside a live P1S H10 invocation through H10 (k) (3) (v) is not
+  site (iv); it makes no enumeration and its proof is NOT ESTABLISHED,
+  giving QUARANTINED 7); (v) the clean-namespace part of the §6.3 reboot
   proof, wherever it is used (Case D and every other path that relies on
   boot-change). The emptyBy=not-submitted proof of §11.1 and §11.3 is the
   record-level statement of (ii)–(iv) and is made only by them. Every
@@ -5887,15 +5969,20 @@ one executionId (flock on `attempts/<X>`).
   parts. (1) The abandonment of submission is irrevocable in every
   branch and in every later state. (2) The selected existing reason,
   PRESUBMIT_FAILURE or CLIENT_LOST, is the reason this invocation writes,
-  but only on its own H10 path. That path continues on the unchanged view
-  of (k) (1), or after the closed benign recovery of (k) (3) (ii)–(iv):
-  exact A-RES, exact rollback, mandatory fresh re-read, and the exact
-  original PREPARED/NOT_SENT state proven restored. The selected reason
+  but only on its own H10 path. That path continues on the valid
+  unchanged exact original state of (k) (1) (C14: S4 equality and no
+  additional object are not enough; the committed view, K1–K5 and the
+  exact original classification must also be proven), or after the
+  closed benign recovery of (k) (3) (ii)–(iv): exact A-RES, exact
+  rollback, mandatory fresh re-read, and the exact original
+  PREPARED/NOT_SENT state proven restored. The selected reason
   is not a general outcome override. It has no authority over an outcome
   already committed by another broker ((k) (2)), over class D or another
-  state that forbids this invocation's terminal write ((k) (3) (i)), over
-  a post-cleanup state that is not the exact original ((k) (3) (v)), or
-  over the QUARANTINED 7 of failed evidence ((e), (f)). The reason is
+  state that forbids this invocation's terminal write ((k) (3) (i)),
+  including one whose S4 is unchanged, over any state of (k) (3) (v),
+  including the QUARANTINED 7 given there when a Case E namespace proof
+  cannot be made (C14), or over the QUARANTINED 7 of failed evidence
+  ((e), (f)). The reason is
   invocation-local. It is never written and never reconstructed from
   PREPARED/NOT_SENT, and it does not survive the invocation ((h)).
   (c) The one call. Holding P's X for the terminal span (C12: acquired at
@@ -5911,7 +5998,8 @@ one executionId (flock on `attempts/<X>`).
   mutation, launch, relaunch, retry or submission operation, and no
   bus-driver call. There is no fallback method, no second enumeration and
   no polling loop. An A-RES rollback of (k) (3) (ii) and every re-read of
-  (k) make no D-Bus call. After an exact restoration the one call is
+  (k) make no D-Bus call. Branch (3) (v) of (k) never makes this call or
+  any other D-Bus call (C14). After an exact restoration the one call is
   still the site (ii) or (iii) enumeration of the original selection,
   never a Case E site (iv) enumeration (C13). The H9 reads of `transactions/<Y>.json` are
   protected-store reads, not D-Bus calls. P has no bound unit (controller
@@ -5970,7 +6058,11 @@ one executionId (flock on `attempts/<X>`).
   terminal write is durable, the head stays PREPARED/NOT_SENT. The next
   CREATE C5 (3) or RECONCILE R5 applies Case E (H9 site (iv)) with that
   site's own existing allowance. E is not carried over and does not apply
-  there. The same holds on the A-RES path of (k) (3) (C13). A crash during
+  there. The same holds on the A-RES path of (k) (3) (C13), and for a
+  crash before the QUARANTINED 7 of (k) (3) (v) (B) is durable (C14): the
+  later invocation uses the existing durable recovery and ordinary Case
+  E at site (iv), and reconstructs neither the selected reason nor the
+  in-memory (k) (3) (v) disposition. A crash during
   the rollback leaves a shorter exact A-RES prefix, or the empty prefix,
   over the same head (A-RES crash idempotence). A crash after the
   rollback and before the fresh re-read, after the re-read and before the
@@ -6027,9 +6119,10 @@ one executionId (flock on `attempts/<X>`).
   (3) It cannot change the selected terminal path back to the success
   path or to the other terminal path. The control-flow direction stays
   monotonic. A later (k) revalidation can end the path without this
-  invocation's write (committed outcome, class D, or a post-cleanup state
-  that is not the exact original). It never switches this invocation's
-  own H10 write to the other reason (C13, (b)).
+  invocation's selected-reason write (committed outcome, class D, or
+  another state of (k) (3) (v), which may give QUARANTINED 7, C14). It
+  never switches this invocation's own H10 write to the other reason
+  (C13, (b)).
   (4) The waiting broker holds no GLOBAL and no other X, and it attempts
   no lock upgrade (H1, H2, H4 unchanged).
   The interval precedes the terminal span of (f). It is not a wait inside
@@ -6056,15 +6149,33 @@ one executionId (flock on `attempts/<X>`).
   protected-store descriptors S4, the committed view and every additional
   object of P. It then applies the classification order and K1–K5 for P
   again. The pre-wait terminal plan is never mutation authority by itself
-  (H8 (e)). There are three branches. Their precedence is closed (C13),
-  highest first: an outcome already committed (2); class D or another
-  state that forbids this invocation's terminal write ((3) (i)); exact
-  A-RES followed by exact restoration ((3) (ii)–(iv)); every other state
-  ((3) (v)). Exactly one applies:
-  (1) S4 is byte-equal to the PREPARED/NOT_SENT value of P's reservation
-  commit, which is the last value this broker made durable for P, and no
-  additional object of P exists. The terminal plan stays in force, and
-  (c)–(f) follow with the selected outcome.
+  (H8 (e)). There are three branches. Their precedence is closed (C13)
+  and exhaustive (C14). Highest first:
+  [1] an outcome already committed: (2);
+  [2] class D or another state that forbids this invocation's terminal
+  write, also when S4 is byte-equal and no additional object exists:
+  (3) (i);
+  [3] the valid unchanged exact original state: (1);
+  [4] exact A-RES followed by exact restoration: (3) (ii)–(iv); a
+  post-rollback re-read that does not prove (iv) goes to [5];
+  [5] every other state: (3) (v).
+  The broker evaluates [1]–[5] in this order on the fresh protected-store
+  read, and the first that matches applies. Every revalidation result
+  matches exactly one disposition. There is no branch outside this order,
+  and no lower rank applies to a result that a higher rank matches.
+  (1) The fresh revalidation under X proves all of the following: (1a)
+  S4 is byte-equal to the PREPARED/NOT_SENT value of P's reservation
+  commit, which is the last value this broker made durable for P; (1b)
+  no additional object of P exists; (1c) the committed view is
+  structurally valid; (1d) the applicable K1–K5 relations hold for P;
+  and (1e) the resulting classification is exactly the same incomplete
+  A-INC PREPARED/NOT_SENT state of this invocation's attempt. Only then
+  does the terminal plan stay in force, and (c)–(f) follow with the
+  selected outcome at the original H9 site (ii) or (iii). (1a) and (1b)
+  alone never select (1) (C14). If (1a) and (1b) hold but (1c), (1d) or
+  (1e) fails, (1) does not apply. A failure of (1c) or (1d) is class D,
+  and [2] applies through (3) (i). Any other classification goes to (3)
+  (v). The stale pre-wait plan is discarded in both cases.
   (2) P's head is already terminal or QUARANTINED. For example, a concurrent
   Case E by RECONCILE R5 or by another CREATE's C5 (3) committed
   PRESUBMIT_FAILURE or QUARANTINED during the interval. The plan is
@@ -6074,16 +6185,19 @@ one executionId (flock on `attempts/<X>`).
   is still connected, it gets the committed record in the existing
   TERMINAL or QUARANTINED frame. This branch outranks the selection of
   (b).
-  (3) Any other changed view (C13 closes this branch; owner option 2).
-  The pre-wait plan is discarded and nothing from it is written. The
-  broker applies the H8 (f) classification order for P, and exactly one
-  of the following applies, with no implementation choice:
+  (3) Any other view (C13 closes this branch; owner option 2; C14: this
+  includes a view with S4 byte-equal and no additional object that fails
+  (1)). The pre-wait plan is discarded and nothing from it is written.
+  The broker applies the H8 (f) classification order for P, and exactly
+  one of the following applies, with no implementation choice:
   (i) Class D, or another existing state that forbids this invocation's
-  terminal write. The existing class-D or fail-closed disposition of H8
-  (f) applies as before. The selection of (b) has no authority over it,
-  and neither CLIENT_LOST nor PRESUBMIT_FAILURE is forced. No terminal
+  terminal write, including a view with S4 byte-equal and no additional
+  object whose committed view or K1–K5 relations fail (C14). This rank
+  ([2]) outranks (1). The existing class-D or fail-closed disposition of
+  H8 (f) applies as before. The selection of (b) has no authority over
+  it, and neither CLIENT_LOST nor PRESUBMIT_FAILURE is forced. No terminal
   write is made from the H10 plan, no H10 call is made and E never
-  begins. Submission stays abandoned.
+  begins. Submission stays abandoned. C14 adds no class and no reason.
   (ii) Exact A-RES of P. The broker performs the existing A-RES rollback,
   unchanged, under the same X. It removes exactly the proven uncommitted
   prefix, in reverse list order, each step durable before the next, with
@@ -6116,23 +6230,50 @@ one executionId (flock on `attempts/<X>`).
   is NOT ESTABLISHED, or that finds the own unit or an unknown member,
   is QUARANTINED 7 under (e) and (f), whatever the selected reason.
   There is no retry.
-  (v) Any other result. This covers a changed view that is neither (2),
-  (3) (i) nor exact A-RES, and a post-rollback re-read that does not
-  prove (iv). The selection of (b) gets no authority. The existing H8 (f)
-  classification and disposition govern, with their own existing sites
-  and allowances, and there is no return to (iv). H10 (c)–(f) and E do
-  not apply, and no reason is forced.
+  (v) Any other result. This covers a view that matches none of (2),
+  (3) (i), (1) or exact A-RES, and a post-rollback re-read that does not
+  prove (iv). The selection of (b) gets no authority, H10 (c)–(f) and E
+  do not apply, no reason is forced, and there is no return to (iv). The
+  broker runs the existing H8 (f) classification and disposition for P
+  under the same X. Exactly one of the following then applies, decided by
+  whether that existing disposition needs a manager or unit-namespace
+  proof (C14, closed):
+  (A) No such proof needed. The existing disposition applies unchanged.
+  This covers, for example, the class-D refusal or the committed-outcome
+  path reached through this reclassification. Local protected-store steps
+  of H8 (f) that need no manager call, such as an A-RES rollback, also
+  stay unchanged.
+  (B) A Case E no-send/no-unit/clean-namespace proof needed (H8 (f): an
+  incomplete head that reaches Case E). Inside this live P1S H10
+  invocation that proof cannot legally be made. This invocation is not
+  CREATE C5 (3) or RECONCILE R5, so it is not H9 site (iv). H10 (c) and E
+  serve only sites (ii) and (iii) through (1) and (3) (iv). No other D-Bus
+  allowance exists in P1S (§6.4, (a)). The broker therefore makes no
+  ListUnitsByPatterns call and no other D-Bus call. It does not use (c),
+  does not start E, and does not consume, restart, extend or borrow S. It
+  makes no retry and starts no second invocation. The proof is NOT
+  ESTABLISHED for this invocation, and the existing Case E fail-closed
+  outcome applies: QUARANTINED 7 (§6.4 "otherwise QUARANTINED 7"; §7.4
+  S1). The broker commits it under the same X through the existing
+  terminal/QUARANTINED commit, with the same record and reason as that
+  existing Case E proof-failure outcome and with the existing permanent
+  QUARANTINED semantics (claim retained, no release, incident resolution
+  unsupported). The selected CLIENT_LOST or PRESUBMIT_FAILURE is not
+  written and does not override this result, as a failed proof outranks
+  the selected reason under (3) (iv). The sticky path is not re-entered.
+  The result is the same when S was already exhausted at the selection.
   In every branch the abandonment of submission by (b) stays
   irrevocable. Revalidation never re-enables the SUBMITTING write,
   StartTransientUnit, P1S progress, a retry or a new reservation, and it
   never undoes the fact that this invocation has abandoned submission.
   The selected reason is written only through (1) or (3) (iv). This
   invocation makes at most one ListUnitsByPatterns in total, never two.
-  That one is either the call of (c), after the revalidation, through
-  (1) or (3) (iv), or, only under (3) (v), the one enumeration that an
-  existing H8 (f) disposition itself requires at its own site and under
-  that site's own allowance. Branch (2), (3) (i), the rollback of (3)
-  (ii) and the re-reads of (k) make no call. Zero calls is therefore the
+  That one can only be the call of (c), after the revalidation, through
+  (1) or (3) (iv), as the site (ii) enumeration for PRESUBMIT_FAILURE or
+  the site (iii) enumeration for CLIENT_LOST, under E. Branch (2), (3)
+  (i), (3) (v) (A) and (B), the rollback of (3) (ii) and the re-reads of
+  (k) make no call (C14). Once the call of (c) has been made, nothing in
+  this invocation permits another enumeration. Zero calls is therefore the
   result of every path that needs no H10 terminal evidence, not only of
   an outcome already committed.
   (l) Local evidence work (C12). After the one complete reply that (e)
@@ -6816,7 +6957,12 @@ interval, never a phase budget, state, class, reason, outcome, exit code
 or output value. C13 adds no closed value, constant, timeout, state,
 reason, outcome, exit code, journal field or durable object. The sticky
 selected reason of H10 (b) and (k) (3) is invocation-local control flow
-over the existing PRESUBMIT_FAILURE and CLIENT_LOST reasons. No public export, bin or package-file change is proposed; the
+over the existing PRESUBMIT_FAILURE and CLIENT_LOST reasons. C14 adds no
+closed value, constant, timeout, state, class, reason, outcome, exit
+code, journal field, D-Bus allowance, H9 site or durable object. The H10
+(k) precedence ranks and the (3) (v) (A)/(B) split are invocation-local
+control flow over the existing class D, A-INC, A-RES, PRESUBMIT_FAILURE,
+CLIENT_LOST and QUARANTINED 7. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -6895,7 +7041,12 @@ FALSE. C13 revalidation: H10 (b) and (k) (3) are broker-internal outcome
 precedence and revalidation rules over existing reasons. They add no
 import or call edge to either approval gate, to #23F, apply.js, gate
 symbols or legacy execution, and no code changes. Current trigger FALSE;
-proposed trigger FALSE. No closure, re-rating or remediation.
+proposed trigger FALSE. C14 revalidation: H10 (k) (1), (3) (i) and
+(3) (v) are broker-internal precedence and zero-call fail-closed rules
+over existing classes and outcomes. They add no import or call edge to
+either approval gate, to #23F, apply.js, gate symbols or legacy
+execution, and no code changes. Current trigger FALSE; proposed trigger
+FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -6938,7 +7089,9 @@ vectors (10)–(15) (§20.3.7) and the C9 forms of vectors (1), (2) and
 (16)–(24) (§20.3.7) on the reference host; C11: the P1S terminal-evidence
 vectors (25)–(33) (§20.3.7) on the reference host; C12: the terminal X
 acquisition vectors (34)–(41) (§20.3.7) on the reference host; C13: the
-sticky-reason vectors (42)–(49) (§20.3.7) on the reference host.
+sticky-reason vectors (42)–(49) (§20.3.7) on the reference host; C14:
+the precedence and zero-call vectors (50)–(57) (§20.3.7) on the
+reference host.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -6993,7 +7146,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6, C7, C8, C9, C10, C11, C12 and C13 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7, C8, C9, C10, C11, C12, C13 and C14 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -7769,6 +7922,89 @@ current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
 PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
 TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
 fresh independent exact-head HEAVY Architecture re-review of the C13
+HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh
+independent exact-head HEAVY Security review (Security STOP until
+then); then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.22 Architecture corrective C14 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C14 — APPROVED (owner
+decision: no new D-Bus allowance; existing fail-closed QUARANTINED 7
+when a delegated disposition would need a Case E namespace proof that
+cannot legally be made). Reviewed HEAD
+6517536aba8f1a31ccb5cedb8e5bbf8662db3d8d (tree
+76de3b4a9ff3c366f2b4ddda4db267fe02c71251, parent
+cc4b51b83514d04a3d8f222ca44ac467bb941e69, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 2 MINOR
+/ 1 new INFO; ARCH-S5-C12-m01 RESOLVED. C14 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical
+to C2–C13 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C14
+resolves exactly the two MINOR findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C13-m01 H10 (k) branch (1) sits outside the closed precedence and keeps the terminal plan on S4 equality and no additional object alone, although the committed view or K1–K5 may make the state class D | The precedence is exhaustive, highest first: [1] committed outcome (2); [2] class D or another write-forbidding state (3) (i); [3] the valid unchanged exact original state (1); [4] exact A-RES and exact restoration (3) (ii)–(iv); [5] every other state (3) (v). The first rank that matches the fresh read applies, every result matches exactly one, and no branch lies outside the order. Branch (1) now needs, on the fresh revalidation under X, S4 byte-equal to the reservation's PREPARED/NOT_SENT value, no additional object of P, a structurally valid committed view, valid applicable K1–K5 relations, and exactly the same A-INC PREPARED/NOT_SENT classification of this invocation's attempt. S4 equality and no additional object alone never select it. With S4 byte-equal and no additional object but a broken committed view or K relation, the state is class D and [2] wins: the plan is discarded, no H10 call is made, E never begins, nothing is written from the stale plan, and the selected reason has no override authority. No class or reason is added. Vectors (50), (51) | §20.3.8 H8 (f), H10 (b), (j) (3), (k) precedence, (1), (3), (3) (i); §20.3.7 C14 vectors (50), (51), (56); §20.0 |
+| ARCH-S5-C13-m02 H10 (k) (3) (v) delegates to generic H8 (f), whose Case E needs a clean-namespace proof that has no site or allowance inside a live P1S H10 invocation | Branch (3) (v) runs the existing H8 (f) classification and disposition, then splits by proof need. (A) An existing disposition that needs no manager or unit-namespace proof applies unchanged. (B) A disposition that would need a Case E no-send/no-unit/clean-namespace proof makes no ListUnitsByPatterns call and no other D-Bus call, does not use (c), does not start E, and does not consume, restart, extend or borrow S. It makes no retry. The proof is NOT ESTABLISHED, and the existing Case E fail-closed QUARANTINED 7 is committed through the existing terminal/QUARANTINED commit, with that outcome's existing record, reason and permanent QUARANTINED semantics. The selected CLIENT_LOST or PRESUBMIT_FAILURE does not override it, and the sticky path is not re-entered. The result is identical when S was exhausted. H9 site (iv) stays CREATE C5 (3) A-INC and RECONCILE R5 only; a live H10 (3) (v) is not site (iv). The only possible H10 call is the call of (c) at site (ii) or (iii), so a whole invocation makes at most one ListUnitsByPatterns, never two. A crash before that QUARANTINED 7 is durable leaves PREPARED/NOT_SENT for the existing durable recovery and ordinary Case E at site (iv). No in-memory C14 disposition or selected reason is reconstructed. Vectors (52)–(57) | §20.3.8 H8 (f), H9 site (iv), H10 (b), (c), (h), (k) (3) (v) and closing paragraph; §20.3.7 C13 vector (47) and C14 vectors (52)–(57); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reading H10 (k) with H8 (f) and H9
+finds one outcome for each trace. A selects a terminal reason, waits for
+P's X and acquires it. If S4 is unchanged, no object was added and the
+committed view and K1–K5 are valid with the exact original
+classification, A makes the one site (ii) or (iii) call. If S4 is
+unchanged but K3 is broken, A refuses as class D with no call and no
+record from the plan. If the state reaches (3) (v) and H8 (f) leads to
+Case E, A makes no call and commits QUARANTINED 7. Nothing in the
+contract is left for the implementer to invent: no allowance, site or
+outcome.
+
+C14 adds no D-Bus allowance, H9 site, constant, timeout, deadline,
+journal state, class, attempt, transaction, record or incident schema or
+version, record reason, broker frame, broker operation, outcome, exit
+code, refusal enum, usage code, CLI reason code, CLI command or flag,
+config or ProjectProfile field, environment variable, public API field,
+hash domain, durable object or maintenance service. Unchanged: the
+resolutions of ARCH-S5-C12-m01 (C13 owner option 2 sticky reason, exact
+A-RES restoration, same-live-invocation scope, crash boundary),
+ARCH-S5-C11-m01 (H10 (i)–(l) timing architecture, the terminal X
+acquisition synchronization interval, no flock fairness assumption, no
+hard X acquisition bound), ARCH-S5-C10-m01 (H10 option (a), successful
+P1S makes zero D-Bus calls, E = 5000 ms), ARCH-S5-C9-m01 (H9
+membership-only rule), ARCH-S5-C8-m01 (H8 short X), ARCH-S5-C8-m02 and
+ARCH-S5-C7-m01 (committed view, classification order, A-RES/D
+disjointness), and every earlier resolution. Class D semantics and the
+A-RES rule are not redefined. Also unchanged: S4 as the sole durable
+commit marker; the one-INTENT invariant and proof; GLOBAL → X only, no
+X → GLOBAL, no lock upgrade; INTENT rollback, never roll-forward;
+COMMITTED as the consumption commit point; permanent COMMITTED
+transactions; exactly two consumed tombstones; no retry;
+AutomationExecutionRecord v2; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED fail-closed
+semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the new Architecture INFO finding of the C13 re-review
+(vectors (42)–(44) do not cover QUARANTINED F prefixes or P-transition
+residue) is carried on the review record. C14 does not close it and does
+not widen vectors (42)–(44). Also preserved are the carried INFO
+findings of the C12 re-review, C11 INFO (1), (2), (4) and (5), the
+carried C10 INFO findings, the remaining carried C9 INFO findings
+(including no explicit byte bound on the lockless S6 read), the carried
+C8 and C7 Architecture INFO findings, and every other carried
+Architecture INFO finding. None is closed, waived, re-rated or absorbed.
+Every earlier Architecture resolution stands. The Security C2 direction
+SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved; Security
+INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C14
 HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh
 independent exact-head HEAVY Security review (Security STOP until
 then); then separate Product Owner design acceptance and merge
