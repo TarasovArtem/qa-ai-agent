@@ -2426,6 +2426,7 @@ only the sentences listed here, and only as stated:
 | §20.3.7 (C8) lock hierarchy vectors (1), (2) and (5), which held an X lock across a Cases A–H wait, and the §20.3.8 (C8) AL0/H3/H4 texts (X span relative to lifecycle waits and the re-read on re-acquisition unspecified) | Not a supersession of §7: the §7 rule "short per-attempt operation locks … never held across lifecycle waits" governs unchanged. §20.3.8 lock hierarchy H8 (C9) makes it exact: X is released, with its durable post-condition complete, before every lifecycle, manager or client wait; it is re-acquired before any journal/state mutation or dependent manager action; the head and mutable facts are re-read and revalidated under the re-acquired X; a pre-wait snapshot is never mutation authority; a changed state discards the earlier plan and re-runs the closed classification and Cases A–H disposition |
 | §6.2 "unknown member quarantines runner", §7 "scan runner unknown namespace before creates" and §20.3.8 (C8) H6 for the unit-namespace scan (membership of a unit whose S6 committed after the preceding GLOBAL hold scan unspecified) | §20.3.8 lock hierarchy H9 (C9): units are enumerated first; a matching unit is a known member only if a descriptor-anchored lockless read of its exact S6 finds a valid S6 with phase COMMITTED for that executionId; that read is membership proof only; INTENT, absent, malformed or mismatched S6 keeps the existing unknown-member fail-closed handling |
 | §6.3 reboot "clean namespace", §6.4 P1S "no-send/no-unit/clean-namespace proof" (PRESUBMIT_FAILURE and CLIENT_LOST), §7 Case E "no-send/no-unit proof", §7.4 S1, §11.1 emptyBy not-submitted "no send/no unit/clean namespace proof", §11.3 "proof above", and §20.3.8 (C9) H9 limited to the CREATE C5 scan (membership rule of these enumerations unspecified) | §20.3.8 lock hierarchy H9 (C10): one membership rule for every namespace enumeration and clean-namespace proof (sites (i)–(v)). Enumerate first; a grammar-matching unit's exact S6 is read locklessly and unconditionally; only a valid COMMITTED S6 of that executionId makes it a known member, as membership authority only. The proof's own unit always fails the no-unit part. A clean namespace means no own unit and no unknown member. INTENT, absent, malformed, mismatched S6 or an invalid name keeps the existing fail-closed handling |
+| §6.4 P1S "During all of P1S ... no D-Bus call is made", §12 C2 vector "no D-Bus call observed during P1S", §6.4 synchronous create observation sum (P1S terminal paths unspecified), §20.3.3 "every manager wait is already bounded by its §6.4 phase deadline", and §20.3.8 (C10) H8 (a) "each within its existing §6.3/§6.4 allowance" as applied to H9 sites (ii) and (iii), which have no manager-call allowance in P1S | §20.3.8 H10 (C11, owner option (a)): qualified, not removed. Before the terminal failure decision, and on every successful P1S, zero D-Bus calls (manager or bus driver). After the broker has irrevocably selected PRESUBMIT_FAILURE or P1S CLIENT_LOST, exactly one read-only ListUnitsByPatterns is allowed, bounded by the fixed internal E = 5000 ms, solely for the H9 (ii)/(iii) clean-namespace evidence. Every other D-Bus call stays forbidden in P1S. This does not begin P2, submission stays NOT_SENT, and StartTransientUnit is never reachable. Successful CREATE timing is unchanged. A terminal P1S path is bounded by S plus E plus the existing terminal commit/release I/O |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -4338,7 +4339,10 @@ P4, R); an expiry ends in the existing CONTROLLER_FAILURE, TIMED_OUT,
 OBSERVATION_EXPIRED or QUARANTINED outcomes. It cannot produce PASS: PASSED
 needs a durable OBSERVED backed by the authenticated manager's properties
 (§7.3) and a validated proposal, and no message from another sender is
-ever read as manager evidence. It does not bypass L7: the traffic creates
+ever read as manager evidence. The one P1S terminal-evidence
+ListUnitsByPatterns of §20.3.8 H10 (C11) is bounded by E = 5000 ms, not
+by S. If a full queue delays its reply past E, the clean-namespace proof
+is not established and the outcome is the existing QUARANTINED 7. It does not bypass L7: the traffic creates
 no broker process, so the open L7 concurrency question is unchanged.
 
 #### 20.3.4 Dependencies, toolchain, build and linkage
@@ -5032,8 +5036,54 @@ a head change: at any site, the proving broker classifies Y a known
 member, and B then commits Y's next transition. Any later decision on Y
 (by the proving broker or by RECONCILE(Y)) re-reads Y's head under Y's
 X (H8) and never uses the membership read as head, controller or manager
-evidence. If the proving broker of sites (ii)–(v) waits before its
+evidence. If the proving broker of sites (iv) or (v) waits before its
 terminal write, it makes the proof again under the re-acquired X of P.
+At sites (ii) and (iii) no such wait exists (H10 (f), C11).
+
+C11 P1S terminal-evidence vectors (§20.3.8 H10). D-Bus instrumentation
+records every bus message the broker sends, and a monotonic clock
+records the E origin and the reply. B is as in (16)–(24). (25) Success
+path: the reservation is COMMITTED with PREPARED/NOT_SENT, every P1S check
+passes, and SUBMITTING is written. Zero D-Bus calls are observed between
+the COMMITTED fsync and the durable SUBMITTING write, with no
+enumeration. P2 begins only after SUBMITTING. (26) Recheck failure: the
+P1S recheck fails, and the selection is made before any D-Bus call (no
+SUBMITTING write or further P1S step follows, and S is not restarted). B
+has already published Y with a valid COMMITTED S6. Within E, exactly one
+ListUnitsByPatterns is observed. It returns Y. The exact S6 of Y is read
+and Y is a known member. P's unit is absent, so the result is
+PRESUBMIT_FAILURE 7 with emptyBy=not-submitted, not a false QUARANTINED.
+StartTransientUnit is never sent for P. (27) CLIENT_LOST: client loss is
+detected in P1S, and CLIENT_LOST is selected before the enumeration. One
+E-bounded call follows, with the same H9 algorithm. A foreign COMMITTED Y
+does not quarantine P. The result is the existing CLIENT_LOST 7, durably
+committed even with no client left to read it, and returned by a later
+RECONCILE. There is no submission, retry or StartTransientUnit. (28) S
+exhaustion: S expires, PRESUBMIT_FAILURE is selected, submission is
+disabled, the E origin is recorded after the selection, and the one call
+is made. The proof is not skipped, and its time is not charged to S. (29)
+E success: the reply arrives within E. Every matching unit is evaluated
+under H9. With no own unit and all foreign members known, the namespace
+is clean and the selected outcome is written. Otherwise the existing
+fail-closed handling applies. (30) E timeout or failure: in separate
+runs, the reply is delayed past E (manager paused, full queue), the
+manager returns a D-Bus error, the reply is malformed or comes from a
+non-manager sender, and the reply lists 257 matching units. Each gives
+QUARANTINED 7, with exactly one call, no retry, no other manager method,
+no PRESUBMIT_FAILURE and no submission. A late reply is discarded. (31)
+Bad S6: the call succeeds within E, and a matching Y has an INTENT,
+absent, malformed, non-regular or symlink S6, or one naming another
+executionId. The existing H9 fail-closed handling applies (vector (22)),
+with no C11-specific outcome. (32) No start ever: across (26)–(31) and a
+broker SIGKILL at each H10 step, StartTransientUnit(P) is observed
+neither before the selection, nor during E, nor afterwards, including
+on a later RECONCILE of P. A SIGKILL leaves PREPARED/NOT_SENT for Case E
+(H10 (h)). A clean proof never leads to a SUBMITTING write. (33) E cannot
+revive S: after the selection (S expired or not) no SUBMITTING write,
+envelope or recheck step, new reservation, S restart, extension or reset,
+or retry of the same execution is observed. The only observable results
+are a terminal record (PRESUBMIT_FAILURE, CLIENT_LOST or QUARANTINED) or a
+crash left for Case E.
 
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
@@ -5562,7 +5612,11 @@ one executionId (flock on `attempts/<X>`).
   individual manager or cgroup calls and reads that §7 serializes with
   X's journal transitions (for example a StopUnit or KillUnit call, a
   unit-property read, a cgroup.events read), each within its existing
-  §6.3/§6.4 allowance. It never contains a lifecycle wait: a wait for a
+  §6.3/§6.4 allowance. The one exception is the P1S terminal-evidence
+  ListUnitsByPatterns of H10 (C11), which has no §6.3/§6.4 allowance and
+  is admitted only within the E allowance of H10, at sites (ii) and (iii).
+  H10 gives no allowance to any other manager call. A single bounded,
+  synchronous, read-only manager call is not a lifecycle wait. It never contains a lifecycle wait: a wait for a
   unit state, job or deactivation change, the §6.4 P3 execution
   interval, the P4 stop/SIGKILL and empty-confirmation intervals, P5
   proposal receipt, any client frame, any Cases A–H wait, or a wait for
@@ -5600,9 +5654,10 @@ one executionId (flock on `attempts/<X>`).
   cannot accept a late PASS. (g) Termination: a head moves only forward
   along the §7 successor table, with at most 1024 entries, and every
   wait is inside an existing phase budget, so re-acquisition adds no
-  unbounded loop. A discarded plan does not reset any deadline. No
-  timeout is introduced, and no timeout serves to resolve a deadlock
-  (deadlock freedom below is structural).
+  unbounded loop. A discarded plan does not reset any deadline. H8
+  introduces no timeout, and no timeout serves to resolve a deadlock
+  (deadlock freedom below is structural). The C11 allowance E of H10
+  bounds one manager call and resolves no lock wait.
 - H9 Unit-namespace membership (C9; scope C10). H9 is the single
   membership rule of every Controlled-v1 enumeration of the unit
   namespace qa-agent-exec-v1-* (§4.3 item 6, §6.2) and of every
@@ -5619,7 +5674,8 @@ one executionId (flock on `attempts/<X>`).
   unknown-member check refers to one of these sites; no site has a
   membership rule of its own. Each enumeration runs this one algorithm:
   (1) It first enumerates the units of the namespace (the bounded
-  read-only ListUnitsByPatterns of §6.3, at most 256 units, §7). (2) A
+  read-only ListUnitsByPatterns of §6.3, at most 256 units, §7; at sites
+  (ii) and (iii) this is exactly the one E-bounded call of H10, C11). (2) A
   unit with the qa-agent-exec-v1- prefix whose name does not match the
   whole-string grammar ^qa-agent-exec-v1-[0-9a-f]{32}\.service$ has no
   executionId. H9 makes no read for it and never binds it; it keeps the
@@ -5672,11 +5728,97 @@ one executionId (flock on `attempts/<X>`).
   re-observes before its write (H8 (a), (d)). The H9 read takes no lock,
   so H1, H2 and H4 are unchanged. A membership result is never carried
   across an X release: after any wait the proof is made again under the
-  re-acquired X (H8 (e)). Site (i) holds no lock. The §20.2.7 OW predicate
+  re-acquired X (H8 (e)). That redo applies only at sites (iv) and (v).
+  At sites (ii) and (iii), H10 keeps the enumeration, the H9 reads and the
+  terminal write in one X span with no wait, so a second enumeration is
+  never needed and is forbidden. Site (i) holds no lock. The §20.2.7 OW predicate
   is a qualification-time rule under QZ2, not a runtime namespace proof,
   and is unchanged.
   This lockless authority applies to S6 for namespace membership only. It
   extends to no other protected-store object and to no other decision.
+- H10 P1S terminal-evidence enumeration (C11, owner option (a); qualifies
+  the §6.4 P1S sentence "no D-Bus call is made", §20.0). This is the only
+  rule that lets a D-Bus call happen in P1S.
+  (a) Normal path. Until a terminal failure decision of (b) is made, and
+  on every P1S that reaches the SUBMITTING write, the broker makes zero
+  D-Bus calls (manager or bus driver), with no H9 enumeration. No manager
+  interaction is allowed while P1S can still proceed toward SUBMITTING.
+  P2 begins only at the durable SUBMITTING write, as in §6.4.
+  (b) Irrevocable selection. The terminal-evidence path starts only after
+  the broker has irrevocably selected one of the two existing P1S
+  terminal paths: PRESUBMIT_FAILURE (a recheck failure, a step failure or
+  S exhaustion) or P1S CLIENT_LOST (§6.4, §7.4 S1). The selection is
+  in-memory control flow, not a journal state, reason or output value. It
+  is final for that invocation. From it on, the SUBMITTING write, every
+  remaining P1S step (envelope work, post-reservation recheck,
+  propertiesDigest), StartTransientUnit, a new reservation and a retry of
+  the same execution are unreachable. Nothing durable is written for the
+  selection. The durable head stays PREPARED with submission NOT_SENT
+  until the terminal write of (f). S exhaustion enters this path. It does
+  not skip the proof.
+  (c) The one call. Holding P's X for the terminal span (H8 (c) acquisition
+  and accounting unchanged), the broker makes exactly one read-only
+  org.freedesktop.systemd1 Manager ListUnitsByPatterns call. Its arguments
+  are those of every other H9 enumeration, and it serves solely as the
+  H9 (1) enumeration of site (ii) or (iii). No other method is allowed on
+  this path: not StartTransientUnit, StopUnit, KillUnit, ResetFailedUnit,
+  GetUnit, Properties.GetAll, RefUnit or UnrefUnit, no other manager
+  mutation, launch, relaunch, retry or submission operation, and no
+  bus-driver call. There is no fallback method, no second enumeration and
+  no polling loop. The H9 reads of `transactions/<Y>.json` are
+  protected-store reads, not D-Bus calls. P has no bound unit (controller
+  null), so the P6 release of this path makes none of the RefUnit,
+  ResetFailedUnit or UnrefUnit calls of the §6.4 P6 row. That release is
+  protected-store I/O and leaf removal only.
+  (d) E. E = 5000 ms is a fixed internal broker constant. It is not
+  configurable and is not part of ProjectProfile, config, a CLI option,
+  the environment or any public API, schema or output field. E applies
+  only to the call of (c). Its origin is the monotonic instant after the
+  selection of (b) and after P's X is held, immediately before the call
+  is issued. The call must return a complete reply within E of that
+  origin. The broker enforces E with its own monotonic deadline on the
+  blocking call, and a late reply is discarded unused. E never renews or
+  resets. It never extends, restarts or resets S, grants no further P1S
+  progress, and permits neither SUBMITTING nor StartTransientUnit. No
+  unused time moves from S to E or from E to S. E is added to no other
+  budget (A, T, R or any other phase).
+  (e) Evidence failure. If the call does not return a complete reply
+  within E (timeout or blocked queue), fails at the manager or D-Bus
+  layer, returns a reply that is malformed or not from the authenticated
+  manager, or returns more units than the existing 256-unit namespace
+  bound (§7), then the clean-namespace proof is NOT ESTABLISHED. The
+  existing proof-failure outcome applies: QUARANTINED 7 (§6.4). There is
+  no retry, no alternate API and no downgrade to PRESUBMIT_FAILURE, and
+  no new reason, outcome, exit code, refusal code or state exists.
+  (f) After a complete reply. H9 (2)–(7) and its own-attempt rule apply
+  unchanged: exact grammar, own-unit handling, exact Y extraction,
+  descriptor-anchored lockless S6 reads, COMMITTED S6 as membership-only
+  proof, no X of any Y. No unit named for P and every other matching unit
+  a known member means the namespace is clean. The broker then writes the
+  selected existing outcome (PRESUBMIT_FAILURE 7, or CLIENT_LOST 7, with
+  emptyBy=not-submitted). Otherwise the existing fail-closed handling
+  applies (QUARANTINED 7, with the §6.2 runner quarantine for an unknown
+  member). The enumeration, the H9 reads and this terminal write are one
+  span of P's X, with no wait and no X release between them. A clean
+  proof is terminal evidence only. It never authorizes submission or a
+  return to P1S progress. The order is always
+  selection → evidence → terminal outcome.
+  (g) CLIENT_LOST without a client. The client may be gone, so no TERMINAL
+  or QUARANTINED frame may be delivered and no synchronous exit is
+  observed. The broker still runs (c)–(f) and commits the outcome
+  durably. A later RECONCILE returns that committed record (R7) and never
+  re-evaluates it.
+  (h) Crash. If the broker dies at any point of (b)–(f) before the
+  terminal write is durable, the head stays PREPARED/NOT_SENT. The next
+  CREATE C5 (3) or RECONCILE R5 applies Case E (H9 site (iv)) with that
+  site's own existing allowance. E is not carried over and does not apply
+  there.
+  (i) Timing. Successful CREATE timing is unchanged, and E is not added
+  to successful P1S. A P1S terminal-evidence path ends without P2–P5. Its
+  synchronous bound is P0+P1+S+E plus the existing bounded terminal
+  commit/release I/O (P6, without manager calls), that is
+  <=5000+120000+30000+5000 ms plus that I/O. The H8 (c) acquisition of P's X
+  keeps its existing accounting.
 
 Deadlock freedom (proof). Under H1–H4 a broker waiting for GLOBAL holds
 no lock, and a broker waiting for an X lock holds no X lock and, in
@@ -5684,14 +5826,16 @@ layout v1, no GLOBAL. A GLOBAL holder waits for no lock (H3), and an X
 holder waits for neither GLOBAL (H1) nor another X (H2). By H8 no
 lifecycle, manager or client wait happens while any X is held, so an X
 span is finite, like a GLOBAL span. H9 takes no lock, inside or outside
-an X span, so it adds no wait-for edge. Every wait-for
+an X span, so it adds no wait-for edge. The one H10 call (C11) takes no
+lock and is bounded by E, so it adds no wait-for edge either. Every wait-for
 chain therefore ends at a holder that waits for no lock, so no cycle
 exists; a GLOBAL holder's span is bounded protected-store I/O (AL6), and
 crash releases every kernel lock at process exit. Pre-global scans never
 mutate or retain locks on INTENT-era objects (H6), so a live INTENT is
 never misclassified as D or rolled back outside GLOBAL, and a dead one
 is rolled back by the next GLOBAL holder (at-most-one-INTENT proof
-above, unchanged). No new timeout is introduced.
+above, unchanged). No timeout is introduced for lock waits. The C11
+constant E bounds only the H10 manager call.
 
 R7 for a committed outcome. When RECONCILE(X) finds a head that is
 already terminal or QUARANTINED, R5 has no case to apply and R7 writes no
@@ -6311,7 +6455,11 @@ and read rules. "Known member" and "unknown member" keep their existing
 §6.2 meaning and are never a state, class, reason or output value. C10
 adds no closed value either: it widens only the sites of the
 broker-internal rule H9, and "clean namespace" keeps its existing
-meaning of a proof, never a state, class, reason or output value. No public export, bin or package-file change is proposed; the
+meaning of a proof, never a state, class, reason or output value. C11
+adds exactly one broker-internal fixed constant, E = 5000 ms (§20.3.8
+H10). It is not a config, ProjectProfile, CLI, environment, schema,
+public API or output value. The irrevocable terminal selection is
+control flow, never a state, class, reason or output value. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -6378,8 +6526,11 @@ no code changes. Current trigger FALSE; proposed trigger FALSE. C10
 revalidation: the H9 scope extension is a broker-internal protected-store
 read rule; it adds no import or call edge to either approval gate,
 to #23F, apply.js, gate symbols or legacy execution, and no code changes.
-Current trigger FALSE; proposed trigger FALSE. No closure, re-rating or
-remediation.
+Current trigger FALSE; proposed trigger FALSE. C11 revalidation: H10 is a
+broker-internal bound on one read-only manager call. It adds no import
+or call edge to either approval gate, to #23F, apply.js, gate symbols or
+legacy execution, and no code changes. Current trigger FALSE; proposed
+trigger FALSE. No closure, re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -6419,7 +6570,8 @@ C8: the committed-view vectors (§20.2.7) and the lock hierarchy vectors
 (§20.3.7) on the reference host; C9: the short-X and namespace-membership
 vectors (10)–(15) (§20.3.7) and the C9 forms of vectors (1), (2) and
 (5) on the reference host; C10: the namespace-proof membership vectors
-(16)–(24) (§20.3.7) on the reference host.
+(16)–(24) (§20.3.7) on the reference host; C11: the P1S terminal-evidence
+vectors (25)–(33) (§20.3.7) on the reference host.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -6474,7 +6626,7 @@ INDETERMINATE.
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6, C7, C8, C9 and C10 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7, C8, C9, C10 and C11 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -7011,5 +7163,77 @@ re-review of the C10 HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on
 that HEAD, fresh independent exact-head HEAVY Security review (Security
 STOP until then); then separate Product Owner design acceptance and
 merge authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
+AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
+AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
+
+### 20.19 Architecture corrective C11 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-DESIGN-GAP-C11 — APPROVED (owner
+option (a)). Reviewed HEAD fc201f3ffe182e8222eb9a7148018dddabca8684
+(tree 373e2f968b48ed0d6c6fa79bbe489f7cd6620c21, parent
+d487f806ed4d092d756419eeaccb41ef3144f297, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Architecture re-review of that HEAD: CHANGES REQUIRED, 0 MAJOR / 1 MINOR
+/ 3 new INFO; ARCH-S5-C9-m01 RESOLVED. C11 is documentation only, this
+file only; native/qa-agent-controller-v1/Containerfile is byte-identical
+to C2–C10 (git blob 7304f13b1dbed74b08e305432f2d0b447465cd70). C11
+resolves exactly the one MINOR finding:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| ARCH-S5-C10-m01 H9 P1S enumeration contradicts §6.4 "During all of P1S ... no D-Bus call is made" | §20.0 qualifies, not removes, that sentence and the §12 "no D-Bus call observed during P1S" vector. Normal and successful P1S make zero D-Bus calls. Only after the broker irrevocably selects PRESUBMIT_FAILURE or P1S CLIENT_LOST is exactly one read-only ListUnitsByPatterns allowed, solely as the H9 (ii)/(iii) enumeration. It is bounded by the fixed internal E = 5000 ms, whose origin is after the selection and after P's X is held, immediately before the call. There is no retry, no fallback, no second enumeration and no other method. E never renews, extends, restarts or resets S, and no time is borrowed between them. A call that misses E, fails, or returns malformed or over-bound evidence leaves the proof NOT ESTABLISHED, and the outcome is the existing QUARANTINED 7. Submission stays NOT_SENT, P2 does not begin, and StartTransientUnit is unreachable. H8 (a) admits that call only within E. H9 (1), its Placement clause and vector (24) confine the after-wait redo to sites (iv)/(v). §20.3.3 names E as that call's bound. The terminal-path timing is S + E + the existing terminal commit/release I/O, and successful timing is unchanged. Vectors (25)–(33) | §20.3.8 H8 (a), H8 (g), H9 (1) and Placement, new H10, deadlock proof; §20.3.3; §20.3.7 C10 vector (24) and C11 vectors (25)–(33); §20.0; §20.6; §20.7; §20.8 |
+
+Resolution test. An implementer reading §6.4 with §20.0 and H10 finds one
+rule. Before the selection and on success there is no D-Bus call. On the
+terminal-evidence path there is exactly one E-bounded read-only
+ListUnitsByPatterns, and nothing else. No site (i)–(v) is removed from
+H9, and unknown-unit detection is not deferred to a later CREATE.
+
+C11 adds one broker-internal fixed constant (E) and no journal state,
+attempt, transaction, record or incident schema or version, record
+reason, broker frame, broker operation, exit code, refusal enum, usage
+code, CLI reason code, CLI command or flag, config or ProjectProfile
+field, environment variable, public API field, hash domain or
+maintenance service. Unchanged: the resolutions of ARCH-S5-C9-m01 (H9
+sites (i)–(v), unconditional S6 read, own-unit rule, clean namespace =
+no own unit and no unknown member), ARCH-S5-C8-m01 (H8 short X) and
+ARCH-S5-C8-m02 (H9 at the C5 scan); H1–H9 except the wording
+reconciliations above; ARCH-S5-C7-m01 (committed view, classification
+order, A-RES/D disjointness) and every earlier resolution; S4 as the
+sole durable commit marker; the one-INTENT invariant and proof; GLOBAL →
+X only, no X → GLOBAL, no lock upgrade; INTENT rollback, never
+roll-forward; COMMITTED as the consumption commit point; permanent
+COMMITTED transactions; exactly two consumed tombstones; no retry;
+AutomationExecutionRecord v2; SO_PEERCRED as the only runtime caller
+identity source; the §20.4.10 command `qa-agent reconcile --execution
+<executionId> [--json]` and marker independence; incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1 and permanent QUARANTINED fail-closed
+semantics; AA-NULL; JR read-only and non-authoritative.
+
+Preserved: the 3 new Architecture INFO findings of the C10 re-review
+(no runtime detection of a recreated or lookalike unit of a terminal or
+bindingless COMMITTED Y; vector (20) labelling the site (v) own-unit
+outcome "Case D H"; H8 (a) admitting the enumeration call only
+implicitly), the carried C9 INFO findings (no explicit byte bound on the
+lockless S6 read; H8 (f) not naming the committed-outcome path of the
+attached CREATE after AL7; H9 not cross-checking keys/bindingDigest), the
+carried C8 and C7 Architecture INFO findings and every other carried
+Architecture INFO finding stay on the review record. None is closed,
+waived, re-rated or absorbed. H8 (a) now names the P1S terminal-evidence
+call explicitly because resolving the MINOR finding requires it. That
+text does not close the third C10 INFO, which is the reviewer's to
+disposition. Every earlier Architecture resolution stands. The Security
+C2 direction SEC-S5-m01/m02 and corrections INFO-2/3/4/6 are preserved;
+Security INFO-1, INFO-5 and INFO-7 stay OPEN / PRESERVED / NON-BLOCKING.
+DG-1..DG-4 are not reopened. Further unchanged items: execute DISABLED;
+Controlled Release NOT APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with
+current and proposed triggers FALSE; §19.1 L1–L7 and I1–I5 OPEN /
+PRESERVED / CARRIED TO STAGE 5; R-1..R-5; AT-07/TB-01; FUTURE guards;
+TAP-2; CRS-1; PPI-1; #23F; Stage 4 authority; both approval gates. Next:
+fresh independent exact-head HEAVY Architecture re-review of the C11
+HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD, fresh
+independent exact-head HEAVY Security review (Security STOP until
+then); then separate Product Owner design acceptance and merge
+authorization. Merge NOT AUTHORIZED; Stage 5 implementation NOT
 AUTHORIZED; execute activation NOT AUTHORIZED; OCI publication NOT
 AUTHORIZED; SEC-DEP-1 NOT AUTHORIZED.
