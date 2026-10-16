@@ -2431,6 +2431,8 @@ only the sentences listed here, and only as stated:
 | §20.3.8 (C11/C12) H10 (b) "final for that invocation", H10 (j) (3), H10 (k) "In every branch the selection of (b) stays irrevocable" and branch (3) "H8 (f) applies unchanged ... the proof uses the one call of (c)", H10 (c) "only if (k) leaves the terminal plan in force", vector (36) "the selection stays CLIENT_LOST" and the second run of vector (39); H8 (f) "an incomplete head goes through Cases A–H" and the A-RES rule "Afterwards head n continues as A-INC", as applied inside a live H10 terminal-evidence invocation; the §20.20 C12 resolution text "Any other change gets H8 (f) unchanged"; and the §20.20 sentence "The only path that reaches no call is one where a terminal outcome is already committed" | §20.3.8 H10 (b) and (k) (3) (C13, owner option 2): qualified, not removed. "Irrevocable" means two things. Submission abandonment is always irrevocable. The selected PRESUBMIT_FAILURE or CLIENT_LOST is sticky only on the invocation's own H10 path: the unchanged view of (k) (1), or exact A-RES, exact rollback under the same X, a mandatory fresh re-read, and the exact original PREPARED/NOT_SENT proven restored ((k) (3) (ii)–(iv)). That path resumes the original site (ii) or (iii), never Case E site (iv). Closed precedence, highest first: an already committed outcome; class D or another state forbidding the write; exact restoration; otherwise H8 (f) unchanged, with no reason override. Failed evidence stays QUARANTINED 7. At most one ListUnitsByPatterns per invocation, never two; the rollback and the re-reads make none, and E begins only after the restoration is proven. The selected reason is invocation-local and never durable. After a crash a later CREATE or RECONCILE applies Case E. Zero calls is the result of every path needing no H10 evidence (committed outcome, class D and other dispositions without evidence). No new reason, outcome, state, field, call or timeout |
 | §20.3.8 (C13) H10 (k) "There are three branches. Their precedence is closed (C13), highest first: an outcome already committed (2); class D ... ((3) (i)); exact A-RES followed by exact restoration ((3) (ii)–(iv)); every other state ((3) (v))", branch (1) "S4 is byte-equal ... and no additional object of P exists. The terminal plan stays in force", branch (3) "Any other changed view", branch (3) (v) "The existing H8 (f) classification and disposition govern, with their own existing sites and allowances", the closing sentence "or, only under (3) (v), the one enumeration that an existing H8 (f) disposition itself requires at its own site and under that site's own allowance", vector (47) "the existing H8 (f) classification and disposition decide the result", H9 site (iv) "wherever Case E is applied" as applied inside a live H10 invocation, the C13 row above "Closed precedence ... otherwise H8 (f) unchanged", and the §20.21 record text "(E) any other post-cleanup state gets H8 (f) unchanged" | §20.3.8 H10 (k) (1), (3) (i), (3) (v), H8 (f) and H9 (C14): qualified, not removed. The precedence is exhaustive, highest first: [1] committed outcome (2); [2] class D or another write-forbidding state (3) (i), also when S4 is byte-equal and no additional object exists; [3] the valid unchanged exact original state (1); [4] exact A-RES and exact restoration (3) (ii)–(iv); [5] every other state (3) (v). Branch (1) needs S4 byte-equal, no additional object, a structurally valid committed view, valid K1–K5 and the exact original A-INC PREPARED/NOT_SENT classification; S4 equality and no additional object alone never select it. Under (3) (v) an existing H8 (f) disposition that needs no namespace proof applies unchanged; one that would need a Case E no-send/no-unit/clean-namespace proof makes no ListUnitsByPatterns or other D-Bus call, uses neither (c), E nor S, and gives the existing Case E fail-closed QUARANTINED 7 through the existing commit (proof NOT ESTABLISHED). The selected reason does not override it. H9 site (iv) stays CREATE C5 (3) A-INC and RECONCILE R5 only. At most one ListUnitsByPatterns per invocation, only the call of (c) at site (ii) or (iii). No new D-Bus allowance, H9 site, class, reason, outcome, state, exit code, field, schema or timeout |
 | §6.4 P1S "If that no-send proof fails, the outcome is QUARANTINED 7" and "otherwise QUARANTINED 7"; §7 Case E "no-send/no-unit proof -> error7 PRESUBMIT_FAILURE, else H" and Case H "QUARANTINED7/root claims"; §7.4 S1 "else QUARANTINED"; §11.3 "QUARANTINED only CONTROLLER_FAILURE/MISSING_UNIT_PROOF/CLEANUP_UNPROVEN/STATE_INCONSISTENT"; §20.3.3 "the outcome is the existing QUARANTINED 7"; §20.3.8 (C11–C14) H9 site (iv) and own-attempt "QUARANTINED 7 at (ii)–(iv)", H10 (b), (e), (f), (h), (j) (3), (k) (3) (iv) and (3) (v) (B) "with the same record and reason as that existing Case E proof-failure outcome"; and the §20.3.7 vectors (25)–(57), including vector (53) "those of the existing Case E proof failure", all as applied to a PREPARED/NOT_SENT outcome whose no-send/no-unit/clean-namespace proof is NOT ESTABLISHED (record reason unspecified among the four QUARANTINED reasons) | §20.3.8 H9 failed-proof reason (C15, owner decision): qualified, not removed. For the PREPARED/NOT_SENT proof-failure class (sites (ii)–(iv) and H10 (k) (3) (v) (B)) the outcome is exactly QUARANTINED, reason CLEANUP_UNPROVEN, exit 7. This holds whatever the low-level cause: manager timeout or failure, malformed or unauthenticated reply, more than 256 units, own unit present, unknown member, unreadable membership evidence, or no legal allowance at the site. It also holds whatever PRESUBMIT_FAILURE or CLIENT_LOST was selected. A clean proof keeps PRESUBMIT_FAILURE 7 (sites (ii), (iv)) or CLIENT_LOST 7 (site (iii)). Case H for Case E therefore has the reason CLEANUP_UNPROVEN, and the other Case H uses keep their existing reasons. S11 reason, recordDigest, S13 incident reason (K5) and final QUARANTINED frame reason are all CLEANUP_UNPROVEN. A rule that decides the input first (committed outcome, class D or another write-forbidding state, H10 (k) (3) (v) (A)) keeps its outcome. CONTROLLER_FAILURE, MISSING_UNIT_PROOF (including the §7.4 S2 controller-state-disappears row), STATE_INCONSISTENT and site (v) are unchanged. No new reason, status, outcome, exit, schema, field, incident type, state, operation, H9 site, D-Bus allowance, CLI/API/config, timeout or hash domain |
+| §20.3.3 (C2) "It cannot extend execution: a full queue only delays or blocks receipt of manager messages ... an expiry ends in the existing CONTROLLER_FAILURE, TIMED_OUT, OBSERVATION_EXPIRED or QUARANTINED outcomes" and (C15) "If a full queue delays its reply past E"; §20.3.3 "the broker MUST NOT raise max_queued or create an unbounded MessageIterator or MessageStream" (filtered receive topology unspecified); §20.3.7 (C2) "(a starved manager wait ends in the existing outcome for that phase)"; vector (30) "(manager paused, full queue)"; §20.3.8 H10 (e) "(timeout or blocked queue)"; the H9 failed-proof reason cause "(manager timeout or blocked queue"; and the §20.10 INFO-4 row "time bounded by §6.4" | §20.3.3 receive-path isolation (C16, owner decision, SEC-S5-C15-M01): the two §20.3.3 sentences and the §20.3.7 parenthetical are rewritten in place; the rest is qualified, not removed. Pinned zbus 5.13.2 source evidence Z1–Z8 and normative RP1–RP8: no unfiltered MessageStream/MessageIterator or catch-all subscriber, no object server, no request_name, no cached Proxy, no Proxy receive_*, no max_queued change; one exact-filtered PropertiesChanged subscription (type signal, authenticated manager unique name, Properties interface, PropertiesChanged member, exact bound unit path), none while no unit path is bound; rejection happens at the zbus socket reader's rule check before enqueue and at the inactive-channel drop, never after dequeue. A queue can never be filled or blocked by unrelated traffic, and in P1S no subscription exists, so "full queue" and "blocked queue" in those texts name no reachable cause from unrelated traffic. Only a genuine manager-side delay remains, with its existing outcome (QUARANTINED / CLEANUP_UNPROVEN / 7 at H10 and the H9 sites, C15). A flood-caused expiry or outcome is a qualification failure (vectors (66)–(73)): Stage 5 qualification and Controlled Release BLOCKED, never an ordinary manager failure or residual. Trusted sender validation (RP6) is unchanged. No host ACL or policy, zbus patch, version change, queue-size, deadline, retry or memory change; no new D-Bus method, allowance, site, timeout or outcome |
+| §7 Case A "failure H", Case B "ambiguity H", Case C "failure H", Case D "otherwise H", Case F, Case G "otherwise error/H" and Case H "stop/cleanup/identity fails / QUARANTINED7/root claims"; §6.3 "Failure QUARANTINED7"; §6.4 P4 "QUARANTINED7 if empty unproven"; §7.3 controller/systemd failure row "else QUARANTINED" and orphan/reconcile row "or QUARANTINED"; §7.4 S2/S3 "else QUARANTINED" and "reconcile error 7 or H"; §11.3 "uncertain send must prove actual subtree empty or quarantine"; and the C15 texts "the other Case H uses keep their existing reasons", "CONTROLLER_FAILURE keeps its existing controller and systemd failure dispositions" and "STATE_INCONSISTENT keeps its existing structural and store dispositions" (record reason of these QUARANTINED routes unspecified; no STATE_INCONSISTENT producer named) | §20.3.8 QR quarantine reason partition (C16, owner decision, SEC-S5-C15-L01): qualified, not removed. Status rules are unchanged; QR binds the reason only where an existing rule already reaches QUARANTINED. Closed order: Q0 the C15 PREPARED/NOT_SENT class -> CLEANUP_UNPROVEN (unchanged); Q1 trusted-state conflict SC (c1)–(c5) -> STATE_INCONSISTENT (Case B ambiguity = SC; untrusted input, unobtainable facts, unknown members, store corruption and a boot change used as reboot proof are not SC); Q2 authenticated absence of the unit of a head whose SUBMITTING write is durable, with removal and reboot proof NOT ESTABLISHED -> MISSING_UNIT_PROOF (includes §7.4 S2/S3 and Case D, including site (v)); Q3 every other QUARANTINED route (containment or cleanup proof NOT ESTABLISHED, including a manager-call failure or an unobtainable fact) -> CLEANUP_UNPROVEN. No QUARANTINED route carries CONTROLLER_FAILURE; the §7.3 controller/systemd failure EXECUTION_ERROR CONTROLLER_FAILURE 7 with empty proven is unchanged. Store structural corruption stays class D, refused, no record; STATE_INCONSISTENT's producers are exactly the Q1 routes. S11 reason, recordDigest, S13 (K5) and final frame reason are the QR reason. Vectors (74)–(86). No new reason, status, outcome, exit, state, schema, field, incident type, operation, site, allowance, timeout or hash domain |
 | The remaining "next P1" texts (§6.4 P1 and P1S paragraphs) | Read as the §20.3.8 pre-create recovery of the next CREATE (C5, then AL1–AL3 at C7) or any RECONCILE R4–R7, including §20.4.10 |
 
 Unchanged and not reopened: process-lifecycle containment only; R-1..R-5
@@ -4336,20 +4338,235 @@ system bus max_message_size of the qualified host, recorded as
 qualification evidence. In-process buffering is therefore at most the
 fixed number of zbus queues the broker opens times 64 times that size,
 derived from the pinned crate and the recorded bus configuration, with no
-new production limit. It cannot extend execution: a full queue only delays
-or blocks receipt of manager messages, and every manager wait is already
-bounded by its §6.4 phase deadline (A, S, TimeoutStartUSec, RuntimeMaxUSec,
-P4, R); an expiry ends in the existing CONTROLLER_FAILURE, TIMED_OUT,
-OBSERVATION_EXPIRED or QUARANTINED outcomes. It cannot produce PASS: PASSED
+new production limit. It cannot delay or block receipt of a manager reply
+(C16, SEC-S5-C15-M01): under the receive-path isolation rules RP1–RP8
+below, traffic from any sender other than the authenticated manager is
+rejected before it can occupy any zbus queue whose fullness can suspend
+the socket reader. It therefore consumes no capacity of the method-return
+queue or of the one exact-filtered signal queue. Every manager wait keeps
+its §6.4 phase deadline (A, S, TimeoutStartUSec, RuntimeMaxUSec, P4, R)
+or E, and only the manager's own behaviour can exhaust it. An expiry,
+manager timeout or any other outcome caused by unrelated traffic is a
+Stage 5 qualification failure (§20.3.7 vector (73)), never an existing
+outcome of that phase. It cannot produce PASS: PASSED
 needs a durable OBSERVED backed by the authenticated manager's properties
 (§7.3) and a validated proposal, and no message from another sender is
 ever read as manager evidence. The one P1S terminal-evidence
 ListUnitsByPatterns of §20.3.8 H10 (C11) is bounded by E = 5000 ms, not
-by S. If a full queue delays its reply past E, the clean-namespace proof
-is not established and the outcome is the existing QUARANTINED 7, with
-reason CLEANUP_UNPROVEN, not CONTROLLER_FAILURE (§20.3.8 H9 failed-proof
-reason, C15). It does not bypass L7: the traffic creates
+by S. If a genuine manager-side delay (for example a paused or stalled
+manager) holds its reply past E, the clean-namespace proof is not
+established and the outcome is the existing QUARANTINED 7, with reason
+CLEANUP_UNPROVEN, not CONTROLLER_FAILURE (§20.3.8 H9 failed-proof
+reason, C15). Unrelated traffic is never that cause (C16, RP5). It does
+not bypass L7: the traffic creates
 no broker process, so the open L7 concurrency question is unchanged.
+
+Receive-path isolation (C16; owner decision
+OD-CONTROLLED-V1-STAGE5-SECURITY-C16; resolves SEC-S5-C15-M01).
+Security property: unrelated traffic MUST NOT consume capacity of an
+active bounded subscriber queue whose fullness can block receipt of
+manager method replies. The owner decision rejects the residual: no
+host-wide D-Bus ACL, no new dbus-daemon or polkit policy, no filtering
+outside the broker, no dedicated system user, no queue-size, deadline,
+retry or memory change. The property is established from the pinned
+library source, below, and gated by the mandatory qualification vectors
+(66)–(73) of §20.3.7.
+
+Pinned-source evidence (zbus 5.13.2, crate archive SHA-256
+1bfeff997a0aaa3eb20c4652baf788d2dfa6d2839a0ead0b3ff69ce2f9c4bdd1, equal
+to the crates.io registry checksum; zbus requires async-broadcast
+"0.7.0", whose 0.7.2 source was inspected; the broker's Cargo.lock
+resolution of async-broadcast is part of the exact graph of §20.3.4 and is
+re-proven against Z3 for any other resolved version):
+
+- Z1 Routing before enqueue. One socket-reader task per connection
+  (src/connection/socket_reader.rs, receive_msg) reads each message. It
+  then walks the connection's broadcaster map, keyed by
+  `Option<OwnedMatchRule>`. For each keyed channel it evaluates
+  MatchRule::matches before calling broadcast_direct; on Ok(false) or a
+  match error it continues, so the message is never offered to that
+  channel. broadcast_direct is awaited channel by channel. A channel that
+  is full and has an active receiver therefore suspends the reader, and
+  with it the receipt of every later message, method returns included
+  (src/connection/mod.rs: "When the queue is full, no more messages can
+  be received until room is created").
+- Z2 Built-in channels. Connection::new (src/connection/mod.rs) creates
+  the unfiltered channel (key None, capacity 64) and the method-return
+  channel (keys msg_type=method_return and msg_type=error, capacity
+  DEFAULT_MAX_METHOD_RETURN_QUEUED = 8). Both are created deactivated,
+  with set_await_active(false).
+- Z3 Inactive drop. In async-broadcast 0.7, try_broadcast returns
+  TrySendError::Inactive when the channel has no active receiver
+  (receiver_count == 0), and the Send future then returns SendError at
+  once when await_active is false. The message is not queued and the
+  reader does not wait. A channel without an active receiver consumes no
+  capacity and never suspends the reader.
+- Z4 Unfiltered activation. Only MessageStream::from(Connection) and
+  MessageStream::from(&Connection) (src/message_stream.rs), and the
+  blocking MessageIterator::from conversions that wrap them
+  (src/blocking/message_iterator.rs), activate the unfiltered channel
+  (msg_receiver.activate_cloned()). No non-test zbus code path calls them.
+- Z5 Method replies. call_method_raw activates a clone of the
+  method-return receiver for one call only (src/connection/mod.rs) and
+  sends the call. PendingMethodCall consumes every item of that receiver
+  and discards each one whose reply_serial differs from the call's serial
+  or whose type is neither method_return nor error. Method replies never
+  pass through the unfiltered channel or a signal subscription channel.
+  Their only coupling to those channels is the reader suspension of Z1.
+- Z6 Filtered subscriptions. MessageStream::for_match_rule and the
+  blocking MessageIterator::for_match_rule call Connection::add_match.
+  It creates one channel keyed by the rule (capacity max_queued or 64)
+  and, on a bus, sends AddMatch. The bus applies match rules only to
+  broadcast routing; a unicast message addressed to the broker is
+  delivered whatever its rules, so the client-side MatchRule::matches is
+  the only filter for unicast traffic. MatchRule::matches
+  (src/match_rule/mod.rs) checks the message type only if the rule sets
+  one. It checks the sender only for a unique name: a well-known sender
+  name is not checked (BusName::WellKnown(_) => ()).
+- Z7 Implicit subscriptions. Connection::request_name adds NameAcquired
+  and NameLost rules whose sender is the well-known org.freedesktop.DBus.
+  Proxy::receive_signal and its variants first subscribe NameOwnerChanged
+  with that well-known sender for a well-known destination
+  (src/proxy/mod.rs, subscribe_dest_owner_change). A Proxy property cache
+  (CacheProperties::Lazily, the default, or Yes) subscribes
+  PropertiesChanged for its destination on first property access. An
+  ObjectServer (Connection::object_server, or builder interfaces/serve_at)
+  adds an active MethodCall subscription for the broker's unique name.
+  Unrelated unicast traffic can enter each of these active queues.
+- Z8 Reader termination. receive_message
+  (src/connection/socket/mod.rs) and Message::from_raw_parts
+  (src/message/mod.rs) deserialize the primary header and the header
+  fields of every message before routing. The header field codes are the
+  closed FieldCode set 1–9 (src/message/field_code.rs). Any error ends
+  the socket-reader task for good (socket_reader.rs: senders.clear(),
+  return). That is a connection loss, not a queue stall. RP7 (a) and (c)
+  exclude it for relayed traffic.
+
+Conclusion: the property is expressible with pinned zbus 5.13.2, with no
+patch, no version or dependency change, no host policy and no new
+transport. Take a broker that holds no active receiver on the unfiltered
+channel and whose only signal subscription fixes type, unique sender,
+interface, member and path. A message from any other sender then matches
+no rule except the two method-return rules, and those only for its own
+type. At the unfiltered channel it is dropped under Z3. The reader never
+waits on capacity because of it.
+
+Normative receive topology (C16, for the whole broker lifetime; no
+temporary, debug or recovery exception):
+
+- RP1 Prohibited receive APIs. The broker MUST NOT create or hold an
+  unfiltered MessageStream or MessageIterator (any conversion from a
+  Connection), any equivalent catch-all subscriber, or any subscriber
+  whose queue may accept arbitrary messages addressed to the broker. It
+  MUST NOT create a match-rule subscriber whose rule leaves the message
+  type, sender, interface, member or path open, or whose sender is a
+  well-known name. It MUST NOT call Connection::object_server, register
+  an interface, use builder serve_at, or call request_name or
+  request_name_with_flags. It MUST NOT build any Proxy (including the
+  blocking fdo DBusProxy used for GetNameOwner and
+  GetConnectionCredentials) with property caching: every Proxy is built
+  with CacheProperties::No. It MUST NOT call any Proxy receive_* method.
+  It MUST NOT call set_max_queued or the connection builder's
+  max_queued, or pass a max_queued other than None.
+  No receive path may let unrelated traffic consume capacity of a queue
+  whose fullness can stop receipt of manager method replies.
+- RP2 The only permitted signal subscription. It is the existing
+  PropertiesChanged subscription and nothing else, created with the
+  blocking MessageIterator::for_match_rule and max_queued None
+  (capacity 64). Its rule closes every dimension: type='signal';
+  sender = the authenticated manager unique name (the §5.6.1 N1
+  GetNameOwner result, a unique name, never a well-known name);
+  interface='org.freedesktop.DBus.Properties';
+  member='PropertiesChanged'; path = the exact bound unit object path.
+  It has no arg, path_namespace or destination dimension and no other
+  wildcard. It is created only after N1 has authenticated the manager
+  and the unit path is bound, at most once per bound unit path in one
+  broker process. While no unit path is bound (P0, P1, P1S, and every
+  RECONCILE step before a unit path is bound) no signal subscription
+  exists. This tightens the existing AddMatch allowance; it adds no
+  D-Bus method, call site or authority.
+- RP3 Calls. Every manager, unit and bus-driver call (the closed §6.3
+  and §20.3.3 list) is made with the blocking Connection::call_method or
+  through a blocking Proxy built under RP1. Its reply is received only
+  through the zbus method-return channel (Z5).
+- RP4 Pre-queue rejection, and where it occurs. Rejection happens in
+  the zbus socket reader, at the per-channel MatchRule::matches check
+  that precedes broadcast_direct (Z1), and at the inactive-channel drop
+  (Z3). It does not happen after dequeue. Per message class:
+  (a) a signal, method call or any other non-reply message from a sender
+  other than the authenticated manager fails the RP2 sender check and
+  matches neither method-return rule. It is offered only to the
+  unfiltered channel, which has no active receiver (RP1, Z4), and is
+  dropped there at once. It takes zero capacity of every queue;
+  (b) a manager signal with any other type, interface, member or path is
+  handled as (a);
+  (c) a method_return or error that answers no outstanding broker call
+  is not delivered by the qualified bus (RP7 (b)). If one were delivered
+  with no broker call outstanding, the method-return channel would be
+  inactive and it would be dropped under Z3. With a call outstanding, it
+  would be consumed and discarded by that call's serial filter (Z5) and
+  never accumulate. Its delivery is a qualification failure (vector
+  (71)).
+  Ignoring or dropping a message after reading it from a queue is not
+  this property. The RP6 validation is a separate authority check, not
+  the isolation mechanism.
+- RP5 Manager reply independence. Receipt of every blocking manager or
+  bus-driver reply depends only on the bus delivering it, on the reader
+  not being suspended, and on the call's own receiver. This holds for:
+  GetNameOwner; GetConnectionCredentials; the AddMatch made by RP2;
+  StartTransientUnit; GetUnit; RefUnit; Properties.GetAll;
+  ListUnitsByPatterns (the H10 call under E, ordinary Case E site (iv)
+  and every other H9 site); StopUnit; KillUnit; ResetFailedUnit;
+  UnrefUnit; the P4 empty confirmation; and every qualification or
+  identity call whose timeout changes a security disposition. Under
+  RP1–RP4 the only channel whose fullness can suspend the reader is the
+  RP2 subscription, and its only admissible producer is the
+  authenticated manager on the bound unit path. Unrelated traffic cannot
+  fill it or any other channel. A hostile sender therefore cannot, by
+  unrelated traffic, cause a manager timeout, an E expiry, a §6.4 phase
+  expiry or any outcome. The manager's own PropertiesChanged signals on
+  the bound path are not unrelated traffic. Vector (72) qualifies that
+  they never fill the RP2 queue during an outstanding call, including
+  under workload-driven activity; otherwise qualification is BLOCKED.
+- RP6 Trusted sender validation preserved. Queue filtering and match
+  rules are not authority, and a match rule is not a security identity
+  by itself. Every message that becomes evidence keeps every existing
+  check: a reply to the broker's own call serial; the bus driver for
+  bus-driver calls; the authenticated manager unique name for manager
+  calls and RP2 signals; the §5.6.1 N1 ProcessFD and ProcessID manager
+  identity; the manager identity, bound unit path, InvocationID and
+  ControlGroup bindings; and every other §7.3 evidence validation. A
+  malformed or untrusted message never gains evidence authority.
+- RP7 Qualified-bus facts. These are recorded qualification evidence,
+  like the bus max_message_size. They are stock bus behaviour: no
+  policy, ACL or configuration file is added. (a) The qualified system
+  bus's org.freedesktop.DBus Features property contains
+  "HeaderFiltering" (D-Bus Specification 0.32: the bus removes header
+  fields it does not understand before relaying). The qualification
+  harness reads it; the broker makes no new call. (b) The qualified
+  system bus does not deliver a method_return or error that answers no
+  outstanding call of the recipient (requested-reply enforcement of the
+  stock system-bus configuration). (c) No message the bus relays to the
+  broker terminates its zbus socket reader (Z8). If (a), (b) or (c) is
+  false, Stage 5 qualification is BLOCKED. That is never answered by a
+  host-policy change, a zbus patch or a version change.
+- RP8 No threshold fix. max_queued is never raised (unchanged rule). E,
+  S, A, P4, R, TimeoutStartUSec, RuntimeMaxUSec, systemd timeouts,
+  retries and memory limits are unchanged, and none of them is a
+  mitigation for M01.
+
+Failure semantics. A hostile flood of unrelated traffic by itself yields
+no security outcome. It never yields CLEANUP_UNPROVEN, CONTROLLER_FAILURE,
+MISSING_UNIT_PROOF, STATE_INCONSISTENT, QUARANTINED, a durable
+transition, claim retention or root blocking. If it is observed to do
+so, Stage 5 qualification and Controlled Release are BLOCKED. It is never
+reinterpreted as an ordinary manager failure, never accepted as an
+availability residual, and never given permanent quarantine as an
+expected result. A genuine, independent manager or containment failure
+that coincides with a flood is classified under the ordinary contract,
+including the §20.3.8 QR reason partition (C16). Unrelated traffic now
+occupies no queue, so the in-process memory bound above remains a true
+upper bound.
 
 #### 20.3.4 Dependencies, toolchain, build and linkage
 
@@ -4854,8 +5071,10 @@ max_message_size, during every phase P1–P6 and during RECONCILE. Required
 observations: no such message is ever used (the sender filter drops it);
 broker resident memory stays within the §20.3.3 bound computed from the
 zbus queue count, 64 and the recorded max_message_size; no phase exceeds
-its §6.4 bound (a starved manager wait ends in the existing outcome for
-that phase); no flood yields PASSED, TEST_FAILED or a changed observation;
+its §6.4 bound, and no manager wait is starved by the flood (C16: a
+flood-caused expiry is a qualification failure under vector (73), never
+the existing outcome of that phase); no flood yields PASSED, TEST_FAILED
+or a changed observation;
 the global broker invocation count is unchanged by the flood (L7 stays
 OPEN).
 
@@ -5324,6 +5543,129 @@ removes the controller state of a bound unit. The outcome is the
 existing MISSING_UNIT_PROOF disposition (removal or boot proof gives
 error 7, otherwise QUARANTINED). C15 changes neither that outcome nor
 its reason.
+
+C16 receive-path isolation vectors (§20.3.3 RP1–RP8; mandatory Stage 5
+qualification, not optional). Pinned environment: zbus exactly 5.13.2
+with the Cargo.lock graph of §20.3.4, the qualified system bus
+configuration of the reference host (RP7 facts recorded), and the exact
+RP1–RP3 broker receive topology. Attacker: a second local Linux account
+with no sudo permission, no QA enrollment and no protected-store access.
+It has the system-bus access the stock configuration grants for sending
+unicast signals, and it discovers the broker's unique name through
+ListNames where the bus permits. It does not cooperate, and its traffic
+need not use valid systemd interfaces. Each flooded run has a no-flood
+control run of the same fixture. A flood is more than 64 unsolicited
+messages, sustained for the whole interval during which the named
+legitimate manager call is outstanding. It includes signals and method
+calls with arbitrary and with exact-imitation systemd1 interfaces, paths
+and members, PropertiesChanged on the exact bound unit path, and
+messages at the recorded max_message_size. The instrumented build
+records, per channel of the zbus broadcaster map, the number of queued
+items that came from a non-manager sender, and every suspension of the
+socket reader. (66) Topology (Vector M0): the broker source contains no
+call that RP1 forbids, and exactly one RP2 construction with all five
+rule dimensions fixed. In every phase P0–P6 and in RECONCILE, the
+instrumented map shows the unfiltered channel with 0 active receivers,
+the method-return channel active only while a call is outstanding, and at
+most one RP2 channel, and only while a unit path is bound. (67) H10 under
+E (Vector M1): a live P1S H10 invocation makes its one site (ii) or
+(iii) ListUnitsByPatterns under E on a clean namespace, during a flood.
+The reply is consumed within E as in the control run. The non-manager
+item count is 0 on every channel, and the outcome equals the control
+outcome (PRESUBMIT_FAILURE 7 or CLIENT_LOST 7, emptyBy=not-submitted):
+no E expiry, no QUARANTINED, no CLEANUP_UNPROVEN. (68) Case E site (iv)
+(Vector M2): ordinary Case E at site (iv), once in CREATE C5 (3) A-INC
+and once in RECONCILE R5, during a flood. The result equals the control
+run (PRESUBMIT_FAILURE 7 on a clean proof). (69) P4 empty confirmation
+(Vector M3): P4 after a client-loss stop and after a RuntimeMaxUSec
+deadline, during a flood that covers StopUnit, KillUnit escalation where
+the fixture needs it, Properties.GetAll and the empty confirmation. The
+result equals the control run (CLIENT_LOST 7, or TIMED_OUT 8 on the
+proven deadline), with no QUARANTINED. (70) Every other call (Vector
+M4): a flood is held during each of GetNameOwner,
+GetConnectionCredentials, the RP2 AddMatch, StartTransientUnit,
+GetUnit, RefUnit, Properties.GetAll, ResetFailedUnit and UnrefUnit
+outside H10, and during the §7.3 attached observation with RP2 active,
+including attacker PropertiesChanged on the bound path. Every reply is
+consumed with the control-run semantics, no observation changes, and the
+PASSED path of the control run is reached unchanged. (71) Replies and
+header variants (Vector M5): the attacker sends method_return and error
+messages whose reply_serial covers the broker's outstanding call serials,
+and messages with every header field the bus accepts, including header
+field codes outside 1–9. The bus delivers none of the unsolicited
+replies (RP7 (b)), the broker's socket reader is never terminated (RP7
+(c)), and the recorded Features property contains HeaderFiltering (RP7
+(a)). (72) Manager-origin bound (Vector M6): with RP2 active, the
+workload inside the unit, as the runner account, tries to make the
+manager emit PropertiesChanged for its own unit: sd_notify under
+NotifyAccess=none, rapid descendant forks and exits, and cgroup activity.
+This runs during outstanding manager calls, with and without a flood. The
+RP2 queue occupancy stays below its capacity 64 and the reader is never
+suspended by a full channel. (73) Failure semantics (Vector M7): in
+(66)–(72), any run in which the flood alone causes a manager timeout, an
+E expiry, a §6.4 phase expiry, CLEANUP_UNPROVEN, CONTROLLER_FAILURE,
+MISSING_UNIT_PROOF, STATE_INCONSISTENT, QUARANTINED, any durable
+transition, claim retention or root blocking, or any outcome different
+from its control run, BLOCKS Stage 5 qualification and Controlled
+Release. The run is never reclassified as an ordinary manager failure or
+accepted as a residual. In a coincidence control run, a fixture pauses
+the manager past E during a flood. The result is QUARANTINED /
+CLEANUP_UNPROVEN / 7, from the genuine delay, as in vector (30) without
+a flood. The flood itself is classified as nothing.
+
+C16 quarantine reason vectors (§20.3.8 QR). Each run records the S11
+status and reason bytes, the recomputed recordDigest, the S13 base
+incident reason and, with a client connected, the final QUARANTINED
+frame's record.reason and frame reason. (74) Case A (Vector A): an
+ORPHANED ACTIVE attempt whose stop/kill/whole-tree empty proof cannot be
+established (fixture: an uninterruptible task keeps cgroup.events
+populated=1 past P4), with no SC conflict. Result: QUARANTINED /
+CLEANUP_UNPROVEN / 7. (75) Case B (Vector B): an incomplete FAILED unit
+whose authenticated InvocationID differs from controller.invocationId
+(SC (c3)). Result: QUARANTINED / STATE_INCONSISTENT / 7. In a control
+run the unit's facts agree and only the drain is unprovable. Result:
+QUARANTINED / CLEANUP_UNPROVEN / 7, not STATE_INCONSISTENT. (76) Case C
+(Vector C): an incomplete INACTIVE unit with a populated control group
+that cannot be confirmed empty. Result: QUARANTINED / CLEANUP_UNPROVEN /
+7. (77) Case D (Vector D): a bound unit is removed, and neither the §6.3
+removal proof nor the reboot proof (including H9 site (v)) is
+established. Result: QUARANTINED / MISSING_UNIT_PROOF / 7. (78) Case G
+cleanup (Vector E): a timeout during absence whose empty or durable
+cleanup proof is not established, with the unit present and no SC
+conflict. Result: QUARANTINED / CLEANUP_UNPROVEN / 7. (79) Case G
+conflict (Vector F): as (78), but in the same boot the authenticated
+manager unique owner differs from controller.managerId (SC (c1)).
+Result: QUARANTINED / STATE_INCONSISTENT / 7. (80) P4 (Vector G): P4
+empty confirmation fails within its 30000 ms with no SC conflict and the
+unit present. Result: QUARANTINED / CLEANUP_UNPROVEN / 7. (81) §7.3
+controller failure with containment proven (Vector H): Result=oom-kill
+with the empty proof established. Result: EXECUTION_ERROR /
+CONTROLLER_FAILURE / 7 (existing row), with no QUARANTINED record. In a
+control run the empty proof fails. Result: QUARANTINED /
+CLEANUP_UNPROVEN / 7, never CONTROLLER_FAILURE. (82) §7.3 identity
+conflict (Vector I): the ControlGroup or cgroup dev/inode of the bound
+unit differs from the controller record (SC (c4)), and the empty proof
+fails. Result: QUARANTINED / STATE_INCONSISTENT / 7. In a control run an
+unauthenticated sender imitates the conflicting fact. It is dropped
+(RP4, RP6), no SC conflict exists, and the result is that of the run
+without the imitation. (83) §7.4 S2 (Vector J): SUBMITTING/BOUND, the
+controller state disappears, and the removal/boot proof is not
+established. Result: QUARANTINED / MISSING_UNIT_PROOF / 7. With the
+proof established, the existing error 7 disposition is unchanged.
+(84) §7.4 S3 (Vector K): the same for STARTED. Result: QUARANTINED /
+MISSING_UNIT_PROOF / 7. (85) C15 preserved (Vector L): vectors (59)–(63)
+rerun unchanged give QUARANTINED / CLEANUP_UNPROVEN / 7, including a run
+in which the own unit is absent and the clean-namespace proof fails.
+None gives MISSING_UNIT_PROOF or STATE_INCONSISTENT. (86) Record
+consistency (Vector M): for one run each of (74), (75), (77), (79),
+(80), (82) and (83) with a connected client, the S11 status is
+QUARANTINED and the S11 reason is the vector's reason. recordDigest
+recomputes over those exact bytes. The S13 base incident reason (K5)
+and the final frame's record.reason and frame reason equal it. A
+tampered copy carrying another QUARANTINED reason fails the recordDigest
+recomputation. Across (74)–(86) no reason, status, outcome or exit
+outside the existing sets is observed, and no QUARANTINED record carries
+CONTROLLER_FAILURE.
 
 #### 20.3.8 Protected-store layout od06-journal-layout-v1 and disabled-enrollment recovery (C6, normative)
 
@@ -6430,6 +6772,115 @@ one executionId (flock on `attempts/<X>`).
   or configuration for these reads, and H9 authority is not widened. The
   carried C9 Architecture INFO on an explicit byte bound for the lockless
   S6 read stays open.
+- QR Quarantine reason partition (C16; owner decision
+  OD-CONTROLLED-V1-STAGE5-SECURITY-C16; resolves SEC-S5-C15-L01). QR
+  binds the AutomationExecutionRecord v2 reason of every existing route
+  that ends in QUARANTINED (§7 Case H). It binds reasons only. The
+  existing rules first decide, unchanged, whether a route ends in
+  PASSED, TEST_FAILED, TIMED_OUT, EXECUTION_ERROR, QUARANTINED, class D,
+  runner quarantine or REFUSED, and QR applies only after an existing
+  rule has decided QUARANTINED for the attempt head. QR converts no error
+  path into quarantine and no quarantine into an error. It uses only the
+  existing §11.3 reasons CLEANUP_UNPROVEN, MISSING_UNIT_PROOF and
+  STATE_INCONSISTENT. Closed order, first match wins:
+  [Q0] PREPARED/NOT_SENT proof-failure class (H9 failed-proof reason,
+  C15) -> CLEANUP_UNPROVEN, unchanged. Q1–Q3 are not evaluated for this
+  class. An own unit absent or present, an unknown member or unreadable
+  evidence there is neither MISSING_UNIT_PROOF nor STATE_INCONSISTENT.
+  [Q1] Trusted-state conflict (SC) -> STATE_INCONSISTENT. A trusted
+  fact is only: (t1) a protected-store fact of P from a structurally
+  valid committed view with K1–K5 holding; (t2) a fact in a reply that
+  passed every §20.3.3 RP6 and §5.6.1 validation, from the
+  authenticated manager or the bus driver; (t3) a cgroup.events read
+  through the §5.6.1 N5 anchor; (t4) the current boot ID. SC holds
+  exactly when the route's decision meets one of these conflicts:
+  (c1) in the boot recorded in controller.bootId, the authenticated
+  manager unique owner differs from controller.managerId; (c2) in an
+  attached observation (§7.3), the current boot ID differs from
+  controller.bootId; (c3) the bound unit's authenticated InvocationID
+  differs from controller.invocationId; (c4) its ControlGroup differs
+  from controller.cgroupPath, or the cgroup dev/inode reached through
+  N5 differs from controller.cgroupDev/cgroupIno; (c5) a closed §7.3
+  field of the bound unit (ActiveState, SubState, Result, ExecMainCode,
+  ExecMainStatus, ActiveEnterTimestampMonotonic) differs from the value
+  already durably recorded for the same InvocationID in P's journal.
+  These are the existing §7.3 "managerId/boot/InvocationID/cgroup/
+  property change" class. The §7 Case B "ambiguity" is read as exactly
+  SC. Not SC: a fact from an unauthenticated or unvalidated message (it
+  is dropped and is not a fact, RP4, RP6); a fact that could not be
+  obtained (timeout, D-Bus error, malformed reply, unreadable
+  cgroup.events); an unknown namespace member; a protected-store
+  structure that is not valid (class D, refused, no record); and a boot
+  change that Case D, Case G or H9 site (v) uses as its §6.3 reboot
+  proof.
+  [Q2] Missing unit, proof not established (MU) -> MISSING_UNIT_PROOF.
+  MU holds exactly when Q0 and Q1 do not, P's protected journal holds
+  the durable SUBMITTING write (submission is not NOT_SENT; an ORPHANED
+  head counts only if that write precedes it), the authenticated
+  manager has established that the unit named for P does not exist
+  (NoSuchUnit to GetUnit, or its absence from a complete validated
+  ListUnitsByPatterns reply), and both the §6.3 removal proof and the
+  §6.3 reboot proof (including H9 site (v)) are NOT ESTABLISHED. This
+  includes a site (v) failure inside a Case D route (C15 "at (v) ... the
+  existing Case D outcome"). A head without a durable SUBMITTING write is
+  never MU, whatever its unit's presence.
+  [Q3] Containment or cleanup not established (CP) -> CLEANUP_UNPROVEN.
+  CP holds exactly when the head is QUARANTINED by an existing rule and
+  Q0, Q1 and Q2 do not hold. Every existing QUARANTINED rule that is not
+  Q0–Q2 fails on a stop, kill, whole-tree empty, admission/migration
+  closure, population, no-job or durable-cleanup proof (§6.3 "Failure
+  QUARANTINED7", §6.4 P4, §7.3 "else QUARANTINED", §7 Cases A–C and G,
+  Case H "stop/cleanup", §11.3 "prove actual subtree empty or
+  quarantine"). An identity or manager fact that could not be obtained
+  is not SC; it leaves the containment proof for P NOT ESTABLISHED, so
+  it is CP. A manager-call failure is only the mechanism; it never
+  selects CONTROLLER_FAILURE.
+  QR never selects CONTROLLER_FAILURE, so no reachable QUARANTINED route
+  carries it. CONTROLLER_FAILURE stays the reason of the existing §7.3
+  controller/systemd failure row's EXECUTION_ERROR 7 whenever empty is
+  proven, for every trigger that row names (including an identity
+  change), unchanged. §11.3 still permits it with QUARANTINED; no
+  producer exists.
+  Route application (status rules unchanged; reason only where the
+  existing rule already reaches QUARANTINED):
+
+  | Existing route | QUARANTINED reason under QR |
+  |---|---|
+  | §6.4 P1S, §7 Case E PREPARED/NOT_SENT, §7.4 S1, H9 sites (ii)–(iv), H10 (k) (3) (v) (B) | Q0 CLEANUP_UNPROVEN (C15, unchanged) |
+  | §7 Case A failure H (stop/kill/whole-tree empty/containment cleanup) | SC: STATE_INCONSISTENT; else unit authenticated-absent with removal/reboot proof NOT ESTABLISHED: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7 Case B ambiguity H | STATE_INCONSISTENT (ambiguity = SC) |
+  | §7 Case B other H (drain/empty not established, no SC) | MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN (never STATE_INCONSISTENT) |
+  | §7 Case C failure H (population/jobs/stop/kill/empty/cleanup) | SC: STATE_INCONSISTENT; else MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7 Case D otherwise H | SC: STATE_INCONSISTENT; else MISSING_UNIT_PROOF |
+  | §7 Case E SUBMITTING uncertainty | The reason of the Case A–D route it reaches |
+  | §7 Case F | No H route of its own: it defers to the manager deadline and later Cases A–D, and takes the reason of the route reached |
+  | §7 Case G otherwise H | SC: STATE_INCONSISTENT; else MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7 Case H stop/cleanup/identity fails | Q1–Q3 in order: SC STATE_INCONSISTENT, MU MISSING_UNIT_PROOF, otherwise CLEANUP_UNPROVEN |
+  | §6.3 "Failure QUARANTINED7", §6.4 P4 "QUARANTINED7 if empty unproven", §7.2 and §7.3 broker-initiated stop, start failure, timeout and signal paths through P4 | SC: STATE_INCONSISTENT; else MU: MISSING_UNIT_PROOF; else CLEANUP_UNPROVEN |
+  | §7.3 controller/systemd failure row, "else QUARANTINED" | Identity/state-change trigger that is SC: STATE_INCONSISTENT; else CLEANUP_UNPROVEN; never CONTROLLER_FAILURE |
+  | §7.4 S2 and S3 controller state disappears, "else QUARANTINED" | MISSING_UNIT_PROOF (SC first: STATE_INCONSISTENT) |
+  | §7.4 "reconcile error 7 or H" and the §7.3 orphan/reconcile row | The reason of the Case A–H route the reconcile reaches |
+  | §6.2 unknown-member runner quarantine, class D, store corruption, §7.4 S5/S6 runner quarantine and release failure | No attempt QUARANTINED record is written; QR does not apply; unchanged |
+
+  Record, journal, incident and frame. For every QR route the broker
+  commits through the existing terminal/QUARANTINED commit: S11 status
+  QUARANTINED; S11 reason = the QR reason; recordDigest = the existing
+  v2 digest of that exact record; S13 base incident reason = the S11
+  reason (K5); final QUARANTINED frame record.reason and frame reason =
+  the record reason. Every other record member takes the value that the
+  existing §11.3 and K4 rules give. No other reason bytes are written for
+  the route. The reason is chosen when the commit is made, from the
+  durable state and the facts of that commit's own span. An in-memory
+  choice is never durable authority, and a crash before the commit is
+  durable leaves the prior durable state for the existing recovery (same
+  rule as C15). Permanent QUARANTINED semantics are unchanged: claim
+  retained, no release, no retry, incident resolution
+  UNSUPPORTED_IN_CONTROLLED_V1. STATE_INCONSISTENT's producers are
+  exactly the existing Q1 conflict routes. QR adds no reason, status,
+  outcome, exit code, state, schema, field, incident type, broker
+  operation, H9 site, D-Bus allowance, timeout or hash domain. A QR route
+  whose only cause is unrelated D-Bus traffic is not an outcome; it is
+  the §20.3.3 qualification failure (vector (73)).
 
 Deadlock freedom (proof). Under H1–H4 a broker waiting for GLOBAL holds
 no lock, and a broker waiting for an X lock holds no X lock and, in
@@ -7103,7 +7554,14 @@ timeout, state, class, reason, status, outcome, exit code, schema,
 field, incident type, journal state, broker operation, D-Bus allowance,
 H9 site or hash domain. The H9 failed-proof reason binds the existing
 §11.3 reason CLEANUP_UNPROVEN to the existing PREPARED/NOT_SENT
-proof-failure QUARANTINED 7. No public export, bin or package-file change is proposed; the
+proof-failure QUARANTINED 7. C16 adds no closed value, constant,
+timeout, state, class, reason, status, outcome, exit code, schema,
+field, incident type, journal state, broker operation, D-Bus method or
+allowance, H9 site, hash domain, host policy or residual acceptance. The
+§20.3.3 RP1–RP8 receive topology narrows the existing zbus usage and the
+existing PropertiesChanged AddMatch. The §20.3.8 QR partition binds the
+existing §11.3 reasons STATE_INCONSISTENT, MISSING_UNIT_PROOF and
+CLEANUP_UNPROVEN to existing QUARANTINED routes. No public export, bin or package-file change is proposed; the
 public CLI/config surface changes only as documented in §20.4, at Stage 5
 implementation.
 
@@ -7191,7 +7649,13 @@ FALSE. C15 revalidation: the H9 failed-proof reason selects one existing
 record reason for an existing broker-internal fail-closed outcome. It
 adds no import or call edge to either approval gate, to #23F, apply.js,
 gate symbols or legacy execution, and no code changes. Current trigger
-FALSE; proposed trigger FALSE. No closure, re-rating or remediation.
+FALSE; proposed trigger FALSE. C16 revalidation: the receive-path
+isolation rules are broker-internal D-Bus receive topology, and the QR
+partition selects existing record reasons for existing broker-internal
+QUARANTINED routes. They add no import or call edge to either approval
+gate, to #23F, apply.js, gate symbols or legacy execution, and no code
+changes. Current trigger FALSE; proposed trigger FALSE. No closure,
+re-rating or remediation.
 
 Security debt (§19.1): all 7 LOW + 5 INFO remain **OPEN / PRESERVED /
 CARRIED TO STAGE 5**. Design linkage only, no closure claim:
@@ -7237,7 +7701,11 @@ acquisition vectors (34)–(41) (§20.3.7) on the reference host; C13: the
 sticky-reason vectors (42)–(49) (§20.3.7) on the reference host; C14:
 the precedence and zero-call vectors (50)–(57) (§20.3.7) on the
 reference host; C15: the failed-proof reason vectors (58)–(65)
-(§20.3.7) on the reference host.
+(§20.3.7) on the reference host; C16: the receive-path isolation
+vectors (66)–(73) with the RP7 qualified-bus facts recorded, and the
+quarantine reason vectors (74)–(86) (§20.3.7), on the reference host.
+A failed vector (66)–(73) blocks Stage 5 qualification and Controlled
+Release.
 Nothing here is runner certification.
 
 Stage 5 implementation must STOP for an owner decision if: the qualified
@@ -7284,15 +7752,22 @@ nondeterministic path outside V), or the pinned builder pushes an index or
 any media type other than the selected one — never answered by an opaque
 or hand-edited image, by unwrapping an index or by widening V or the
 exclusion set in place; the unsolicited-D-Bus bound cannot be met without a new
-numeric production limit; or any TSB-F02 edge would become TRUE or
-INDETERMINATE.
+numeric production limit; the §20.3.3 receive-path isolation (RP1–RP7)
+cannot be met by the pinned zbus 5.13.2 receive path and the qualified
+bus without a host D-Bus ACL or policy, a zbus patch or fork, a
+dependency or version change, a new transport or an accepted residual,
+or a hostile unrelated D-Bus flood causes any outcome (vector (73)) —
+never answered by raising max_queued, unbounded queues, a longer E or
+other deadline, retries or memory limits; a QUARANTINED route reaches no
+QR reason, or more than one, under §20.3.8 QR without a new reason or a
+status change; or any TSB-F02 edge would become TRUE or INDETERMINATE.
 
 ### 20.8 Delivery boundary
 
 Documentation change of this file plus, from C2, the versioned
 build-provenance design artifact native/qa-agent-controller-v1/Containerfile
 (no broker source, no Cargo file, nothing built or published; C3, C4,
-C5, C6, C7, C8, C9, C10, C11, C12, C13, C14 and C15 leave it byte-unchanged and change this file only). No source,
+C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15 and C16 leave it byte-unchanged and change this file only). No source,
 test, workflow, package, ROADMAP lifecycle, security disposition or
 activation change. Next:
 independent exact-head HEAVY Architecture review; only if APPROVED,
@@ -8237,4 +8712,94 @@ exact-head HEAVY Security review (Security STOP until then); then
 separate Product Owner design acceptance and merge authorization. Merge
 NOT AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; execute
 activation NOT AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT
+AUTHORIZED.
+
+### 20.24 Security corrective C16 (record)
+
+Authority: OD-CONTROLLED-V1-STAGE5-SECURITY-C16 — APPROVED (binding
+owner decisions: do not accept the M01 residual, add no host-wide D-Bus
+ACL, fix the broker receive path; bind existing QUARANTINED routes to
+existing reasons through one closed partition, with no new reason).
+Reviewed HEAD 593ec7740c7023cb0a24e3479104c0edf5598a9f (tree
+2f47d993f32255bf3fc2e7714e4bcb7154f4fdca, parent
+ec68309af50b2205947d27e846e16317544d6a02, base
+52e23acf0f7e5d2f7fce2b406a27de51ae1af68c). Fresh independent HEAVY
+Security review of that HEAD: CHANGES REQUIRED, 0 CRITICAL / 0 HIGH / 1
+MEDIUM / 1 LOW, 2 design-blocking. The Architecture C15 re-review of
+that HEAD was APPROVED 0 MAJOR / 0 MINOR. C16 creates a new HEAD, so that
+exact-head approval does not carry to it. C16 is documentation only,
+this file only; native/qa-agent-controller-v1/Containerfile is
+byte-identical to C2–C15 (git blob
+7304f13b1dbed74b08e305432f2d0b447465cd70). C16 resolves exactly the two
+findings:
+
+| Finding | Resolution | Where |
+|---|---|---|
+| SEC-S5-C15-M01 (MEDIUM, design-blocking) An unprivileged local account floods the broker's unique name; a full active zbus subscriber queue stops socket reads; a legitimate manager reply is delayed past its deadline (including H10 E = 5000 ms) and the root is permanently QUARANTINED / CLEANUP_UNPROVEN / 7: attacker-triggerable permanent per-root denial of service | Receive-path isolation. Pinned zbus 5.13.2 source evidence Z1–Z8: the rule check precedes enqueue in the socket reader; the unfiltered and method-return channels start inactive with await_active false; async-broadcast 0.7 drops a message for an inactive channel at once; only conversions from a Connection activate the unfiltered channel; replies use only the per-call method-return receiver; a well-known sender is not checked client-side; request_name, Proxy receive_*, Proxy property caches and the object server create implicit active queues; header-parse errors end the reader. Normative RP1–RP8: those APIs are forbidden for the whole broker lifetime; one exact-filtered PropertiesChanged subscription only (signal, authenticated manager unique name, Properties interface, PropertiesChanged member, exact bound unit path), none while no unit path is bound; pre-queue rejection at the reader's rule check and the inactive drop; reply independence for every blocking manager and bus-driver call; RP6 trusted-sender validation unchanged; RP7 qualified-bus facts (HeaderFiltering, requested-reply enforcement, reader liveness) recorded as evidence with no new policy; no threshold fix. Mandatory vectors (66)–(73): H10 E, Case E site (iv), P4 and every other call under a >64-message flood from a second unprivileged account, against no-flood controls; any flood-caused outcome blocks Stage 5 qualification and Controlled Release | §20.3.3; §20.3.7 C2 flood paragraph and vectors (66)–(73); §20.0; §20.6; §20.7; §20.8 |
+| SEC-S5-C15-L01 (LOW, design-blocking) Several existing QUARANTINED / Case H routes have a deterministic status but no deterministic AutomationExecutionRecord.reason, so the security evidence, recordDigest and incident reason depend on implementation choice | §20.3.8 QR closed partition over existing reasons only: Q0 C15 class CLEANUP_UNPROVEN (unchanged); Q1 trusted-state conflict SC (c1)–(c5) -> STATE_INCONSISTENT; Q2 authenticated absence of a submitted unit with removal and reboot proof NOT ESTABLISHED -> MISSING_UNIT_PROOF; Q3 every other QUARANTINED route -> CLEANUP_UNPROVEN. Route table for §6.3, §6.4 P4, Cases A–H, §7.3 and §7.4 S2/S3; Case F has no H route of its own. CONTROLLER_FAILURE is never a QUARANTINED reason and stays the existing §7.3 EXECUTION_ERROR reason when empty is proven. S11, recordDigest, S13 (K5) and the final frame carry the QR reason. Status rules unchanged. Vectors (74)–(86) | §20.3.8 QR; §20.3.7 vectors (74)–(86); §20.0; §20.6; §20.7 |
+
+Resolution test (M01). An implementer cannot open an unfiltered or
+catch-all receive path, a well-known-sender subscription, an object
+server, a name request, a cached proxy or a proxy signal stream. The one
+permitted subscription admits only the authenticated manager's
+PropertiesChanged on the bound path. A message from any other sender is
+rejected at the zbus reader before any queue, so no flood can delay a
+manager reply. If qualification shows otherwise, the release is
+blocked, not accepted. Resolution test (L01). An implementer reaching
+any existing QUARANTINED route applies Q0–Q3 in order and gets exactly
+one existing reason, with the same bytes in S11, the recordDigest input,
+S13 and the final frame. No reason choice is left to the implementer.
+
+Interaction. Under a hostile unrelated flood the correct result is no
+security outcome caused by the flood (vector (73)). The flood is never
+classified as CLEANUP_UNPROVEN, CONTROLLER_FAILURE, MISSING_UNIT_PROOF
+or STATE_INCONSISTENT. A genuine independent manager or containment
+failure at the same time is classified under the ordinary contract,
+including QR.
+
+Changed prior fact, reported: the Security C2 INFO-4 disposition (§20.10
+row "time bounded by §6.4") is refined, not closed. Unrelated traffic no
+longer occupies any zbus queue and cannot consume a phase or E bound.
+INFO-4 stays a preserved Security C2 correction. No other Security or
+Architecture INFO fact changes.
+
+C16 adds no record reason, status, outcome, exit code, schema or schema
+version, record or incident field, incident type, journal state, class,
+broker frame, broker operation, D-Bus method or allowance, H9 site,
+constant, timeout, deadline, refusal enum, CLI command or flag, config
+field, environment variable, public API field, hash domain, durable
+object, host policy or residual acceptance. Preserved unchanged: C15
+(PREPARED/NOT_SENT failed proof -> QUARANTINED / CLEANUP_UNPROVEN / 7);
+C14 (exhaustive H10 (k) precedence [1]–[5] and the zero-call (3) (v)
+(B)); C13 (sticky reason only after exact A-RES restoration, same live
+invocation, crash boundary); C12 (terminal X acquisition
+synchronization interval); C11 (bounded H10 evidence exception, E = 5000
+ms); C10 and every earlier Architecture resolution; at most one H10
+ListUnitsByPatterns per invocation; H9 site (iv) at CREATE C5 (3) A-INC
+and RECONCILE R5 only; successful P1S makes zero D-Bus calls; permanent
+QUARANTINED semantics and incident resolution
+UNSUPPORTED_IN_CONTROLLED_V1; GLOBAL -> X only, never X -> GLOBAL; one
+INTENT; S4 commit authority; A-RES/D disjointness; crash recovery;
+SO_PEERCRED as the only runtime caller identity source; C1a; AA-NULL;
+JR read-only and non-authoritative.
+
+Carried, not closed: §19.1 L1–L7 and I1–I5 stay OPEN / PRESERVED /
+CARRIED TO STAGE 5. In particular C16 does not qualify the L4 runner
+user manager or agent, adds no L5/L6 storage floor and adds no L7 global
+broker cap. Security INFO-1, INFO-5 (including the enabled=false check
+order) and INFO-7, the Architecture INFO-A security disposition, the
+same-account/agent qualification INFO, the Debian snapshot HTTP note and
+the storage exhaustion note stay OPEN / PRESERVED / NON-BLOCKING. Every
+carried Architecture INFO finding of C7–C14 stays on the record. None is
+closed, waived, re-rated or absorbed. DG-1..DG-4 are not reopened.
+Further unchanged items: execute DISABLED; Controlled Release NOT
+APPROVED; TSB-F02 OPEN / LOW / CONDITIONAL with current and proposed
+triggers FALSE; R-1..R-5; AT-07/TB-01; FUTURE guards; TAP-2; CRS-1;
+PPI-1; #23F; Stage 4 authority; both approval gates; SEC-DEP-1 QUEUED;
+WIP 1. Next: fresh independent exact-head HEAVY Architecture re-review
+of the C16 HEAD; only if APPROVED with 0 MAJOR / 0 MINOR on that HEAD,
+fresh independent exact-head HEAVY Security re-review; then separate
+Product Owner design acceptance and merge authorization. Merge NOT
+AUTHORIZED; Stage 5 implementation NOT AUTHORIZED; execute activation
+NOT AUTHORIZED; OCI publication NOT AUTHORIZED; SEC-DEP-1 NOT
 AUTHORIZED.
