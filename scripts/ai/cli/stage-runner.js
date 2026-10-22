@@ -15,6 +15,7 @@
 "use strict";
 
 const api = require("../index");
+const { bindCancelSignal } = require("../providers/index");
 
 const STAGES = Object.freeze({
   collect: (p) =>
@@ -39,8 +40,49 @@ const STAGES = Object.freeze({
 });
 
 const MAX_RESULT_MESSAGE = 1024;
+// SEC-C1: the existing generic stage-failure exit code - no new code.
+const PARENT_LOST_EXIT_CODE = 1;
+
+/**
+ * SEC-C1 (OD-RATE-1 FT0, unconditional): losing the parent's IPC channel
+ * before this child has started reporting its result is a terminal
+ * cancellation. In that one listener turn the signal aborts (an in-flight
+ * provider request is aborted at its transport - providers/index.js
+ * bindCancelSignal()) and the process exits, so no pending wait, retry,
+ * provider call or later stage work can run afterwards. The child's own
+ * process.disconnect() after a completed result is the expected disconnect
+ * and is ignored. No signal handler is installed: a user signal still
+ * terminates the child natively.
+ *
+ * `complete()` claims the single right to report a result; it is refused
+ * once cancelled, so a child never reports both outcomes.
+ */
+function guardParentLink(proc) {
+  const controller = new AbortController();
+  let state = "running";
+  proc.on("disconnect", () => {
+    if (state !== "running") return;
+    state = "cancelled";
+    try {
+      controller.abort();
+    } finally {
+      proc.exit(PARENT_LOST_EXIT_CODE);
+    }
+  });
+  return {
+    signal: controller.signal,
+    complete() {
+      if (state !== "running") return false;
+      state = "completing";
+      return true;
+    },
+  };
+}
+
+let parentLink = null;
 
 function finish(result) {
+  if (parentLink && !parentLink.complete()) return;
   const send = () => {
     if (process.connected) process.disconnect();
   };
@@ -76,10 +118,12 @@ if (require.main === module) {
     process.stderr.write("stage-runner.js is an internal qa-agent entrypoint and must be started by the qa-agent CLI.\n");
     process.exitCode = 1;
   } else {
+    parentLink = guardParentLink(process);
+    bindCancelSignal(parentLink.signal);
     process.once("message", (message) => {
       runOnce(message);
     });
   }
 }
 
-module.exports = { STAGES };
+module.exports = { STAGES, guardParentLink };

@@ -34,7 +34,7 @@
 // config.js snapshots AI_PROVIDER at load; in this child it equals the
 // parent's effective decision (buildGenerativeEnv()).
 const { PROVIDER } = require("../config");
-const { createProvider } = require("../providers/index");
+const { createProvider, bindCancelSignal } = require("../providers/index");
 const { generateRequirementModel } = require("../generative-test-design/requirement-model-generator");
 const { generateTestCaseModel } = require("../generative-test-design/test-case-model-generator");
 const { generateAutomationCandidate } = require("../generative-test-design/automation-candidate-generator");
@@ -105,8 +105,44 @@ async function runGenerate(provider, p) {
 }
 
 const STAGES = Object.freeze({ design: runDesign, plan: runPlan, generate: runGenerate });
+// SEC-C1: the existing generic stage-failure exit code - no new code.
+const PARENT_LOST_EXIT_CODE = 1;
+
+/**
+ * SEC-C1 (OD-RATE-1 FT0, unconditional): identical to stage-runner.js's
+ * guardParentLink() - unexpected parent IPC loss aborts the in-flight
+ * provider request (providers/index.js bindCancelSignal()) and exits in the
+ * same listener turn, so no later generator attempt, step or result can
+ * run; the child's own disconnect after a completed result is ignored; no
+ * signal handler is installed. `complete()` claims the single right to
+ * report a result and is refused once cancelled.
+ */
+function guardParentLink(proc) {
+  const controller = new AbortController();
+  let state = "running";
+  proc.on("disconnect", () => {
+    if (state !== "running") return;
+    state = "cancelled";
+    try {
+      controller.abort();
+    } finally {
+      proc.exit(PARENT_LOST_EXIT_CODE);
+    }
+  });
+  return {
+    signal: controller.signal,
+    complete() {
+      if (state !== "running") return false;
+      state = "completing";
+      return true;
+    },
+  };
+}
+
+let parentLink = null;
 
 function finish(result) {
+  if (parentLink && !parentLink.complete()) return;
   const done = () => {
     if (process.connected) process.disconnect();
   };
@@ -150,10 +186,12 @@ if (require.main === module) {
     process.stderr.write("generative-runner.js is an internal qa-agent entrypoint and must be started by the qa-agent CLI.\n");
     process.exitCode = 1;
   } else {
+    parentLink = guardParentLink(process);
+    bindCancelSignal(parentLink.signal);
     process.once("message", (message) => {
       runOnce(message);
     });
   }
 }
 
-module.exports = { STAGES, failureCodes };
+module.exports = { STAGES, failureCodes, guardParentLink };

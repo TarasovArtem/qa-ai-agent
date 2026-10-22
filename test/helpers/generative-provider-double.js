@@ -29,10 +29,15 @@ const Module = require("node:module");
 
 const script = JSON.parse(fs.readFileSync(process.env.QA_AGENT_TEST_PROVIDER_SCRIPT, "utf8"));
 let calls = 0;
+// SEC-C1: the runner binds its parent-link signal through the replaced
+// module exactly as through the real one; like the real adapters, the
+// double then refuses every call once that signal has fired.
+let cancelSignal = null;
 
 const provider = {
   name: "stage3-test-double",
   async analyze({ systemPrompt, userPrompt }) {
+    if (cancelSignal && cancelSignal.aborted) throw Object.assign(new Error("cancelled: parent disconnected"), { code: "UNKNOWN" });
     const index = calls;
     calls += 1;
     if (script.callLog) {
@@ -64,6 +69,9 @@ Module._load = function load(request, parent, isMain) {
       createProvider(name) {
         if (script.callLog) fs.appendFileSync(script.callLog, `${JSON.stringify({ createProvider: name })}\n`);
         return provider;
+      },
+      bindCancelSignal(signal) {
+        cancelSignal = signal;
       },
     };
   }

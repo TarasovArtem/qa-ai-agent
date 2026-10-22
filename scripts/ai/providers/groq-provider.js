@@ -97,6 +97,18 @@ function mapBodyReadError(err, timeoutMs) {
   });
 }
 
+// SEC-C1 (OD-RATE-1 FT0): a request ended because the stage child lost its
+// parent (see providers/index.js bindCancelSignal()). Never retryable, and
+// never one of the retryable RATE_LIMIT/TIMEOUT/NETWORK events - an
+// existing generic code only, no new reason code. No cause is attached:
+// whatever the transport rejected with is not carried anywhere.
+function cancelledError() {
+  return new ProviderError("Groq API request cancelled: the parent process disconnected", {
+    code: PROVIDER_ERROR_CODES.UNKNOWN,
+    retryable: false,
+  });
+}
+
 class GroqProvider {
   name = "groq";
 
@@ -104,11 +116,13 @@ class GroqProvider {
   // unit tests construct a fully offline GroqProvider (fake fetchImpl, a
   // throwaway key/model, a short timeoutMs) with no process.env
   // manipulation and no real network access. Production (createProvider(),
-  // see providers/index.js) calls `new GroqProvider()` with no arguments,
-  // which falls back to this project's existing generic config (AI_API_KEY,
+  // see providers/index.js) passes no credential/model/transport arguments
+  // (only the SEC-C1 cancelSignal below), so it falls back to this project's existing generic config (AI_API_KEY,
   // AI_MODEL) - GroqProvider never introduces a GROQ_-prefixed env var of
-  // its own.
-  constructor({ apiKey = API_KEY, model = MODEL, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  // its own. `cancelSignal` (SEC-C1) is the stage child's parent-link
+  // signal, passed only by createProvider() inside a stage child; null
+  // everywhere else, which leaves analyze() exactly as before.
+  constructor({ apiKey = API_KEY, model = MODEL, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, cancelSignal = null } = {}) {
     if (!apiKey) {
       throw new ProviderError('AI_API_KEY is required for provider "groq"', {
         code: PROVIDER_ERROR_CODES.CONFIGURATION,
@@ -126,12 +140,30 @@ class GroqProvider {
     this.model = model;
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.cancelSignal = cancelSignal;
   }
 
   async analyze({ systemPrompt, userPrompt }) {
+    // SEC-C1: no request starts once the parent link is gone.
+    if (this.cancelSignal && this.cancelSignal.aborted) throw cancelledError();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // SEC-C1: parent loss aborts this request through the same controller
+    // that already bounds fetch() and the body read.
+    const onCancel = () => controller.abort();
+    if (this.cancelSignal) this.cancelSignal.addEventListener("abort", onCancel, { once: true });
+    try {
+      return await this.#exchange(controller, timer, systemPrompt, userPrompt);
+    } catch (err) {
+      if (this.cancelSignal && this.cancelSignal.aborted) throw cancelledError();
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      if (this.cancelSignal) this.cancelSignal.removeEventListener("abort", onCancel);
+    }
+  }
 
+  async #exchange(controller, timer, systemPrompt, userPrompt) {
     let res;
     try {
       res = await this.fetchImpl(GROQ_API_URL, {
