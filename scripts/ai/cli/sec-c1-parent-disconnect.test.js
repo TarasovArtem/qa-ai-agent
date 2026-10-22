@@ -21,6 +21,12 @@
  * process emitter whose exit() is recorded but does not terminate, so the
  * cooperative layer (provider refusal + non-retryable cancellation) is
  * proven on its own, independent of process termination.
+ *
+ * FT0-C1 (corrective for FT0-R2-M01/M02): the result transfer is covered
+ * both in-process over a fake that models Node's IPC lifecycle (ipcProcess)
+ * and in the real child with the result write withheld; unsuccessful HTTP
+ * responses are covered with bodies that never finish, checking EVERY
+ * request signal and body, not only the latest.
  */
 
 const { test } = require("node:test");
@@ -119,6 +125,19 @@ function generativeCase(t) {
   };
 }
 
+// A Stage 3 `plan` invocation with no candidates: the generative runner
+// reaches a successful result without any provider call.
+function generativeSuccessCase(t) {
+  const dir = scratchDir(t);
+  return {
+    dir,
+    runner: "generative",
+    stage: "plan",
+    env: { AI_PROVIDER: "gemini" },
+    payload: { automationCandidates: [], repositoryContext: null, projectId: PROFILE.id },
+  };
+}
+
 function withTimeout(promise, ms, what) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -129,11 +148,12 @@ function withTimeout(promise, ms, what) {
 
 // Spawns the real runner exactly as stage-process.js does (execPath, argv
 // [runner, stage], shell:false, stdio with ipc) plus the test-only transport
-// preload. Never sends the payload by itself.
-function startChild(t, testCase, steps) {
+// preload. Never sends the payload by itself. `extra` adds transport-script
+// options (resultSend).
+function startChild(t, testCase, steps, extra = {}) {
   const log = path.join(testCase.dir, "transport.log");
   const scriptFile = path.join(testCase.dir, "transport.json");
-  fs.writeFileSync(scriptFile, JSON.stringify({ log, steps }));
+  fs.writeFileSync(scriptFile, JSON.stringify({ ...extra, log, steps }));
   fs.writeFileSync(log, "");
   const child = childProcess.spawn(process.execPath, ["--require", FAKE_TRANSPORT, RUNNERS[testCase.runner], testCase.stage], {
     cwd: testCase.dir,
@@ -575,7 +595,7 @@ for (const [name, runner] of [
       });
       assert.equal(transportCalls, 1, "no second provider call");
       assert.deepEqual(delays, [], "no backoff is entered for a cancellation");
-      assert.equal(link.complete(), false, "a cancelled child can never report a result");
+      assert.equal(link.report({ type: "result", ok: true }), false, "a cancelled child can never report a result");
       assert.deepEqual(proc.exits, [1]);
     });
   }
@@ -600,16 +620,18 @@ for (const [name, runner] of [
     assert.equal(aborts, 1);
     assert.equal(link.signal.aborted, true);
     assert.deepEqual(proc.exits, [1]);
-    assert.equal(link.complete(), false);
-    assert.equal(link.complete(), false);
+    assert.equal(link.report({ type: "result", ok: true }), false);
+    assert.equal(link.report({ type: "result", ok: false }), false);
   });
 
-  test(`T12 [${name}] the child's own disconnect after a completed result is not a cancellation`, () => {
-    const proc = fakeProcess();
+  test(`T12 [${name}] the child's own disconnect after a delivered result is not a cancellation`, async () => {
+    const proc = ipcProcess();
     const link = runner.guardParentLink(proc);
-    assert.equal(link.complete(), true, "the first completion may report");
-    assert.equal(link.complete(), false, "a result is reported at most once");
-    proc.emit("disconnect");
+    assert.equal(link.report({ type: "result", ok: true }), true, "the first completion may report");
+    assert.equal(link.report({ type: "result", ok: true }), false, "a result is reported at most once");
+    proc.sent[0].callback(null);
+    await tick();
+    assert.equal(proc.selfDisconnects, 1);
     assert.equal(link.signal.aborted, false);
     assert.deepEqual(proc.exits, []);
   });
@@ -710,4 +732,390 @@ test("T14 [triageCase] a disconnected child writes no credential to its output",
   h.child.disconnect();
   await h.closed();
   assert.equal(h.output.includes(SECRET), false);
+});
+
+// ===================================================================================
+// FT0-C1 M01 - result-transfer lifecycle: parent loss while the result is being sent
+// ===================================================================================
+
+// Node's IPC lifecycle, as the guard sees it: disconnect() clears `connected`
+// at once and emits 'disconnect' on a later tick; send() on a closed channel
+// reports ERR_IPC_CHANNEL_CLOSED to its callback on a later tick; an async
+// write's callback is held by the test (proc.sent) and released explicitly.
+function ipcProcess() {
+  const proc = fakeProcess();
+  proc.connected = true;
+  proc.sent = [];
+  proc.selfDisconnects = 0;
+  proc.send = (message, callback) => {
+    if (!proc.connected) {
+      process.nextTick(callback, Object.assign(new Error("Channel closed"), { code: "ERR_IPC_CHANNEL_CLOSED" }));
+      return false;
+    }
+    proc.sent.push({ message, callback });
+    return true;
+  };
+  const close = () => {
+    proc.connected = false;
+    process.nextTick(() => proc.emit("disconnect"));
+  };
+  proc.disconnect = () => {
+    proc.selfDisconnects += 1;
+    close();
+  };
+  proc.parentLost = close;
+  return proc;
+}
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+for (const [name, runner] of [
+  ["stage-runner", stageRunner],
+  ["generative-runner", generativeRunner],
+]) {
+  const RESULT = Object.freeze({ type: "result", ok: true });
+
+  test(`C1-M01 [${name}] parent lost before the result is sent (event still pending): nothing is sent, one failed exit`, async () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    proc.parentLost();
+    assert.equal(link.report(RESULT), false);
+    assert.equal(proc.sent.length, 0);
+    await tick();
+    assert.equal(link.signal.aborted, true);
+    assert.deepEqual(proc.exits, [1]);
+  });
+
+  test(`C1-M01 [${name}] parent lost while the send callback is delayed: failed exit, a late callback changes nothing`, async () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    assert.equal(link.report(RESULT), true);
+    proc.parentLost();
+    await tick();
+    assert.deepEqual(proc.exits, [1], "a pending send is not a completed delivery");
+    assert.equal(link.signal.aborted, true);
+    proc.sent[0].callback(null);
+    proc.sent[0].callback(new Error("late"));
+    await tick();
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(proc.selfDisconnects, 0);
+  });
+
+  test(`C1-M01 [${name}] the send callback receives an error: failed exit, never a success`, async () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    link.report(RESULT);
+    proc.sent[0].callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+    await tick();
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(proc.selfDisconnects, 0);
+  });
+
+  test(`C1-M01 [${name}] callback null after the channel closed but before its 'disconnect' event: failed exit (Node reports null whatever the write status)`, async () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    link.report(RESULT);
+    proc.parentLost();
+    proc.sent[0].callback(null);
+    assert.deepEqual(proc.exits, [1]);
+    await tick();
+    assert.deepEqual(proc.exits, [1], "the later 'disconnect' event is not a second outcome");
+    assert.equal(proc.selfDisconnects, 0);
+  });
+
+  test(`C1-M01 [${name}] callback completes before the child's own disconnect: delivered, no cancellation`, async () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    assert.equal(link.report(RESULT), true);
+    assert.deepEqual(proc.sent[0].message, RESULT);
+    proc.sent[0].callback(null);
+    assert.equal(proc.selfDisconnects, 1);
+    await tick();
+    proc.emit("disconnect");
+    assert.deepEqual(proc.exits, []);
+    assert.equal(link.signal.aborted, false);
+  });
+
+  for (const order of ["callback-then-loss", "loss-then-callback"]) {
+    test(`C1-M01 [${name}] same-turn race ${order}: exactly one terminal outcome`, async () => {
+      const proc = ipcProcess();
+      const link = runner.guardParentLink(proc);
+      link.report(RESULT);
+      if (order === "callback-then-loss") {
+        proc.sent[0].callback(null);
+        proc.parentLost();
+      } else {
+        proc.parentLost();
+        proc.sent[0].callback(null);
+      }
+      await tick();
+      await tick();
+      const delivered = proc.selfDisconnects === 1;
+      const failed = proc.exits.length === 1;
+      assert.notEqual(delivered, failed, "delivered xor failed");
+      assert.ok(proc.selfDisconnects <= 1 && proc.exits.length <= 1);
+      if (order === "loss-then-callback") assert.deepEqual(proc.exits, [1], "a write whose channel closed first is never a success");
+      if (failed) assert.equal(link.signal.aborted, true);
+    });
+  }
+
+  test(`C1-M01 [${name}] repeated disconnects while sending: one abort, one exit`, async () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    let aborts = 0;
+    link.signal.addEventListener("abort", () => (aborts += 1));
+    link.report(RESULT);
+    proc.parentLost();
+    await tick();
+    proc.emit("disconnect");
+    proc.emit("disconnect");
+    proc.sent[0].callback(new Error("late"));
+    await tick();
+    assert.equal(aborts, 1);
+    assert.deepEqual(proc.exits, [1]);
+  });
+
+  test(`C1-M01 [${name}] a result is reported at most once`, () => {
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    assert.equal(link.report(RESULT), true);
+    assert.equal(link.report({ type: "result", ok: false }), false);
+    assert.equal(proc.sent.length, 1);
+  });
+
+  test(`C1-M01 [${name}] a send that throws synchronously is a failed delivery`, () => {
+    const proc = ipcProcess();
+    proc.send = () => {
+      throw new TypeError("could not serialize");
+    };
+    const link = runner.guardParentLink(proc);
+    assert.equal(link.report(RESULT), false);
+    assert.deepEqual(proc.exits, [1]);
+  });
+}
+
+// Child-process M01 probes: the REAL runner, the REAL Node IPC channel; the
+// transport preload only withholds the result write (resultSend).
+for (const mode of ["hold", "hold-error", "hold-ok"]) {
+  for (const [label, make, steps] of [
+    ["triage success", (t) => triageCase(t), (c) => [{ content: c.validContent }]],
+    ["generative success", (t) => generativeSuccessCase(t), () => ["hang"]],
+    ["triage error result", (t) => triageCase(t), () => [{ status: 400 }]],
+  ]) {
+    test(`C1-M01 [${label}] result send ${mode} then parent disconnect: exit 1, never a false success, no result`, async (t) => {
+      const c = make(t);
+      const h = startChild(t, c, steps(c), { resultSend: mode });
+      h.sendPayload();
+      await h.probe("result-held", 0);
+      h.child.disconnect();
+      const { code, signal } = await h.closed();
+      assert.equal(signal, null);
+      assert.equal(code, 1, `a result that was never delivered is a failed child: ${h.output}`);
+      assert.deepEqual(results(h.messages), []);
+    });
+  }
+}
+
+test("C1-M01 [generative success] normal result transmission is unchanged: delivered, exit 0, zero provider calls", async (t) => {
+  const c = generativeSuccessCase(t);
+  const h = startChild(t, c, ["hang"]);
+  h.sendPayload();
+  const { code, signal } = await h.closed();
+  assert.equal(signal, null);
+  assert.equal(code, 0, h.output);
+  assert.deepEqual(results(h.messages).map((r) => r.ok), [true]);
+  assert.equal(fetchCount(h.events()), 0);
+});
+
+// ===================================================================================
+// FT0-C1 M02 - an unsuccessful HTTP response never leaves its body or request active
+// ===================================================================================
+
+// A body that never finishes, recording its cancellation.
+function unfinishedBody(log, index) {
+  return new ReadableStream({
+    pull() {
+      return new Promise(() => {});
+    },
+    cancel() {
+      log.push(`body-cancelled#${index}`);
+    },
+  });
+}
+
+for (const Provider of [GroqProvider, GeminiProvider]) {
+  for (const [status, code] of [
+    [429, PROVIDER_ERROR_CODES.RATE_LIMIT],
+    [500, PROVIDER_ERROR_CODES.UNKNOWN],
+    [503, PROVIDER_ERROR_CODES.UNKNOWN],
+  ]) {
+    test(`C1-M02 [${Provider.name}] HTTP ${status} with an unfinished body: mapping unchanged, body cancelled and request signal aborted`, async () => {
+      const log = [];
+      const signals = [];
+      const provider = new Provider({
+        apiKey: SECRET,
+        model: "m",
+        fetchImpl: async (url, init) => {
+          signals.push(init.signal);
+          return new Response(unfinishedBody(log, 0), { status });
+        },
+        cancelSignal: new AbortController().signal,
+      });
+      await assert.rejects(provider.analyze({ systemPrompt: "s", userPrompt: "u" }), (err) => {
+        assert.equal(err.code, code);
+        assert.equal(err.retryable, true);
+        return true;
+      });
+      assert.deepEqual(log, ["body-cancelled#0"]);
+      assert.deepEqual(signals.map((s) => s.aborted), [true]);
+    });
+  }
+
+  test(`C1-M02 [${Provider.name}] two-request signal probe: parent loss during the retry leaves no earlier request active`, async () => {
+    const cancel = new AbortController();
+    const log = [];
+    const signals = [];
+    let started;
+    const secondStarted = new Promise((r) => (started = r));
+    const provider = new Provider({
+      apiKey: SECRET,
+      model: "m",
+      fetchImpl: (url, init) => {
+        const index = signals.length;
+        signals.push(init.signal);
+        if (index === 0) return Promise.resolve(new Response(unfinishedBody(log, 0), { status: 429 }));
+        started();
+        return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
+      },
+      cancelSignal: cancel.signal,
+    });
+    const delays = [];
+    const run = runProviderAnalysis(provider, TRIAGE_CONTEXT, { projectProfile: PROFILE, sleep: async (ms) => delays.push(ms) });
+    await secondStarted;
+    cancel.abort();
+    await assert.rejects(run, /AI provider request failed \(UNKNOWN\)/);
+    assert.deepEqual(signals.map((s) => s.aborted), [true, true], "every request signal, not only the latest");
+    assert.deepEqual(log, ["body-cancelled#0"]);
+    assert.deepEqual(delays, [500]);
+  });
+
+  test(`C1-M02 [${Provider.name}] parent loss after the HTTP error, before the retry: the failed request is already released, no retry`, async () => {
+    const cancel = new AbortController();
+    const log = [];
+    const signals = [];
+    const backoff = deferred();
+    let sleeping;
+    const asleep = new Promise((r) => (sleeping = r));
+    const provider = new Provider({
+      apiKey: SECRET,
+      model: "m",
+      fetchImpl: async (url, init) => {
+        signals.push(init.signal);
+        return new Response(unfinishedBody(log, signals.length - 1), { status: 429 });
+      },
+      cancelSignal: cancel.signal,
+    });
+    const run = runProviderAnalysis(provider, TRIAGE_CONTEXT, {
+      projectProfile: PROFILE,
+      sleep: () => {
+        sleeping();
+        return backoff.promise;
+      },
+    });
+    await asleep;
+    assert.deepEqual(signals.map((s) => s.aborted), [true], "released before the backoff, not by the disconnect");
+    assert.deepEqual(log, ["body-cancelled#0"]);
+    cancel.abort();
+    backoff.resolve();
+    await assert.rejects(run);
+    assert.equal(signals.length, 1, "no post-disconnect provider call");
+  });
+
+  test(`C1-M02 [${Provider.name}] retry semantics without cancellation: 3 attempts, 500/1500ms, every failed request released`, async () => {
+    const log = [];
+    const signals = [];
+    const provider = new Provider({
+      apiKey: SECRET,
+      model: "m",
+      fetchImpl: async (url, init) => {
+        signals.push(init.signal);
+        return new Response(unfinishedBody(log, signals.length - 1), { status: 429 });
+      },
+      cancelSignal: new AbortController().signal,
+    });
+    const delays = [];
+    await assert.rejects(runProviderAnalysis(provider, TRIAGE_CONTEXT, { projectProfile: PROFILE, sleep: async (ms) => delays.push(ms) }), /RATE_LIMIT/);
+    assert.deepEqual(delays, [500, 1500]);
+    assert.deepEqual(signals.map((s) => s.aborted), [true, true, true]);
+    assert.deepEqual(log, ["body-cancelled#0", "body-cancelled#1", "body-cancelled#2"]);
+  });
+
+  for (const failure of ["throws", "rejects", "never-settles", "no-body"]) {
+    test(`C1-M02 [${Provider.name}] body cleanup that ${failure}: still RATE_LIMIT, retryable, promptly, request signal aborted`, async () => {
+      let signal;
+      const body = {
+        throws: {
+          cancel() {
+            throw new Error(`cleanup ${SECRET}`);
+          },
+        },
+        rejects: { cancel: () => Promise.reject(new Error(`cleanup ${SECRET}`)) },
+        "never-settles": { cancel: () => new Promise(() => {}) },
+        "no-body": null,
+      }[failure];
+      const provider = new Provider({
+        apiKey: SECRET,
+        model: "m",
+        fetchImpl: async (url, init) => {
+          signal = init.signal;
+          return { ok: false, status: 429, body };
+        },
+      });
+      await withTimeout(
+        assert.rejects(provider.analyze({ systemPrompt: "s", userPrompt: "u" }), (err) => {
+          assert.equal(err.code, PROVIDER_ERROR_CODES.RATE_LIMIT);
+          assert.equal(err.retryable, true);
+          assert.equal(err.message.includes(SECRET), false);
+          assert.equal(err.cause, undefined);
+          return true;
+        }),
+        1000,
+        "the HTTP error mapping"
+      );
+      assert.equal(signal.aborted, true);
+    });
+  }
+}
+
+// Child-process M02 probes: the REAL runners and adapters, an HTTP 429 whose
+// body never finishes, then parent loss.
+for (const make of [triageCase, generativeCase]) {
+  test(`C1-M02 [${make.name}] disconnect during the retry after a 429 with an unfinished body: both requests released, no third call`, async (t) => {
+    const c = make(t);
+    const h = startChild(t, c, [{ status: 429, body: "hang" }, "hang"]);
+    h.sendPayload();
+    await h.probe("fetch", 1);
+    h.child.disconnect();
+    const { code } = await h.closed();
+    const events = h.events().map((e) => `${e.event}#${e.index}`);
+    assert.equal(code, 1);
+    assert.equal(fetchCount(h.events()), 2, JSON.stringify(events));
+    const second = events.indexOf("fetch#1");
+    assert.ok(events.indexOf("body-cancelled#0") > -1 && events.indexOf("body-cancelled#0") < second, `the 429 body is cancelled before the retry: ${JSON.stringify(events)}`);
+    assert.ok(events.indexOf("request-aborted#0") > -1 && events.indexOf("request-aborted#0") < second, `the 429 request is aborted before the retry: ${JSON.stringify(events)}`);
+    assert.ok(events.includes("request-aborted#1"), JSON.stringify(events));
+  });
+}
+
+test("C1-M02 [triageCase] disconnect in the backoff after a 429 with an unfinished body: the 429 request is already released, no retry", async (t) => {
+  const c = triageCase(t);
+  const h = startChild(t, c, [{ status: 429, body: "hang" }, "hang"]);
+  h.sendPayload();
+  await h.probe("fetch", 0);
+  h.child.disconnect();
+  const { code } = await h.closed();
+  const events = h.events().map((e) => `${e.event}#${e.index}`);
+  assert.equal(code, 1);
+  assert.deepEqual(events.filter((e) => e.startsWith("fetch#")), ["fetch#0"]);
+  assert.ok(events.includes("body-cancelled#0") && events.includes("request-aborted#0"), JSON.stringify(events));
 });

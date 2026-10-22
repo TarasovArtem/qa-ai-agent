@@ -71,6 +71,22 @@ function mapHttpError(status) {
   });
 }
 
+// SEC-C1 (OD-RATE-1 FT0-C1): an unsuccessful response's body is never read,
+// so it is released the moment it is abandoned rather than left to the
+// transport: the body stream is cancelled and this request's own controller
+// aborted, so neither a retry nor a later parent loss can find this request
+// still active. Fire-and-forget - a body whose cancel() throws, rejects or
+// never settles cannot delay or change the HTTP status mapping.
+function releaseErrorResponse(res, controller) {
+  try {
+    const pending = res.body && typeof res.body.cancel === "function" ? res.body.cancel() : null;
+    if (pending && typeof pending.catch === "function") pending.catch(() => {});
+  } catch {
+    // already locked / errored / closed - nothing further to release
+  }
+  controller.abort();
+}
+
 // TSB-F06 + ADV-01: bounded body-read failure -> the existing generic
 // codes. The deadline firing mid-body is the same TIMEOUT (retryable) the
 // request itself already reports; an oversized body is INVALID_RESPONSE,
@@ -204,6 +220,7 @@ class GroqProvider {
 
     if (!res.ok) {
       clearTimeout(timer);
+      releaseErrorResponse(res, controller);
       throw mapHttpError(res.status);
     }
 

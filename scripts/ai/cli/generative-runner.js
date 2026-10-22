@@ -110,30 +110,51 @@ const PARENT_LOST_EXIT_CODE = 1;
 
 /**
  * SEC-C1 (OD-RATE-1 FT0, unconditional): identical to stage-runner.js's
- * guardParentLink() - unexpected parent IPC loss aborts the in-flight
- * provider request (providers/index.js bindCancelSignal()) and exits in the
- * same listener turn, so no later generator attempt, step or result can
- * run; the child's own disconnect after a completed result is ignored; no
- * signal handler is installed. `complete()` claims the single right to
- * report a result and is refused once cancelled.
+ * guardParentLink() - parent IPC loss before the result is delivered aborts
+ * the in-flight provider request (providers/index.js bindCancelSignal()) and
+ * exits in the same turn, so no later generator attempt, step or result can
+ * run; no signal handler is installed. `report()` owns the single result
+ * transfer (FT0-C1): a pending send is not a delivery, so parent loss while
+ * sending, a send error or a callback after the channel closed fails the
+ * child; only a delivered result is followed by the child's own, ignored,
+ * disconnect.
  */
 function guardParentLink(proc) {
   const controller = new AbortController();
   let state = "running";
-  proc.on("disconnect", () => {
-    if (state !== "running") return;
-    state = "cancelled";
+  const fail = () => {
+    if (state === "failed" || state === "delivered") return;
+    state = "failed";
     try {
       controller.abort();
     } finally {
       proc.exit(PARENT_LOST_EXIT_CODE);
     }
-  });
+  };
+  proc.on("disconnect", fail);
   return {
     signal: controller.signal,
-    complete() {
+    report(message) {
       if (state !== "running") return false;
-      state = "completing";
+      if (!proc.connected) {
+        fail();
+        return false;
+      }
+      state = "sending";
+      try {
+        proc.send(message, (err) => {
+          if (state !== "sending") return;
+          if (err || !proc.connected) {
+            fail();
+            return;
+          }
+          state = "delivered";
+          proc.disconnect();
+        });
+      } catch {
+        fail();
+        return false;
+      }
       return true;
     },
   };
@@ -142,12 +163,7 @@ function guardParentLink(proc) {
 let parentLink = null;
 
 function finish(result) {
-  if (parentLink && !parentLink.complete()) return;
-  const done = () => {
-    if (process.connected) process.disconnect();
-  };
-  if (typeof process.send === "function" && process.connected) process.send({ type: "result", ...result }, done);
-  else process.exitCode = result.ok ? 0 : 1;
+  if (parentLink) parentLink.report({ type: "result", ...result });
 }
 
 async function runOnce(message) {

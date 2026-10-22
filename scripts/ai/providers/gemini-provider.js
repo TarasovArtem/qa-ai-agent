@@ -68,6 +68,19 @@ function mapHttpError(status) {
   });
 }
 
+// SEC-C1 (OD-RATE-1 FT0-C1): exactly mirroring groq-provider.js's
+// releaseErrorResponse() - an unsuccessful response's never-read body is
+// cancelled and its request aborted at once, fire-and-forget.
+function releaseErrorResponse(res, controller) {
+  try {
+    const pending = res.body && typeof res.body.cancel === "function" ? res.body.cancel() : null;
+    if (pending && typeof pending.catch === "function") pending.catch(() => {});
+  } catch {
+    // already locked / errored / closed - nothing further to release
+  }
+  controller.abort();
+}
+
 // TSB-F06 + ADV-01: bounded body-read failure -> the existing generic
 // codes, exactly mirroring groq-provider.js's mapBodyReadError().
 function mapBodyReadError(err, timeoutMs) {
@@ -217,6 +230,7 @@ class GeminiProvider {
 
     if (!res.ok) {
       clearTimeout(timer);
+      releaseErrorResponse(res, controller);
       throw mapHttpError(res.status);
     }
 

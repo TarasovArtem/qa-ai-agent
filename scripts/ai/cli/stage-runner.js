@@ -45,35 +45,58 @@ const PARENT_LOST_EXIT_CODE = 1;
 
 /**
  * SEC-C1 (OD-RATE-1 FT0, unconditional): losing the parent's IPC channel
- * before this child has started reporting its result is a terminal
- * cancellation. In that one listener turn the signal aborts (an in-flight
- * provider request is aborted at its transport - providers/index.js
- * bindCancelSignal()) and the process exits, so no pending wait, retry,
- * provider call or later stage work can run afterwards. The child's own
- * process.disconnect() after a completed result is the expected disconnect
- * and is ignored. No signal handler is installed: a user signal still
+ * before this child's result has been delivered is a terminal failure. In
+ * that one turn the signal aborts (an in-flight provider request is aborted
+ * at its transport - providers/index.js bindCancelSignal()) and the process
+ * exits, so no pending wait, retry, provider call or later stage work can
+ * run afterwards. No signal handler is installed: a user signal still
  * terminates the child natively.
  *
- * `complete()` claims the single right to report a result; it is refused
- * once cancelled, so a child never reports both outcomes.
+ * `report()` claims the single right to send the result and owns its
+ * transfer (FT0-C1): running -> sending -> delivered, or -> failed from
+ * either. A pending send is not a delivery - parent loss while sending, a
+ * send error, or a send callback that runs after the channel has already
+ * closed (Node reports an async IPC write's completion as success whatever
+ * its status) all fail the child, never exit it as a success. Only once
+ * delivered does the child disconnect itself, and that expected disconnect
+ * is ignored. Every outcome is reached at most once.
  */
 function guardParentLink(proc) {
   const controller = new AbortController();
   let state = "running";
-  proc.on("disconnect", () => {
-    if (state !== "running") return;
-    state = "cancelled";
+  const fail = () => {
+    if (state === "failed" || state === "delivered") return;
+    state = "failed";
     try {
       controller.abort();
     } finally {
       proc.exit(PARENT_LOST_EXIT_CODE);
     }
-  });
+  };
+  proc.on("disconnect", fail);
   return {
     signal: controller.signal,
-    complete() {
+    report(message) {
       if (state !== "running") return false;
-      state = "completing";
+      if (!proc.connected) {
+        fail();
+        return false;
+      }
+      state = "sending";
+      try {
+        proc.send(message, (err) => {
+          if (state !== "sending") return;
+          if (err || !proc.connected) {
+            fail();
+            return;
+          }
+          state = "delivered";
+          proc.disconnect();
+        });
+      } catch {
+        fail();
+        return false;
+      }
       return true;
     },
   };
@@ -82,12 +105,7 @@ function guardParentLink(proc) {
 let parentLink = null;
 
 function finish(result) {
-  if (parentLink && !parentLink.complete()) return;
-  const send = () => {
-    if (process.connected) process.disconnect();
-  };
-  if (typeof process.send === "function" && process.connected) process.send({ type: "result", ...result }, send);
-  else process.exitCode = result.ok ? 0 : 1;
+  if (parentLink) parentLink.report({ type: "result", ...result });
 }
 
 async function runOnce(message) {
