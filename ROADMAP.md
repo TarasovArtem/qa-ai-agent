@@ -38,14 +38,21 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified main / Controlled-v1 baseline (OD-06 execution design):
+Latest certified repository main / OD-RATE-1 FT0 SEC-C1 security implementation:
+  main: 742ba32baa64a7fccf5f0af642c89cfdf10295e1
+  TREE: a5231b3d432b9568908c8cc4c8dd194c806ecd54
+  implementation PR #259; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  independently reviewed HEAD: 8f4af624e47293e147daad319dd2c01dbd087b1f (reviewed TREE = merge TREE)
+  STANDARD_TWO_PARENT; fresh push CI 39930474587 / completed / success / 7/7 jobs
+
+Historical certified baseline (OD-06 execution design; separate Controlled-v1 contract):
   main: 22ceb0682f9b56c2fbefdbad35273b7c21225d89
   TREE: 4d7daaa2fbdcb29466f780683d85c1761965c101
   design PR #254; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
   reviewed HEAD: d6fb535639b004e661c2b5aa2576476a12d9baa7 (reviewed TREE = merge TREE)
   STANDARD_TWO_PARENT; fresh push CI 38592925997 / completed / success / 7/7 jobs
 
-Historical certification anchor (Stage 4B activation; latest implementation baseline):
+Historical certification anchor (Stage 4B activation; Controlled-v1 implementation baseline):
   main: 2c666e1261df747eb8ca4ce8d33870c8d47404f4
   TREE: 9ec9967b9ac4ba71154544afb5a3f586c86cd354
   implementation PR #249; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
@@ -101,9 +108,11 @@ Historical RTI certification anchor (not the current repository HEAD):
 (PR #254), post-merge certified on its exact SHA (see [OD-06 certification
 record](#od-06-execution-design-certification-record) in §8); it is
 documentation-only and changes no runtime behavior. Stage 4B
-(`2c666e1261df747eb8ca4ce8d33870c8d47404f4`) remains the latest certified
-implementation baseline and a historical certification anchor; all earlier
-anchors above are preserved unchanged.
+`2c666e1261df747eb8ca4ce8d33870c8d47404f4` is a historical Controlled-v1
+implementation certification anchor. The most recent certified repository `main`
+is the distinct OD-RATE-1 FT0 security implementation merge
+`742ba32baa64a7fccf5f0af642c89cfdf10295e1`; all earlier anchors remain
+historically valid.
 `8aa7c5191e662942f1d73539c740904d385c646d` is the `TSB-F04` + `TSB-F07` +
 `XI-01` + `XI-02` remediation merge (PR #238), post-merge certified on its exact
 SHA (see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
@@ -149,6 +158,7 @@ and README's own RTI section for the full RTI evidence chain.
 | `ACQ-UPG` — Reproducible versioned acquisition + upgrade transition | `PROVEN` | `proof/acq-v1`/`proof/acq-v2`, independently re-reviewed under full auth isolation. |
 | `RTI-1` .. `RTI-8` — Requirements & Test-Design Integration | `COMPLETE_ON_MAIN` | See [§5](#5-rti-closure). |
 | `RTI Integrated Audit` | `PASS WITH DEFERRED DEBT` | See [§5](#5-rti-closure). |
+| `OD-RATE-1 FT0` — SEC-C1 parent IPC disconnect safety | `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED` | Implementation [PR #259](https://github.com/TarasovArtem/qa-ai-agent/pull/259); [certification record](#od-rate-1-ft0-sec-c1-certified-security-slice). Separate governor design and FT1 are not completed by this slice. |
 
 `ID-3` formal release planning remains **planning-complete**. Controlled-v1
 productization stages 1–3 are **COMPLETE_ON_MAIN**; Stage 4 design is
@@ -540,8 +550,8 @@ entry's constraints and tracked status are otherwise unchanged.
 ### GOV-AUTO-1 — Governance Pre-Review Framework
 
 ```text
-GOV-AUTO-1:      COMPLETE_ON_MAIN  (Waves 0-5 merged + post-merge certified; see §8
-                 Wave 5 closure evidence for this sync's lifecycle condition)
+GOV-AUTO-1:      COMPLETE_ON_MAIN  (Waves 0-5 and canonical closure PR #210
+                 merged + post-merge certified; see §8 Wave 5 evidence)
 Design:          design/reconciliation MERGED + POST-MERGE CERTIFIED
                  (docs/gov-auto-1-design-reconciliation-v1.md; PR #185; see §8 evidence)
 Roadmap sync:    CERTIFIED_ON_MAIN (PR #186; see §8 closure evidence)
@@ -602,8 +612,9 @@ post-merge certified (PR #208; see [Wave 5 / Stage 1G closure evidence](#gov-aut
 Wave 4 merged with one owner-accepted deferred finding, `W4-C2-SEC-M1`
 (`DEFERRED`, non-blocking, **not** closed); the privileged
 `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` path stays fail-closed until its trust
-prerequisites are separately delivered. `GOV-AUTO-1` is `COMPLETE_ON_MAIN`,
-subject to this closure sync's own lifecycle condition in the Wave 5 evidence.
+prerequisites are separately delivered. `GOV-AUTO-1` is `COMPLETE_ON_MAIN`:
+canonical closure PR #210 merged as `35c8d72a06aa86c94bd0550e6d66715c5e27edb3`
+and passed fresh exact-merge push-event CI #37212895232.
 Completion does not establish a live authenticated GitHub/provider adapter or
 production readiness. `AISEC-4` is `COMPLETE_ON_MAIN` for its research/design
 lifecycle (see [closure evidence](#aisec-4-closure-evidence) in §8). `AISEC-5`
@@ -1110,7 +1121,7 @@ New order:        AISEC-3 (COMPLETE_ON_MAIN)  →  GOV-AUTO-1  →  AISEC-4 .. A
                   implementation was NOT_STARTED and it was the roadmap-designated
                   next active gate; since then the design/reconciliation and Waves 0-5
                   have been merged + certified, and GOV-AUTO-1 is COMPLETE_ON_MAIN
-                  (see §6, §8; this closure sync has its own lifecycle condition).
+                  (see §6, §8; the subsequent closure PR #210 is already post-merge certified).
 
 Decision owner:   Project owner.
 ```
@@ -1348,8 +1359,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Architecture Conformance Gate (COMPLETE_ON_MAIN)
        [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
   →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)
-  →  GOV-AUTO-1 (COMPLETE_ON_MAIN; Waves 0-5 MERGED + POST-MERGE CERTIFIED;
-       this closure sync must itself complete its §8 lifecycle condition)
+  →  GOV-AUTO-1 (COMPLETE_ON_MAIN; Waves 0-5 and canonical closure PR #210
+       MERGED + POST-MERGE CERTIFIED; see §8 Wave 5 evidence)
   →  AISEC-4 (COMPLETE_ON_MAIN)
   →  AISEC-5 (COMPLETE_ON_MAIN)
   →  AISEC-6 (COMPLETE_ON_MAIN; research/design)
@@ -1387,7 +1398,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (Controlled-v1 OD-06 canonical closure sync).** Per
+**Current sequence (OD-RATE-1 FT0 ROADMAP-only closure sync).** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
@@ -1431,11 +1442,15 @@ below). Stage 4A implementation is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`
 (PR #249); its canonical closure sync merged via PR #253. OD-06 (the
 Controlled-v1 execution design) is `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`
 (PR #254; see the [OD-06 certification
-record](#od-06-execution-design-certification-record) below). This OD-06
-documentation-only canonical closure sync is the active governance lifecycle
-under `WIP = 1`; independent exact-head LIGHT review and separate PO merge
-authorization are required before its merge, and it is not itself complete
-before merge and post-merge certification. Stage 5 (`execute`) is
+record](#od-06-execution-design-certification-record) below). The OD-06 documentation-only canonical closure sync itself merged via PR
+[#255](https://github.com/TarasovArtem/qa-ai-agent/pull/255) and was certified on
+`52e23acf0f7e5d2f7fce2b406a27de51ae1af68c` through fresh push-event
+[CI 38691690831](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38691690831).
+The **OD-RATE-1 FT0 ROADMAP-only closure sync** is now the sole active
+**governance** lifecycle under `WIP = 1`; independent exact-head `LIGHT`
+review, separate PO merge authorization, STANDARD_TWO_PARENT merge and fresh
+post-merge push-event certification are still required for this documentation
+sync. Its authoring is not canonical completion. Stage 5 (`execute`) is
 `READY / NOT AUTHORIZED`; `execute` remains disabled and no next engineering
 stage is authorized. Later productization stages retain their designed order,
 followed by `qa-agent-demo` (`NOT_STARTED`) and Controlled Release
@@ -1448,6 +1463,51 @@ closing AT-07/TB-01 or any FUTURE review guard. It starts no implementation,
 closes, waives or re-rates no security finding, does not activate any
 `MEM`/`RAG`/`LEARN` stage and does not approve Controlled Release (`NOT
 APPROVED`). The steps after `AISEC-6` are strictly serial under `WIP = 1`.
+
+### OD-RATE-1 FT0 SEC-C1 certified security slice
+
+`OD-RATE-1 FT0` (the independently reviewed parent IPC disconnect security
+exception) is **`COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`**. This is a narrow
+implementation result, **not** approval or completion of the full Hybrid
+Provider Governor design, FT1, or any Controlled-v1 execute/release capability.
+
+- Implementation [PR #259](https://github.com/TarasovArtem/qa-ai-agent/pull/259):
+  `MERGED` 2026-10-23; four linear implementation/corrective commits, nine changed files.
+- Independent exact-head `HEAVY` review `OD-RATE-1-FT0-C2-D1-R1`: `APPROVED`
+  for HEAD `8f4af624e47293e147daad319dd2c01dbd087b1f`, TREE
+  `a5231b3d432b9568908c8cc4c8dd194c806ecd54`;
+  `FT0-R2-M01 RESOLVED`, `FT0-R2-M02 RESOLVED / PRESERVED`,
+  `FT0-C2-D1 RESOLVED`, zero confirmed new production defects.
+  Original reviewer report/evidence verified for byte/manifest integrity in
+  the PO conversation; not cryptographically signed or deposited in GitHub.
+- Pre-merge [CI 39921597780](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/39921597780):
+  `pull_request`, exact reviewed HEAD, 7/7 jobs `success`.
+- `STANDARD_TWO_PARENT` merge SHA `742ba32baa64a7fccf5f0af642c89cfdf10295e1`,
+  TREE `a5231b3d432b9568908c8cc4c8dd194c806ecd54`.
+  Parent 1: `52e23acf0f7e5d2f7fce2b406a27de51ae1af68c`.
+  Parent 2: `8f4af624e47293e147daad319dd2c01dbd087b1f`.
+- Fresh automatic [post-merge CI 39930474587](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/39930474587):
+  event `push`, `main`, exact merge SHA, attempt 1,
+  `completed / success`, **7/7 jobs PASS**.
+- Preserved uncertainty: Windows `EPERM` `UNVERIFIED`, no waiver or
+  `RESOLVED` claim; two synthetic event-order observations `UNVERIFIED`
+  under native process lifecycle, not confirmed production defects.
+  Linux Stage 4B `REVIEWER_IDENTITY_UNAVAILABLE` independently
+  `PRE-EXISTING`. The reviewer Linux full unit suite was not
+  a clean PASS; setup-related failures were separately rerun and the
+  post-merge exact-SHA GitHub CI passed.
+- [Issue #258](https://github.com/TarasovArtem/qa-ai-agent/issues/258) remains
+  `OPEN`: a **separate** OD-RATE-1-C2-R2 design/provenance disposition issue,
+  not an FT0 implementation issue. Open PD-R1/R4/R7/R9/R11/R12 policy
+  decisions are not inferred resolved, waived or implemented here.
+- No new engineering stream, FT1 start, public governor contract, rate/token
+  budget policy, Stage 5 activation, release authorization or lifecycle
+  closure of unrelated issues follows from this FT0 certification.
+
+This ROADMAP-only truth-sync is a separate **LIGHT review lifecycle**:
+it does not become authoritative until its independently reviewed PR is
+separately PO merge-authorized, merged `STANDARD_TWO_PARENT` and
+post-merge certified by automatic `push` CI.
 
 ### OD-06 execution design certification record
 
@@ -1488,13 +1548,24 @@ qualification and activation are separately authorized and completed. R-1..R-5
 remain accepted, `AT-07/TB-01` remains residual and the FUTURE review guards
 remain open.
 
-This sync uses `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED` and
+**Historical OD-06 canonical closure record (at PR #255 preparation).** The
+OD-06 documentation-only sync was authorized under
+`OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED` and
 `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED`, review class
-`LIGHT`. Its merge is `NOT AUTHORIZED`: independent exact-head LIGHT review and
-separate PO merge authorization are required, and the sync is not complete until
-merged and post-merge certified. It records already-certified OD-06 completion;
-it implements and activates nothing, authorizes no Stage 5 work and grants no
-Controlled Release approval.
+`LIGHT`. At that historical preparation point, its merge was
+`NOT AUTHORIZED` pending independent exact-head LIGHT review and separate
+PO merge authorization. **That restriction is no longer an active gate:**
+OD-06 closure [PR #255](https://github.com/TarasovArtem/qa-ai-agent/pull/255)
+subsequently merged via `STANDARD_TWO_PARENT` commit
+`52e23acf0f7e5d2f7fce2b406a27de51ae1af68c` and passed fresh
+[push-event CI 38691690831](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38691690831)
+on that exact SHA (7/7 SUCCESS). Thus OD-06 canonical closure is completed
+on `main`, not pending. The **separate OD-RATE-1 FT0 ROADMAP-only closure
+PR #260** remains the current governance lifecycle, requiring its own
+independent exact-head LIGHT review, separate PO merge authorization,
+`STANDARD_TWO_PARENT` merge and fresh post-merge push CI. Neither OD-06
+closure nor FT0 documentation synchronization implements or activates Stage 5
+or grants Controlled Release approval.
 
 ### Controlled-v1 Stage 4 design certification and current productization state
 
@@ -2712,8 +2783,10 @@ closure certification.
 
 ### AISEC-5 closure evidence
 
-The next-stage designation in this block records the point-in-time state at
-AISEC-5 closure. For current AISEC-6 and AISEC-7 completion and the next stage, see
+The next-stage designation, management-Issue OPEN entry and proposed
+closure-sync approval/merge conditions in this block are **point-in-time
+records from AISEC-5 closure preparation**, not present-day open gates.
+For current AISEC-6 and AISEC-7 completion and the next stage, see
 [AISEC-6 closure evidence](#aisec-6-closure-evidence) and
 [AISEC-7 closure evidence](#aisec-7-closure-evidence).
 
@@ -2793,10 +2866,24 @@ post-merge push certification before final canonical lifecycle closure. Issue
 closure is reserved for PM/PO after this sync's governed lifecycle completes.
 This implementation is not independent LIGHT approval or merge authorization.
 
+*(Historical point-in-time record of the AISEC-5 canonical ROADMAP closure
+preparation. Present-day: closure [PR #216](https://github.com/TarasovArtem/qa-ai-agent/pull/216)
+merged through `STANDARD_TWO_PARENT` commit
+`5aa5a7abdfe3617256402289bf3196242023af07`; fresh
+[push CI 37507834510](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37507834510)
+on that exact merge SHA completed successfully. Management
+[Issue #214](https://github.com/TarasovArtem/qa-ai-agent/issues/214) is
+`CLOSED`. The prior `OPEN pending` and closure-gate statements above describe
+the pre-merge state of PR #216, **not** pending requirements for current FT0
+documentation closure. Research/design PR #215 and ROADMAP closure PR #216
+remain distinct.)*
+
 ### AISEC-6 closure evidence
 
-The next-stage designation in this block records the point-in-time state at
-AISEC-6 closure. For current AISEC-7 completion and the next stage, see
+The next-stage designation, management-Issue OPEN entry and proposed
+closure-sync approval/merge conditions in this block are **point-in-time
+records from AISEC-6 closure preparation**, not present-day open gates.
+For current AISEC-7 completion and the next stage, see
 [AISEC-7 closure evidence](#aisec-7-closure-evidence).
 
 ```text
@@ -2911,6 +2998,18 @@ lifecycle closure. Issue
 [#217](https://github.com/TarasovArtem/qa-ai-agent/issues/217) remains OPEN; its
 closure is reserved for PM/PO after this sync's governed lifecycle completes.
 This implementation is not independent LIGHT approval or merge authorization.
+
+*(Historical point-in-time record of the AISEC-6 canonical ROADMAP closure
+preparation. Present-day: closure [PR #219](https://github.com/TarasovArtem/qa-ai-agent/pull/219)
+merged through `STANDARD_TWO_PARENT` commit
+`9148d71c1c586b61c771754ccb3986490e57e4c6`; fresh
+[push CI 37582777205](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37582777205)
+on that exact merge SHA completed successfully. Management
+[Issue #217](https://github.com/TarasovArtem/qa-ai-agent/issues/217) is
+`CLOSED`. The prior `OPEN pending` and closure-gate statements above describe
+the pre-merge state of PR #219, **not** pending requirements for current FT0
+documentation closure. Research/design PR #218 and ROADMAP closure PR #219
+remain distinct.)*
 
 ### AISEC-7 closure evidence
 
@@ -4649,6 +4748,11 @@ sync grants no activation.
 
 ### N-15 closure evidence
 
+The N-15 `CLOSED_ON_MAIN` authority condition below is a **historical
+point-in-time pre-merge gate** from the N-15 ROADMAP-only closure
+preparation, not a current restriction on the FT0 closure PR #260.
+The subsequent N-15 closure and its own certification are recorded below.
+
 ```text
 finding:          N-15
 corrective:       RP-32 — Approval Boundary Hardening
@@ -4674,6 +4778,16 @@ RP-32/N-15 implementation; it is not new technical implementation and does not
 repeat or replace the security review. This `CLOSED_ON_MAIN` record becomes
 authoritative only after this ROADMAP-only closure-sync change itself completes
 its required `LIGHT` independent review, merge and post-merge certification.
+
+*(Historical point-in-time condition at N-15 closure preparation. Present-day:
+N-15 canonical ROADMAP closure [PR #205](https://github.com/TarasovArtem/qa-ai-agent/pull/205)
+merged as `STANDARD_TWO_PARENT` commit
+`b3efb343db657d4beb45eda652a506872c276c07`, and fresh automatic
+[push CI 37013051903](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37013051903)
+succeeded on that exact merge SHA. N-15 is `CLOSED_ON_MAIN`; its former
+`LIGHT` review/merge/CI completion conditions are fulfilled, not currently
+pending for this FT0 documentation closure. This does not close N-21 or
+alter the separate #22F and AT-07/TB-01 boundaries.)*
 
 The certified implementation reads the caller-supplied change set, review
 package and review record once into owned, frozen snapshots before validation
@@ -4702,6 +4816,12 @@ and outside N-15 closure.
 
 
 ### N-21 closure evidence
+
+The N-21 conditional `CLOSED_ON_MAIN` authority, historical Issue #202
+`OPEN` entry and post-certification metadata gate below record the **point-in-time
+state at N-21 ROADMAP/SECURITY closure preparation**, not current requirements
+for the distinct FT0 closure PR #260. Their verified present-day disposition
+is recorded after the historical conditions in this section.
 
 ```text
 finding:             N-21 — Human Review Presentation Integrity
@@ -4772,6 +4892,22 @@ authoritative N-21 lifecycle record; the open
 `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` remains separately authoritative
 for future activation.
 
+*(Historical point-in-time N-21 closure gate and Issue #202 status above.
+Present-day: N-21 canonical ROADMAP/SECURITY closure
+[PR #206](https://github.com/TarasovArtem/qa-ai-agent/pull/206) merged as
+`STANDARD_TWO_PARENT` commit
+`9b7e3269f09cffd60e5eac1728b3ad224c0b27c3`; fresh automatic
+[push CI 37019574358](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37019574358)
+succeeded on that exact merge SHA (attempt 1). Management
+[Issue #202](https://github.com/TarasovArtem/qa-ai-agent/issues/202) is
+`CLOSED` (2026-10-02). N-21 is `CLOSED_ON_MAIN`. Its historical `HEAVY`
+review/merge/push-CI and later Issue metadata-truth closure gates have
+completed: they are **not** current FT0 merge or Issue-closure conditions.
+N-15 and N-21 retain distinct closure PRs (#205 and #206).
+`FUTURE_REVIEW_PRESENTATION_BINDING_GUARD`, R-1..R-5, #22F and
+AT-07/TB-01 remain separately governed; no new waiver or release activation
+is granted.)*
+
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
 ```text
@@ -4791,8 +4927,8 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   see [AISEC-3 closure evidence](#aisec-3-closure-evidence) in §8. Per §15,
   GOV-AUTO-1 (inserted before AISEC-4 by a later owner decision, §7) is
   COMPLETE_ON_MAIN; its design/reconciliation and Waves 0-5 are merged and
-  post-merge certified (see §8 Wave 5 closure evidence and this sync's own
-  lifecycle condition). AISEC-4 is COMPLETE_ON_MAIN for research/design; see
+  post-merge certified (see §8 Wave 5 closure evidence; the subsequent
+  canonical closure PR #210 is also post-merge certified). AISEC-4 is COMPLETE_ON_MAIN for research/design; see
   [AISEC-4 closure evidence](#aisec-4-closure-evidence). AISEC-5 is also
   COMPLETE_ON_MAIN for research/design; see [AISEC-5 closure evidence](#aisec-5-closure-evidence).
   AISEC-6 is also COMPLETE_ON_MAIN for research/design; see
@@ -5451,9 +5587,13 @@ design/reconciliation is merged and post-merge certified -- see [GOV-AUTO-1 desi
 the ROADMAP synchronization recording that design has been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)),
 and Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4 have been merged and post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)).
 Wave 5 / Stage `1G` is also merged and post-merge certified (PR #208; see
-[Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)). The proposed
-`COMPLETE_ON_MAIN` state is subject to this sync's own LIGHT review, authorized
-standard two-parent merge and fresh post-merge push certification. `AISEC-4`
+[Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)).
+The earlier proposed `COMPLETE_ON_MAIN` transition is historical: its canonical
+closure PR [#210](https://github.com/TarasovArtem/qa-ai-agent/pull/210)
+merged as a `STANDARD_TWO_PARENT` commit
+`35c8d72a06aa86c94bd0550e6d66715c5e27edb3`, and the fresh automatic
+[push CI 37212895232](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37212895232)
+passed on this exact merge SHA. `AISEC-4`
 has since completed its research/design lifecycle (`COMPLETE_ON_MAIN`; see
 [AISEC-4 closure evidence](#aisec-4-closure-evidence)). `AISEC-5` is also
 `COMPLETE_ON_MAIN` for research/design (see [AISEC-5 closure evidence](#aisec-5-closure-evidence)),
@@ -5516,8 +5656,9 @@ TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation:
                                  POST-MERGE CERTIFIED (design PR #237;
                                  implementation PR #238; merge
                                  8aa7c5191e662942f1d73539c740904d385c646d)
-active governance lifecycle:     Controlled-v1 OD-06 canonical closure
-                                 sync (LIGHT / SOLE WIP; merge NOT AUTHORIZED)
+active governance lifecycle:     OD-RATE-1 FT0 ROADMAP-only canonical closure
+                                 sync (LIGHT / SOLE WIP; independent review and
+                                 separate merge authorization required)
 Audit findings:                  TSB-F01, TSB-F03, TSB-F04, TSB-F05, TSB-F06,
                                  TSB-F07 CLOSED_ON_MAIN / REMEDIATED;
                                  TSB-F02 OPEN / LOW / CONDITIONAL
@@ -5548,6 +5689,15 @@ OD-06 execution design:          COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
                                  22ceb0682f9b56c2fbefdbad35273b7c21225d89;
                                  process-lifecycle containment only)
 OD-06 Security review debt:      7 LOW + 5 INFO OPEN / PRESERVED (Stage 5 inputs)
+OD-06 canonical closure sync:    PR #255 MERGED / POST-MERGE CERTIFIED
+                                 (merge 52e23acf0f7e5d2f7fce2b406a27de51ae1af68c;
+                                 fresh push CI 38691690831, SUCCESS)
+OD-RATE-1 FT0 SEC-C1:             COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+                                 (PR #259; merge 742ba32baa64a7fccf5f0af642c89cfdf10295e1;
+                                 fresh push CI 39930474587, 7/7 PASS)
+OD-RATE-1 C2-R2 design Issue:    #258 OPEN (distinct; no FT1 authorization)
+FT0 residual observations:      Windows EPERM UNVERIFIED; two synthetic IPC
+                                 observations UNVERIFIED; no waiver
 Stage 5 (execute):               READY / NOT AUTHORIZED
 qa-agent-demo E2E validation:    NOT_STARTED
 MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
