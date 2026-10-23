@@ -1398,7 +1398,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (Controlled-v1 OD-06 canonical closure sync).** Per
+**Current sequence (OD-RATE-1 FT0 ROADMAP-only closure sync).** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
@@ -1548,13 +1548,24 @@ qualification and activation are separately authorized and completed. R-1..R-5
 remain accepted, `AT-07/TB-01` remains residual and the FUTURE review guards
 remain open.
 
-This sync uses `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED` and
+**Historical OD-06 canonical closure record (at PR #255 preparation).** The
+OD-06 documentation-only sync was authorized under
+`OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE — APPROVED` and
 `OD-CONTROLLED-V1-OD-06-CANONICAL-CLOSURE-C1-SCOPE — APPROVED`, review class
-`LIGHT`. Its merge is `NOT AUTHORIZED`: independent exact-head LIGHT review and
-separate PO merge authorization are required, and the sync is not complete until
-merged and post-merge certified. It records already-certified OD-06 completion;
-it implements and activates nothing, authorizes no Stage 5 work and grants no
-Controlled Release approval.
+`LIGHT`. At that historical preparation point, its merge was
+`NOT AUTHORIZED` pending independent exact-head LIGHT review and separate
+PO merge authorization. **That restriction is no longer an active gate:**
+OD-06 closure [PR #255](https://github.com/TarasovArtem/qa-ai-agent/pull/255)
+subsequently merged via `STANDARD_TWO_PARENT` commit
+`52e23acf0f7e5d2f7fce2b406a27de51ae1af68c` and passed fresh
+[push-event CI 38691690831](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38691690831)
+on that exact SHA (7/7 SUCCESS). Thus OD-06 canonical closure is completed
+on `main`, not pending. The **separate OD-RATE-1 FT0 ROADMAP-only closure
+PR #260** remains the current governance lifecycle, requiring its own
+independent exact-head LIGHT review, separate PO merge authorization,
+`STANDARD_TWO_PARENT` merge and fresh post-merge push CI. Neither OD-06
+closure nor FT0 documentation synchronization implements or activates Stage 5
+or grants Controlled Release approval.
 
 ### Controlled-v1 Stage 4 design certification and current productization state
 
