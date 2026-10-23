@@ -2783,8 +2783,10 @@ closure certification.
 
 ### AISEC-5 closure evidence
 
-The next-stage designation in this block records the point-in-time state at
-AISEC-5 closure. For current AISEC-6 and AISEC-7 completion and the next stage, see
+The next-stage designation, management-Issue OPEN entry and proposed
+closure-sync approval/merge conditions in this block are **point-in-time
+records from AISEC-5 closure preparation**, not present-day open gates.
+For current AISEC-6 and AISEC-7 completion and the next stage, see
 [AISEC-6 closure evidence](#aisec-6-closure-evidence) and
 [AISEC-7 closure evidence](#aisec-7-closure-evidence).
 
@@ -2864,10 +2866,24 @@ post-merge push certification before final canonical lifecycle closure. Issue
 closure is reserved for PM/PO after this sync's governed lifecycle completes.
 This implementation is not independent LIGHT approval or merge authorization.
 
+*(Historical point-in-time record of the AISEC-5 canonical ROADMAP closure
+preparation. Present-day: closure [PR #216](https://github.com/TarasovArtem/qa-ai-agent/pull/216)
+merged through `STANDARD_TWO_PARENT` commit
+`5aa5a7abdfe3617256402289bf3196242023af07`; fresh
+[push CI 37507834510](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37507834510)
+on that exact merge SHA completed successfully. Management
+[Issue #214](https://github.com/TarasovArtem/qa-ai-agent/issues/214) is
+`CLOSED`. The prior `OPEN pending` and closure-gate statements above describe
+the pre-merge state of PR #216, **not** pending requirements for current FT0
+documentation closure. Research/design PR #215 and ROADMAP closure PR #216
+remain distinct.)*
+
 ### AISEC-6 closure evidence
 
-The next-stage designation in this block records the point-in-time state at
-AISEC-6 closure. For current AISEC-7 completion and the next stage, see
+The next-stage designation, management-Issue OPEN entry and proposed
+closure-sync approval/merge conditions in this block are **point-in-time
+records from AISEC-6 closure preparation**, not present-day open gates.
+For current AISEC-7 completion and the next stage, see
 [AISEC-7 closure evidence](#aisec-7-closure-evidence).
 
 ```text
@@ -2982,6 +2998,18 @@ lifecycle closure. Issue
 [#217](https://github.com/TarasovArtem/qa-ai-agent/issues/217) remains OPEN; its
 closure is reserved for PM/PO after this sync's governed lifecycle completes.
 This implementation is not independent LIGHT approval or merge authorization.
+
+*(Historical point-in-time record of the AISEC-6 canonical ROADMAP closure
+preparation. Present-day: closure [PR #219](https://github.com/TarasovArtem/qa-ai-agent/pull/219)
+merged through `STANDARD_TWO_PARENT` commit
+`9148d71c1c586b61c771754ccb3986490e57e4c6`; fresh
+[push CI 37582777205](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37582777205)
+on that exact merge SHA completed successfully. Management
+[Issue #217](https://github.com/TarasovArtem/qa-ai-agent/issues/217) is
+`CLOSED`. The prior `OPEN pending` and closure-gate statements above describe
+the pre-merge state of PR #219, **not** pending requirements for current FT0
+documentation closure. Research/design PR #218 and ROADMAP closure PR #219
+remain distinct.)*
 
 ### AISEC-7 closure evidence
 
