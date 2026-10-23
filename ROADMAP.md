@@ -4748,6 +4748,11 @@ sync grants no activation.
 
 ### N-15 closure evidence
 
+The N-15 `CLOSED_ON_MAIN` authority condition below is a **historical
+point-in-time pre-merge gate** from the N-15 ROADMAP-only closure
+preparation, not a current restriction on the FT0 closure PR #260.
+The subsequent N-15 closure and its own certification are recorded below.
+
 ```text
 finding:          N-15
 corrective:       RP-32 — Approval Boundary Hardening
@@ -4773,6 +4778,16 @@ RP-32/N-15 implementation; it is not new technical implementation and does not
 repeat or replace the security review. This `CLOSED_ON_MAIN` record becomes
 authoritative only after this ROADMAP-only closure-sync change itself completes
 its required `LIGHT` independent review, merge and post-merge certification.
+
+*(Historical point-in-time condition at N-15 closure preparation. Present-day:
+N-15 canonical ROADMAP closure [PR #205](https://github.com/TarasovArtem/qa-ai-agent/pull/205)
+merged as `STANDARD_TWO_PARENT` commit
+`b3efb343db657d4beb45eda652a506872c276c07`, and fresh automatic
+[push CI 37013051903](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37013051903)
+succeeded on that exact merge SHA. N-15 is `CLOSED_ON_MAIN`; its former
+`LIGHT` review/merge/CI completion conditions are fulfilled, not currently
+pending for this FT0 documentation closure. This does not close N-21 or
+alter the separate #22F and AT-07/TB-01 boundaries.)*
 
 The certified implementation reads the caller-supplied change set, review
 package and review record once into owned, frozen snapshots before validation
@@ -4801,6 +4816,12 @@ and outside N-15 closure.
 
 
 ### N-21 closure evidence
+
+The N-21 conditional `CLOSED_ON_MAIN` authority, historical Issue #202
+`OPEN` entry and post-certification metadata gate below record the **point-in-time
+state at N-21 ROADMAP/SECURITY closure preparation**, not current requirements
+for the distinct FT0 closure PR #260. Their verified present-day disposition
+is recorded after the historical conditions in this section.
 
 ```text
 finding:             N-21 — Human Review Presentation Integrity
@@ -4870,6 +4891,22 @@ records. Once this closure-sync lifecycle completes, this block is the
 authoritative N-21 lifecycle record; the open
 `FUTURE_REVIEW_PRESENTATION_BINDING_GUARD` remains separately authoritative
 for future activation.
+
+*(Historical point-in-time N-21 closure gate and Issue #202 status above.
+Present-day: N-21 canonical ROADMAP/SECURITY closure
+[PR #206](https://github.com/TarasovArtem/qa-ai-agent/pull/206) merged as
+`STANDARD_TWO_PARENT` commit
+`9b7e3269f09cffd60e5eac1728b3ad224c0b27c3`; fresh automatic
+[push CI 37019574358](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37019574358)
+succeeded on that exact merge SHA (attempt 1). Management
+[Issue #202](https://github.com/TarasovArtem/qa-ai-agent/issues/202) is
+`CLOSED` (2026-10-02). N-21 is `CLOSED_ON_MAIN`. Its historical `HEAVY`
+review/merge/push-CI and later Issue metadata-truth closure gates have
+completed: they are **not** current FT0 merge or Issue-closure conditions.
+N-15 and N-21 retain distinct closure PRs (#205 and #206).
+`FUTURE_REVIEW_PRESENTATION_BINDING_GUARD`, R-1..R-5, #22F and
+AT-07/TB-01 remain separately governed; no new waiver or release activation
+is granted.)*
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
