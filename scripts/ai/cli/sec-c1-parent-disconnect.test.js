@@ -27,9 +27,15 @@
  * and in the real child with the result write withheld; unsuccessful HTTP
  * responses are covered with bodies that never finish, checking EVERY
  * request signal and body, not only the latest.
+ *
+ * FT0-C2 (Parent ACK, corrective for FT0-R2-M01): a result is delivered only
+ * once the parent has stored it and returned its private receipt. The
+ * decisive cases run the REAL runners under the REAL runStageProcess() over
+ * native IPC, including a parent whose event loop is blocked so the
+ * result's bytes reach the pipe but are never read.
  */
 
-const { test } = require("node:test");
+const { describe, test } = require("node:test");
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
 const { EventEmitter, getEventListeners } = require("node:events");
@@ -46,6 +52,7 @@ const { ingestRequirementEvidence } = require("../generative-test-design/evidenc
 const { buildFailureReferences } = require("../triage-boundary-contract");
 const stageRunner = require("./stage-runner");
 const generativeRunner = require("./generative-runner");
+const { runStageProcess } = require("./stage-process");
 const { localInvocationEnv, withInvocationEnv, contextForCurrentInvocation, defaultFailure } = require("../../../test/helpers/triage-invocation-env");
 
 const FAKE_TRANSPORT = path.resolve(__dirname, "..", "..", "..", "test", "helpers", "sec-c1-fake-transport.js");
@@ -149,8 +156,9 @@ function withTimeout(promise, ms, what) {
 // Spawns the real runner exactly as stage-process.js does (execPath, argv
 // [runner, stage], shell:false, stdio with ipc) plus the test-only transport
 // preload. Never sends the payload by itself. `extra` adds transport-script
-// options (resultSend).
-function startChild(t, testCase, steps, extra = {}) {
+// options (resultSend). Like the real parent (FT0-C2), it ACKs the first
+// result it receives unless `autoAck` is false.
+function startChild(t, testCase, steps, extra = {}, { autoAck = true } = {}) {
   const log = path.join(testCase.dir, "transport.log");
   const scriptFile = path.join(testCase.dir, "transport.json");
   fs.writeFileSync(scriptFile, JSON.stringify({ ...extra, log, steps }));
@@ -169,6 +177,7 @@ function startChild(t, testCase, steps, extra = {}) {
   const waiters = [];
   child.on("message", (m) => {
     messages.push(m);
+    if (autoAck && m && m.type === "result" && results(messages).length === 1) child.send({ type: "result-ack", receipt: m.receipt }, () => {});
     for (const w of [...waiters]) {
       if (w.match(m)) {
         waiters.splice(waiters.indexOf(w), 1);
@@ -192,11 +201,13 @@ function startChild(t, testCase, steps, extra = {}) {
       child.send({ type: "payload", stage: testCase.stage, payload: testCase.payload });
     },
     probe(event, index) {
-      const match = (m) => m && m.type === "sec-c1-probe" && m.event === event && m.index === index;
+      return this.message((m) => m && m.type === "sec-c1-probe" && m.event === event && m.index === index, `transport probe ${event}#${index}`);
+    },
+    message(match, what = "a matching child message") {
       const seen = messages.find(match);
       if (seen) return Promise.resolve(seen);
       const p = new Promise((resolve) => waiters.push({ match, resolve }));
-      return withTimeout(p, PROBE_TIMEOUT_MS, `transport probe ${event}#${index}`);
+      return withTimeout(p, PROBE_TIMEOUT_MS, what);
     },
     closed: () => withTimeout(closed, CLOSE_TIMEOUT_MS, "child termination"),
     events() {
@@ -630,6 +641,7 @@ for (const [name, runner] of [
     assert.equal(link.report({ type: "result", ok: true }), true, "the first completion may report");
     assert.equal(link.report({ type: "result", ok: true }), false, "a result is reported at most once");
     proc.sent[0].callback(null);
+    proc.ack();
     await tick();
     assert.equal(proc.selfDisconnects, 1);
     assert.equal(link.signal.aborted, false);
@@ -764,6 +776,8 @@ function ipcProcess() {
     close();
   };
   proc.parentLost = close;
+  // FT0-C2: the parent's receipt for the result sent first.
+  proc.ack = () => proc.emit("message", { type: "result-ack", receipt: proc.sent[0].message.receipt });
   return proc;
 }
 
@@ -823,12 +837,17 @@ for (const [name, runner] of [
     assert.equal(proc.selfDisconnects, 0);
   });
 
-  test(`C1-M01 [${name}] callback completes before the child's own disconnect: delivered, no cancellation`, async () => {
+  test(`C1-M01 [${name}] callback then the parent's ACK, before the child's own disconnect: delivered, no cancellation`, async () => {
     const proc = ipcProcess();
     const link = runner.guardParentLink(proc);
     assert.equal(link.report(RESULT), true);
-    assert.deepEqual(proc.sent[0].message, RESULT);
+    const { receipt, ...sent } = proc.sent[0].message;
+    assert.deepEqual(sent, RESULT);
+    assert.match(receipt, /^[0-9a-f]{32}$/);
     proc.sent[0].callback(null);
+    assert.equal(proc.selfDisconnects, 0, "FT0-C2: a send callback is not a delivery");
+    proc.ack();
+    await tick();
     assert.equal(proc.selfDisconnects, 1);
     await tick();
     proc.emit("disconnect");
@@ -850,12 +869,10 @@ for (const [name, runner] of [
       }
       await tick();
       await tick();
-      const delivered = proc.selfDisconnects === 1;
-      const failed = proc.exits.length === 1;
-      assert.notEqual(delivered, failed, "delivered xor failed");
-      assert.ok(proc.selfDisconnects <= 1 && proc.exits.length <= 1);
-      if (order === "loss-then-callback") assert.deepEqual(proc.exits, [1], "a write whose channel closed first is never a success");
-      if (failed) assert.equal(link.signal.aborted, true);
+      // FT0-C2: with no ACK, neither order is a delivery.
+      assert.equal(proc.selfDisconnects, 0);
+      assert.deepEqual(proc.exits, [1], "a write the parent never acknowledged is never a success");
+      assert.equal(link.signal.aborted, true);
     });
   }
 
@@ -1119,3 +1136,627 @@ test("C1-M02 [triageCase] disconnect in the backoff after a 429 with an unfinish
   assert.deepEqual(events.filter((e) => e.startsWith("fetch#")), ["fetch#0"]);
   assert.ok(events.includes("body-cancelled#0") && events.includes("request-aborted#0"), JSON.stringify(events));
 });
+
+// ===================================================================================
+// FT0-C2 - Parent ACK: a result is delivered only on the parent's private receipt
+// ===================================================================================
+
+const ACK_DEADLINE_MS = 10000;
+const RECEIPT = /^[0-9a-f]{32}$/;
+const STAGE_PROCESS = require.resolve("./stage-process.js");
+const RETURN_KEYS = ["spawnError", "exitCode", "signal", "result", "stdout", "stderr"];
+
+function transportScript(testCase, steps, extra = {}) {
+  const log = path.join(testCase.dir, "transport.log");
+  const scriptFile = path.join(testCase.dir, "transport.json");
+  fs.writeFileSync(scriptFile, JSON.stringify({ ...extra, log, steps }));
+  fs.writeFileSync(log, "");
+  return { log, scriptFile };
+}
+
+const readEvents = (log) =>
+  fs
+    .readFileSync(log, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .map((e) => `${e.event}#${e.index}`);
+const fetches = (events) => events.filter((e) => e.startsWith("fetch#")).length;
+
+// Each runner, reaching a successful result (triage: one provider call;
+// generative: none) and an error result (one HTTP 400).
+const C2_RUNNERS = [
+  {
+    name: "triage",
+    success: (t) => {
+      const c = triageCase(t);
+      return { c, steps: [{ content: c.validContent }], calls: 1 };
+    },
+    error: (t) => ({ c: triageCase(t), steps: [{ status: 400 }] }),
+  },
+  {
+    name: "generative",
+    success: (t) => ({ c: generativeSuccessCase(t), steps: ["hang"], calls: 0 }),
+    error: (t) => ({ c: generativeCase(t), steps: [{ status: 400 }] }),
+  },
+];
+
+// --- the REAL runStageProcess() over the REAL runner and native IPC ------------------
+
+// What becomes of the parent's ACK on its way to the child.
+const ACK_ROUTES = Object.freeze({
+  pass: (child, send, message, rest) => send(message, ...rest),
+  twice: (child, send, message, rest) => {
+    send(message);
+    return send(message, ...rest);
+  },
+  withhold: () => true,
+  throw: () => {
+    throw new Error("ACK send failed");
+  },
+  "callback-error": (child, send, message, rest) => {
+    const callback = rest.find((a) => typeof a === "function");
+    process.nextTick(callback, Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+    return false;
+  },
+  // Every one is sent; none may authorize delivery. Then nothing.
+  malformed: (child, send, message) => {
+    for (const bad of [
+      { type: "result-ack" },
+      { type: "result-ack", receipt: "0".repeat(32) },
+      { type: "result-ack", receipt: message.receipt.toUpperCase() },
+      { type: "result-ack", receipt: [message.receipt] },
+      { type: "result-ack ", receipt: message.receipt },
+      { type: "ack", receipt: message.receipt },
+      { type: "result", receipt: message.receipt },
+      { receipt: message.receipt },
+      "result-ack",
+      [message.receipt],
+    ]) {
+      send(bad);
+    }
+    return true;
+  },
+  // Parent loss after the result is stored, before its ACK.
+  disconnect: (child) => {
+    child.disconnect();
+    return true;
+  },
+});
+
+function launch(t, c, steps, { ack = "pass" } = {}) {
+  const { log, scriptFile } = transportScript(c, steps);
+  const acks = [];
+  let ackSeen;
+  const ackAttempted = new Promise((r) => (ackSeen = r));
+  let child = null;
+  const spawnImpl = (command, args, options) => {
+    child = childProcess.spawn(command, ["--require", FAKE_TRANSPORT, ...args], options);
+    t.after(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    });
+    const send = child.send.bind(child);
+    child.send = (message, ...rest) => {
+      if (!message || message.type !== "result-ack") return send(message, ...rest);
+      acks.push({ message, at: Date.now() });
+      ackSeen();
+      return ACK_ROUTES[ack](child, send, message, rest);
+    };
+    return child;
+  };
+  const outcome = runStageProcess({ stage: c.stage, payload: c.payload, env: baseEnv({ ...c.env, SEC_C1_TRANSPORT_SCRIPT: scriptFile }), cwd: c.dir, runner: c.runner, spawnImpl });
+  const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal, at: Date.now() })));
+  return {
+    child,
+    acks,
+    outcome: (ms = CLOSE_TIMEOUT_MS) => withTimeout(outcome, ms, "runStageProcess()"),
+    exited: (ms = CLOSE_TIMEOUT_MS) => withTimeout(exited, ms, "child exit"),
+    ackAttempted: () => withTimeout(ackAttempted, PROBE_TIMEOUT_MS, "the parent's ACK"),
+    events: () => readEvents(log),
+  };
+}
+
+for (const r of C2_RUNNERS) {
+  test(`C2 [${r.name}] normal result: the parent stores it, ACKs it once, the child exits 0; return shape unchanged`, async (t) => {
+    const { c, steps, calls } = r.success(t);
+    const run = launch(t, c, steps);
+    const outcome = await run.outcome();
+    assert.deepEqual(Object.keys(outcome), RETURN_KEYS);
+    assert.equal(outcome.spawnError, false);
+    assert.equal(outcome.signal, null);
+    assert.equal(outcome.exitCode, 0, outcome.stderr);
+    assert.equal(outcome.result.type, "result");
+    assert.equal(outcome.result.ok, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(outcome.result, "receipt"), false, "the private receipt is not part of the stored result");
+    assert.equal(run.acks.length, 1);
+    assert.match(run.acks[0].message.receipt, RECEIPT);
+    assert.deepEqual(Object.keys(run.acks[0].message).sort(), ["receipt", "type"]);
+    assert.equal(fetches(run.events()), calls);
+  });
+
+  test(`C2 [${r.name}] error result: ACKed once, the existing failure exit 1 is preserved`, async (t) => {
+    const { c, steps } = r.error(t);
+    const run = launch(t, c, steps);
+    const outcome = await run.outcome();
+    assert.equal(outcome.exitCode, 1);
+    assert.equal(outcome.signal, null);
+    assert.equal(outcome.result.ok, false);
+    assert.equal(run.acks.length, 1);
+    if (r.name === "generative") assert.deepEqual(outcome.result.failure, { kind: "generation", step: "requirementModel", providerAttempts: 1, codes: ["UNKNOWN"] });
+  });
+
+  // Both ACKs arrive in one read; on Node 22 a self-disconnect from inside
+  // the first one's dispatch crashed the child on the second.
+  test(`C2 [${r.name}] duplicate ACK: one delivery, exit 0, no crash`, async (t) => {
+    const { c, steps } = r.success(t);
+    const run = launch(t, c, steps, { ack: "twice" });
+    const outcome = await run.outcome();
+    assert.equal(outcome.exitCode, 0, outcome.stderr);
+    assert.equal(outcome.result.ok, true);
+    assert.doesNotMatch(outcome.stderr, /TypeError|kPendingMessages/);
+  });
+
+  test(`C2 [${r.name}] parent loss after storing the result, before its ACK: exit 1, no further provider call`, async (t) => {
+    const { c, steps, calls } = r.success(t);
+    const run = launch(t, c, steps, { ack: "disconnect" });
+    const { code, signal } = await run.exited();
+    assert.equal(signal, null);
+    assert.equal(code, 1, "a result the parent never acknowledged is never a success");
+    assert.equal(fetches(run.events()), calls);
+  });
+
+  for (const sig of ["SIGTERM", "SIGINT"]) {
+    test(`C2 [${r.name}] ${sig} while awaiting the ACK still terminates the child natively by signal`, async (t) => {
+      const { c, steps } = r.success(t);
+      const run = launch(t, c, steps, { ack: "withhold" });
+      await run.ackAttempted();
+      run.child.kill(sig);
+      const outcome = await run.outcome();
+      assert.equal(outcome.signal, sig);
+      assert.equal(outcome.exitCode, null);
+      assert.equal(outcome.result.ok, true, "the stored result does not make a signalled child a success");
+    });
+  }
+}
+
+// The 10-second ACK deadline, natively; these wait it out, so they overlap.
+describe("C2 ACK deadline (native IPC, real runStageProcess())", { concurrency: true }, () => {
+  const deadlineCases = [];
+  for (const r of C2_RUNNERS) {
+    for (const ack of ["withhold", "malformed", "throw", "callback-error"]) deadlineCases.push([r, ack]);
+  }
+
+  for (const [r, ack] of deadlineCases) {
+    test(`C2 [${r.name}] ACK ${ack}: the child fails closed at the 10s deadline - exit 1, never a success, never a spawn error`, async (t) => {
+      const { c, steps, calls } = r.success(t);
+      const run = launch(t, c, steps, { ack });
+      const outcome = await run.outcome(ACK_DEADLINE_MS + 15000);
+      const { at } = await run.exited();
+      assert.deepEqual(Object.keys(outcome), RETURN_KEYS);
+      assert.equal(outcome.spawnError, false);
+      assert.equal(outcome.signal, null);
+      assert.equal(outcome.exitCode, 1);
+      assert.equal(outcome.result.ok, true, "the result was stored; only the missing ACK fails the child");
+      assert.equal(run.acks.length, 1, "the parent ACKs at most once");
+      const waited = at - run.acks[0].at;
+      assert.ok(waited >= ACK_DEADLINE_MS - 1500 && waited <= ACK_DEADLINE_MS + 5000, `deadline ~${ACK_DEADLINE_MS}ms, observed ${waited}ms`);
+      assert.equal(fetches(run.events()), calls);
+    });
+  }
+});
+
+// --- FT0-R2-M01 reproducer: a parent whose event loop is blocked -------------------
+//
+// The intermediate parent runs the REAL runStageProcess(), then blocks its
+// event loop: the child's result reaches this end of the pipe, the child's
+// send callback runs with null, and nothing is read. Then the parent closes
+// the channel (close), dies (die), or resumes and reads normally (read).
+
+const BLOCKED_PARENT = `
+const cp = require("node:child_process");
+const fs = require("node:fs");
+const [stageProcess, runner, stage, preload, envJson, payloadJson, log, mode] = process.argv.slice(1);
+const { runStageProcess } = require(stageProcess);
+let child;
+const run = runStageProcess({
+  stage, payload: JSON.parse(payloadJson), env: JSON.parse(envJson), cwd: process.cwd(), runner,
+  spawnImpl: (command, args, options) => (child = cp.spawn(command, ["--require", preload, ...args], options)),
+});
+const received = [];
+child.on("message", (m) => received.push(m && m.type));
+const cell = new Int32Array(new SharedArrayBuffer(4));
+const deadline = Date.now() + 15000;
+while (!fs.readFileSync(log, "utf8").includes('"result-sent"')) {
+  if (Date.now() > deadline) { process.stdout.write(JSON.stringify({ error: "no result-sent" }) + "\\n"); process.exit(3); }
+  Atomics.wait(cell, 0, 0, 10);
+}
+Atomics.wait(cell, 0, 0, 750);
+const exitedWhileBlocked = fs.readFileSync(log, "utf8").includes('"exit"');
+const report = (o) => process.stdout.write(JSON.stringify({ pid: child.pid, exitedWhileBlocked, received, ...o }) + "\\n");
+if (mode === "close") {
+  child.disconnect();
+  child.on("exit", (code, signal) => report({ code, signal }));
+} else if (mode === "die") {
+  report({});
+  process.exit(0);
+} else {
+  run.then((o) => report({ code: o.exitCode, signal: o.signal, result: o.result }));
+}
+`;
+
+async function blockedParent(t, c, steps, mode) {
+  const { log, scriptFile } = transportScript(c, steps, { resultSend: "observe", recordExit: true });
+  const env = baseEnv({ ...c.env, SEC_C1_TRANSPORT_SCRIPT: scriptFile });
+  const parent = childProcess.spawn(
+    process.execPath,
+    ["-e", BLOCKED_PARENT, STAGE_PROCESS, c.runner, c.stage, FAKE_TRANSPORT, JSON.stringify(env), JSON.stringify(c.payload), log, mode],
+    { cwd: c.dir, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
+  );
+  let out = "";
+  let err = "";
+  parent.stdout.on("data", (chunk) => (out += chunk));
+  parent.stderr.on("data", (chunk) => (err += chunk));
+  let pid = null;
+  t.after(() => {
+    if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
+    if (pid !== null && processAlive(pid)) process.kill(pid, "SIGKILL");
+  });
+  await withTimeout(new Promise((resolve) => parent.on("close", resolve)), PROBE_TIMEOUT_MS + CLOSE_TIMEOUT_MS, "the blocked parent");
+  const line = out.trim().split("\n").pop();
+  assert.ok(line, `blocked parent produced no report: ${err}`);
+  const report = JSON.parse(line);
+  assert.equal(report.error, undefined, `${report.error}: ${err}`);
+  pid = report.pid;
+  await until(() => !processAlive(pid), "the runner to terminate");
+  return { report, events: readEvents(log) };
+}
+
+for (const r of C2_RUNNERS) {
+  test(`C2-M01 RED/GREEN [${r.name}] result written, callback null, parent closes the channel unread: exit 1, never a false success`, async (t) => {
+    const { c, steps } = r.success(t);
+    const { report, events } = await blockedParent(t, c, steps, "close");
+    assert.equal(report.received.includes("result"), false, "precondition: the parent never received the result");
+    assert.equal(report.exitedWhileBlocked, false, `the child must not finish on its send callback alone: ${JSON.stringify(events)}`);
+    assert.equal(report.signal, null);
+    assert.equal(report.code, 1, "an unread result is a failed child");
+    assert.ok(events.includes("result-sent#0") && events.includes("exit#1"), JSON.stringify(events));
+    assert.equal(events.includes("exit#0"), false);
+  });
+
+  test(`C2-M01 RED/GREEN [${r.name}] result written, callback null, parent dies unread: the child never exits 0`, async (t) => {
+    const { c, steps } = r.success(t);
+    const { report, events } = await blockedParent(t, c, steps, "die");
+    assert.equal(report.exitedWhileBlocked, false, JSON.stringify(events));
+    assert.equal(events.includes("exit#0"), false, `never a success after parent death: ${JSON.stringify(events)}`);
+    // Windows hard-kills the orphan with its parent (job object), so no exit
+    // is recorded there; a POSIX orphan must fail itself.
+    if (process.platform !== "win32") assert.ok(events.includes("exit#1"), JSON.stringify(events));
+  });
+
+  test(`C2-M01 [${r.name}] send callback succeeds before the parent reads the result: the child waits, then the parent reads, ACKs and the child exits 0`, async (t) => {
+    const { c, steps } = r.success(t);
+    const { report, events } = await blockedParent(t, c, steps, "read");
+    assert.equal(report.exitedWhileBlocked, false, `no delivery before the parent read the result: ${JSON.stringify(events)}`);
+    assert.equal(report.code, 0);
+    assert.equal(report.signal, null);
+    assert.equal(report.result.ok, true);
+    assert.equal(report.result.receipt, undefined);
+    assert.ok(events.includes("exit#0"), JSON.stringify(events));
+  });
+}
+
+test("C2 [triageCase] unsolicited ACKs before the result never authorize a later delivery", async (t) => {
+  const c = triageCase(t);
+  const h = startChild(t, c, [{ status: 429 }, { content: c.validContent }], {}, { autoAck: false });
+  h.sendPayload();
+  await h.probe("fetch", 0);
+  // In the retry backoff: running, nothing reported yet.
+  h.child.send({ type: "result-ack", receipt: "0".repeat(32) });
+  h.child.send({ type: "result-ack", receipt: "f".repeat(32) });
+  h.child.send({ type: "result-ack" });
+  const result = await h.message((m) => m && m.type === "result", "the result");
+  assert.match(result.receipt, RECEIPT);
+  assert.equal(result.ok, true);
+  h.child.disconnect();
+  const { code, signal } = await h.closed();
+  assert.equal(signal, null);
+  assert.equal(code, 1, "only the receipt of THIS result could have authorized a delivery");
+  assert.equal(fetchCount(h.events()), 2);
+});
+
+// --- the child guard, in-process (exit() recorded, not performed; mocked deadline) --
+
+for (const [name, runner] of [
+  ["stage-runner", stageRunner],
+  ["generative-runner", generativeRunner],
+]) {
+  const RESULT = Object.freeze({ type: "result", ok: true });
+  const receiptOf = (proc) => proc.sent[0].message.receipt;
+  const settledListeners = (proc) => assert.equal(proc.listenerCount("message"), 0, "the ACK listener is removed on every terminal path");
+
+  test(`C2 [${name}] a successful send callback is not a delivery; the parent's ACK is`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    assert.equal(proc.listenerCount("message"), 0, "nothing listens for an ACK before a result is reported");
+    assert.equal(link.report(RESULT), true);
+    assert.match(receiptOf(proc), RECEIPT);
+    assert.equal(proc.listenerCount("message"), 1);
+    proc.sent[0].callback(null);
+    await tick();
+    assert.equal(proc.selfDisconnects, 0);
+    assert.deepEqual(proc.exits, []);
+    proc.ack();
+    assert.equal(proc.selfDisconnects, 0, "the self-disconnect never runs inside Node's message dispatch");
+    assert.equal(proc.connected, true);
+    settledListeners(proc);
+    await tick();
+    assert.equal(proc.selfDisconnects, 1);
+    assert.equal(link.signal.aborted, false);
+    t.mock.timers.tick(ACK_DEADLINE_MS * 2);
+    assert.deepEqual(proc.exits, [], "the deadline is cleared on delivery");
+  });
+
+  test(`C2 [${name}] the ACK arriving before the send callback still delivers; the late callback changes nothing`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    runner.guardParentLink(proc).report(RESULT);
+    proc.ack();
+    await tick();
+    assert.equal(proc.selfDisconnects, 1);
+    proc.sent[0].callback(new Error("late"));
+    await tick();
+    assert.deepEqual(proc.exits, []);
+    assert.equal(proc.selfDisconnects, 1);
+  });
+
+  test(`C2 [${name}] unsolicited ACKs before the result is reported are never seen and authorize nothing`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    for (const receipt of ["0".repeat(32), undefined]) proc.emit("message", { type: "result-ack", receipt });
+    assert.equal(proc.selfDisconnects, 0);
+    link.report(RESULT);
+    proc.sent[0].callback(null);
+    proc.emit("message", { type: "result-ack", receipt: "0".repeat(32) });
+    assert.equal(proc.selfDisconnects, 0);
+    t.mock.timers.tick(ACK_DEADLINE_MS);
+    assert.deepEqual(proc.exits, [1]);
+    const other = ipcProcess();
+    runner.guardParentLink(other).report(RESULT);
+    assert.notEqual(receiptOf(other), receiptOf(proc), "every result carries its own receipt");
+  });
+
+  test(`C2 [${name}] malformed and unrelated ACKs are ignored; the deadline then fails closed, once`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    link.report(RESULT);
+    proc.sent[0].callback(null);
+    const receipt = receiptOf(proc);
+    for (const bad of [
+      null,
+      undefined,
+      "result-ack",
+      [receipt],
+      {},
+      { type: "result-ack" },
+      { type: "result-ack", receipt: "0".repeat(32) },
+      { type: "result-ack", receipt: receipt.toUpperCase() },
+      { type: "result-ack", receipt: [receipt] },
+      { type: "result-ack", receipt: { toString: () => receipt } },
+      { type: "ack", receipt },
+      { type: "result", receipt },
+      { type: "sec-c1-probe", event: "fetch", index: 0 },
+      { receipt },
+    ]) {
+      proc.emit("message", bad);
+    }
+    assert.equal(proc.selfDisconnects, 0);
+    assert.deepEqual(proc.exits, []);
+    t.mock.timers.tick(ACK_DEADLINE_MS);
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(link.signal.aborted, true);
+    settledListeners(proc);
+  });
+
+  test(`C2 [${name}] duplicate ACK in the same dispatch: one delivery, one self-disconnect`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    runner.guardParentLink(proc).report(RESULT);
+    proc.sent[0].callback(null);
+    proc.ack();
+    proc.ack();
+    await tick();
+    assert.equal(proc.selfDisconnects, 1);
+    assert.deepEqual(proc.exits, []);
+  });
+
+  test(`C2 [${name}] the 10s deadline bounds the wait for the ACK: 9999ms nothing, 10000ms one failed exit`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    link.report(RESULT);
+    proc.sent[0].callback(null);
+    t.mock.timers.tick(ACK_DEADLINE_MS - 1);
+    assert.deepEqual(proc.exits, []);
+    t.mock.timers.tick(1);
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(link.signal.aborted, true);
+    settledListeners(proc);
+    t.mock.timers.tick(ACK_DEADLINE_MS * 2);
+    assert.deepEqual(proc.exits, [1]);
+  });
+
+  test(`C2 [${name}] a send that never completes is inside the same 10s bound`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    link.report(RESULT);
+    t.mock.timers.tick(ACK_DEADLINE_MS);
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(link.signal.aborted, true);
+  });
+
+  test(`C2 [${name}] a late ACK after the deadline changes nothing`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    runner.guardParentLink(proc).report(RESULT);
+    proc.sent[0].callback(null);
+    t.mock.timers.tick(ACK_DEADLINE_MS);
+    proc.ack();
+    await tick();
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(proc.selfDisconnects, 0);
+  });
+
+  test(`C2 [${name}] parent loss while awaiting the ACK: one failed exit, no provider call, a later ACK and the deadline change nothing`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const proc = ipcProcess();
+    const link = runner.guardParentLink(proc);
+    let transportCalls = 0;
+    const provider = new GroqProvider({
+      apiKey: SECRET,
+      model: "m",
+      fetchImpl: async () => {
+        transportCalls += 1;
+        return okContent("x");
+      },
+      cancelSignal: link.signal,
+    });
+    link.report(RESULT);
+    proc.sent[0].callback(null);
+    proc.parentLost();
+    await tick();
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(link.signal.aborted, true);
+    settledListeners(proc);
+    proc.ack();
+    t.mock.timers.tick(ACK_DEADLINE_MS * 2);
+    assert.deepEqual(proc.exits, [1]);
+    assert.equal(proc.selfDisconnects, 0);
+    await assert.rejects(provider.analyze({ systemPrompt: "s", userPrompt: "u" }));
+    assert.equal(transportCalls, 0);
+  });
+
+  test(`C2 [${name}] a send that throws or a send-callback error: one failed exit, deadline and listener cleared`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const throwing = ipcProcess();
+    throwing.send = () => {
+      throw new TypeError("could not serialize");
+    };
+    assert.equal(runner.guardParentLink(throwing).report(RESULT), false);
+    const failing = ipcProcess();
+    runner.guardParentLink(failing).report(RESULT);
+    failing.sent[0].callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+    await tick();
+    for (const proc of [throwing, failing]) {
+      assert.deepEqual(proc.exits, [1]);
+      settledListeners(proc);
+    }
+    t.mock.timers.tick(ACK_DEADLINE_MS * 2);
+    assert.deepEqual(throwing.exits, [1]);
+    assert.deepEqual(failing.exits, [1]);
+  });
+}
+
+// --- the parent launcher, over a scripted child (supplementary) --------------------
+
+function scriptedChild({ onAck } = {}) {
+  const { PassThrough } = require("node:stream");
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.sent = [];
+  child.send = (message, callback) => {
+    child.sent.push(message);
+    if (message && message.type === "result-ack" && onAck) return onAck(child, callback);
+    return true;
+  };
+  child.finish = (code) => {
+    child.stdout.end();
+    child.stderr.end();
+    child.emit("close", code, null);
+  };
+  return child;
+}
+
+function launchScripted(options) {
+  const child = scriptedChild(options);
+  const outcome = runStageProcess({ stage: "plan", payload: {}, env: {}, cwd: process.cwd(), runner: "generative", spawnImpl: () => child });
+  return { child, outcome };
+}
+
+const acksOf = (child) => child.sent.filter((m) => m && m.type === "result-ack");
+
+test("C2 [stage-process] only the expected result is ACKed, exactly once; probes, diagnostics and later results never are", async () => {
+  const { child, outcome } = launchScripted();
+  const first = "a".repeat(32);
+  for (const m of [{ type: "sec-c1-probe", event: "fetch", index: 0 }, { type: "result-ack", receipt: first }, { type: "diagnostic", receipt: first }, { type: "payload", receipt: first }, "result", null, [first], { receipt: first }]) {
+    child.emit("message", m);
+  }
+  assert.deepEqual(acksOf(child), []);
+  child.emit("message", { type: "result", ok: true, receipt: first });
+  child.emit("message", { type: "result", ok: false, receipt: "b".repeat(32) });
+  child.emit("message", { type: "result", ok: true, receipt: first });
+  assert.deepEqual(acksOf(child), [{ type: "result-ack", receipt: first }]);
+  child.finish(0);
+  const o = await outcome;
+  assert.deepEqual(Object.keys(o), RETURN_KEYS);
+  assert.deepEqual(o.result, { type: "result", ok: true }, "the first result, stored without its receipt");
+});
+
+test("C2 [stage-process] the result is stored before its ACK is sent", async () => {
+  const { child, outcome } = launchScripted({
+    onAck: (c) => {
+      c.finish(0);
+      return true;
+    },
+  });
+  child.emit("message", { type: "result", ok: true, receipt: "c".repeat(32) });
+  const o = await withTimeout(outcome, 1000, "the ACK that ends the scripted child");
+  assert.deepEqual(o.result, { type: "result", ok: true });
+  assert.equal(o.exitCode, 0);
+});
+
+for (const receipt of [undefined, "", "x", "0".repeat(31), "0".repeat(33), "G".repeat(32), "A".repeat(32), 123, { toString: () => "0".repeat(32) }, ["0".repeat(32)]]) {
+  test(`C2 [stage-process] a result with an invalid receipt (${JSON.stringify(receipt)}) is stored but never ACKed`, async () => {
+    const { child, outcome } = launchScripted();
+    child.emit("message", { type: "result", ok: true, receipt });
+    assert.deepEqual(acksOf(child), []);
+    child.finish(1);
+    const o = await outcome;
+    assert.deepEqual(o.result, { type: "result", ok: true });
+    assert.equal(o.exitCode, 1);
+  });
+}
+
+for (const [label, onAck] of [
+  [
+    "throws",
+    () => {
+      throw new Error("channel closed");
+    },
+  ],
+  [
+    "reports an async error",
+    (c, callback) => {
+      const err = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+      // Node: with a callback the error goes to it; without one it is emitted as 'error'.
+      if (typeof callback === "function") process.nextTick(callback, err);
+      else process.nextTick(() => c.emit("error", err));
+      return false;
+    },
+  ],
+]) {
+  test(`C2 [stage-process] an ACK send that ${label} is never a spawn error or a success; the child's exit decides`, async () => {
+    const { child, outcome } = launchScripted({ onAck });
+    child.emit("message", { type: "result", ok: true, receipt: "d".repeat(32) });
+    await tick();
+    child.finish(1);
+    const o = await outcome;
+    assert.equal(o.spawnError, false);
+    assert.equal(o.exitCode, 1);
+    assert.deepEqual(o.result, { type: "result", ok: true });
+  });
+}

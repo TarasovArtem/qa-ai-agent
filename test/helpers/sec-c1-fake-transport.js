@@ -16,7 +16,8 @@
  *
  *   { "log": "<file: one JSON line per transport event, written synchronously>",
  *     "steps": [ "hang" | "hang-body" | { "status": <n>, "body"?: "hang" } | { "content": "<model text>" } ],
- *     "resultSend"?: "hold" | "hold-error" | "hold-ok" }
+ *     "resultSend"?: "hold" | "hold-error" | "hold-ok" | "observe",
+ *     "recordExit"?: true }
  *
  * fetch call i uses steps[min(i, last)]:
  *   hang       never resolves; rejects with an AbortError when its signal aborts
@@ -34,6 +35,12 @@
  *   hold-ok     once the channel has closed, its callback receives null, as
  *               Node's own async IPC write completion does whatever the
  *               write's status
+ *   observe     (FT0-C2) the result IS written, unchanged, to the real
+ *               channel; "result-sent" is recorded just before the write
+ *
+ * recordExit (FT0-C2) records the child's own exit code as event "exit"
+ * with the code as its index, so a test that is not the child's parent can
+ * still tell a success exit from a failure.
  *
  * Events are appended to the log synchronously (they must survive an
  * immediate process.exit) and, while the IPC channel is still up, reported
@@ -61,6 +68,10 @@ if (script.resultSend && typeof process.send === "function") {
   const send = process.send.bind(process);
   process.send = function heldResultSend(message, ...rest) {
     if (!message || message.type !== "result") return send(message, ...rest);
+    if (script.resultSend === "observe") {
+      record("result-sent", 0);
+      return send(message, ...rest);
+    }
     record("result-held", 0);
     const callback = rest.find((a) => typeof a === "function");
     if (callback && script.resultSend !== "hold") {
@@ -68,6 +79,10 @@ if (script.resultSend && typeof process.send === "function") {
     }
     return true;
   };
+}
+
+if (script.recordExit) {
+  process.on("exit", (code) => fs.appendFileSync(script.log, `${JSON.stringify({ event: "exit", index: code })}\n`));
 }
 
 function abortError() {

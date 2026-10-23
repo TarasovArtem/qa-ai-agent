@@ -31,6 +31,10 @@ const RUNNERS = Object.freeze({ triage: STAGE_RUNNER_PATH, generative: GENERATIV
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_FORWARD_BYTES = 64 * 1024;
 const MIN_REDACTION_LENGTH = 4;
+// SEC-C1 (FT0-C2): the private receipt returned for the one stored result;
+// the child treats its result as delivered only on this ACK.
+const RESULT_ACK_TYPE = "result-ack";
+const RECEIPT_PATTERN = /^[0-9a-f]{32}$/;
 
 function redact(text, secrets) {
   let out = text;
@@ -87,8 +91,20 @@ function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = c
     let result = null;
     let settled = false;
 
+    // Only the first result is stored, and only it - once stored - is ACKed,
+    // at most once. Its receipt is not part of the stored result. A failed
+    // ACK send is left to the child, which then fails closed on its own; the
+    // callback keeps such a failure from surfacing as a spawn 'error'.
     child.on("message", (message) => {
-      if (message && typeof message === "object" && message.type === "result" && result === null) result = message;
+      if (!message || typeof message !== "object" || message.type !== "result" || result !== null) return;
+      const { receipt, ...stored } = message;
+      result = stored;
+      if (typeof receipt !== "string" || !RECEIPT_PATTERN.test(receipt)) return;
+      try {
+        child.send({ type: RESULT_ACK_TYPE, receipt }, () => {});
+      } catch {
+        // As above: no ACK, so the child fails closed.
+      }
     });
     child.on("error", () => {
       if (settled) return;
