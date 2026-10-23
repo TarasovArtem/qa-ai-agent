@@ -35,6 +35,11 @@ const MIN_REDACTION_LENGTH = 4;
 // the child treats its result as delivered only on this ACK.
 const RESULT_ACK_TYPE = "result-ack";
 const RECEIPT_PATTERN = /^[0-9a-f]{32}$/;
+// SEC-C1 (FT0-C2-D1): on Windows a child that exits with IPC data still
+// unread can leave the parent with no 'close' (and no 'disconnect'); the
+// event loop then drains and the CLI ends without a result. After 'exit' the
+// parent waits at most this long for 'close', then settles failed.
+const CLOSE_AFTER_EXIT_MS = 10000;
 
 function redact(text, secrets) {
   let out = text;
@@ -90,6 +95,25 @@ function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = c
     const readStderr = capture(child.stderr);
     let result = null;
     let settled = false;
+    let closeTimer = null;
+
+    // The one settlement of a started child: 'close', or the bounded recovery
+    // after 'exit'. Diagnostics stay bounded and redacted on both.
+    function finish(exitCode, signal) {
+      settled = true;
+      clearTimeout(closeTimer);
+      const out = readStdout();
+      const err = readStderr();
+      const stdout = redact(out.text, secrets);
+      const stderr = redact(err.text, secrets);
+      if (diagnostics) {
+        const forwarded = `${stdout}${stderr}`;
+        const bounded = forwarded.length > MAX_FORWARD_BYTES ? `${forwarded.slice(0, MAX_FORWARD_BYTES)}\n[qa-agent] stage diagnostics truncated\n` : forwarded;
+        if (bounded.length > 0) diagnostics(bounded.endsWith("\n") ? bounded : `${bounded}\n`);
+        if (out.truncated || err.truncated) diagnostics("[qa-agent] stage output exceeded the capture bound and was truncated\n");
+      }
+      resolve({ spawnError: false, exitCode, signal, result, stdout, stderr });
+    }
 
     // Only the first result is stored, and only it - once stored - is ACKed,
     // at most once. Its receipt is not part of the stored result. A failed
@@ -109,22 +133,30 @@ function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = c
     child.on("error", () => {
       if (settled) return;
       settled = true;
+      clearTimeout(closeTimer);
       resolve({ spawnError: true, exitCode: null, signal: null, result: null, stdout: "", stderr: "" });
     });
     child.on("close", (exitCode, signal) => {
       if (settled) return;
-      settled = true;
-      const out = readStdout();
-      const err = readStderr();
-      const stdout = redact(out.text, secrets);
-      const stderr = redact(err.text, secrets);
-      if (diagnostics) {
-        const forwarded = `${stdout}${stderr}`;
-        const bounded = forwarded.length > MAX_FORWARD_BYTES ? `${forwarded.slice(0, MAX_FORWARD_BYTES)}\n[qa-agent] stage diagnostics truncated\n` : forwarded;
-        if (bounded.length > 0) diagnostics(bounded.endsWith("\n") ? bounded : `${bounded}\n`);
-        if (out.truncated || err.truncated) diagnostics("[qa-agent] stage output exceeded the capture bound and was truncated\n");
-      }
-      resolve({ spawnError: false, exitCode, signal, result, stdout, stderr });
+      finish(exitCode, signal);
+    });
+    // The timer is deliberately ref'd: it is what keeps the parent alive when
+    // 'close' never comes. Exit alone never proves the result was delivered,
+    // so a recovered settlement carries no result and the caller fails.
+    child.on("exit", (exitCode, signal) => {
+      if (settled || closeTimer !== null) return;
+      closeTimer = setTimeout(() => {
+        if (settled) return;
+        result = null;
+        try {
+          if (child.connected) child.disconnect();
+        } catch {
+          // already gone
+        }
+        if (child.stdout) child.stdout.destroy();
+        if (child.stderr) child.stderr.destroy();
+        finish(exitCode, signal);
+      }, CLOSE_AFTER_EXIT_MS);
     });
 
     try {

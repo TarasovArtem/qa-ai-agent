@@ -33,9 +33,17 @@
  * decisive cases run the REAL runners under the REAL runStageProcess() over
  * native IPC, including a parent whose event loop is blocked so the
  * result's bytes reach the pipe but are never read.
+ *
+ * FT0-C2-D1 (Windows parent settlement): a child that exits with IPC data
+ * still unread can leave the parent with no 'close'; runStageProcess() then
+ * never settled and the CLI ended 0 with no result. After 'exit' the parent
+ * now waits at most 10s for 'close' and otherwise settles once, without a
+ * result. Covered natively (child killed with its result unread; parent
+ * blocked past the child's ACK deadline; 'close' withheld or delayed), over
+ * a scripted child with a mocked timer, and through the real CLI.
  */
 
-const { describe, test } = require("node:test");
+const { after, describe, test } = require("node:test");
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
 const { EventEmitter, getEventListeners } = require("node:events");
@@ -54,6 +62,8 @@ const stageRunner = require("./stage-runner");
 const generativeRunner = require("./generative-runner");
 const { runStageProcess } = require("./stage-process");
 const { localInvocationEnv, withInvocationEnv, contextForCurrentInvocation, defaultFailure } = require("../../../test/helpers/triage-invocation-env");
+const { baseConfig, cleanupScratch, hermeticEnv, makeRoot, runCli } = require("../../../test/helpers/qa-agent-cli");
+const stage3 = require("../../../test/helpers/stage3-fixtures");
 
 const FAKE_TRANSPORT = path.resolve(__dirname, "..", "..", "..", "test", "helpers", "sec-c1-fake-transport.js");
 const RUNNERS = Object.freeze({
@@ -1224,9 +1234,12 @@ const ACK_ROUTES = Object.freeze({
   },
 });
 
-function launch(t, c, steps, { ack = "pass" } = {}) {
+// `close` (FT0-C2-D1) withholds the child's 'close' from runStageProcess():
+// "drop" never delivers it, a number delivers it that many ms late.
+function launch(t, c, steps, { ack = "pass", close } = {}) {
   const { log, scriptFile } = transportScript(c, steps);
   const acks = [];
+  const closes = [];
   let ackSeen;
   const ackAttempted = new Promise((r) => (ackSeen = r));
   let child = null;
@@ -1235,6 +1248,18 @@ function launch(t, c, steps, { ack = "pass" } = {}) {
     t.after(() => {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     });
+    if (close !== undefined) {
+      const emit = child.emit.bind(child);
+      child.emit = (event, ...rest) => {
+        if (event !== "close") return emit(event, ...rest);
+        closes.push(Date.now());
+        if (close !== "drop") {
+          const timer = setTimeout(() => emit(event, ...rest), close);
+          t.after(() => clearTimeout(timer));
+        }
+        return true;
+      };
+    }
     const send = child.send.bind(child);
     child.send = (message, ...rest) => {
       if (!message || message.type !== "result-ack") return send(message, ...rest);
@@ -1249,6 +1274,7 @@ function launch(t, c, steps, { ack = "pass" } = {}) {
   return {
     child,
     acks,
+    closes,
     outcome: (ms = CLOSE_TIMEOUT_MS) => withTimeout(outcome, ms, "runStageProcess()"),
     exited: (ms = CLOSE_TIMEOUT_MS) => withTimeout(exited, ms, "child exit"),
     ackAttempted: () => withTimeout(ackAttempted, PROBE_TIMEOUT_MS, "the parent's ACK"),
@@ -1351,6 +1377,9 @@ describe("C2 ACK deadline (native IPC, real runStageProcess())", { concurrency: 
 // event loop: the child's result reaches this end of the pipe, the child's
 // send callback runs with null, and nothing is read. Then the parent closes
 // the channel (close), dies (die), or resumes and reads normally (read).
+// FT0-C2-D1: or it kills the child first, so it exits with the result
+// unread (kill), or stays blocked past the child's 10s ACK deadline (late),
+// then resumes and waits for runStageProcess() to settle.
 
 const BLOCKED_PARENT = `
 const cp = require("node:child_process");
@@ -1364,27 +1393,40 @@ const run = runStageProcess({
 });
 const received = [];
 child.on("message", (m) => received.push(m && m.type));
+let exitedAt = null;
+let closes = 0;
+child.on("exit", () => (exitedAt = Date.now()));
+child.on("close", () => (closes += 1));
 const cell = new Int32Array(new SharedArrayBuffer(4));
 const deadline = Date.now() + 15000;
 while (!fs.readFileSync(log, "utf8").includes('"result-sent"')) {
   if (Date.now() > deadline) { process.stdout.write(JSON.stringify({ error: "no result-sent" }) + "\\n"); process.exit(3); }
   Atomics.wait(cell, 0, 0, 10);
 }
-Atomics.wait(cell, 0, 0, 750);
+if (mode === "kill") process.kill(child.pid, "SIGKILL");
+Atomics.wait(cell, 0, 0, mode === "late" ? 12000 : 750);
 const exitedWhileBlocked = fs.readFileSync(log, "utf8").includes('"exit"');
 const report = (o) => process.stdout.write(JSON.stringify({ pid: child.pid, exitedWhileBlocked, received, ...o }) + "\\n");
+let settlements = 0;
 if (mode === "close") {
   child.disconnect();
   child.on("exit", (code, signal) => report({ code, signal }));
 } else if (mode === "die") {
   report({});
   process.exit(0);
-} else {
+} else if (mode === "read") {
   run.then((o) => report({ code: o.exitCode, signal: o.signal, result: o.result }));
+} else {
+  run.then((o) => {
+    settlements += 1;
+    const settledAfterExitMs = exitedAt === null ? null : Date.now() - exitedAt;
+    // Reported a moment later, so a second settlement or a late 'close' shows.
+    setTimeout(() => report({ code: o.exitCode, signal: o.signal, result: o.result, settledAfterExitMs, settlements, closes }), 200);
+  });
 }
 `;
 
-async function blockedParent(t, c, steps, mode) {
+async function blockedParent(t, c, steps, mode, timeoutMs = PROBE_TIMEOUT_MS + CLOSE_TIMEOUT_MS) {
   const { log, scriptFile } = transportScript(c, steps, { resultSend: "observe", recordExit: true });
   const env = baseEnv({ ...c.env, SEC_C1_TRANSPORT_SCRIPT: scriptFile });
   const parent = childProcess.spawn(
@@ -1401,7 +1443,7 @@ async function blockedParent(t, c, steps, mode) {
     if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
     if (pid !== null && processAlive(pid)) process.kill(pid, "SIGKILL");
   });
-  await withTimeout(new Promise((resolve) => parent.on("close", resolve)), PROBE_TIMEOUT_MS + CLOSE_TIMEOUT_MS, "the blocked parent");
+  await withTimeout(new Promise((resolve) => parent.on("close", resolve)), timeoutMs, "the blocked parent");
   const line = out.trim().split("\n").pop();
   assert.ok(line, `blocked parent produced no report: ${err}`);
   const report = JSON.parse(line);
@@ -1678,12 +1720,20 @@ function scriptedChild({ onAck } = {}) {
     child.stderr.end();
     child.emit("close", code, null);
   };
+  // FT0-C2-D1: 'exit' on its own, with or without a later 'close'.
+  child.connected = true;
+  child.disconnects = 0;
+  child.disconnect = () => {
+    child.connected = false;
+    child.disconnects += 1;
+  };
+  child.exit = (code, signal = null) => child.emit("exit", code, signal);
   return child;
 }
 
-function launchScripted(options) {
+function launchScripted(options = {}) {
   const child = scriptedChild(options);
-  const outcome = runStageProcess({ stage: "plan", payload: {}, env: {}, cwd: process.cwd(), runner: "generative", spawnImpl: () => child });
+  const outcome = runStageProcess({ stage: "plan", payload: {}, env: {}, cwd: process.cwd(), runner: "generative", spawnImpl: () => child, diagnostics: options.diagnostics });
   return { child, outcome };
 }
 
@@ -1760,3 +1810,242 @@ for (const [label, onAck] of [
     assert.deepEqual(o.result, { type: "result", ok: true });
   });
 }
+
+// ===================================================================================
+// FT0-C2-D1 - the parent settles exactly once, even when 'close' never comes
+// ===================================================================================
+
+const CLOSE_RECOVERY_MS = 10000;
+const callerSuccess = (o) => Boolean(o.result && o.result.ok === true && o.exitCode === 0);
+
+// --- native: the Windows defect (a child that exits with its result unread) -------
+
+describe("C2-D1 native recovery (real runner, real runStageProcess())", { concurrency: true }, () => {
+  for (const r of C2_RUNNERS) {
+    test(`C2-D1 RED/GREEN [${r.name}] child killed with its result unread: the parent settles once, never a success`, async (t) => {
+      const { c, steps } = r.success(t);
+      const { report, events } = await blockedParent(t, c, steps, "kill", PROBE_TIMEOUT_MS + CLOSE_RECOVERY_MS + 10000);
+      assert.ok(events.includes("result-sent#0"), JSON.stringify(events));
+      assert.equal(report.settlements, 1);
+      assert.equal(callerSuccess({ result: report.result, exitCode: report.code }), false, JSON.stringify(report));
+      assert.notEqual(report.code, 0);
+      assert.ok(report.settledAfterExitMs !== null && report.settledAfterExitMs <= CLOSE_RECOVERY_MS + 2000, JSON.stringify(report));
+    });
+
+    test(`C2-D1 RED/GREEN [${r.name}] parent blocked past the child's ACK deadline: the parent settles once with the failed exit`, async (t) => {
+      const { c, steps } = r.success(t);
+      const { report, events } = await blockedParent(t, c, steps, "late", PROBE_TIMEOUT_MS + 12000 + CLOSE_RECOVERY_MS + 10000);
+      assert.ok(events.includes("exit#1"), `the child fails closed on its own deadline: ${JSON.stringify(events)}`);
+      assert.equal(report.settlements, 1);
+      assert.equal(report.code, 1);
+      assert.equal(report.signal, null);
+      assert.equal(callerSuccess({ result: report.result, exitCode: report.code }), false);
+      assert.ok(report.settledAfterExitMs !== null && report.settledAfterExitMs <= CLOSE_RECOVERY_MS + 2000, JSON.stringify(report));
+    });
+
+    test(`C2-D1 [${r.name}] 'close' never delivered: settled once, ${CLOSE_RECOVERY_MS}ms after 'exit', without the stored result`, async (t) => {
+      const { c, steps } = r.success(t);
+      const run = launch(t, c, steps, { close: "drop" });
+      const { at } = await run.exited();
+      const outcome = await run.outcome(CLOSE_RECOVERY_MS + 10000);
+      const waited = Date.now() - at;
+      assert.equal(run.acks.length, 1, "precondition: the result was stored and ACKed");
+      assert.equal(run.closes.length, 1, "precondition: Node's 'close' was withheld");
+      assert.ok(waited >= CLOSE_RECOVERY_MS - 1500 && waited <= CLOSE_RECOVERY_MS + 5000, `recovery ~${CLOSE_RECOVERY_MS}ms after exit, observed ${waited}ms`);
+      assert.deepEqual(Object.keys(outcome), RETURN_KEYS);
+      assert.equal(outcome.spawnError, false);
+      assert.equal(outcome.exitCode, 0, "the observed exit is reported as is");
+      assert.equal(outcome.signal, null);
+      assert.equal(outcome.result, null, "exit alone never proves delivery");
+      assert.equal(callerSuccess(outcome), false);
+      assert.equal(run.child.connected, false);
+      assert.equal(run.child.stdout.destroyed && run.child.stderr.destroyed, true);
+    });
+
+    test(`C2-D1 [${r.name}] 'exit' then a delayed 'close': the normal settlement, with the result`, async (t) => {
+      const { c, steps } = r.success(t);
+      const run = launch(t, c, steps, { close: 2000 });
+      const { at } = await run.exited();
+      const outcome = await run.outcome(CLOSE_RECOVERY_MS);
+      const waited = Date.now() - at;
+      assert.ok(waited >= 1500 && waited < CLOSE_RECOVERY_MS - 1000, `settled on the delayed close, observed ${waited}ms`);
+      assert.equal(outcome.exitCode, 0, outcome.stderr);
+      assert.equal(outcome.result.ok, true);
+      assert.equal(callerSuccess(outcome), true);
+    });
+  }
+});
+
+// --- the parent launcher, over a scripted child (mocked recovery timer) ------------
+
+// The outcome once pending callbacks have run - failing, not hanging, when
+// runStageProcess() has not settled (the mocked clock cannot bound a wait).
+async function settledNow(outcome) {
+  let value = null;
+  outcome.then((o) => (value = o));
+  await tick();
+  assert.ok(value, "runStageProcess() has not settled");
+  return value;
+}
+
+test("C2-D1 [stage-process] 'exit' without 'close': nothing at 9999ms, one failed settlement at 10000ms", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let diagnosed = 0;
+  const { child, outcome } = launchScripted({ diagnostics: () => (diagnosed += 1) });
+  let settled = 0;
+  outcome.then(() => (settled += 1));
+  child.emit("message", { type: "result", ok: true, receipt: "e".repeat(32) });
+  child.stderr.write("diagnostic\n");
+  child.exit(0);
+  t.mock.timers.tick(CLOSE_RECOVERY_MS - 1);
+  await tick();
+  assert.equal(settled, 0);
+  assert.equal(child.disconnects, 0);
+  t.mock.timers.tick(1);
+  const o = await settledNow(outcome);
+  assert.deepEqual(Object.keys(o), RETURN_KEYS);
+  assert.equal(o.spawnError, false);
+  assert.equal(o.exitCode, 0);
+  assert.equal(o.signal, null);
+  assert.equal(o.result, null, "the stored result is not delivered by an exit alone");
+  assert.equal(callerSuccess(o), false);
+  assert.equal(child.disconnects, 1);
+  assert.equal(child.stdout.destroyed && child.stderr.destroyed, true);
+  assert.equal(diagnosed, 1, "diagnostics still forwarded, once");
+  child.exit(0);
+  child.emit("close", 0, null);
+  t.mock.timers.tick(CLOSE_RECOVERY_MS * 2);
+  await tick();
+  assert.equal(settled, 1, "a late 'close' or 'exit' changes nothing");
+  assert.equal(child.disconnects, 1);
+  assert.equal(diagnosed, 1);
+});
+
+test("C2-D1 [stage-process] the recovered settlement keeps diagnostics bounded and redacted", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const forwarded = [];
+  const child = scriptedChild();
+  const outcome = runStageProcess({ stage: "plan", payload: {}, env: {}, cwd: process.cwd(), runner: "generative", secrets: [SECRET], spawnImpl: () => child, diagnostics: (text) => forwarded.push(text) });
+  child.stderr.write(`${SECRET} ${"x".repeat(80 * 1024)}`);
+  await tick();
+  child.exit(1);
+  t.mock.timers.tick(CLOSE_RECOVERY_MS);
+  const o = await settledNow(outcome);
+  assert.equal(o.stderr.includes(SECRET), false);
+  assert.match(o.stderr, /^\[REDACTED\] /);
+  assert.equal(forwarded.join("").includes(SECRET), false);
+  assert.match(forwarded.join(""), /stage diagnostics truncated/);
+});
+
+for (const code of [0, 1]) {
+  test(`C2-D1 [stage-process] child exits ${code} without a result: never a success, with or without 'close'`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const closed = launchScripted();
+    closed.child.exit(code);
+    closed.child.finish(code);
+    const a = await settledNow(closed.outcome);
+    assert.equal(a.exitCode, code);
+    assert.equal(a.result, null);
+    assert.equal(callerSuccess(a), false);
+    t.mock.timers.tick(CLOSE_RECOVERY_MS * 2);
+    assert.equal(closed.child.disconnects, 0, "the normal settlement clears the recovery timer");
+
+    const unclosed = launchScripted();
+    unclosed.child.exit(code);
+    t.mock.timers.tick(CLOSE_RECOVERY_MS);
+    const b = await settledNow(unclosed.outcome);
+    assert.equal(b.exitCode, code);
+    assert.equal(b.result, null);
+    assert.equal(callerSuccess(b), false);
+  });
+}
+
+test("C2-D1 [stage-process] 'exit' then 'close' inside the bound: the normal settlement with the stored result; the timer is cleared", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { child, outcome } = launchScripted();
+  child.emit("message", { type: "result", ok: true, receipt: "f".repeat(32) });
+  child.exit(0);
+  t.mock.timers.tick(CLOSE_RECOVERY_MS - 1);
+  child.emit("close", 0, null);
+  const o = await settledNow(outcome);
+  assert.deepEqual(o.result, { type: "result", ok: true });
+  assert.equal(o.exitCode, 0);
+  assert.equal(callerSuccess(o), true);
+  t.mock.timers.tick(CLOSE_RECOVERY_MS * 2);
+  await tick();
+  assert.equal(child.disconnects, 0);
+  assert.equal(child.stdout.destroyed || child.stderr.destroyed, false, "a recovery never runs after a normal settlement");
+});
+
+test("C2-D1 [stage-process] a signalled exit without 'close' reports the signal and no result", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { child, outcome } = launchScripted();
+  child.emit("message", { type: "result", ok: true, receipt: "1".repeat(32) });
+  child.exit(null, "SIGKILL");
+  t.mock.timers.tick(CLOSE_RECOVERY_MS);
+  const o = await settledNow(outcome);
+  assert.equal(o.exitCode, null);
+  assert.equal(o.signal, "SIGKILL");
+  assert.equal(o.result, null);
+});
+
+test("C2-D1 [stage-process] a spawn 'error' after 'exit' settles once and clears the recovery", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { child, outcome } = launchScripted();
+  child.exit(1);
+  child.emit("error", new Error("spawn failure"));
+  const o = await settledNow(outcome);
+  assert.equal(o.spawnError, true);
+  t.mock.timers.tick(CLOSE_RECOVERY_MS * 2);
+  await tick();
+  assert.equal(child.disconnects, 0);
+});
+
+// --- the CLI: a child that never closes is never a silent success ------------------
+
+// A stage child that answers the payload with a successful result, exits 0,
+// and never emits 'close' - the Windows defect, as the CLI sees it.
+function unclosingSpawn() {
+  const calls = [];
+  const impl = () => {
+    const child = scriptedChild();
+    calls.push(child);
+    child.send = (message) => {
+      if (message && message.type === "payload") {
+        setImmediate(() => {
+          child.emit("message", { type: "result", ok: true, receipt: "2".repeat(32), artifacts: {} });
+          child.exit(0);
+        });
+      }
+      return true;
+    };
+    return child;
+  };
+  return { impl, calls };
+}
+
+describe("C2-D1 CLI (real timers)", { concurrency: true }, () => {
+  after(cleanupScratch);
+
+  test("C2-D1 [cli triage analyze] child exits 0 without 'close': exit 1 STAGE_FAILED, never 0", async () => {
+    const root = makeRoot(baseConfig({ capabilities: { triage: true } }));
+    const spawn = unclosingSpawn();
+    const env = hermeticEnv({ QA_AI_INVOCATION_MODE: "local-v1", QA_AI_INVOCATION_ID: "c".repeat(32) });
+    const r = await withTimeout(runCli(["triage", "analyze", "--root", root, "--json"], { env, spawnImpl: spawn.impl }), CLOSE_RECOVERY_MS + 10000, "the CLI");
+    assert.equal(spawn.calls.length, 1);
+    assert.equal(r.code, 1, r.stderr);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.errors[0].code, "STAGE_FAILED");
+  });
+
+  test("C2-D1 [cli design] child exits 0 without 'close': exit 1 STAGE_FAILED, never 0, no run left behind", async () => {
+    const root = stage3.makeStage3Root();
+    const spawn = unclosingSpawn();
+    const r = await withTimeout(runCli(["design", "--root", root, "--json"], { env: stage3.generativeEnv(), spawnImpl: spawn.impl }), CLOSE_RECOVERY_MS + 10000, "the CLI");
+    assert.equal(spawn.calls.length, 1);
+    assert.equal(r.code, 1, r.stderr);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.errors[0].code, "STAGE_FAILED");
+    assert.equal(fs.existsSync(path.join(root, "reports")), false);
+  });
+});
