@@ -31,10 +31,11 @@
 
 "use strict";
 
+const crypto = require("crypto");
 // config.js snapshots AI_PROVIDER at load; in this child it equals the
 // parent's effective decision (buildGenerativeEnv()).
 const { PROVIDER } = require("../config");
-const { createProvider } = require("../providers/index");
+const { createProvider, bindCancelSignal } = require("../providers/index");
 const { generateRequirementModel } = require("../generative-test-design/requirement-model-generator");
 const { generateTestCaseModel } = require("../generative-test-design/test-case-model-generator");
 const { generateAutomationCandidate } = require("../generative-test-design/automation-candidate-generator");
@@ -105,13 +106,96 @@ async function runGenerate(provider, p) {
 }
 
 const STAGES = Object.freeze({ design: runDesign, plan: runPlan, generate: runGenerate });
+// SEC-C1: the existing generic stage-failure exit code - no new code.
+const PARENT_LOST_EXIT_CODE = 1;
+// FT0-C2: the parent's private receipt for a stored result (stage-process.js).
+const RESULT_ACK_TYPE = "result-ack";
+// FT0-C2: fixed bound on the whole transfer - the send and the wait for the
+// parent's ACK. Not configurable.
+const RESULT_ACK_DEADLINE_MS = 10000;
+
+/**
+ * SEC-C1 (OD-RATE-1 FT0, unconditional): identical to stage-runner.js's
+ * guardParentLink() - parent IPC loss before the result is delivered aborts
+ * the in-flight provider request (providers/index.js bindCancelSignal()) and
+ * exits in the same turn, so no later generator attempt, step or result can
+ * run; no signal handler is installed. `report()` owns the single result
+ * transfer: running -> sending -> awaiting_ack -> delivered, or -> failed
+ * from any of them. The send callback is not delivery proof (FT0-C2); only
+ * the parent's ACK echoing this result's random receipt is, and parent
+ * loss, a send error or no valid ACK within RESULT_ACK_DEADLINE_MS of the
+ * report fails the child. Only a delivered result is followed by the
+ * child's own, ignored, disconnect.
+ */
+function guardParentLink(proc) {
+  const controller = new AbortController();
+  let state = "running";
+  let receipt = null;
+  let deadline = null;
+  const settle = (outcome) => {
+    state = outcome;
+    clearTimeout(deadline);
+    proc.removeListener("message", onAck);
+  };
+  const fail = () => {
+    if (state === "failed" || state === "delivered") return;
+    settle("failed");
+    try {
+      controller.abort();
+    } finally {
+      proc.exit(PARENT_LOST_EXIT_CODE);
+    }
+  };
+  // The receipt alone proves the parent read this result, so an ACK that
+  // overtakes the send callback is still a delivery. Messages that reached
+  // the child before report() are replayed to this listener by Node; the
+  // receipt check is what keeps them from authorizing anything.
+  function onAck(message) {
+    if (state !== "sending" && state !== "awaiting_ack") return;
+    if (!message || typeof message !== "object" || message.type !== RESULT_ACK_TYPE || message.receipt !== receipt) return;
+    settle("delivered");
+    // Never from inside Node's own message dispatch: on Node 22 a further
+    // message from the same read would meet the already-closed channel and
+    // crash the child.
+    setImmediate(() => {
+      if (proc.connected) proc.disconnect();
+    });
+  }
+  proc.on("disconnect", fail);
+  return {
+    signal: controller.signal,
+    report(message) {
+      if (state !== "running") return false;
+      if (!proc.connected) {
+        fail();
+        return false;
+      }
+      state = "sending";
+      receipt = crypto.randomBytes(16).toString("hex");
+      deadline = setTimeout(fail, RESULT_ACK_DEADLINE_MS);
+      proc.on("message", onAck);
+      try {
+        proc.send({ ...message, receipt }, (err) => {
+          if (state !== "sending") return;
+          if (err || !proc.connected) {
+            fail();
+            return;
+          }
+          state = "awaiting_ack";
+        });
+      } catch {
+        fail();
+        return false;
+      }
+      return true;
+    },
+  };
+}
+
+let parentLink = null;
 
 function finish(result) {
-  const done = () => {
-    if (process.connected) process.disconnect();
-  };
-  if (typeof process.send === "function" && process.connected) process.send({ type: "result", ...result }, done);
-  else process.exitCode = result.ok ? 0 : 1;
+  if (parentLink) parentLink.report({ type: "result", ...result });
 }
 
 async function runOnce(message) {
@@ -150,10 +234,12 @@ if (require.main === module) {
     process.stderr.write("generative-runner.js is an internal qa-agent entrypoint and must be started by the qa-agent CLI.\n");
     process.exitCode = 1;
   } else {
+    parentLink = guardParentLink(process);
+    bindCancelSignal(parentLink.signal);
     process.once("message", (message) => {
       runOnce(message);
     });
   }
 }
 
-module.exports = { STAGES, failureCodes };
+module.exports = { STAGES, failureCodes, guardParentLink };

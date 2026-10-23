@@ -31,6 +31,15 @@ const RUNNERS = Object.freeze({ triage: STAGE_RUNNER_PATH, generative: GENERATIV
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_FORWARD_BYTES = 64 * 1024;
 const MIN_REDACTION_LENGTH = 4;
+// SEC-C1 (FT0-C2): the private receipt returned for the one stored result;
+// the child treats its result as delivered only on this ACK.
+const RESULT_ACK_TYPE = "result-ack";
+const RECEIPT_PATTERN = /^[0-9a-f]{32}$/;
+// SEC-C1 (FT0-C2-D1): on Windows a child that exits with IPC data still
+// unread can leave the parent with no 'close' (and no 'disconnect'); the
+// event loop then drains and the CLI ends without a result. After 'exit' the
+// parent waits at most this long for 'close', then settles failed.
+const CLOSE_AFTER_EXIT_MS = 10000;
 
 function redact(text, secrets) {
   let out = text;
@@ -86,18 +95,13 @@ function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = c
     const readStderr = capture(child.stderr);
     let result = null;
     let settled = false;
+    let closeTimer = null;
 
-    child.on("message", (message) => {
-      if (message && typeof message === "object" && message.type === "result" && result === null) result = message;
-    });
-    child.on("error", () => {
-      if (settled) return;
+    // The one settlement of a started child: 'close', or the bounded recovery
+    // after 'exit'. Diagnostics stay bounded and redacted on both.
+    function finish(exitCode, signal) {
       settled = true;
-      resolve({ spawnError: true, exitCode: null, signal: null, result: null, stdout: "", stderr: "" });
-    });
-    child.on("close", (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
+      clearTimeout(closeTimer);
       const out = readStdout();
       const err = readStderr();
       const stdout = redact(out.text, secrets);
@@ -109,6 +113,50 @@ function runStageProcess({ stage, payload, env, cwd, secrets = [], spawnImpl = c
         if (out.truncated || err.truncated) diagnostics("[qa-agent] stage output exceeded the capture bound and was truncated\n");
       }
       resolve({ spawnError: false, exitCode, signal, result, stdout, stderr });
+    }
+
+    // Only the first result is stored, and only it - once stored - is ACKed,
+    // at most once. Its receipt is not part of the stored result. A failed
+    // ACK send is left to the child, which then fails closed on its own; the
+    // callback keeps such a failure from surfacing as a spawn 'error'.
+    child.on("message", (message) => {
+      if (!message || typeof message !== "object" || message.type !== "result" || result !== null) return;
+      const { receipt, ...stored } = message;
+      result = stored;
+      if (typeof receipt !== "string" || !RECEIPT_PATTERN.test(receipt)) return;
+      try {
+        child.send({ type: RESULT_ACK_TYPE, receipt }, () => {});
+      } catch {
+        // As above: no ACK, so the child fails closed.
+      }
+    });
+    child.on("error", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(closeTimer);
+      resolve({ spawnError: true, exitCode: null, signal: null, result: null, stdout: "", stderr: "" });
+    });
+    child.on("close", (exitCode, signal) => {
+      if (settled) return;
+      finish(exitCode, signal);
+    });
+    // The timer is deliberately ref'd: it is what keeps the parent alive when
+    // 'close' never comes. Exit alone never proves the result was delivered,
+    // so a recovered settlement carries no result and the caller fails.
+    child.on("exit", (exitCode, signal) => {
+      if (settled || closeTimer !== null) return;
+      closeTimer = setTimeout(() => {
+        if (settled) return;
+        result = null;
+        try {
+          if (child.connected) child.disconnect();
+        } catch {
+          // already gone
+        }
+        if (child.stdout) child.stdout.destroy();
+        if (child.stderr) child.stderr.destroy();
+        finish(exitCode, signal);
+      }, CLOSE_AFTER_EXIT_MS);
     });
 
     try {

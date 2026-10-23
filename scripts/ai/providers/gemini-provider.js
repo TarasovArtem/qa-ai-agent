@@ -68,6 +68,19 @@ function mapHttpError(status) {
   });
 }
 
+// SEC-C1 (OD-RATE-1 FT0-C1): exactly mirroring groq-provider.js's
+// releaseErrorResponse() - an unsuccessful response's never-read body is
+// cancelled and its request aborted at once, fire-and-forget.
+function releaseErrorResponse(res, controller) {
+  try {
+    const pending = res.body && typeof res.body.cancel === "function" ? res.body.cancel() : null;
+    if (pending && typeof pending.catch === "function") pending.catch(() => {});
+  } catch {
+    // already locked / errored / closed - nothing further to release
+  }
+  controller.abort();
+}
+
 // TSB-F06 + ADV-01: bounded body-read failure -> the existing generic
 // codes, exactly mirroring groq-provider.js's mapBodyReadError().
 function mapBodyReadError(err, timeoutMs) {
@@ -85,6 +98,16 @@ function mapBodyReadError(err, timeoutMs) {
   }
   return new ProviderError("Gemini API returned a response that was not valid JSON", {
     code: PROVIDER_ERROR_CODES.INVALID_RESPONSE,
+    retryable: false,
+  });
+}
+
+// SEC-C1 (OD-RATE-1 FT0): exactly mirroring groq-provider.js's
+// cancelledError() - parent loss is never retryable, never a new code, and
+// carries no cause.
+function cancelledError() {
+  return new ProviderError("Gemini API request cancelled: the parent process disconnected", {
+    code: PROVIDER_ERROR_CODES.UNKNOWN,
     retryable: false,
   });
 }
@@ -117,10 +140,11 @@ class GeminiProvider {
   // throwaway key/model, a short timeoutMs) with no process.env
   // manipulation and no real network access - identical pattern to
   // GroqProvider. Production (createProvider(), see providers/index.js)
-  // calls `new GeminiProvider()` with no arguments, which falls back to
+  // passes no credential/model/transport arguments, so it falls back to
   // this project's existing generic config (AI_API_KEY, AI_MODEL) -
   // GeminiProvider never introduces a GEMINI_-prefixed env var of its own.
-  constructor({ apiKey = API_KEY, model = MODEL, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  // `cancelSignal` (SEC-C1) is identical to GroqProvider's.
+  constructor({ apiKey = API_KEY, model = MODEL, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, cancelSignal = null } = {}) {
     if (!apiKey) {
       throw new ProviderError('AI_API_KEY is required for provider "gemini"', {
         code: PROVIDER_ERROR_CODES.CONFIGURATION,
@@ -138,12 +162,29 @@ class GeminiProvider {
     this.model = model;
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.cancelSignal = cancelSignal;
   }
 
+  // SEC-C1: identical to GroqProvider.analyze() - no request after parent
+  // loss, and parent loss aborts the in-flight one via the same controller.
   async analyze({ systemPrompt, userPrompt }) {
+    if (this.cancelSignal && this.cancelSignal.aborted) throw cancelledError();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const onCancel = () => controller.abort();
+    if (this.cancelSignal) this.cancelSignal.addEventListener("abort", onCancel, { once: true });
+    try {
+      return await this.#exchange(controller, timer, systemPrompt, userPrompt);
+    } catch (err) {
+      if (this.cancelSignal && this.cancelSignal.aborted) throw cancelledError();
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      if (this.cancelSignal) this.cancelSignal.removeEventListener("abort", onCancel);
+    }
+  }
 
+  async #exchange(controller, timer, systemPrompt, userPrompt) {
     // Model belongs in the URL path (Gemini's own REST convention), never
     // hardcoded - always the configured this.model, so a future AI_MODEL
     // change requires no adapter change.
@@ -189,6 +230,7 @@ class GeminiProvider {
 
     if (!res.ok) {
       clearTimeout(timer);
+      releaseErrorResponse(res, controller);
       throw mapHttpError(res.status);
     }
 
