@@ -550,8 +550,8 @@ entry's constraints and tracked status are otherwise unchanged.
 ### GOV-AUTO-1 — Governance Pre-Review Framework
 
 ```text
-GOV-AUTO-1:      COMPLETE_ON_MAIN  (Waves 0-5 merged + post-merge certified; see §8
-                 Wave 5 closure evidence for this sync's lifecycle condition)
+GOV-AUTO-1:      COMPLETE_ON_MAIN  (Waves 0-5 and canonical closure PR #210
+                 merged + post-merge certified; see §8 Wave 5 evidence)
 Design:          design/reconciliation MERGED + POST-MERGE CERTIFIED
                  (docs/gov-auto-1-design-reconciliation-v1.md; PR #185; see §8 evidence)
 Roadmap sync:    CERTIFIED_ON_MAIN (PR #186; see §8 closure evidence)
@@ -612,8 +612,9 @@ post-merge certified (PR #208; see [Wave 5 / Stage 1G closure evidence](#gov-aut
 Wave 4 merged with one owner-accepted deferred finding, `W4-C2-SEC-M1`
 (`DEFERRED`, non-blocking, **not** closed); the privileged
 `PASS_AFTER_JUSTIFIED_SAME_HEAD_RERUN` path stays fail-closed until its trust
-prerequisites are separately delivered. `GOV-AUTO-1` is `COMPLETE_ON_MAIN`,
-subject to this closure sync's own lifecycle condition in the Wave 5 evidence.
+prerequisites are separately delivered. `GOV-AUTO-1` is `COMPLETE_ON_MAIN`:
+canonical closure PR #210 merged as `35c8d72a06aa86c94bd0550e6d66715c5e27edb3`
+and passed fresh exact-merge push-event CI #37212895232.
 Completion does not establish a live authenticated GitHub/provider adapter or
 production readiness. `AISEC-4` is `COMPLETE_ON_MAIN` for its research/design
 lifecycle (see [closure evidence](#aisec-4-closure-evidence) in §8). `AISEC-5`
@@ -1120,7 +1121,7 @@ New order:        AISEC-3 (COMPLETE_ON_MAIN)  →  GOV-AUTO-1  →  AISEC-4 .. A
                   implementation was NOT_STARTED and it was the roadmap-designated
                   next active gate; since then the design/reconciliation and Waves 0-5
                   have been merged + certified, and GOV-AUTO-1 is COMPLETE_ON_MAIN
-                  (see §6, §8; this closure sync has its own lifecycle condition).
+                  (see §6, §8; the subsequent closure PR #210 is already post-merge certified).
 
 Decision owner:   Project owner.
 ```
@@ -1358,8 +1359,8 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Architecture Conformance Gate (COMPLETE_ON_MAIN)
        [A-3 CLOSED_ON_MAIN; A-1 CLOSED_ON_MAIN; D-2 CLOSED_ON_MAIN]
   →  AISEC-1 (COMPLETE_ON_MAIN)  →  AISEC-2 (COMPLETE_ON_MAIN)  →  AISEC-3 (COMPLETE_ON_MAIN)
-  →  GOV-AUTO-1 (COMPLETE_ON_MAIN; Waves 0-5 MERGED + POST-MERGE CERTIFIED;
-       this closure sync must itself complete its §8 lifecycle condition)
+  →  GOV-AUTO-1 (COMPLETE_ON_MAIN; Waves 0-5 and canonical closure PR #210
+       MERGED + POST-MERGE CERTIFIED; see §8 Wave 5 evidence)
   →  AISEC-4 (COMPLETE_ON_MAIN)
   →  AISEC-5 (COMPLETE_ON_MAIN)
   →  AISEC-6 (COMPLETE_ON_MAIN; research/design)
@@ -4850,8 +4851,8 @@ AISEC execution: AISEC-1 COMPLETE_ON_MAIN (research); AISEC-2 COMPLETE_ON_MAIN (
   see [AISEC-3 closure evidence](#aisec-3-closure-evidence) in §8. Per §15,
   GOV-AUTO-1 (inserted before AISEC-4 by a later owner decision, §7) is
   COMPLETE_ON_MAIN; its design/reconciliation and Waves 0-5 are merged and
-  post-merge certified (see §8 Wave 5 closure evidence and this sync's own
-  lifecycle condition). AISEC-4 is COMPLETE_ON_MAIN for research/design; see
+  post-merge certified (see §8 Wave 5 closure evidence; the subsequent
+  canonical closure PR #210 is also post-merge certified). AISEC-4 is COMPLETE_ON_MAIN for research/design; see
   [AISEC-4 closure evidence](#aisec-4-closure-evidence). AISEC-5 is also
   COMPLETE_ON_MAIN for research/design; see [AISEC-5 closure evidence](#aisec-5-closure-evidence).
   AISEC-6 is also COMPLETE_ON_MAIN for research/design; see
@@ -5510,9 +5511,13 @@ design/reconciliation is merged and post-merge certified -- see [GOV-AUTO-1 desi
 the ROADMAP synchronization recording that design has been reviewed under the required review lifecycle gate (review independence LIMITED -- same-session role separation), merged and post-merge certified (see [GOV-AUTO-1 ROADMAP synchronization closure evidence](#gov-auto-1-roadmap-synchronization-closure-evidence)),
 and Wave 0, Wave 1, Wave 2, Wave 3 and Wave 4 have been merged and post-merge certified (see [GOV-AUTO-1 Wave 0 evidence](#gov-auto-1-wave-0-evidence), [GOV-AUTO-1 Wave 1 evidence](#gov-auto-1-wave-1-evidence), [GOV-AUTO-1 Wave 2 evidence](#gov-auto-1-wave-2-evidence), [GOV-AUTO-1 Wave 3 evidence](#gov-auto-1-wave-3-evidence) and [GOV-AUTO-1 Wave 4 evidence](#gov-auto-1-wave-4-evidence)).
 Wave 5 / Stage `1G` is also merged and post-merge certified (PR #208; see
-[Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)). The proposed
-`COMPLETE_ON_MAIN` state is subject to this sync's own LIGHT review, authorized
-standard two-parent merge and fresh post-merge push certification. `AISEC-4`
+[Wave 5 closure evidence](#gov-auto-1-wave-5--stage-1g-closure-evidence)).
+The earlier proposed `COMPLETE_ON_MAIN` transition is historical: its canonical
+closure PR [#210](https://github.com/TarasovArtem/qa-ai-agent/pull/210)
+merged as a `STANDARD_TWO_PARENT` commit
+`35c8d72a06aa86c94bd0550e6d66715c5e27edb3`, and the fresh automatic
+[push CI 37212895232](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/37212895232)
+passed on this exact merge SHA. `AISEC-4`
 has since completed its research/design lifecycle (`COMPLETE_ON_MAIN`; see
 [AISEC-4 closure evidence](#aisec-4-closure-evidence)). `AISEC-5` is also
 `COMPLETE_ON_MAIN` for research/design (see [AISEC-5 closure evidence](#aisec-5-closure-evidence)),
