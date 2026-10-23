@@ -38,7 +38,14 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified repository main / OD-RATE-1 FT0 SEC-C1 security implementation:
+Latest certified repository main / FT0 ROADMAP-only closure:
+  main: fd11db77df0c2fa3e71ffd6c5225a8e345d053c9
+  PR #260 MERGED / POST-MERGE CERTIFIED
+  reviewed HEAD: 78536948b3b9e00e73eed3bffb26a7af4a213b8f
+  STANDARD_TWO_PARENT parents: 742ba32baa64a7fccf5f0af642c89cfdf10295e1, 78536948b3b9e00e73eed3bffb26a7af4a213b8f
+  automatic push CI 39957638452 / attempt 1 / success / 7/7 jobs
+
+Historical certified FT0 SEC-C1 implementation:
   main: 742ba32baa64a7fccf5f0af642c89cfdf10295e1
   TREE: a5231b3d432b9568908c8cc4c8dd194c806ecd54
   implementation PR #259; COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
@@ -109,10 +116,10 @@ Historical RTI certification anchor (not the current repository HEAD):
 record](#od-06-execution-design-certification-record) in §8); it is
 documentation-only and changes no runtime behavior. Stage 4B
 `2c666e1261df747eb8ca4ce8d33870c8d47404f4` is a historical Controlled-v1
-implementation certification anchor. The most recent certified repository `main`
-is the distinct OD-RATE-1 FT0 security implementation merge
-`742ba32baa64a7fccf5f0af642c89cfdf10295e1`; all earlier anchors remain
-historically valid.
+implementation certification anchor. The most recent certified repository `main` is the FT0 canonical closure
+merge `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9` (PR #260). The FT0 implementation merge
+`742ba32baa64a7fccf5f0af642c89cfdf10295e1` (PR #259) and all earlier
+certified anchors remain historically valid.
 `8aa7c5191e662942f1d73539c740904d385c646d` is the `TSB-F04` + `TSB-F07` +
 `XI-01` + `XI-02` remediation merge (PR #238), post-merge certified on its exact
 SHA (see [TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation closure
@@ -1446,11 +1453,11 @@ record](#od-06-execution-design-certification-record) below). The OD-06 document
 [#255](https://github.com/TarasovArtem/qa-ai-agent/pull/255) and was certified on
 `52e23acf0f7e5d2f7fce2b406a27de51ae1af68c` through fresh push-event
 [CI 38691690831](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38691690831).
-The **OD-RATE-1 FT0 ROADMAP-only closure sync** is now the sole active
-**governance** lifecycle under `WIP = 1`; independent exact-head `LIGHT`
-review, separate PO merge authorization, STANDARD_TWO_PARENT merge and fresh
-post-merge push-event certification are still required for this documentation
-sync. Its authoring is not canonical completion. Stage 5 (`execute`) is
+The **OD-RATE-1 FT0 ROADMAP-only closure sync** (PR #260) is
+`MERGED / POST-MERGE CERTIFIED`, with independent exact-head `LIGHT` review,
+separate PO merge authorization, STANDARD_TWO_PARENT merge and fresh automatic
+push-event CI 39957638452 (7/7 success) on `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9`. No new engineering
+stream is authorized. Stage 5 (`execute`) is
 `READY / NOT AUTHORIZED`; `execute` remains disabled and no next engineering
 stage is authorized. Later productization stages retain their designed order,
 followed by `qa-agent-demo` (`NOT_STARTED`) and Controlled Release
@@ -1496,6 +1503,13 @@ Provider Governor design, FT1, or any Controlled-v1 execute/release capability.
   `PRE-EXISTING`. The reviewer Linux full unit suite was not
   a clean PASS; setup-related failures were separately rerun and the
   post-merge exact-SHA GitHub CI passed.
+- FT0 ROADMAP-only closure [PR #260](https://github.com/TarasovArtem/qa-ai-agent/pull/260):
+  independently reviewed HEAD `78536948b3b9e00e73eed3bffb26a7af4a213b8f`
+  (`LIGHT` R5 APPROVED); merge `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9` (STANDARD_TWO_PARENT;
+  parents `742ba32baa64a7fccf5f0af642c89cfdf10295e1` and
+  `78536948b3b9e00e73eed3bffb26a7af4a213b8f`).
+  Automatic `push` CI [39957638452](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/39957638452)
+  on `main`, attempt 1, completed / success, 7/7 jobs.
 - [Issue #258](https://github.com/TarasovArtem/qa-ai-agent/issues/258) remains
   `OPEN`: a **separate** OD-RATE-1-C2-R2 design/provenance disposition issue,
   not an FT0 implementation issue. Open PD-R1/R4/R7/R9/R11/R12 policy
@@ -1504,10 +1518,10 @@ Provider Governor design, FT1, or any Controlled-v1 execute/release capability.
   budget policy, Stage 5 activation, release authorization or lifecycle
   closure of unrelated issues follows from this FT0 certification.
 
-This ROADMAP-only truth-sync is a separate **LIGHT review lifecycle**:
-it does not become authoritative until its independently reviewed PR is
-separately PO merge-authorized, merged `STANDARD_TWO_PARENT` and
-post-merge certified by automatic `push` CI.
+This ROADMAP-only truth-sync completed its separate **LIGHT review lifecycle**:
+PR #260 was independently exact-head approved (R5), separately PO merge-authorized,
+merged `STANDARD_TWO_PARENT` and post-merge certified by automatic `push` CI.
+PR #259 implementation remains a separate historical certification gate.
 
 ### OD-06 execution design certification record
 
@@ -1561,9 +1575,9 @@ subsequently merged via `STANDARD_TWO_PARENT` commit
 [push-event CI 38691690831](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/38691690831)
 on that exact SHA (7/7 SUCCESS). Thus OD-06 canonical closure is completed
 on `main`, not pending. The **separate OD-RATE-1 FT0 ROADMAP-only closure
-PR #260** remains the current governance lifecycle, requiring its own
-independent exact-head LIGHT review, separate PO merge authorization,
-`STANDARD_TWO_PARENT` merge and fresh post-merge push CI. Neither OD-06
+PR #260** completed independent exact-head LIGHT review, separate PO merge
+authorization, `STANDARD_TWO_PARENT` merge (`fd11db77df0c2fa3e71ffd6c5225a8e345d053c9`) and
+fresh automatic push CI 39957638452 (7/7 success). Neither OD-06
 closure nor FT0 documentation synchronization implements or activates Stage 5
 or grants Controlled Release approval.
 
@@ -5656,9 +5670,9 @@ TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation:
                                  POST-MERGE CERTIFIED (design PR #237;
                                  implementation PR #238; merge
                                  8aa7c5191e662942f1d73539c740904d385c646d)
-active governance lifecycle:     OD-RATE-1 FT0 ROADMAP-only canonical closure
-                                 sync (LIGHT / SOLE WIP; independent review and
-                                 separate merge authorization required)
+FT0 governance lifecycle:        PR #260 MERGED / POST-MERGE CERTIFIED
+active engineering stream:        NONE AUTHORIZED
+next engineering lifecycle:       NOT AUTHORIZED (WIP = 1)
 Audit findings:                  TSB-F01, TSB-F03, TSB-F04, TSB-F05, TSB-F06,
                                  TSB-F07 CLOSED_ON_MAIN / REMEDIATED;
                                  TSB-F02 OPEN / LOW / CONDITIONAL
@@ -5695,7 +5709,10 @@ OD-06 canonical closure sync:    PR #255 MERGED / POST-MERGE CERTIFIED
 OD-RATE-1 FT0 SEC-C1:             COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
                                  (PR #259; merge 742ba32baa64a7fccf5f0af642c89cfdf10295e1;
                                  fresh push CI 39930474587, 7/7 PASS)
-OD-RATE-1 C2-R2 design Issue:    #258 OPEN (distinct; no FT1 authorization)
+OD-RATE-1 FT0 closure sync:       PR #260 MERGED / POST-MERGE CERTIFIED
+                                  (merge fd11db77df0c2fa3e71ffd6c5225a8e345d053c9; push CI 39957638452, 7/7 PASS)
+OD-RATE-1 C2-R2 design Issue:    #258 OPEN / PARTIALLY_REMEDIATED
+                                  (distinct; no FT1 authorization)
 FT0 residual observations:      Windows EPERM UNVERIFIED; two synthetic IPC
                                  observations UNVERIFIED; no waiver
 Stage 5 (execute):               READY / NOT AUTHORIZED
