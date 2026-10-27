@@ -1,11 +1,11 @@
-# OD-RATE-1-C2-R3 — Provider Gateway Design (Parent Gateway Replacement, C5)
+# OD-RATE-1-C2-R3 — Provider Gateway Design (Parent Gateway, C6 Consolidated Containment Corrective)
 
 | Field | Value |
 |---|---|
 | Document | `docs/od-rate-1-c2-r3-design.md` (1 of 3; companions: [proofs](od-rate-1-c2-r3-proofs.md), [review matrix](od-rate-1-c2-r3-review-matrix.md)) |
-| Revision | **C5: Parent Gateway design replacement.** It replaces the child-owned C4 governor at PR #262 head `38121f95938b28e065283707d01a70b05893e94c` (tree `cf2b202dbbde6c5fa693ceeb41e2df3662fd6c4c`). C4 was REJECTED by the independent R4 review (§2.6). Superseded C4 material: §22. Change log: §23. |
-| Status | **DESIGN — PENDING INDEPENDENT EXACT-HEAD ARCHITECTURE REVIEW AND SECURITY REVIEW.** Not approved. It authorizes no implementation, test, contract amendment, ROADMAP entry, real-provider call, merge or release. |
-| Authority | Product Owner: **OD-RATE-1 Unified Architecture Decision Package v2, AD-01 … AD-09, APPROVED 2026-10-27** (§2.2) |
+| Revision | **C6: consolidated containment corrective of the C5 Parent Gateway design** (C5 = PR #262 head `0c91393d68f9ac66f8ae5a7e9a719d76187fed03`, tree `203006c000a0e1d97aff86f3fa9965466e50d955`). C6 addresses `SG01-SEC-01`, `C5-ARCH-01`, `C5-ARCH-02` and `C5-EVID-01` (§24). C5 replaced the child-owned C4 governor (`38121f95`), which the independent R4 review REJECTED (§2.6). Superseded C4 material: §22. Change log: §23. **C6 containment sections: §24–§31.** |
+| Status | **DESIGN — PENDING INDEPENDENT EXACT-HEAD ARCHITECTURE REVIEW AND SECURITY REVIEW.** Not approved. It authorizes no implementation, test, contract amendment, ROADMAP entry, real-provider call, host experiment, dependency, merge or release. **Host feasibility: BLOCKED (§30.1). No host is qualified.** |
+| Authority | Product Owner: **OD-RATE-1 Unified Architecture Decision Package v2, AD-01 … AD-09, APPROVED 2026-10-27** (§2.2); **C6 decisions PD-C6-1 … PD-C6-6** and SEC-D1 … SEC-D3 (§24.1) |
 | Issue | #258 (OPEN; not modified; its body predates the later PO decisions, §2.3) |
 | Baseline | `main` HEAD `a32a6cd7e0a1bdc9917fc3abc7f692039591a145`, TREE `5e15c577faf60d65887569772dd4dd3558e53c26` |
 | Author | Claude Code, the same account that authored OD-RATE-1, C1 … C4 and the Gateway spike. **This author cannot approve this design.** |
@@ -37,17 +37,34 @@ Decision record:
   spike into production. The spike is feasibility evidence (§2.5); every spike
   behavior used here is restated as a production requirement, and the spike-only
   behaviors that production must not have are listed in §15.4 and §22.
+- **C6.** The Security review finding `SG01-SEC-01` (MAJOR) found that C5's
+  termination guarantee, which relied on child cooperation and K_SETTLE abandonment,
+  is incompatible with SEC-C1. C6 adds **worker containment**: every provider-backed
+  stage child runs inside an OS containment created by a per-stage launcher, before
+  the child runs. The parent can terminate the containment without the child's
+  cooperation and confirm that it is empty. The containment also gives the child no
+  network and no credential (§27, §28). Ungoverned provider-backed execution now
+  also uses the parent-owned Gateway, in pass-through mode (PD-C6-1, §25). Hosts that
+  are unsupported or unqualified refuse provider-backed execution (PD-C6-3, §26).
+  **The containment mechanisms are candidate designs. No host has been qualified
+  (§30).**
+
+Reading guide: §3–§23 are the C5 Gateway design with C6 amendments marked
+"(C6)". §24–§31 are the C6 containment design. Where a C5 statement in §3–§21
+conflicts with §24–§31, §24–§31 govern. Every such conflict is listed in §24.3.
 
 In scope: architecture, private IPC, admission, wait and deadline semantics,
 transport contract and HTTPS qualification, accounting, revocation, Property A/B
-and SEC-C1 analysis, FT0 lifecycle compatibility, failure propagation, public
-compatibility.
+and SEC-C1 analysis, worker containment and termination, direct-provider-bypass
+prevention, credential boundary, host qualification policy, FT0 lifecycle
+compatibility, failure propagation, public compatibility.
 
 Out of scope (unchanged and not designed here): triage (`stage-runner.js`, PD-R7);
 the attempt budget (PD-R1); provider request payload caps (PD-R4); real-provider
 validation (PD-R9); persistent or cross-process rate state (rejected in C1);
-OS-level network isolation of the child (Property B, §13.4); release, ROADMAP,
-governance, package exports, `README.md`, `SECURITY.md`, `PROVIDERS` docs.
+non-generative child processes (`collect`, `history`, `aggregate`, `analyze`);
+release, ROADMAP, governance, package exports, `README.md`, `SECURITY.md`,
+`PROVIDERS` docs; installation, packaging or signing of any launcher.
 
 ## 2. Authority, evidence and baseline
 
@@ -60,8 +77,12 @@ Every claim in D, P and M carries one of these classes. They are never merged.
 | **PO-CONV** | Approved by the Product Owner in conversation; not (yet) published on GitHub | AD-01 … AD-09; PD-R11 A, PD-R12 A, PD-R12-I1, PD-R15 |
 | **PO-GH** | Disposition published on GitHub (Issue #258 body, 2026-10-19) | PD-R2, PD-R3, PD-R5, PD-R6, PD-R8, PD-R10, PD-R13, PD-R14, SEC-C1 |
 | **HIST-C4** | Rejected child-owned C4 design and its numbers | §22; P §7.2 |
-| **SPIKE** | Behavior of the isolated Gateway spike, independently verified (§2.5) | P §8 |
-| **OPEN** | Production behavior not yet verified by anyone | HTTPS transport (§10.2), integrated lifecycle (§14), Windows on Node 22.x |
+| **SPIKE** | Behavior of the isolated Gateway spike. The independent C2 verdict reached the author as PO-supplied evidence (§2.5, §2.8) | P §8 |
+| **OPEN** | Production behavior not yet verified by anyone | HTTPS transport (§10.2), integrated lifecycle (§14), Windows on Node 22.x, every containment property (§30) |
+
+Orthogonal to these classes, C6 records each evidence item's **provenance**, which
+says who verified it. Provenance is defined in §2.8 (C5-EVID-01) and is never
+upgraded.
 
 Issue #258 still lists PD-R11 and PD-R12 as open. Its body predates the later PO
 decisions and is unsynchronized. It is **not** evidence that those decisions are
@@ -72,7 +93,7 @@ absent. The R4 reviewer noted the same (§2.6).
 | ID | Decision | Where C5 implements it |
 |---|---|---|
 | AD-01 | Parent exclusively owns governed provider transport, credentials, admission, accounting and revocation. Child uses validated private IPC. | §3, §7, §8, §10, §13.1 |
-| AD-02 | Preserve SEC-C1. Property A is verified; Property B is not provided. Mandatory Security reconciliation, no waiver. | §13; gates SG-01 … SG-04 (§21.2) |
+| AD-02 | Preserve SEC-C1. Property A is verified; Property B is not provided. Mandatory Security reconciliation, no waiver. | §13; gates SG-01 … SG-04 (§21.2). **C6:** the reconciliation produced `SG01-SEC-01`; C6 adds a candidate containment design for Property B and for worker termination (§27, §28), still under the Security gates |
 | AD-03 | 900 000 ms cumulative governor waiting; preserve the approved 65 000 ms cold start. | §9.1, §8.6 |
 | AD-04 | `now >= deadlineAt` means REFUSE. Timer overshoot may increase charged waiting but must never permit further dispatch. | §9.2, §9.3, §8.4 |
 | AD-05 | Count actual waiting elapsed before cancellation. | §9.3 |
@@ -91,7 +112,7 @@ absent. The R4 reviewer noted the same (§2.6).
 | PD-R6 | PO-GH | APPROVED | No exit 130; native user-signal termination; user cancellation never exit 6. |
 | PD-R8 | PO-GH | APPROVED DIRECTION | Closed reason-code extension (§16). |
 | PD-R10 | PO-GH | APPROVED | Heuristic, best-effort token admission; exceeding local budgets fails closed (§11.2). |
-| PD-R13 | PO-GH | APPROVED | Deadline and watchdog only when governed. |
+| PD-R13 | PO-GH | APPROVED; **interpretation narrowly amended by PD-C6-1** | Deadline and watchdog only when governed. C6 reading (§25.2): PD-R13 covers the rate-governance features (admission, ledgers, wait budget, dispatch deadline, heartbeat, watchdog, enforcement). It does not exclude the parent-owned transport, credential custody, revocation or containment. Those are SEC-C1 protections and apply in both modes. |
 | SEC-C1 | PO-GH | APPROVED; FT0 implementation certified on `main` | "Parent IPC disconnection must abort pending waits and in-flight provider requests. No subsequent provider calls may be initiated. The child must terminate." (§13.6) |
 | PD-R14 | PO-GH | APPROVED | SEC-C1 unconditional, also when the governor is disabled. |
 | PD-R11 | PO-CONV | APPROVED: A | `charged = max(reserved, observed)` for valid usage; valid usage survives content failure (§11.4). |
@@ -130,8 +151,8 @@ invariant violation); `--json` envelope contract §10.8; config v1 contract §11
 | `test/gateway.test.js` SHA-256 | `7059ad212e063addf39ba8a47b67e93e9def252b95e17f11a519b6b941744bb3` — **matches** |
 | Other sources (SHA-256) | `src/parent.js` `cfdc9ce9e181b58a7a0734af17c5e5b2f403c81156502947c8f0a818b6e58dc2`; `src/transport.js` `dabd7978557f094bd7ff0ed7ee6fa67f55a07a43e1e72e51bd2c2e70f2571af6`; `src/worker.js` `d9c9832db61a237b73babb3775a6ce46a23f559a4d25174e56c101236ea05c0c`; `src/schema.js` `b17ff59d79a62c9a9f05c98e4b3f92f2fd67c6c1b1bc7fe8e7a435fa582c3b09`; `src/clock.js` `80301a914e234fddd7d405bf46b785ecc3adbfedc6f9383997c3345a48de8e78`; `test/parent.test.js` `c3bf9e533d8a1490d3e03b7f9c50d72b996b8168d95be5636a212c372f4f5262`; `test/transport.test.js` `6e8b1ca6287c1d0da2ac9c3ec1cd65fa52712694f17bdd138b1895a9bcf26554`; `test/schema.test.js` `18320899ddc9d0d6fa9005a57f868a86a24d1867a4c1c9f4d0d230b614bbac79`; `test/helpers/fakeServer.js` `53745906e46d7be51c50fc8828597b0485747eba01f4fc7c7d8c30897c786d6e` |
 | Evidence outputs | `evidence/test-output.txt` `5881cc8881e477ef763e1d3314e5d5b16052ee9d26763158d0a2a5d616b018e6` (Windows 11, Node v24.22.1, 82/82); `evidence/test-output-linux.txt` `61fa4057f0eb5542316748735b38f5b914472f67497f474a85bb27e6dcab12ed` (WSL2 Linux, Node v22.23.3, 82/82). Both equal the hashes recorded in the spike's C2 record. |
-| Source manifest | PO-stated `8bcd557c82c50f54006fc84537b0fd72dc0503882e5ecc96bba7b7f743ea5f2c`. **Not reproduced:** the manifest's construction rule is not recorded locally, and the common `sha256sum`-style constructions over `src/`, `test/` and `package.json` did not yield it. Per-file identities above were verified directly. |
-| Independent verdict | **As stated by the PO mission:** C2 VERIFIED_PASS; Windows Node 24 82/82; Linux Node 22 82/82; GWV-01/02/03 FIXED_VERIFIED; F1–F5 PASS in spike scope; Property A VERIFIED_PASS; Property B NOT PROVIDED; real HTTPS/TLS not verified; 0 real provider calls. **Gap:** the independent verifier's report is not present on this machine (the only local verifier transcript dated 2026-10-27 is an aborted session without a verdict). The author relies on the PO-stated verdict plus the matching source identities. |
+| Source manifest (C6, C5-EVID-01) | `8bcd557c82c50f54006fc84537b0fd72dc0503882e5ecc96bba7b7f743ea5f2c`. **Reproduced by the author at C6 authoring (AUTHOR-LOCAL)** over all **24** files of the spike directory: `README.md`, `REPORT.md`, `evidence/` (10 files), `package.json`, `src/` (6), `test/` (5 incl. `helpers/fakeServer.js`). Rule: one line per file, `sorted relative path + space + lowercase SHA-256 + LF`, sorted bytewise (C locale); the manifest hash is the SHA-256 of the concatenated lines. The C5 statement "not reproduced" is withdrawn: it tried constructions over `src/`, `test/` and `package.json` only. |
+| Independent verdict | **PO-SUPPLIED.** The PO mission stated: C2 VERIFIED_PASS; Windows Node 24 82/82; Linux Node 22 82/82; GWV-01/02/03 FIXED_VERIFIED; F1–F5 PASS in spike scope; Property A VERIFIED_PASS; Property B NOT PROVIDED; real HTTPS/TLS not verified; 0 real provider calls. Independent C2 report SHA-256, **reviewer-reported**: `5447dc2ab15de967f39ee4497ded79a0e3c29a0795f7b27d2c29082fb713f9c7`. **Gap:** the author has no copy of that report, so neither its content nor its hash is author-verified. The verdict is used as PO-supplied evidence of an independent verification, together with the AUTHOR-LOCAL source identities and manifest above. |
 | Spike scope limits | Loopback `node:http` only, no TLS; fake credential; scenario-driven worker, not the production runner; parent lifecycle disconnects first and uses a 300 ms graceful-exit window (not carried, §15.4); Windows ran Node 24 (outside `engines` 22.x); Windows ignored-kill is simulated with a no-op kill hook. |
 
 ### 2.6 Independent review history
@@ -178,7 +199,20 @@ C2 identities (unchanged, not re-sealed): C2 design SHA-256
 `1139919745bf35507bdbe732af3e8e5fb55313e3d9d9ee0b3f42aad2f5470fcc`; Issue #258
 raw body `e5b84e8118631885d8034f9d6eab1bc730d5ccda3598597ba5d6c935e95c86cc`. The
 full C3 and C4 texts remain in git history at `eff78a0c` and `38121f95`. C2
-clauses are still cited as `C2:<line>`.
+clauses are still cited as `C2:<line>`. The C5 text remains at `0c91393d`.
+
+### 2.8 Evidence provenance (C6; C5-EVID-01)
+
+| Provenance | Meaning | Items in C6 |
+|---|---|---|
+| **IND-VERIFIED** | Verified by an independent reviewer **and** the verification artifact is available to the author | none in C6. (R4 reran the C4 artifacts, with output hashes recorded in P §7.2. That result is historical C4 evidence.) |
+| **PO-SUPPLIED** | A verdict or fact the PO stated in a mission. The author did not verify the underlying artifact | spike C2 independent verdict; C2 report SHA-256 `5447dc2a…f9c7` (reviewer-reported); SG01-SEC-01 and C5-ARCH-01/02, C5-EVID-01, C5-GOV-01 finding texts; PD-C6-1 … 6; SEC-D1 … D3 |
+| **AUTHOR-LOCAL** | Verified by the author on local files at C6 authoring time; **not independent** | spike per-file hashes and 24-file manifest `8bcd557c…`; host-feasibility report hashes (§30.1); repository code facts at `a32a6cd7` (§2.4, §28.1) |
+| **SMOKE** | Experimental setup-smoke observations. They are not formal probes and are certified by no one | host-feasibility S1–S7 (Windows Job Object and AppContainer setup), WSL2 inventory (§30.1) |
+| **ASSUMPTION** | An unverified design assumption, from OS documentation or reasoning, pending a qualification gate | every host property `H-L…` / `H-W…` (§27.4, §27.5) and their gates (§30.2) |
+
+No item is moved to a stronger provenance without new evidence. Provenance labels
+SMOKE and ASSUMPTION never support a "verified", "qualified" or "certified" statement.
 
 ---
 
@@ -197,19 +231,29 @@ CLI parent process (qa-agent; generative.js + stage-process.js)
  |     +-- Controlled HTTPS transport    single-send core https; no redirects, retries or reuse
  |     +-- Provider credentials          AI_API_KEY, AI_MODEL read from the parent environment
  |
- +-- Lifecycle supervisor (stage-process.js, governed path)
+ +-- Lifecycle supervisor (stage-process.js)
  |     +-- FT0 result store + receipt ACK, close-based settlement, CLOSE_AFTER_EXIT
- |     +-- heartbeat watchdog, stage enforcement, kill, K_SETTLE abandonment
+ |     +-- governed only: heartbeat watchdog, stage enforcement
+ |     +-- both modes (C6): containment state machine, termination request, K_SETTLE settlement bound
  |
- |   private IPC (validated, closed schema; no credentials, URLs or headers)
+ |   spawn; private launcher status / control channel (C6, §27.3)
  v
-Stage child (generative-runner.js, governed path)
+Per-stage launcher (C6; candidate: Linux bubblewrap, Windows native helper; §27.4, §27.5)
+ |     creates the OS containment BEFORE the worker runs; never holds credentials
+ v
+OS containment (C6): Linux user+PID+net+IPC namespaces / Windows Job Object + AppContainer
+ |   private IPC (validated, closed schema; no credentials, URLs or headers), passed through
+ v
+Stage worker = stage child (generative-runner.js; governed AND ungoverned, C6)
        +-- generators (unchanged)
        +-- Gateway client provider       implements the provider contract via IPC
-       +-- StageContext                  step, per-step call count, sticky refusal (C4 §11 machinery)
+       +-- StageContext                  governed only: step, per-step call count, sticky refusal (C4 §11 machinery)
        +-- FT0 guardParentLink           cancellation on parent loss, result receipt/ACK (unchanged)
-       +-- heartbeat sender
+       +-- heartbeat sender              governed only
 ```
+
+In C6 the term **worker** means the stage child process together with every
+descendant it creates. All of them are members of one containment (§27.1).
 
 | Responsibility | Owner | Notes |
 |---|---|---|
@@ -226,44 +270,59 @@ Stage child (generative-runner.js, governed path)
 | Result transfer and receipt | child (`report()`), parent stores + ACKs | §14.1 |
 | Kill, watchdog, enforcement, K_SETTLE | parent supervisor | §14 |
 
-### 3.2 Governed and ungoverned modes
+### 3.2 Governed and ungoverned modes (C6: PD-C6-1)
 
-| Config | Gateway session | Child provider | Child env credentials | Heartbeat / watchdog / deadline / K_SETTLE | SEC-C1 |
+| Config | Gateway session | Child provider | Child env credentials | Rate governance: admission, wait, deadline, heartbeat, watchdog, enforcement | SEC-C1 protection |
 |---|---|---|---|---|---|
-| v1 | none | `createProvider()` + global `fetch` (certified) | present (certified) | none (PD-R13) | certified FT0 (PD-R14) |
-| v2, `providerGovernor` absent or `enabled: false` | none | same as v1 | present | none | certified FT0 |
-| v2, `enabled: true` | one per governed stage child | Gateway client (IPC) | **absent** | present | certified FT0 in the child **plus** parent revocation |
+| v1 | **pass-through** (§25) | Gateway client (IPC) | **absent** | none (PD-R13) | revocation + containment + FT0 (PD-R14, §27) |
+| v2, `providerGovernor` absent or `enabled: false` | **pass-through** (§25) | Gateway client (IPC) | **absent** | none (PD-R13) | revocation + containment + FT0 |
+| v2, `enabled: true` | governed (§8–§11) | Gateway client (IPC) | **absent** | present | revocation + containment + FT0 |
 
-**INV-G13 (ungoverned identity):** the first two rows MUST be indistinguishable
-from the certified baseline: spawn, environment, provider construction, IPC,
-exit codes and output. No Gateway module is loaded on those paths.
+C5's table had the first two rows unchanged from the baseline (child-owned
+`createProvider()` and credentials in the child environment). PD-C6-1 replaces those
+rows. In every mode, provider-backed execution happens only on a qualified host
+(§26); elsewhere it is refused before any credential is used.
 
-### 3.3 What the governed child can and cannot do
+**INV-G13 (C6, amended under PD-C6-1; ungoverned compatibility):** with v1 or a
+disabled governor, **no rate governance exists**: no admission, ledger, cold start,
+wait, dispatch deadline, heartbeat, watchdog or enforcement timer. The provider
+request bytes and transport semantics are the certified provider implementation's
+(§25.3). Exit codes, reason codes, stdout and the `--json` envelope equal the
+baseline on every path. The only exceptions are the differences enumerated in §25.4
+(D-1 … D-4), each traceable to PD-C6-1, PD-C6-3 or PD-C6-4. The C5 clause "No Gateway
+module is loaded on those paths" is **withdrawn**.
 
-- It holds no provider credential and no model name: the governed environment is
-  `buildGenerativeEnv()` **without** `AI_SECRET_KEYS` (§20).
+### 3.3 What the worker can and cannot do (C6; both modes)
+
+- It holds no provider credential and no model name. The worker environment is
+  `buildGenerativeEnv()` **without** `AI_SECRET_KEYS`, in both modes (§20, §28.3).
 - It never loads the Gateway, the adapter or the transport. Its only provider
   path is the IPC request in §7.
 - It cannot name a URL, host, header, method or credential: the IPC schema has
   no such fields (§7.2).
-- It **can** still open arbitrary network connections with Node's own modules, as
-  any process of the same OS user can. Parent ownership does not prevent this
-  (Property B, §13.4).
+- C5 recorded that the child **can** still open arbitrary network connections
+  (Property B, §13.4). C6 designs the containment so that the worker has **no
+  network interface except an isolated loopback** (Linux) or **no network
+  capability** (Windows AppContainer). It also has no view of the parent process
+  and no access to credential files (§28). These are **candidate** properties:
+  `HOST_NOT_VERIFIED` (§30).
 
 ## 4. Contract boundaries
 
 | Surface | Class | C5 effect |
 |---|---|---|
 | Package `exports`, `bin`, library API | public | **None.** New modules are internal only. |
-| CLI exit codes (contract §10.7) | public | **None new.** Governed outcomes use existing codes 3, 6 and 1. |
-| CLI reason codes | public | The PD-R8 closed extension of §16. **No code beyond the set already designed in C4.** Unreachable with v1 or a disabled governor. |
+| CLI exit codes (contract §10.7) | public | **None new.** Governed outcomes use existing codes 3, 6 and 1. C6 candidate reasons are proposed onto existing codes 5 and 1, **pending authorization** (§29). |
+| CLI reason codes | public | The PD-R8 closed extension of §16. **No code beyond the set already designed in C4 is part of C6's design contract.** The two PD-C6-4 candidates `HOST_ISOLATION_UNAVAILABLE` and `WORKER_TERMINATION_UNCONFIRMED` are **proposed only**. Adding them needs a canonical contract amendment that is not authorized (§29). |
+| Provider-backed execution availability | public behavior | **C6 (PD-C6-3):** refused on unsupported or unqualified hosts, before any credential use or provider traffic. Unrelated capabilities stay available (§26). |
 | Config schema | public | v2 adds optional `providerGovernor` (§5). v1 unchanged. |
 | stdout | public | Unchanged. |
-| stderr | bounded diagnostics | One governed-only fixed-template line on post-kill abandonment (§14.5), as designed in C4 under PD-R15. |
-| Persistent data, run manifest, run store, review packages | — | **Unchanged. No new persistent format.** Gateway state lives in parent memory and ends with the session. |
-| Child environment | private | Governed path only: credentials removed (§3.3). Ungoverned: unchanged. |
-| Parent ↔ child IPC | private | Governed path only: payload marker, `provider-request`, `provider-response`, `heartbeat`, `failure.kind: "stage-timeout"`, optional `failure.governorCode` (§7, §15). FT0 `result` / `result-ack` unchanged. |
-| Provider adapters | internal | Mapping functions shared with the ungoverned providers so classification is identical (§12). Ungoverned providers unchanged. |
+| stderr | bounded diagnostics | **C6:** one fixed-template line when termination cannot be confirmed (§27.7), in both modes. It replaces C5's governed-only abandonment line (§14.5). |
+| Persistent data, run manifest, run store, review packages | — | **Unchanged. No new persistent format.** Gateway and containment state live in parent memory and end with the session. |
+| Child (worker) environment | private | **C6: both modes:** credentials removed (§3.3, §28.3). |
+| Parent ↔ child IPC | private | **C6: both modes:** `provider-request`, `provider-response`. Governed only: payload marker `gateway`, `heartbeat`, `failure.kind: "stage-timeout"`, optional `failure.governorCode` (§7, §15). FT0 `result` / `result-ack` unchanged. |
+| Parent ↔ launcher channels | private | **C6:** a closed status channel and, on Windows, a control channel (§27.3). These are not part of any public contract. |
+| Provider adapters | internal | Governed: mapping functions shared with the ungoverned providers, so classification is identical (§12). **C6, ungoverned:** the certified provider implementations run unchanged inside the parent (§25.3). |
 | Generators | internal | **No change.** |
 
 ## 5. Configuration and compatibility
@@ -366,11 +425,16 @@ window and no acceptance grace (§14.6).
 
 ## 7. Private IPC protocol
 
-### 7.1 Messages (governed path only)
+### 7.1 Messages (C6: provider messages on both paths; heartbeat governed only)
+
+In C6 the provider-request/response exchange is used in **both** modes. In
+pass-through mode (§25) the parent answers with `content` or `provider-error` only.
+`refused` carries only the private codes `BUSY`, `REVOKED` and `INVALID_REQUEST`.
+Governor codes are never sent in pass-through mode.
 
 | Direction | Message | Closed shape |
 |---|---|---|
-| parent → child | payload (existing) + marker | `{type:"payload", stage, payload, gateway:{v:1}}`. The `gateway` member is present only when governed. |
+| parent → child | payload (existing) + marker | `{type:"payload", stage, payload, gateway:{v:1}}`. The `gateway` member is present only when governed. In C6 the runner **always** uses the Gateway client provider. The marker selects only the governed-only features: heartbeat and `StageContext` (§25.1). |
 | child → parent | provider request | `{type:"provider-request", v:1, id, systemPrompt, userPrompt}` |
 | parent → child | provider response | `{type:"provider-response", v:1, id, outcome:"content", content}` · `{…, outcome:"provider-error", code, retryable}` · `{…, outcome:"refused", code}` |
 | child → parent | heartbeat | `{type:"heartbeat", v:1, seq}` |
@@ -443,18 +507,21 @@ lost (FT0 `fail()` exits the child), or the parent kills the child (§14.4).
 
 ### 7.5 Parent routing
 
-`stage-process.js` routes child messages on the governed path only:
+`stage-process.js` routes child messages on every provider-backed path (C6). The
+heartbeat branch exists only when governed:
 
 ```text
 on message m from child:
   v = validate(m)                                         // §7.2
-  if v is heartbeat:         if !killed and result === null: re-arm watchdog
+  if v is heartbeat (governed): if !killed and result === null: re-arm watchdog
   elif v is provider-request:
-      if killed or settled or session.revoked: reply(id, refused REVOKED); return
-      session.onRequest(v)                                 // §8
+      if killed or settled or session.revoked or containment.state !== PROCESS_RUNNING:
+          reply(id, refused REVOKED); return              // C6: no dispatch before launcher "ready" (§27.3)
+      session.onRequest(v)                                 // §8 governed, §25 pass-through
   elif v is result (FT0):    session.revoke("result"); FT0 store-then-ACK (unchanged); disarm watchdog
   else: ignore (FT0 behavior)
-on child "disconnect" | "exit" | "error":  session.revoke(<event>)   then the FT0 handlers run unchanged
+on child "disconnect" | "exit" | "error":  session.revoke(<event>)   then the FT0 handlers and the
+                                           C6 containment rules (§27.2, §27.8) run
 ```
 
 `reply()` sends only when `child.connected`, inside `try`, with a callback that
@@ -532,9 +599,15 @@ run(req):
     if it >= I_MAX:            return refuse(RATE_BUDGET_EXHAUSTED)
     planned = max(f − t, S_MIN)
     if planned > W_MAX:                              return refuse(RATE_BUDGET_EXHAUSTED)
-    if W + chargeable(t, t + planned) > W_BUDGET:    return refuse(RATE_BUDGET_EXHAUSTED)
-    if t + planned >= dispatchDeadline:              return refuse(STAGE_TIMEOUT)
-    a = now(); fired = await sleep(planned, active.controller.signal); b = now()
+    // ---- pre-sleep section (C6, C5-ARCH-01): fresh reading, then checks, then sleep; no await in between
+    a = now()                                       // FRESH pre-sleep reading; t is NOT reused here
+    if a < t:                                       return refuse(RATE_ACCOUNTING_INVALID)  // §6.2 guard
+    if revoked:                                     return CANCELLED
+    if a >= dispatchDeadline:                       return refuse(STAGE_TIMEOUT)
+    if W + chargeable(a, a + planned) > W_BUDGET:   return refuse(RATE_BUDGET_EXHAUSTED)
+    if a + planned >= dispatchDeadline:             return refuse(STAGE_TIMEOUT)
+    fired = await sleep(planned, active.controller.signal)   // timer armed in this same synchronous section
+    b = now()
     if b < a: return refuse(RATE_ACCOUNTING_INVALID)  // clock regression guard (§6.2)
     W += chargeable(a, b)                           // actual elapsed, incl. overshoot or cancellation (§9.3)
     if !fired or revoked: return CANCELLED
@@ -546,6 +619,25 @@ chargeable(a, b) = max(0, b − max(a, coldUntil))    // §9.1
 `refuse()` makes the first governor refusal sticky. `CANCELLED` produces no reply:
 the session is revoked and the stage is settling. Requests that arrive after
 revocation get `refused REVOKED` (§7.5). Revocation never sets `terminal`.
+
+**Pre-sleep section (C6, C5-ARCH-01).** C5 checked the planned sleep against
+`t`, the loop-top reading. Synchronous work between `t` and the start of the sleep
+(`freeAt`, bookkeeping, garbage collection) could make that reading stale. C6 takes
+a fresh reading `a` immediately before the checks. It evaluates revocation, the
+deadline, the wait budget and the planned end against `a`, and arms the sleep timer
+in the same synchronous section. Only these comparisons and the timer arming lie
+between `a` and the sleep. `planned` keeps the value computed at `t`. The sleep
+therefore ends no earlier than `f` (if `f` is already in the past, the next loop
+iteration commits), and the check `a + planned >= dispatchDeadline` refers to the
+sleep that is actually armed. The per-wait cap and the iteration cap do not depend
+on the clock and are unchanged. The final dispatch checks at `t2` (§8.4) are
+unchanged and remain strict. The pre-sleep section adds an earlier refusal; it does
+not replace the commit-time checks.
+
+Required trace (P PT-13): `dispatchDeadline = D`; loop reading `t = D − 75`;
+`planned = 50` (C5 would pass `t + planned = D − 25 < D`). A synchronous delay of
+100 ms follows, so the fresh `a = D + 25`. Then `a >= D` → `STAGE_TIMEOUT` **before
+sleeping**: 0 sleeps, `W` unchanged, 0 commits, 0 HTTP.
 
 ### 8.4 Commit point (irrevocable boundary)
 
@@ -654,7 +746,9 @@ nowhere else
 
 - **Dispatch deadline:** `dispatchDeadline = tOpen + D_DISPATCH`. A commit is
   refused when its final reading satisfies `t2 >= dispatchDeadline`. A planned
-  sleep is refused before it starts when `t + planned >= dispatchDeadline`.
+  sleep is refused before it starts when its **fresh pre-sleep reading** `a`
+  satisfies `a >= dispatchDeadline` or `a + planned >= dispatchDeadline` (C6,
+  C5-ARCH-01; §8.3). The loop-top reading `t` is never used for this test.
 - **Exchange bound:** the transport's `T_REQ` timer is armed inside `send`, so an
   exchange committed before `dispatchDeadline` is aborted at the first timer
   callback at or after its commit plus 30 000 ms, i.e. at or after (but normally
@@ -682,10 +776,15 @@ nowhere else
 
 - `W = 899 990`, rate window needs 1 more ms → `planned = 50` →
   `899 990 + 50 > 900 000` → `RATE_BUDGET_EXHAUSTED` before sleeping (PT-01, spike G1).
-- `t = dispatchDeadline − 500`, capacity at `dispatchDeadline` → `planned = 500`,
-  `t + planned = dispatchDeadline` → `STAGE_TIMEOUT` before sleeping (PT-02, spike E4a).
+- `t = dispatchDeadline − 500`, capacity at `dispatchDeadline` → `planned = 500`;
+  with no synchronous delay, `a = t` and `a + planned = dispatchDeadline` →
+  `STAGE_TIMEOUT` before sleeping (PT-02, spike E4a).
 - Planned 400, timer 100 ms late → loop reads `t = dispatchDeadline` → refused, 500 ms
   charged (PT-03, spike E4b, GWV01-6).
+- (C6) Stale loop reading: `t = D − 75`, `planned = 50`, 100 ms synchronous delay,
+  `a = D + 25` → `STAGE_TIMEOUT` before sleeping (PT-13; C5-ARCH-01). In C5 this
+  sleep would have started. No dispatch would have followed (the loop-top and commit
+  checks refuse), but the refusal came only after an unnecessary charged sleep.
 
 ---
 
@@ -887,6 +986,10 @@ supervisor as the **first** action on each of:
 
 Parent process death (including native signal termination, PD-R6) destroys the
 session with the process. No Gateway can dispatch after its process has ended.
+(C6) Parent death also triggers the kernel-backed parent-death path of the
+containment (§27.6). C6 also requests worker termination (§27.2) on every trigger
+above other than a stored result, and on the result path when the worker does not
+exit by itself (§27.8).
 
 ### 13.2 Revocation procedure
 
@@ -922,33 +1025,48 @@ P9, P12, GWV01-7). **DESIGNED** for production. Integrated production evidence:
 > **Property B.** A surviving or compromised child has no arbitrary direct
 > network access.
 
-**NOT PROVIDED.** The Gateway does not and cannot provide it. A child is an
-ordinary Node process of the same OS user. It can load `node:http`, `node:https`,
+**C5: NOT PROVIDED.** The Gateway does not and cannot provide it. A child that is an
+ordinary Node process of the same OS user can load `node:http`, `node:https`,
 `node:net` or any file from disk and connect anywhere the user can. Spike P12
 measured an abandoned child making **53 (Windows) / 55 (Linux)** unauthenticated
 direct HTTP requests while the Gateway made zero. Property A does **not** imply
-Property B. Providing B needs OS-level isolation of the worker (sandbox, network
-namespace, per-process firewall rule, or a separate OS user), which is a separate
-security/architecture requirement. It is not designed here (SG-02).
+Property B.
 
-### 13.5 Scenario analysis
+**C6: DESIGNED (candidate) · HOST_NOT_VERIFIED · SECURITY_GATE_OPEN.** C6 places
+the worker in an OS containment with no usable network path (§28.2). That design
+gives Property B with this **scope**: no direct network access from any process of
+the contained worker tree, to the provider or anywhere else. The scope does **not**
+cover (a) other processes of the same OS user outside the containment, (b) covert
+channels through OS broker services that the containment leaves reachable, which
+are qualification items HQ-L-09 and HQ-W-09, or (c) kernel or sandbox escapes.
+Property A still does not imply Property B; B rests on the containment alone. It
+is **not** shown on any host (§30.1).
 
-| Scenario | Gateway dispatch (A) | Credentialed provider call by the child | Unauthenticated network by the child (B) | Notes |
+### 13.5 Scenario analysis (C6: with containment, on a qualified host)
+
+All C6 entries are **DESIGNED, HOST_NOT_VERIFIED** (§30). The C5 column values are
+kept in brackets where C6 changes them.
+
+| Scenario | Gateway dispatch (A) | Credentialed provider call by the worker | Direct network by the worker (B) | Worker termination (C6) |
 |---|---|---|---|---|
-| Normal completion | stops at revocation on result | impossible (no credential) | possible only if child code is compromised | certified child code makes none |
-| Parent IPC loss (parent alive, channel broken) | revoked at the parent's `disconnect` event | impossible | as above | child FT0 `fail()` aborts and exits in the same turn |
-| Parent process dies | no Gateway exists | impossible | as above | child FT0 exits on `disconnect` |
-| Delayed IPC disconnect | revoked at the parent's decision, before disconnect | impossible | as above | late requests over the still-open channel are refused `REVOKED` (spike P7) |
-| Kill not delivered / delayed (surviving child) | revoked before `kill()` | impossible | **possible** | K_SETTLE abandonment bounds the parent phase only (§14.5); spike P11, P12 |
-| Child blocked in synchronous computation | revoked by the watchdog decision | impossible while blocked; refused after | possible after unblocking if compromised | queued requests reach a revoked session (R4-ARCH-03 no longer affects A) |
-| Compromised child | revoked as above; IPC requests validated and refused | **not prevented**: a same-user process may read the credential from the parent's initial environment block (e.g. `/proc/<ppid>/environ` on Linux) or process memory, or from wherever the operator stores it | **possible** | analysis, not experiment; SG-03 |
-| Missing OS-level isolation | — | — | **possible** | Property B NOT PROVIDED (SG-02) |
+| Normal completion | stops at revocation on result | impossible (no credential) | no network path (§28.2) [C5: possible if compromised] | worker exit, then containment emptied and confirmed before acceptance (§27.8, PT-15) |
+| Parent IPC loss (parent alive, channel broken) | revoked at the parent's `disconnect` event | impossible | no network path | termination requested at once; confirmed by containment emptiness (§27.2) |
+| Parent process dies | no Gateway exists | impossible | no network path | kernel-backed parent-death path (§27.6); confirmation impossible after the parent is gone (PT-18) |
+| Delayed IPC disconnect | revoked at the parent's decision, before disconnect | impossible | no network path | as the trigger that revoked |
+| Worker ignores cancellation / kill not honored | revoked first | impossible | no network path [C5: **possible**] | containment termination does not need worker cooperation (§27.2); unresolved → `CLEANUP_UNRESOLVED`, never "terminated" (PT-16, PT-21) |
+| Descendants survive the leader's exit | — | impossible | no network path | descendants are members of the containment; emptiness is required (PT-19) |
+| Worker blocked in synchronous computation | revoked by the watchdog decision (governed) | impossible | no network path | as "ignores cancellation" |
+| Compromised worker | revoked; IPC requests validated and refused | **designed out**: no credential in its environment, no view of the parent's process, no credential files in its filesystem view (§28.3) [C5: **not prevented**] | **designed out** [C5: **possible**] | as "ignores cancellation" |
+| Containment cannot be created | — (no worker) | — | — | provider-backed execution refused before any credential use (§26.3, PT-20) |
 
 **Parent-owned credentials versus arbitrary network permission.** Moving the
 credential out of the child's environment and IPC removes it from the child's
-normal reach and from every artifact the child produces. It does not confine the
-credential against a compromised same-user process, and it does not restrict
-network access. Both need OS-level controls.
+normal reach and from every artifact the child produces. **That alone does not
+confine the credential against a compromised same-user process, and it does not
+restrict network access** (C5, unchanged). C6 does not claim credential confinement
+from environment hygiene. It claims it only from the containment's process,
+filesystem and network isolation (§28.3). That claim is a candidate design and is
+not verified (SG-03 stays open).
 
 ### 13.6 SEC-C1 reconciliation (mandatory Security gate, AD-02)
 
@@ -956,22 +1074,34 @@ SEC-C1 (PO-GH): "Parent IPC disconnection must abort pending waits and in-flight
 provider requests. No subsequent provider calls may be initiated. The child must
 terminate."
 
-| Clause | C5 mechanism | Relation to the certified FT0 implementation |
+| Clause | C6 mechanism (both modes) | Status |
 |---|---|---|
-| Abort pending waits | Gateway waits live in the parent; `revoke()` aborts them (§13.2). The child has no governor waits. | Stronger: the waiting party is the revoking party. |
-| Abort in-flight provider requests | `revoke()` destroys the in-flight request (TS-4). The child's pending IPC call rejects through the certified cancel signal. | Equal. Abort cannot undo a transmitted request (§13.7). |
-| No subsequent provider calls initiated | **Authorized** calls: Property A (§13.3), and the child holds no credential. **Unauthenticated** network use: not prevented (Property B). | Certified FT0 relies on the cooperative child exiting; a compromised FT0 child holds the credential and raw network. C5 is not weaker on any path, and removes the credential from the child. |
-| Child must terminate | Unchanged child `guardParentLink()` exits in the same turn; governed parent adds kill on watchdog/enforcement and K_SETTLE abandonment. | Equal for a cooperative child. A child that does not run its handlers (blocked, compromised, kill undelivered) is not guaranteed to terminate, in FT0 or in C5. |
-| Disabled governor (PD-R14) | Unchanged certified FT0. | Identical. |
+| Abort pending waits | Gateway waits live in the parent; `revoke()` aborts them (§13.2). The worker has no governor waits. Pass-through mode has no waits. | DESIGNED · ALGORITHMICALLY_PROVEN (P Lemma 4) · SPIKE_VERIFIED (prototype) |
+| Abort in-flight provider requests | `revoke()` aborts the in-flight request: governed via TS-4, pass-through via the certified provider's cancel signal (§25.3). The worker's pending IPC call rejects through the certified cancel signal. Abort cannot undo a transmitted request (§13.7). | DESIGNED · ALGORITHMICALLY_PROVEN · SPIKE_VERIFIED (governed transport, loopback) |
+| No subsequent provider calls initiated | **Authorized** calls: Property A (§13.3) in both modes. **Direct provider calls (bypass)**: the worker has no credential (§28.3) **and** no network path (§28.2). These are two independent barriers (SEC-D2). | A: DESIGNED · ALGORITHMICALLY_PROVEN. Bypass barriers: DESIGNED · HOST_NOT_VERIFIED · SECURITY_GATE_OPEN |
+| Child must terminate | The certified child self-exit is kept (cooperative path). **Worker-independent termination**: the parent requests termination of the whole containment, which needs no worker cooperation, and accepts only OS-observable emptiness as proof (§27.2). On parent death, the kernel-backed lifetime binding ends the containment (§27.6). An unresolved termination is reported `CLEANUP_UNRESOLVED`, fails closed and is never counted as terminated (§27.7). | DESIGNED · ALGORITHMICALLY_PROVEN (state machine, conditional on host assumptions) · HOST_NOT_VERIFIED · SECURITY_GATE_OPEN |
+| Disabled governor (PD-R14) | The same mechanisms in pass-through mode (PD-C6-1, §25). | DESIGNED |
 
-**The Gateway design does not weaken SEC-C1 relative to its certified
-implementation.** Whether the approved SEC-C1 text is satisfied by Property A plus
-certified child self-termination, or requires Property B (and a termination
-guarantee for non-cooperative children), is a **Security decision this author
-cannot make**. It is recorded as **SG-01, SECURITY_GATE_OPEN**. If Security
-concludes that SEC-C1 requires Property B, this design is **BLOCKED** until an
-OS-isolation requirement is approved and designed, because C5 cannot provide B.
-No waiver is requested or assumed.
+**SG01-SEC-01 disposition (C6).** C5 explicitly gave no termination guarantee for a
+non-cooperative child. It relied on K_SETTLE abandonment and left Property B
+unprovided. The Security finding found that incompatible with SEC-C1. C6 replaces
+that with the containment design of §27 and §28:
+
+- termination is requested by the parent, does not need the worker, and is
+  confirmed only by OS-observable emptiness;
+- parent death ends the containment through kernel-backed mechanisms;
+- the worker has no credential and no network, in both modes.
+
+`K_SETTLE` remains only the parent's settlement bound (PD-C6-5). When it expires
+without confirmed emptiness, the outcome is `CLEANUP_UNRESOLVED`. It is never
+"terminated" or "abandoned and done".
+
+The design satisfies SEC-C1 **on a qualified host, conditional on the host
+assumptions `H-L…` / `H-W…`**, which are open qualification gates (§30.2). On every
+other host, provider-backed execution is refused (§26). This is an **author design
+disposition**. SG-01 stays **SECURITY_GATE_OPEN** until the independent Security
+review accepts the design and the qualification gates pass. No waiver is requested
+or assumed.
 
 ### 13.7 Abort is not rollback
 
@@ -979,7 +1109,8 @@ Once `transport.send()` has been entered, the request may already be on the wire
 or processed remotely. Revocation and abort end local activity and suppress any
 reply, but cannot retract the request, its remote processing, or any provider-side
 charge. The exchange is recorded as uncertain completion and charged `B_tok`
-(§11.4). This applies equally to the certified FT0 path.
+(§11.4). This applies equally to the certified FT0 path, and to pass-through mode
+(no charge is kept there, §25).
 
 ---
 
@@ -1001,7 +1132,13 @@ On every path, governed or not, these stay exactly as certified:
   not accepted.
 - Native signal handling: no handler is added; PD-R6 holds.
 - Exactly-once settlement via the certified `settled` guard; late events ignored.
-- Ungoverned paths: byte-identical (INV-G13).
+- Ungoverned paths: INV-G13 as amended (§3.2, §25.4).
+- (C6) The parent's direct child process is the **launcher** (§27.3). FT0 `exit`,
+  `close` and `CAE` refer to the launcher process. A launcher exits only after its
+  containment is empty (or after reporting `cleanup-unresolved`). Its exit code
+  equals the worker's exit code (§27.3 LC-5). The FT0 rules therefore keep their
+  meaning: "exit 0 then close" still means that the worker exited 0, and in C6 it
+  also means the containment was confirmed empty first.
 
 ### 14.2 Governed additions
 
@@ -1026,61 +1163,96 @@ on message m:
   else:                                   ignore
 ```
 
-### 14.4 Kill decision
+### 14.4 Kill decision (C6: termination decision)
 
-When the watchdog or enforcement timer fires before settlement:
+A **termination decision** is taken by the governed watchdog or enforcement timer
+when it fires before settlement. In C6 it is also taken, in both modes, on the
+SEC-C1 triggers of §27.2 (parent-observed IPC loss without a stored result, and
+launcher or status-channel faults):
 
 1. `session.revoke(reason)` (synchronous, first).
-2. `killed = {reason}` (`STAGE_TIMEOUT` or `CHILD_UNRESPONSIVE`); first reason wins; sticky.
+2. `killed = {reason}`, where the reason is `STAGE_TIMEOUT`, `CHILD_UNRESPONSIVE`,
+   or (C6) the private `IPC_LOST` or `LAUNCHER_FAULT`. The first reason wins and is
+   sticky.
 3. `result = null`: a stored or ACKed result is discarded.
-4. Disarm watchdog and enforcement timers.
-5. `child.kill("SIGKILL")` inside `try` (POSIX SIGKILL; Windows `TerminateProcess`);
-   record `killIssued`.
+4. Disarm watchdog and enforcement timers (governed).
+5. **(C6) Request containment termination** through the platform's
+   worker-independent mechanism (§27.4.3, §27.5.3). Set the containment state to
+   `TERMINATION_REQUESTED`. The C5 step `child.kill("SIGKILL")` on the stage child
+   is **replaced**: signalling the launcher alone would lose the emptiness
+   confirmation (§27.4.3).
 6. Arm the `K_SETTLE` timer (§14.5).
 
-The parent does **not** disconnect IPC at the kill decision. On Windows a
+The parent does **not** disconnect IPC at the termination decision. On Windows a
 parent-side `disconnect()` can prevent `close` from firing, which would turn every
 kill into a `CAE`-delayed settlement (C4 NDI-12). Property A does not depend on
 disconnect: revocation is step 1.
 
-### 14.5 Post-kill settlement (`K_SETTLE = 10 000 ms`, APPROVED)
+### 14.5 Post-termination settlement (`K_SETTLE = 10 000 ms`, APPROVED; C6 corrective of C5-ARCH-02)
 
-Phase K starts at the kill decision `tKill` and ends at the first of:
+Phase K starts at the termination decision `tKill` (§14.4) and ends at the
+**first** of these events. Settlement is **event-driven** and may occur
+immediately. `CAE` and `K_SETTLE` are **fallbacks** only.
 
-| Event | Next |
+| Event (launcher process, §27.3) | Next |
 |---|---|
-| `exit` | clear `K_SETTLE`; FT0 phase S (`close`, or `CAE` after `exit`) |
-| `close` | settle (result already discarded) |
-| spawn `error` | settle |
-| first `K_SETTLE` callback at or after `tKill + K_SETTLE`, no `exit` | **abandonment** |
+| `exit` | clear `K_SETTLE`; FT0 phase S: settle at `close`, or at the first `CAE` callback at or after `tExit + CAE` if `close` has not arrived |
+| `close` | settle **at once** (result already discarded) |
+| spawn `error` | settle at once |
+| first `K_SETTLE` callback at or after `tKill + K_SETTLE`, no `exit` observed | **unresolved settlement** (C6; replaces C5 "abandonment") |
 
-Abandonment (one-shot, then `settled = true`):
+At every settlement in phase K, the containment state (§27.2) decides the
+classification. With `CONTAINMENT_EMPTY` it is `killed.reason`, mapped as in §15.3.
+In every other state it is `CLEANUP_UNRESOLVED` → candidate
+`WORKER_TERMINATION_UNCONFIRMED` (§29). Settlement by `close` after the launcher's
+exit normally finds `CONTAINMENT_EMPTY`, because the launcher exits only after it
+reported emptiness (§27.3 LC-4, LC-5).
 
-1. If `child.connected`, `child.disconnect()` inside `try`. A cooperative child
-   then runs its SEC-C1 path. **Nothing depends on this for Property A**: the
-   session was revoked at `tKill`, and any request that still arrives is refused.
-2. Destroy `child.stdout` and `child.stderr`.
-3. `child.unref()`.
-4. Clear every governed timer (watchdog, enforcement, `K_SETTLE`, `CAE`).
-5. Settle once: `result = null`, `abandoned = true`; classification is
-   `killed.reason`; no commit.
-6. One stderr line:
-   `[qa-agent] <stage> process did not exit within 10s after termination (pid <n>); it was abandoned and may still be finishing.`
-7. Late `exit`, `close` and messages are ignored (`settled` guard).
+Unresolved settlement (one-shot, then `settled = true`):
 
-Bound (**INV-G18**, parent clock): the post-kill settlement decision is taken at
-the first callback at or after `tKill + K_SETTLE` without `exit`, or at or after
-`tExit + CAE` when `exit` arrived first; so by `tKill + K_SETTLE + CAE` plus timer
-lateness. `K_SETTLE` does **not** guarantee that a surviving process terminates,
-and it bounds a phase, not the whole CLI (§17).
+1. If `child.connected`, `child.disconnect()` inside `try`. **Nothing depends on
+   this for Property A**: the session was revoked at `tKill`, and any request that
+   still arrives is refused.
+2. (C6) Close the parent's ends of the launcher control channel (Windows), which
+   prompts the launcher to terminate its containment again (§27.5.3). Destroy the
+   launcher's stdout, stderr and status streams.
+3. `child.unref()` on the launcher, so that the CLI process can end. Ending the CLI
+   triggers the kernel-backed parent-death path of §27.6. That is a further
+   **unconfirmed** cleanup attempt, never counted as termination.
+4. Clear every timer of the stage (watchdog, enforcement, `K_SETTLE`, `CAE`).
+5. Settle once: `result = null`, containment state `CLEANUP_UNRESOLVED`; no commit.
+6. One stderr line (fixed template, C6; replaces the C5 abandonment line):
+   `[qa-agent] <stage> process termination could not be confirmed within 10s (launcher pid <n>); provider access was revoked; processes may still be running.`
+7. Late `exit`, `close`, status records and messages are ignored (`settled` guard).
+   Their content is not used to change the settled outcome.
+
+Bound (**INV-G18**, corrected in C6; parent clock):
+
+- **No lower bound** beyond `tKill`. Settlement may happen at the first `close` or
+  spawn `error` event after `tKill`, however early.
+- **Upper bound.** If the launcher's `exit` is observed at `tExit < tKill + K_SETTLE`,
+  settlement occurs at `close`, or at the first `CAE` callback at or after
+  `tExit + CAE`. Otherwise it occurs at the first `K_SETTLE` callback at or after
+  `tKill + K_SETTLE`. Settlement therefore occurs no later than the first such
+  callback at or after `tKill + K_SETTLE + CAE` (20 000 ms), plus timer lateness.
+- Required trace (P PT-14): kill decision at 0, launcher `exit` at 3, `close` at 5
+  → **settlement at 5**. C5's statement that settlement is decided "at or after
+  `tKill + K_SETTLE` … or `tExit + CAE`" was wrong for this trace and is withdrawn.
+
+`K_SETTLE` is **only the parent's settlement bound** (PD-C6-5). Its expiry is not
+evidence of termination. It bounds a phase, not the whole CLI (§17).
 
 ### 14.6 Result acceptance and separated mechanisms
 
-Acceptance rule (unchanged FT0, plus the C4 governed-only kill discard): commit
-only if a result is stored, `exitCode === 0`, `killed === null` and settlement was
-by `close` (**INV-G12**). There is **no** time-based acceptance grace, and the
-parent never kills a child on the successful path. A child that stores a result
-but never exits is ended by the enforcement timer, and its result is discarded.
+Acceptance rule (unchanged FT0, plus the C4 kill discard, plus the C6 containment
+condition): commit only if a result is stored, `exitCode === 0`, `killed === null`,
+settlement was by `close`, **and the containment state is `CONTAINMENT_EMPTY`**
+(**INV-G12**). There is **no** time-based acceptance grace, and the parent never
+requests termination on the successful path. The launcher purges descendants after
+the worker's own exit (§27.8), which is containment hygiene and not a parent kill.
+A governed child that stores a result but never exits is ended by the enforcement
+timer, and its result is discarded. In ungoverned mode such a child waits, as in
+the baseline (PD-R13), unless an SEC-C1 trigger of §27.2 fires.
 
 These mechanisms stay separate and never substitute for each other:
 
@@ -1090,7 +1262,8 @@ These mechanisms stay separate and never substitute for each other:
 | Gateway dispatch deadline | `t2 >= dispatchDeadline` | refuse dispatch (`STAGE_TIMEOUT`) |
 | Stage enforcement | callback at or after `enforceAt` | kill decision, `STAGE_TIMEOUT` (6) |
 | Watchdog termination | no valid heartbeat for `WD` before a result | kill decision, `CHILD_UNRESPONSIVE` (1) |
-| Post-kill `K_SETTLE` | no `exit` within `K_SETTLE` after a kill | abandonment |
+| Post-termination `K_SETTLE` (both modes, C6) | no launcher `exit` within `K_SETTLE` after a termination decision | unresolved settlement (`CLEANUP_UNRESOLVED`) |
+| Containment confirmation (C6) | launcher status `containment-empty` | precondition of acceptance and of a resolved settlement |
 | FT0 `CLOSE_AFTER_EXIT` recovery | `exit` without `close` for `CAE` | settle with `result = null` |
 | Parent finalization | settlement | classification (§15.3); validation and commit only on acceptance |
 
@@ -1103,8 +1276,8 @@ These mechanisms stay separate and never substitute for each other:
 | Kill → `exit` latency | unbounded in uninterruptible I/O | unbounded while pending I/O drains |
 | `close` after `exit` | normally prompt | may never arrive with unread IPC data (FT0-C2-D1); `CAE` handles it |
 | Parent-side `disconnect()` | `close` follows | `close` may not fire; hence none at the kill decision |
-| After the CLI exits | an unreaped child is reparented and reaped | libuv job object closure expected to terminate children (to be verified, M §10) |
-| Credential exposure to a same-user child | `/proc/<ppid>/environ` readable subject to ptrace access checks | process memory readable at equal integrity |
+| After the CLI exits | C5: an unreaped child is reparented and reaped. **C6:** the launcher's parent-death signal and the PID-namespace teardown end the containment (§27.4.5; HQ-L-05) | C5: libuv job object closure expected. **C6:** the helper's Job Object handle closes and `KILL_ON_JOB_CLOSE` applies (§27.5.5; HQ-W-05, HQ-W-06) |
+| Credential exposure to a same-user child | C5: `/proc/<ppid>/environ` readable subject to ptrace access checks. **C6:** the worker sees only its own PID namespace (§28.3; HQ-L-07) | C5: process memory readable at equal integrity. **C6:** an AppContainer token has no access to the parent's process object (§28.3; HQ-W-08) |
 | Timer granularity | ≈ 1 ms | ≈ 15.6 ms by default |
 | Spike runtime | Node 22.23.3 (WSL2) | Node 24.22.1 — **outside `engines` 22.x**; Windows on Node 22.x is unverified |
 
@@ -1151,9 +1324,12 @@ per-step attempt count.
 |---|---|---|
 | 1 | Parent's own native signal termination | process ends natively (PD-R6); no classification |
 | 2 | Pre-spawn failure: config, `PROVIDER_GOVERNOR_LIMITS_MISSING`, provider configuration | existing exit 3 codes |
+| 2a | (C6) Host unsupported or unqualified (§26), or launcher setup failed before the worker ran (§27.3 LC-2) | **proposed** `HOST_ISOLATION_UNAVAILABLE`, exit 5. Pending authorization (§29) |
 | 3 | Spawn `error` | `STAGE_SPAWN_FAILED` (1), existing |
-| 4 | Kill by enforcement | `STAGE_TIMEOUT` (6); result discarded |
-| 5 | Kill by watchdog | `CHILD_UNRESPONSIVE` (1); result discarded |
+| 3a | (C6) Containment state `CLEANUP_UNRESOLVED` at settlement, whatever the termination reason | **proposed** `WORKER_TERMINATION_UNCONFIRMED`, exit 1. The kill reason is appended to the message only. Pending authorization (§29) |
+| 4 | Kill by enforcement, containment empty | `STAGE_TIMEOUT` (6); result discarded |
+| 5 | Kill by watchdog, containment empty | `CHILD_UNRESPONSIVE` (1); result discarded |
+| 5a | (C6) Termination for the private reasons `IPC_LOST` or `LAUNCHER_FAULT`, containment empty | `STAGE_FAILED` (1), existing. Baseline outcome for "no result" |
 | 6 | Accepted result (INV-G12) | existing validation and commit |
 | 7 | `session.terminal = STAGE_TIMEOUT`, child report generation/stage-timeout/E1 | `STAGE_TIMEOUT` (6) |
 | 8 | `session.terminal = RATE_*`, child report generation/E1 | `PROVIDER_FAILURE` (6), governor code first, then the child's sanitized codes |
@@ -1178,6 +1354,10 @@ per-step attempt count.
 | `maybeReachedRemote` | spike | internal → `UNAVAILABLE`, charge `B_tok` | **No** |
 | `GRACEFUL_EXIT_MS = 300` | spike | **not carried** (AD-07) | — |
 | `stage-timeout`, `governorCode`, `heartbeat`, `provider-*` | C4/C5 private IPC | parent-only, validated, closed | **No** |
+| `PROCESS_RUNNING`, `TERMINATION_REQUESTED`, `PROCESS_EXIT_OBSERVED`, `CONTAINMENT_EMPTY`, `CLEANUP_UNRESOLVED` | C6 containment states (§27.2) | parent memory only; mapped by §27.2.3 | **No** (not approved public status strings) |
+| `IPC_LOST`, `LAUNCHER_FAULT` | C6 private termination reasons (§14.4) | mapped to existing `STAGE_FAILED` (1) or to the candidate `WORKER_TERMINATION_UNCONFIRMED` | **No** |
+| launcher records `ready`, `worker-exit`, `termination-delivered`, `containment-empty`, `cleanup-unresolved`, `setup-failed` | C6 launcher status channel (§27.3) | parent-only, validated, closed | **No** |
+| spike / smoke `cause:"control_eof"`, helper `ev` names | host-feasibility smoke | not carried | **No** |
 
 ## 16. Public reason codes (PD-R8; unchanged from C4)
 
@@ -1190,8 +1370,14 @@ per-step attempt count.
 | `CHILD_UNRESPONSIVE` | top-level `errors[].code` | watchdog kill | 1 | governed |
 | `PROVIDER_GOVERNOR_LIMITS_MISSING` | top-level `errors[].code` | enabled, no limits for the effective provider | 3 | v2 enabled |
 
-No other code is added. None is reachable with v1 or a disabled governor. These
-codes still need the separate canonical contract amendment (§20).
+No other code is added by the C5 design contract. None of the six is reachable
+with v1 or a disabled governor. These codes still need the separate canonical
+contract amendment (§20).
+
+(C6) The two PD-C6-4 **candidate** reasons are listed in §29 with their proposed
+mappings. Unlike the rows above, they are reachable in **both** modes. They are
+**not** part of this table, and neither is authorized: the design direction is
+approved, but the canonical amendment is not.
 
 ## 17. Deadline and termination phases (D+15 A)
 
@@ -1204,18 +1390,26 @@ codes still need the separate canonical contract amendment (§20).
 | H — heartbeat liveness | parent | silence `< WD` while no result is stored | kill, `CHILD_UNRESPONSIVE` (1) |
 | E — enforcement | parent, `tOpen` | first callback at or after `tOpen + K_PARENT` | kill, `STAGE_TIMEOUT` (6) |
 | A — result transfer | child | ACK within `ACK` (FT0) | child exit 1 |
-| K — post-kill | parent, `tKill` | `exit` / `close` / `error`, or abandonment at or after `tKill + K_SETTLE` | abandonment |
+| L — launcher setup (C6, both modes) | launcher | `ready` record before any provider request is served; not time-bounded by the parent before `ready` (open item, §31.3 Q-C6-5) | `setup-failed` → refusal, `HOST_ISOLATION_UNAVAILABLE` (proposed) |
+| K — post-termination (C6, both modes) | parent, `tKill` | event-driven: `close` / `error` at once; `exit` → phase S; fallback `K_SETTLE` at or after `tKill + K_SETTLE` | unresolved settlement (`CLEANUP_UNRESOLVED`) |
 | S — settlement | parent, `tExit` | `close`, or `CAE` after `exit` (FT0) | settle with `result = null` |
 | V — validation and commit | parent | not bounded | existing errors |
 
 Statements that hold (algorithmic): no governed transport invocation at a parent
-reading `>= tOpen + 1 770 000`; kill decision at the first callback at or after
-`tOpen + 1 815 000`; post-kill settlement decision at or after `tKill + K_SETTLE`
-or `tExit + CAE`.
+reading `>= tOpen + 1 770 000`; no governed sleep starts when its fresh pre-sleep
+reading `a` satisfies `a + planned >= tOpen + 1 770 000` (C6); kill decision at the
+first callback at or after `tOpen + 1 815 000`. (C6) After a termination decision,
+settlement happens at the **first** of: `close`, spawn `error`, the first `CAE`
+callback at or after `tExit + CAE`, or the first `K_SETTLE` callback at or after
+`tKill + K_SETTLE` when no `exit` was seen. It therefore happens no later than the
+first such callback at or after `tKill + K_SETTLE + CAE`, and it may happen
+immediately. No acceptance happens without `CONTAINMENT_EMPTY`.
 
 Statements that do **not** hold: "the CLI settles by 1 815 s"; "no HTTP bytes leave
 after 1 770 s" (wire timing is not observable); "the 900 s budget binds before the
-deadline"; any punctual timer.
+deadline"; any punctual timer. (C6) "Settlement after a kill happens no earlier than
+`tKill + K_SETTLE` or `tExit + CAE`" (withdrawn; C5-ARCH-02). "`K_SETTLE` expiry
+means the worker terminated." "A termination request means the worker terminated."
 
 ## 18. Invariants
 
@@ -1226,28 +1420,41 @@ deadline"; any punctual timer.
 | INV-G03 | Any half-open 65 s interval holds at most `B_req` and at most `floor(B_tok / Res_min)` commits (P Lemma 6). |
 | INV-G04 | One entry per commit; `charged ∈ {max(Res, U), B_tok}`, set once at settlement, `≥ Res`; never removed while live (§11.5). |
 | INV-G05 | `W` starts at `C_COLD`, changes only by `chargeable()` after a sleep, never decreases, and is `≤ W_BUDGET` at every commit (§9.1). |
-| INV-G06 | No commit at a final reading `t2 >= dispatchDeadline`, and no sleep is started when it is planned to end at or after `dispatchDeadline` (§9.2). |
+| INV-G06 | (C6) No commit at a final reading `t2 >= dispatchDeadline`. No sleep is started unless its **fresh** pre-sleep reading `a`, taken after all synchronous planning work and followed only by the pre-sleep comparisons and the timer arming, satisfies `a < dispatchDeadline`, `a + planned < dispatchDeadline` and `W + chargeable(a, a + planned) ≤ W_BUDGET` (§8.3, §9.2; C5-ARCH-01). |
 | INV-G07 | No commit before `coldUntil`. |
 | INV-G08 | Zero Gateway and transport retries; at most one transport invocation per commit; under TS at most one HTTP request per invocation (§10.1). |
 | INV-G09 | The first governor refusal is sticky in the session; afterwards every request is refused with that code and zero commits. |
 | INV-G10 | **Property A:** after `revoke()` returns, zero `transport.send()` calls in that session (§13.3). |
 | INV-G11 | A governor refusal reaches the envelope on the return and unwind paths as primary classification or as `governorCode` (E2), unless a higher-precedence outcome applies; the code comes from the parent's session record (§15.2). |
-| INV-G12 | Commit only if a result is stored, `exitCode === 0`, `killed === null` and settlement was by `close`. |
-| INV-G13 | v1 or disabled governor: spawn, environment, provider construction, IPC, exit codes and output identical to baseline; SEC-C1 certified behavior present. |
+| INV-G12 | (C6) Commit only if a result is stored, `exitCode === 0`, `killed === null`, settlement was by `close`, and the containment state is `CONTAINMENT_EMPTY`. |
+| INV-G13 | (C6, amended under PD-C6-1) v1 or disabled governor: no rate governance; certified provider request bytes and transport semantics; exit codes, reason codes, stdout and envelope equal to the baseline, except the enumerated differences D-1 … D-4 (§25.4); SEC-C1 protection (revocation, credential custody, containment) present (PD-R14). |
 | INV-G14 | No credential, model name, URL, header, raw usage, raw provider message or body other than validated `content` crosses IPC; none reaches logs or the envelope. |
 | INV-G15 | Hints only tighten; invalid hints are ignored. |
 | INV-G16 | All accounting arithmetic is exact (BigInt ns, integer tokens). |
 | INV-G17 | Valid usage is charged `max(Res, U)` whether or not content is present; malformed usage always sets `RATE_ACCOUNTING_INVALID`. |
-| INV-G18 | After a kill decision, parent settlement is decided at or after `tKill + K_SETTLE` (no `exit`) or `tExit + CAE`; abandonment discards the result. |
+| INV-G18 | (C6, corrected; C5-ARCH-02) After a termination decision at `tKill`, the parent settles exactly once, at the **first** of: launcher `close`; spawn `error`; the first `CAE` callback at or after `tExit + CAE` when `exit` arrived without `close`; the first `K_SETTLE` callback at or after `tKill + K_SETTLE` when no `exit` was observed. Event-driven settlement may be immediate (kill 0, exit 3, close 5 → settlement 5). The upper bound is the first such callback at or after `tKill + K_SETTLE + CAE`. Every settlement in phase K discards the result. |
+| INV-G19 | (C6) The containment state is `CONTAINMENT_EMPTY` only after an OS-observable emptiness record from the launcher (§27.2). A termination request, an observed leader exit, a `K_SETTLE` expiry, a launcher exit without that record, or parent-side assumptions never produce it. |
+| INV-G20 | (C6) No provider request is served (governed or pass-through) while the containment state is not `PROCESS_RUNNING`, in particular before the launcher's `ready` record (§7.5, §27.3). |
+| INV-G21 | (C6) Provider-backed execution starts only on a qualified host (§26). On any other host the refusal happens before spawn, before any provider request is built and before the credential is passed to any transport. |
+| INV-G22 | (C6) The worker's environment, argv, IPC and filesystem view contain no provider credential, in both modes (§28.3). |
+| INV-G23 | (C6) A settled outcome with containment state other than `CONTAINMENT_EMPTY` is never classified as a terminated or successful worker. It is `CLEANUP_UNRESOLVED` (§27.7). |
+| INV-G24 | (C6) Ungoverned mode never applies admission, ledgers, cold start, wait, dispatch deadline, heartbeat, watchdog or enforcement (PD-R13), and always applies revocation, credential custody and containment (PD-R14, PD-C6-1). |
 
 ## 19. Non-guarantees
 
-C5 does **not** guarantee:
+C6 does **not** guarantee:
 
-1. **Property B** (no arbitrary network access by a surviving or compromised child).
-2. Credential confinement against a compromised same-user child (§13.5).
-3. Termination of a child whose kill is not delivered or that never yields; only
-   that the parent settles and the Gateway dispatches nothing more.
+1. **Property B** on any host before its qualification gates pass. B is designed as
+   a candidate (§28.2); it is not shown anywhere. B never covers same-user processes
+   outside the containment, OS-broker covert channels that qualification has not
+   excluded, or kernel or sandbox escapes.
+2. Credential confinement before SG-03 and its gates pass. It is a candidate design
+   (§28.3) and is **not** claimed from environment hygiene alone.
+3. Confirmed termination in every case. C6 guarantees only that an unconfirmed
+   termination is reported as `CLEANUP_UNRESOLVED`, fails closed, and is never
+   counted as terminated (§27.7). After parent death, termination is attempted by
+   kernel-backed mechanisms and **cannot be confirmed** by anyone in the product
+   (§27.6).
 4. That an aborted, timed-out or abandoned request was not processed or charged remotely.
 5. Compliance with any provider's TPM, RPM, RPD or TPD accounting (PD-R10); estimator accuracy; provider header meanings (PD-R9).
 6. Isolation from other processes, earlier invocations or other tools on the account.
@@ -1258,6 +1465,10 @@ C5 does **not** guarantee:
 11. That a healthy child is never killed by the watchdog if one synchronous segment
     or result transfer exceeds about 45 s without heartbeats.
 12. Completion of any particular amount of work N.
+13. (C6) That any host is qualified. Until §30 gates pass on a host class, that
+    class refuses provider-backed execution (§26). **Today the qualified set is empty.**
+14. (C6) Protection against a compromised launcher, a compromised parent, or a
+    compromised OS. The launcher and parent are trusted computing base (§28.4).
 
 ## 20. Future implementation touchpoints (design only; not authorized)
 
@@ -1266,10 +1477,12 @@ C5 does **not** guarantee:
 | New internal modules (parent) | Gateway session (admission, ledgers, wait, deadline, revocation, accounting), single-send `https` transport, bounded stream reader, adapters, IPC schema. Package-surface inventory update and external install proof (C2:444). |
 | New internal module (child) | `GatewayClientProvider`, heartbeat sender, `StageContext`. |
 | `providers/groq-provider.js`, `gemini-provider.js` | Export the existing pure pieces (request build, `mapHttpError`, body-read and content mapping) for reuse by the adapters; ungoverned behavior byte-identical. |
-| `cli/child-env.js` | Governed variant of `buildGenerativeEnv()` without `AI_SECRET_KEYS`. |
-| `cli/generative-runner.js` | Governed mode from the payload marker; client provider instead of `createProvider()`; heartbeat; `StageContext`, `classifyReturn` / `classifyThrow`. |
-| `cli/stage-process.js` | Governed routing, revocation hooks, watchdog, enforcement, kill sequence, `K_SETTLE` abandonment. |
-| `cli/generative.js` | Session open before spawn, adapter construction, classification of §15.3, abandonment diagnostic. |
+| `cli/child-env.js` | (C6) Worker variant of `buildGenerativeEnv()` without `AI_SECRET_KEYS`, used in **both** modes. |
+| `cli/generative-runner.js` | (C6) Gateway client provider in both modes, instead of `createProvider()`; governed mode from the payload marker: heartbeat, `StageContext`, `classifyReturn` / `classifyThrow`. |
+| `cli/stage-process.js` | Routing, revocation hooks, (governed) watchdog and enforcement, (C6) containment state machine, launcher spawn and channels, termination request, `K_SETTLE` unresolved settlement. |
+| `cli/generative.js` | Session open before spawn (governed or pass-through), adapter or provider construction, (C6) host qualification check, classification of §15.3, unconfirmed-termination diagnostic. |
+| (C6) New internal module: host qualification and launcher integration | Host class detection, preflight (§26.2), Linux `bwrap` argv construction (§27.4), Windows helper invocation (§27.5), status-record validation (§27.3). |
+| (C6) Native Windows helper | A separate native artifact (§27.5). Its build, signing, distribution and installation are **not designed or authorized** (PO-C6-3, §31.2). |
 | `cli/run-artifacts.js` | `GOVERNOR_REASON_CODES` allowlist. |
 | `cli/config-file.js` | Schema v2. |
 | Contract docs | Canonical amendment for contract §10.7 reason codes and §11 schema v2 (separate). |
@@ -1287,19 +1500,22 @@ Generators: **no change.**
 | PD-R4 | no completion cap; no new IPC prompt cap | No |
 | PD-R7 | generative scope only | No |
 | PD-R9 | no real-provider calls; required before production qualification against real endpoints (TQ) | No; blocks production acceptance |
-| PO-B (joint with SG-02) | Property B scope: accept it as out of scope for Controlled v1, or open a separate OS-isolation requirement | No for design review; required before implementation authorization |
+| PO-B (joint with SG-02) | C5: Property B scope. **C6:** the C6 direction treats direct provider bypass as within SEC-C1 (SEC-D2, PD-C6-1 … 5) and designs B for the contained worker (§28.2). PO-B is recorded as **addressed by that direction**. Security confirms the B scope of §13.4 under SG-02 | No for design review |
 
-No other PO decision is needed by C5: AD-03 … AD-07 settle overshoot, cancelled
-waits, BUSY, the 300 ms grace and `K_SETTLE`; §9.1 keeps the approved wait meaning.
+The C6 decisions still open are listed in §31.2 (PO-C6-1 … PO-C6-5). Apart from
+those, no other PO decision is needed: AD-03 … AD-07 settle overshoot, cancelled
+waits, BUSY, the 300 ms grace and `K_SETTLE`, and §9.1 keeps the approved wait
+meaning.
 
 ### 21.2 Security gates (all SECURITY_GATE_OPEN)
 
 | ID | Gate |
 |---|---|
-| SG-01 | SEC-C1 reconciliation (§13.6): confirm that "no subsequent provider calls" is met by Property A plus the credential-free child, and "the child must terminate" by certified child self-termination plus parent kill and K_SETTLE abandonment. If Security requires Property B or a stronger termination guarantee, C5 is BLOCKED. |
-| SG-02 | Property B: NOT PROVIDED. Security and PO decide scope (with PO-B). |
-| SG-03 | Credential confinement against a compromised same-user child (§13.5): NOT PROVIDED; accept as residual or require OS isolation. |
-| SG-04 | Production HTTPS transport security qualification: TQ-05, TQ-06, TQ-09 and host allowlist TS-9. |
+| SG-01 | SEC-C1 reconciliation. **C6:** C5's reconciliation was found incompatible with SEC-C1 (`SG01-SEC-01`). C6 replaces it with worker-independent containment termination, emptiness confirmation, kernel-backed parent-death binding, no-network containment and credential exclusion, in both modes (§13.6, §27, §28). Security must accept that design. Its host assumptions must pass HQ-L-… / HQ-W-… (§30.2) before SG-01 can close. |
+| SG-02 | Property B. **C6:** DESIGNED (candidate) for the contained worker tree, with the scope of §13.4. HOST_NOT_VERIFIED. |
+| SG-03 | Credential confinement against a compromised worker. **C6:** DESIGNED (candidate) through process, filesystem and network isolation (§28.3), **not** through environment hygiene. HOST_NOT_VERIFIED; the BLOCKED host spike did not verify it (§30.1). **Not closed.** |
+| SG-04 | Production HTTPS transport security qualification: TQ-05, TQ-06, TQ-09 and host allowlist TS-9 (governed transport). In pass-through mode the certified provider transport runs in the parent, unchanged (§25.3). |
+| SG-05 | (C6) Launcher trusted-computing-base review: bubblewrap argv and version floor; Windows helper source, privileges, handle hygiene and AppContainer principal lifecycle (§27.4, §27.5, §28.4). |
 
 ## 22. Superseded C4 material (historical; not normative)
 
@@ -1330,4 +1546,845 @@ abandonment procedure's parent-side steps (§14.4–§14.5).
 |---|---|
 | C3 (`eff78a0c`) | Initial consolidated corrective for R2. |
 | C4 (`38121f95`) | Child-owned gate, redirect `manual`, union wait, six-axis exchange record, StageContext, bounded post-kill settlement. REJECTED by R4. |
-| C5 | **Replacement.** Parent-owned Provider Gateway (AD-01 … AD-09): credentials, single-send `https` transport, admission, accounting, deadline and revocation in the parent; private validated IPC; BUSY instead of FIFO; wait = cold-start charge + measured governor sleeps; exclusive deadline at a final commit reading; Property A designed, Property B explicitly not provided with Security gates SG-01 … SG-04; FT0 lifecycle unchanged, no successful-exit grace, `K_SETTLE = 10 000 ms` approved; parent-authoritative refusal record; spike-only fields mapped to private or existing outcomes; HTTPS qualification TQ-01 … TQ-10. |
+| C5 (`0c91393d`) | **Replacement.** Parent-owned Provider Gateway (AD-01 … AD-09): credentials, single-send `https` transport, admission, accounting, deadline and revocation in the parent; private validated IPC; BUSY instead of FIFO; wait = cold-start charge + measured governor sleeps; exclusive deadline at a final commit reading; Property A designed, Property B explicitly not provided with Security gates SG-01 … SG-04; FT0 lifecycle unchanged, no successful-exit grace, `K_SETTLE = 10 000 ms` approved; parent-authoritative refusal record; spike-only fields mapped to private or existing outcomes; HTTPS qualification TQ-01 … TQ-10. |
+| C6 | **Consolidated containment corrective** (PD-C6-1 … 6). `SG01-SEC-01`: per-stage launcher and OS containment in both modes; worker-independent termination; private containment states with emptiness confirmation; kernel-backed parent-death binding; `CLEANUP_UNRESOLVED` fail-closed (§27). No-network containment and credential exclusion (§28). Ungoverned pass-through Gateway; INV-G13 and PD-R13 interpretation amended (§25). Qualified-host refusal (§26). Candidate public reasons, proposed only (§29). Qualification gates with acceptance criteria; host feasibility BLOCKED (§30). `C5-ARCH-01`: fresh pre-sleep reading (§8.3, INV-G06). `C5-ARCH-02`: event-driven post-termination settlement, INV-G18 corrected (§14.5). `C5-EVID-01`: provenance categories; manifest reproduced; C2 report hash reviewer-reported (§2.5, §2.8). `C5-GOV-01`: `PENDING_PM_METADATA_SYNC` (no PR metadata edited). |
+
+---
+
+## 24. C6 authority, findings and amended C5 statements
+
+### 24.1 C6 decisions used (PO-CONV, 2026-10-27; provenance PO-SUPPLIED)
+
+| ID | PO disposition | Where C6 applies it |
+|---|---|---|
+| PD-C6-1 | **APPROVED.** Ungoverned provider-backed execution may internally use a parent-owned pass-through Gateway. The design interpretation of PD-R13 and INV-G13 is narrowly amended. Externally observable compatibility is preserved wherever possible. "Governor disabled" means no rate governance, **not** no SEC-C1 protection. Any further public behavior change outside the approved decisions requires STOP. | §3.2, §25, INV-G13, INV-G24 |
+| PD-C6-2 | **APPROVED DESIGN DIRECTION.** Linux Bubblewrap and a Windows native helper using a Job Object and AppContainer are candidate launcher mechanisms. They are not production-qualified and not approved mandatory dependencies. The design states precise assumptions and host capabilities. | §27.3–§27.5; PO-C6-3 (§31.2) |
+| PD-C6-3 | **APPROVED.** Qualified-host policy for Windows and Linux on Node 22.x. Unsupported or unqualified hosts refuse provider-backed execution, governed or ungoverned, before exposing credentials or initiating provider traffic. Unrelated capabilities remain available. WSL2 does not prove native Linux or CI compatibility. | §26, INV-G21 |
+| PD-C6-4 | **APPROVED DESIGN DIRECTION.** Two candidate closed public failure reasons, `HOST_ISOLATION_UNAVAILABLE` and `WORKER_TERMINATION_UNCONFIRMED`: design their meaning, occurrence and proposed mappings. Canonical public-contract changes are **not** authorized. No new numeric exit codes without separate approval. | §29; PO-C6-1 |
+| PD-C6-5 | **APPROVED DIRECTION.** Prefer kernel-backed containment and lifetime enforcement. Preserve responsibility for unresolved termination. A permanent host supervisor is **not** approved as an additional production dependency; if one proves unavoidable, STOP for PO disposition. `K_SETTLE = 10 000 ms` remains the parent settlement bound only. | §27.6, §27.7, §14.5; PO-C6-5 |
+| PD-C6-6 | **COMPLETED AS BLOCKED.** The isolated host feasibility experiment ended BLOCKED. Do not retry blocked probes, create alternate credential-inspection tooling, install dependencies or modify OS security settings. Use official OS documentation and existing evidence, and identify the proof gaps. | §30.1; every host property is ASSUMPTION |
+| SEC-D1 … SEC-D3 | **APPROVED** (PO-CONV; their full texts are not reproduced in this repository). C6 relies on SEC-D2 as summarized in the PO record: SEC-C1 covers direct provider bypass, and OS-level credential separation is required. SEC-D1 and SEC-D3 are preserved unchanged; C6 changes nothing they decide. | §13.6, §28 |
+
+AD-01 … AD-09 are preserved. C6 extends AD-01 (parent ownership) to ungoverned
+mode under PD-C6-1. It extends AD-02 by designing a candidate Property B and a
+worker termination guarantee under the Security gates. It keeps AD-07 (FT0, no
+grace, `K_SETTLE`), with the settlement bound corrected (§14.5).
+
+### 24.2 Findings and C6 disposition
+
+| Finding | Severity | C6 disposition | Where |
+|---|---|---|---|
+| `SG01-SEC-01` | MAJOR | **Addressed by design** with worker-independent containment termination, emptiness confirmation, kernel-backed parent-death binding, no-network containment and credential exclusion, in both modes. Fail-closed refusal elsewhere. The disposition is conditional on the host assumptions, which are open qualification gates. **SG-01 stays SECURITY_GATE_OPEN.** | §13.6, §25–§30 |
+| `C5-ARCH-01` | MINOR | **Corrected.** A fresh pre-sleep reading `a`; the deadline, planned end and wait budget are evaluated at `a`; the strict final dispatch checks are unchanged. | §8.3, §9.2, §9.4, INV-G06; P Lemma 3, PT-13 |
+| `C5-ARCH-02` | MINOR | **Corrected.** Post-termination settlement is event-driven and may be immediate; `CAE` and `K_SETTLE` are fallbacks; INV-G18 is restated with an upper bound only. | §14.5, §17, INV-G18; P Lemma 9, PT-14 |
+| `C5-EVID-01` | LOW | **Corrected.** Provenance categories (§2.8). Manifest `8bcd557c…` reproduced (AUTHOR-LOCAL). C2 report hash `5447dc2a…` recorded as reviewer-reported (PO-SUPPLIED), not author-verified. | §2.5, §2.8; P §1; M §1 |
+| `C5-GOV-01` | LOW | **`PENDING_PM_METADATA_SYNC`.** PR title and body are owned by the PM. C6 edits no PR metadata. | M §15 |
+
+### 24.3 C5 statements withdrawn or amended by C6
+
+| C5 statement | C6 status |
+|---|---|
+| §3.2 ungoverned rows: child-owned `createProvider()`, credentials in the child environment; INV-G13 "identical … No Gateway module is loaded" | amended (PD-C6-1): pass-through Gateway, no credentials in the worker; INV-G13 restated with D-1 … D-5 (§25.4) |
+| §13.4 "Property B NOT PROVIDED … not designed here" | superseded: B designed as a candidate for the contained worker tree (§28.2); HOST_NOT_VERIFIED |
+| §13.6 "child must terminate: … not guaranteed to terminate, in FT0 or in C5"; SG-01 BLOCKED condition | superseded: worker-independent termination with confirmation (§27); SG-01 open pending Security and qualification |
+| §14.4 step 5 `child.kill("SIGKILL")` | replaced by a containment termination request (§27.4.3, §27.5.3) |
+| §14.5 "abandonment"; INV-G18 "decided at or after `tKill + K_SETTLE` … or `tExit + CAE`" | replaced by unresolved settlement; INV-G18 corrected (event-driven, upper bound only) |
+| §8.3 pre-sleep test against the loop reading `t` | replaced by the fresh pre-sleep reading `a` |
+| §2.5 "Source manifest … Not reproduced" | withdrawn: reproduced (AUTHOR-LOCAL) |
+| §19 item 1–3 (B, credential confinement, termination "not guaranteed") | restated for C6 (§19) |
+| PT-08 "child keeps running … termination not guaranteed" | replaced by PT-16, PT-21, PT-22 (P §5) |
+
+---
+
+## 25. Ungoverned pass-through Gateway (PD-C6-1)
+
+### 25.1 Mode selection
+
+Every provider-backed generative stage child is launched inside a containment
+(§27) and receives the Gateway client provider (§7.4). The parent opens exactly one
+session per stage child:
+
+- **governed session** (§8–§11) when v2 `providerGovernor.enabled === true`;
+- **pass-through session** (this section) otherwise.
+
+The worker always uses the Gateway client. The payload marker `gateway: {v:1}`
+(governed only) enables only the governed-only worker features: heartbeat and
+`StageContext`. No worker ever calls `createProvider()` for a network provider.
+
+### 25.2 PD-R13 interpretation (narrowly amended)
+
+| Mechanism | Class | Ungoverned (C6) |
+|---|---|---|
+| Admission, RPM/TPM ledgers, reservation, usage charge, cold start, cooldown, hints | rate governance | **absent** |
+| Wait budget, dispatch deadline, stage enforcement, heartbeat, watchdog | rate governance / PD-R13 | **absent** |
+| Parent-owned credential custody and provider transport | SEC-C1 protection (SEC-D2) | present |
+| Revocation (Property A) | SEC-C1 protection | present |
+| Worker containment, termination request, emptiness confirmation, `K_SETTLE` settlement bound | SEC-C1 protection (PD-R14) | present |
+| Single active request (`BUSY`) | session hygiene (one in-flight request to revoke) | present; unreachable with the certified sequential generators |
+
+### 25.3 Pass-through algorithm (normative)
+
+```text
+openPassThrough():                                  // before spawn, after the host check (§26)
+  provider = createProvider(PROVIDER, {cancelSignal: sessionController.signal})
+                                                    // the CERTIFIED Groq/Gemini implementation, unchanged
+                                                    // (global fetch, 30 s timer, bounded body, existing mapping)
+  on throw: classify exactly as the baseline child's provider-configuration failure
+            (PROVIDER_CONFIGURATION_INVALID, exit 3), with no spawn
+
+onRequestPT(req):                                   // req is a validated copy (§7.2)
+  if req.id <= lastId: return reply(req.id, refused INVALID_REQUEST)
+  lastId = req.id
+  if revoked:           return reply(req.id, refused REVOKED)
+  if active !== null:   return reply(req.id, refused BUSY)
+  active = {id: req.id}
+  try:   out = {outcome:"content", content: await provider.analyze({systemPrompt, userPrompt})}
+  catch e: out = revoked ? CANCELLED
+                         : {outcome:"provider-error", code: e.code, retryable: e.retryable}  // §25.5
+  active = null
+  if !revoked and out !== CANCELLED: reply(req.id, out)
+
+revoke(): revoked = true; sessionController.abort()  // aborts the certified provider's in-flight fetch
+```
+
+- The request bytes, endpoint, headers, timeout, body bound, redirect handling and
+  HTTP-status mapping are those of the certified providers (`groq-provider.js`,
+  `gemini-provider.js` at `a32a6cd7`). That includes the global-`fetch` behavior on
+  HTTP 421 (R4-ARCH-02), which **stays a baseline property** of ungoverned mode. The
+  single-send transport (TS-1 … TS-9) is governed-only. C6 does not change it.
+- The certified providers today take a **process-scoped** cancel signal through
+  `bindCancelSignal()`. In the parent, a **per-session** signal is required.
+  Implementation touchpoint (§20): allow `createProvider()` to take an explicit
+  signal, with no change to any other behavior.
+- Property A in pass-through mode: `provider.analyze()` is called only from
+  `onRequestPT` after the `revoked` test with no intervening `await` (P Lemma 4b).
+
+### 25.4 Externally observable differences from the baseline (enumerated; INV-G13)
+
+| ID | Difference | Authority | Public outcome |
+|---|---|---|---|
+| D-1 | A provider-configuration failure (missing `AI_API_KEY` / `AI_MODEL`, constructor error) is detected in the parent before spawn, not in the child | PD-C6-1 (credential custody) | unchanged: `PROVIDER_CONFIGURATION_INVALID`, exit 3. Prerequisite **PRQ-COMPAT-1**: confirm that the child-side checks which run before `createProvider()` in the baseline (`STAGE_PAYLOAD_INVALID`, `CAPABILITY_REQUIRES_GENERATIVE_PROVIDER`, `generative-runner.js` L201–L212) cannot fire in a state where D-1 now fires first. Otherwise STOP |
+| D-2 | Provider-backed execution is refused on unsupported or unqualified hosts | PD-C6-3 | proposed `HOST_ISOLATION_UNAVAILABLE` (§29), pending authorization |
+| D-3 | After parent-observed IPC loss without a stored result, the parent requests containment termination and settles within the `K_SETTLE` bound | PD-C6-1, PD-R14, PD-C6-5 | unchanged when the containment empties: `STAGE_FAILED` (1), as the baseline "no result" outcome. One stderr line only when unresolved |
+| D-4 | Containment failures produce the candidate reasons | PD-C6-4 | proposed `HOST_ISOLATION_UNAVAILABLE` / `WORKER_TERMINATION_UNCONFIRMED` (§29), pending authorization |
+| D-5 | Provider HTTPS requests originate in the CLI parent process. The parent's runtime TLS and proxy configuration therefore applies, instead of the closed child environment (for example `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`, which `buildGenerativeEnv()` never passes to the child) | PD-C6-1 (consequence of parent custody) | no outcome change when those variables are unset. **Disclosed for Security review (SG-04, Q-C6-1).** If Security requires parity, the pass-through transport must neutralize those inputs, which needs re-review |
+
+No other public difference is designed. Internal differences (worker environment
+without credentials, containment, Gateway module loaded) are not public.
+
+### 25.5 Error fidelity (pass-through)
+
+The worker reconstructs the provider error from `{code, retryable}` (§7.4). The
+fields that generators or the envelope read from a provider error must be equal to
+the baseline. Prerequisite **PRQ-COMPAT-2**: enumerate those fields (for example
+through `normalizeProviderError()`). If any field other than `code` and `retryable`
+is read (for example the message text), the IPC `provider-error` shape must carry it
+in a closed, sanitized form, which needs re-review. Verification V-15 (M §12).
+
+---
+
+## 26. Host qualification policy (PD-C6-3)
+
+### 26.1 Host classes
+
+| Class | Definition | C6 status |
+|---|---|---|
+| `linux-native` | Linux x64 kernel on bare metal or a VM, not WSL; includes the CI runner image class, recorded separately per image | candidate; **not qualified** |
+| `linux-wsl2` | Linux under WSL2 | candidate as its **own** class. Its evidence **never** qualifies `linux-native` or CI |
+| `windows` | Windows 10/11 x64 builds named by qualification | candidate; **not qualified** |
+| any other (macOS, other architectures, Linux without the required capabilities, Node ≠ 22.x) | — | **unsupported**: refused |
+
+**Qualified Host Matrix (QHM).** A host class is qualified only when every gate of
+§30.2 for that class has passed under an independent qualification mission. **The
+QHM is empty at C6.** If C6 were implemented unchanged, every host would refuse
+provider-backed execution until qualification. This consequence is stated, not
+hidden.
+
+### 26.2 Qualified-host predicate (evaluated in the parent, per invocation)
+
+`qualified(host)` holds iff all of these are true:
+
+1. the host class is in the QHM;
+2. `process.versions.node` is `22.x` (the `engines` range);
+3. the class's launcher passes the static preflight recorded in the QHM entry:
+   - Linux: `bwrap` resolved at a fixed absolute path, version at or above the
+     qualified floor, not setuid (H-L-01);
+   - Windows: helper present at its installed path with matching integrity identity
+     (PO-C6-3), and OS build in the qualified set;
+4. no QHM exclusion condition holds. For example, running as `root` on Linux is
+   unqualified unless separately qualified.
+
+The predicate reads no credential, opens no network connection and spawns at most
+read-only version probes defined by the qualification. Runtime capability
+(namespace or AppContainer creation) is proven by the launcher itself, before the
+worker runs (LC-2).
+
+### 26.3 Refusal semantics
+
+- **Order.** The existing pipeline order stays: usage (2) → config (3) → authority
+  (5) → input (4) → provider (6). The host check runs after the existing
+  configuration and authority checks of the provider-backed command, and before the
+  provider or adapter is used and before spawn.
+- **Effect.** Zero child processes, zero provider requests, the credential never
+  passed to any transport or child. The parent reads `AI_API_KEY` only as today, for
+  redaction (`generative.js` L71). Outcome: proposed `HOST_ISOLATION_UNAVAILABLE`
+  (§29).
+- **Runtime setup failure on a qualified host.** If the launcher reports
+  `setup-failed` before the worker ran (LC-2), the outcome is the same. If the
+  launcher fails in any other way, the outcome is `CLEANUP_UNRESOLVED` (§27.2,
+  fail closed).
+- **Scope.** Only provider-backed generative execution (`design`, `plan`,
+  `generate` with an effective network provider) is refused. Offline or mock
+  providers, non-generative stages and every other CLI capability are unaffected.
+
+---
+
+## 27. Worker containment and termination (SG01-SEC-01)
+
+### 27.1 Requirements
+
+| ID | Requirement (both modes, every qualified host) |
+|---|---|
+| CR-1 | **Pre-execution containment.** The containment exists, and the worker is a member, before the worker executes any instruction of its own. |
+| CR-2 | **Membership.** Every descendant of the worker is a member. No member can leave the containment or create a process outside it. |
+| CR-3 | **Worker-independent termination.** The parent can cause every member to be terminated without any action by any member. |
+| CR-4 | **OS-observable confirmation.** "Terminated" is established only by an OS-observable emptiness condition of the containment (`CONTAINMENT_EMPTY`), never by a request, a timeout or a leader exit alone. |
+| CR-5 | **Parent death.** If the parent process dies by any cause, the containment is ended by kernel-backed mechanisms that need neither the worker nor the parent's code to run. |
+| CR-6 | **Failed termination.** A termination that cannot be confirmed is `CLEANUP_UNRESOLVED`, fails closed, and is never classified as terminated. |
+| CR-7 | **Handle and resource lifetime.** Every handle or resource that keeps the containment alive or controllable is owned by the launcher (or the kernel), is non-inheritable, and is unreachable from members. |
+| CR-8 | **Cleanup responsibility.** Defined for each outcome (§27.7). No permanent host supervisor (PD-C6-5). |
+| CR-9 | **Fail closed.** Any setup, status or protocol fault yields refusal (before the worker runs) or `CLEANUP_UNRESOLVED` (after). It never yields acceptance. |
+| CR-10 | **Unsupported-host refusal.** §26. |
+
+### 27.2 Containment state machine (private)
+
+#### 27.2.1 States
+
+`LAUNCHING` is an internal pre-state. The five states below are the C6 design
+states. They are **not** approved public status strings.
+
+| State | Meaning | Established by |
+|---|---|---|
+| `LAUNCHING` | launcher spawned; worker not yet confirmed inside the containment | spawn |
+| `PROCESS_RUNNING` | the worker was created inside the containment and may run | launcher `ready` record |
+| `TERMINATION_REQUESTED` | the parent decided to terminate and issued the platform's termination request | parent (§14.4 step 5) |
+| `PROCESS_EXIT_OBSERVED` | the worker **leader** exited. Descendants may still be alive. **Not** termination of the worker tree | launcher `worker-exit` record |
+| `CONTAINMENT_EMPTY` | the OS reported that the containment has no member process | launcher `containment-empty` record (Windows) or the derivation rule R-L-EMPTY (Linux, §27.4.4) |
+| `CLEANUP_UNRESOLVED` | termination or emptiness could not be confirmed | rules T7a … T7f below |
+
+#### 27.2.2 Transitions
+
+| # | From | Event | To |
+|---|---|---|---|
+| T1 | `LAUNCHING` | valid `ready` | `PROCESS_RUNNING` |
+| T2 | `LAUNCHING` | valid `setup-failed`, then launcher exit | settled as **refusal** (`HOST_ISOLATION_UNAVAILABLE`, proposed). No worker ran (LC-2) |
+| T3 | `PROCESS_RUNNING` | termination decision (§14.4) | `TERMINATION_REQUESTED` |
+| T4 | `PROCESS_RUNNING` | valid `worker-exit` | `PROCESS_EXIT_OBSERVED` |
+| T5 | `TERMINATION_REQUESTED` | valid `worker-exit` | `PROCESS_EXIT_OBSERVED` (the request flag is kept) |
+| T6 | `PROCESS_RUNNING`, `TERMINATION_REQUESTED`, `PROCESS_EXIT_OBSERVED` | valid `containment-empty` (or R-L-EMPTY) | `CONTAINMENT_EMPTY` (final) |
+| T7a | any non-final | valid `cleanup-unresolved` | `CLEANUP_UNRESOLVED` (final) |
+| T7b | any non-final | launcher exit, `close` or `CAE` settlement without a prior `containment-empty` | `CLEANUP_UNRESOLVED` |
+| T7c | any non-final | first `K_SETTLE` callback at or after `tKill + K_SETTLE` without emptiness | `CLEANUP_UNRESOLVED` |
+| T7d | any | malformed status record, record not allowed in the current state, status channel EOF before the launcher's exit while a record is still required | termination decision (`LAUNCHER_FAULT`) if not already taken, then `CLEANUP_UNRESOLVED` at settlement unless T6 occurs first |
+| T7e | `LAUNCHING` | launcher exit without `ready` and without `setup-failed` | `CLEANUP_UNRESOLVED`: a worker may have run |
+| T7f | `TERMINATION_REQUESTED` | the termination fallback that forfeits confirmation was used (§27.4.3, §27.5.3) | stays `TERMINATION_REQUESTED`; T6 is no longer accepted from R-L-EMPTY; settles `CLEANUP_UNRESOLVED` unless the launcher itself reports `containment-empty` |
+
+Rules: final states never change. A termination request, `PROCESS_EXIT_OBSERVED`,
+a `K_SETTLE` expiry or a `CAE` settlement **never** produce `CONTAINMENT_EMPTY`
+(INV-G19). The only producers are T6.
+
+The worker's IPC `disconnect`, the launcher's `exit` and the launcher's `close` are
+FT0 events. Their effect on containment state is only through T7b.
+
+#### 27.2.3 Private-to-public mapping (proposal)
+
+| Final containment state at settlement | `killed` | Result stored | Public outcome |
+|---|---|---|---|
+| `CONTAINMENT_EMPTY` | `null` | yes, `exitCode === 0`, `close` | accepted (INV-G12) → existing validation and commit |
+| `CONTAINMENT_EMPTY` | `null` | otherwise | existing FT0 classification (§15.3 rows 6–12) |
+| `CONTAINMENT_EMPTY` | `STAGE_TIMEOUT` / `CHILD_UNRESPONSIVE` | discarded | `STAGE_TIMEOUT` (6) / `CHILD_UNRESPONSIVE` (1) |
+| `CONTAINMENT_EMPTY` | `IPC_LOST` / `LAUNCHER_FAULT` | discarded | `STAGE_FAILED` (1), existing |
+| `CLEANUP_UNRESOLVED` | any | discarded | **proposed** `WORKER_TERMINATION_UNCONFIRMED`, exit 1 (§29) |
+| refusal (T2) | — | — | **proposed** `HOST_ISOLATION_UNAVAILABLE`, exit 5 (§29) |
+
+### 27.3 Launcher contract (platform-neutral)
+
+| ID | Requirement |
+|---|---|
+| LC-1 | One launcher per stage child, spawned by the parent with `shell: false` at a fixed absolute path. Its lifetime ends with its containment. It is **not** a host supervisor and does not outlive the stage except as described in §27.6. Its environment is the worker environment (no credential, INV-G22). |
+| LC-2 | It creates the containment and places the worker in it before the worker runs (CR-1). On any failure before that point, it writes `setup-failed {stage}` and exits non-zero **without having started the worker**. |
+| LC-3 | It provides membership without breakaway (CR-2). |
+| LC-4 | It reports `containment-empty` only from the OS emptiness condition of its platform. |
+| LC-5 | It exits only after `containment-empty` or `cleanup-unresolved`. After `containment-empty` its exit code equals the worker leader's exit code (signal-terminated leaders: a platform-defined non-zero code). In every other case it exits non-zero. |
+| LC-6 | After the leader's exit, it terminates the remaining members (descendant purge) before it reports emptiness. |
+| LC-7 | It is bound to the parent's lifetime by kernel-backed means (§27.6). |
+| LC-8 | It never reads, holds or forwards a provider credential and never opens a network connection. |
+| LC-9 | It passes the parent's IPC channel and stdio to the worker unchanged and retains no copy of the IPC channel after the worker has started. It never parses or relays IPC content. |
+| LC-10 | It writes only closed status records on the status channel (below). |
+
+Status channel: an extra parent-created pipe (child stdio index 4). Records:
+
+| Record | Closed fields | Allowed in state |
+|---|---|---|
+| `ready` | `workerPid` (positive integer; on Linux the sandbox init's PID in the parent's namespace) | `LAUNCHING` |
+| `setup-failed` | `stage` ∈ closed set (`userns`, `namespace`, `mount`, `job`, `appcontainer`, `create-process`, `assign`, `verify`, `other`) | `LAUNCHING` |
+| `worker-exit` | `code` (integer or `null`), `signal` (closed string or `null`) | `PROCESS_RUNNING`, `TERMINATION_REQUESTED` |
+| `termination-delivered` | `ok` (boolean) | `TERMINATION_REQUESTED`, `PROCESS_EXIT_OBSERVED` |
+| `containment-empty` | — | `PROCESS_RUNNING`, `TERMINATION_REQUESTED`, `PROCESS_EXIT_OBSERVED` |
+| `cleanup-unresolved` | `stage` ∈ closed set | any non-final |
+
+Linux (`bwrap`) does not speak this schema. The parent's Linux adapter maps bwrap's
+documented `--json-status-fd` output: `{"child-pid": n}` → `ready`,
+`{"exit-code": n}` → `worker-exit`. A bwrap error before `child-pid` maps to
+`setup-failed {stage:"other"}`, and `containment-empty` is derived by R-L-EMPTY
+(§27.4.4). Every record that does not parse to the closed schema is T7d.
+
+Control channel (Windows only): the helper's stdin pipe. The parent writes the
+single closed record `terminate`. EOF means the parent is gone (§27.5.5). The
+Linux design needs no control channel.
+
+### 27.4 Linux candidate: bubblewrap (unprivileged user namespaces)
+
+#### 27.4.1 Host assumptions (all ASSUMPTION; gates in §30.2)
+
+| ID | Assumption | Source | Gate |
+|---|---|---|---|
+| H-L-01 | `bwrap` at a fixed path, version at or above the qualified floor, **not setuid**, able to create an unprivileged user namespace on the host. Distribution policy, for example an AppArmor user-namespace restriction or a sysctl, may forbid this; that host is then unqualified | bwrap(1); distribution docs | HQ-L-01 |
+| H-L-02 | The parent (same UID) may send `SIGKILL` to the sandbox init by its PID in the parent's namespace | kill(2) permission rules | HQ-L-03 |
+| H-L-03 | When the init of a PID namespace terminates, the kernel sends `SIGKILL` to every other process in that namespace | pid_namespaces(7) (documented) | HQ-L-03, HQ-L-04 |
+| H-L-04 | The init's exit status becomes reapable only after every other member of its PID namespace has exited and been reaped | kernel behavior; **not stated in the manual page** | HQ-L-04 |
+| H-L-05 | A parent-death signal set with `PR_SET_PDEATHSIG` is delivered when the creating parent **thread** ends (prctl(2), with its documented thread caveat); bwrap `--die-with-parent` uses it for the sandbox processes | prctl(2); bwrap(1) | HQ-L-05 |
+| H-L-06 | The bwrap monitor (the parent's direct child) exits only after reaping the sandbox init. Its exit status is the command's exit status; the `exit-code` status record precedes that exit | bwrap behavior; ASSUMPTION | HQ-L-04, HQ-L-14 |
+| H-L-07 | A `/proc` mounted inside the sandbox lists only the sandbox's PID namespace | proc(5), pid_namespaces(7) | HQ-L-07 |
+| H-L-08 | A new network namespace contains only a loopback interface, separate from the host's loopback, and has no route to any other network | network_namespaces(7) | HQ-L-08 |
+| H-L-09 | No host pathname socket (for example under `/run`, `$XDG_RUNTIME_DIR`, `/tmp` of the host) is present in the sandbox filesystem view; abstract UNIX sockets are scoped to the network namespace | unix(7); bwrap mount options | HQ-L-09 |
+| H-L-10 | `SIGKILL` sent from an ancestor PID namespace to a namespace's init is delivered forcibly | pid_namespaces(7) (documented) | HQ-L-03 |
+| H-L-11 | A process cannot move itself or a descendant out of its PID namespace into the parent's namespace without `CAP_SYS_ADMIN` in the user namespace that owns the target namespace | setns(2) | HQ-L-04 |
+
+#### 27.4.2 Containment creation (CR-1, CR-2)
+
+The parent spawns `bwrap` (the **monitor**, the parent's direct child) with, in
+substance:
+
+```text
+bwrap --unshare-user --unshare-pid --unshare-net --unshare-ipc --unshare-uts --unshare-cgroup-try
+      --die-with-parent --new-session [--disable-userns, if the qualified version supports it]
+      --clearenv --setenv <worker environment allowlist, incl. the Node IPC channel variables>
+      --ro-bind <node runtime> --ro-bind <package code root> --ro-bind <required system libs>
+      --proc /proc --dev /dev --tmpfs /tmp --chdir /
+      --json-status-fd 4
+      -- <node> <generative-runner.js> <stage>
+```
+
+- `--unshare-user` is mandatory, not `-try`. Failure to create the namespace is a
+  setup failure (LC-2).
+- bwrap runs its own init as PID 1 of the new PID namespace (no `--as-pid-1`). The
+  worker is a child of that init. Every descendant, including double-forked and
+  `setsid` processes, stays in the namespace and is reparented to the init
+  (H-L-11).
+- The filesystem view contains only read-only binds that the worker needs:
+  PRQ-FS-1 (§28.1) defines that set and qualification confirms it. It contains no
+  home directory, no workspace, no `/run` and no host `/tmp`.
+- cgroup v2 is **not** used. It is not needed for CR-1 … CR-5 under H-L-03 … H-L-06,
+  and on the observed WSL2 host the process's cgroup was `0::/init.scope` with no
+  delegation (SMOKE inventory). If qualification refutes H-L-04 or H-L-06, the only
+  remaining documented emptiness signal is cgroup v2 `cgroup.events` `populated 0`.
+  That needs a delegated cgroup subtree, which is an additional host dependency, so
+  **STOP for PO** (PO-C6-5).
+
+#### 27.4.3 Worker-independent termination (CR-3)
+
+Primary path: the parent sends `SIGKILL` to the sandbox init's PID from the `ready`
+record (H-L-02, H-L-10). The kernel then kills every other member (H-L-03). No
+member's cooperation is involved. `termination-delivered{ok:true}` is recorded when
+the `kill` call returns without error.
+
+Preconditions (PID-reuse guard): `ready` was received; no `worker-exit` record was
+received; the monitor's `exit` was not observed. While these hold, the init has not
+been reaped (H-L-06), so its PID cannot have been reused. **Residual R-L-PID:**
+between the monitor reaping the init and the parent reading the `exit-code` record
+or the monitor's exit, the PID is free. A `SIGKILL` sent in that window could reach
+an unrelated process of the same user if the PID was reused within it. The design
+keeps the window as small as the event loop allows. It is disclosed, not claimed to
+be zero (Q-C6-3). Removing it entirely needs a PID-file-descriptor-capable launcher
+or native addon, which is a dependency outside PD-C6-2.
+
+Fallback (forfeits confirmation, T7f): if the preconditions fail while the monitor
+is alive, or `kill` fails with `EPERM`, the parent kills the monitor
+(`child.kill("SIGKILL")`). bwrap's `--die-with-parent` then kills the sandbox
+processes through the parent-death signal (H-L-05). After that, emptiness can no
+longer be confirmed: `CLEANUP_UNRESOLVED`. `ESRCH` means the init already
+terminated; the parent waits for the records.
+
+#### 27.4.4 Emptiness confirmation (CR-4): rule R-L-EMPTY
+
+The parent records `CONTAINMENT_EMPTY` (T6) iff:
+
+- the `worker-exit` record (bwrap `exit-code`) was received; and
+- the monitor's `exit` was observed afterwards with a consistent status; and
+- the fallback of §27.4.3 was not used.
+
+The rule rests on H-L-04 and H-L-06: the monitor can exit only after reaping the
+init, and the init can be reaped only after the namespace is empty. Both are
+ASSUMPTIONS until HQ-L-04 and HQ-L-14 pass. A leader exit alone
+(`PROCESS_EXIT_OBSERVED`) is never emptiness. A namespace whose init outlives the
+worker leader is not possible in this configuration: bwrap's init exits when its
+command exits. That exit tears the namespace down (descendant purge, LC-6),
+assumed under H-L-03 and HQ-L-04.
+
+#### 27.4.5 Parent death (CR-5)
+
+If the CLI process dies, the monitor receives its parent-death `SIGKILL`, and the
+sandbox init receives its own (bwrap `--die-with-parent`, H-L-05). The init's death
+kills the namespace (H-L-03). No product code runs; no confirmation is possible
+(§27.6).
+
+#### 27.4.6 Failed or unresolved termination (CR-6)
+
+`kill` errors, members stuck in uninterruptible kernel waits (`SIGKILL` pending), a
+monitor killed by a third party, a missing or malformed status record: each leads
+to T7b … T7f and `CLEANUP_UNRESOLVED`.
+
+#### 27.4.7 Resources and cleanup (CR-7, CR-8)
+
+The namespaces and the tmpfs are kernel objects that exist only while a member
+exists. The design creates no persistent host state: no cgroup, no files outside
+the sandbox tmpfs, no registration. After `CONTAINMENT_EMPTY` nothing remains to
+clean up. After `CLEANUP_UNRESOLVED` the remaining kernel objects are released when
+their last member exits.
+
+#### 27.4.8 Limitations
+
+All Linux evidence is an **inventory on WSL2** (bubblewrap 0.11.1 present, not
+setuid; user namespaces available; Node 22.23.3 available). **No sandbox was ever
+started** (§30.1). Native Linux and CI runners are not shown. Hosts that forbid
+unprivileged user namespaces are unqualified.
+
+### 27.5 Windows candidate: native helper with Job Object and AppContainer
+
+#### 27.5.1 Host assumptions (all ASSUMPTION unless marked SMOKE)
+
+| ID | Assumption | Source | Gate |
+|---|---|---|---|
+| H-W-01 | Nested jobs are supported, and a process can be placed in a job at creation (`PROC_THREAD_ATTRIBUTE_JOB_LIST`) on the qualified builds | Windows documentation (Job Objects; `UpdateProcThreadAttribute`) | HQ-W-01, HQ-W-12 |
+| H-W-02 | With `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, all processes in the job are terminated when the **last handle** to the job is closed | `JOBOBJECT_BASIC_LIMIT_INFORMATION` (documented) | HQ-W-05, HQ-W-06 |
+| H-W-03 | Without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` and `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`, a member's child processes are created in the job, and `CREATE_BREAKAWAY_FROM_JOB` fails | Job Objects documentation | HQ-W-04 |
+| H-W-04 | `TerminateJobObject` terminates every process currently associated with the job. Process exit may complete asynchronously (pending I/O) | `TerminateJobObject` (documented) | HQ-W-03, HQ-W-07 |
+| H-W-05 | `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.ActiveProcesses == 0` means that no process in the job is still active. Completion-port job messages are notifications whose delivery is **not guaranteed** and are used only as prompts | Job Objects / `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (documented) | HQ-W-07 |
+| H-W-06 | The helper's job handle is non-inheritable. The job is unnamed. No member can obtain a handle to it, because an AppContainer member cannot open the helper's process | ASSUMPTION | HQ-W-06, HQ-W-08 |
+| H-W-07 | An AppContainer token with **no capabilities** has no outbound network access, and loopback is blocked unless a loopback exemption exists for that AppContainer | AppContainer network isolation documentation | HQ-W-09 |
+| H-W-08 | An AppContainer token cannot open processes, files or registry keys that do not grant access to its SID or to ALL APPLICATION PACKAGES. That includes the parent's process and the user's profile files | AppContainer isolation documentation | HQ-W-08, HQ-W-10 |
+| H-W-09 | Node 22.x runs as an AppContainer process given read access to its runtime and the package code, and a writable AppContainer temp directory | ASSUMPTION | HQ-W-13, HQ-W-15 |
+| H-W-10 | The parent's IPC pipe handle and stdio handles can be passed through the helper to the worker by explicit handle-list inheritance, with the stdio encoding that Node's `NODE_CHANNEL_FD` expects | ASSUMPTION | HQ-W-13 |
+| H-W-11 | The helper ends when the parent ends, by (a) EOF on its control pipe, which helper code acts on, and (b) a kernel mechanism independent of helper code, for example membership in a kill-on-close job held only by the parent process. libuv implements such a job, but that is an implementation detail, not a Node API | ASSUMPTION | HQ-W-05 |
+| H-W-12 | An AppContainer process can be created only with a registered AppContainer profile (error 2 without registration; error 203 with the helper's minimal explicit environment until the profile environment variables were added) | **SMOKE** S2–S6 on one Windows 11 build; inference | HQ-W-14 |
+
+#### 27.5.2 Containment creation (CR-1, CR-2)
+
+The helper performs these steps, in order. Any failure before step 7 → `setup-failed`, exit non-zero:
+
+1. Create an unnamed Job Object `J` with a non-inheritable handle. Set
+   `KILL_ON_JOB_CLOSE`, **without** `BREAKAWAY_OK` and `SILENT_BREAKAWAY_OK`.
+   Associate a completion port for prompts (H-W-05).
+2. Obtain the AppContainer SID for the product's AppContainer principal. Its
+   lifecycle is PO-C6-2: per-run creation and deletion, or explicit setup.
+3. Build `SECURITY_CAPABILITIES` with that SID and **zero** capabilities: no
+   `internetClient`, `internetClientServer` or `privateNetworkClientServer`.
+4. Build an explicit, closed environment block: the worker allowlist (INV-G22),
+   the Node IPC channel variables, the AppContainer profile variables required
+   on the build (H-W-12), and `TEMP`/`TMP` pointing to the AppContainer temp
+   directory.
+5. `CreateProcess(node, runner, stage)` with `EXTENDED_STARTUPINFO_PRESENT |
+   CREATE_SUSPENDED`. Attributes: security capabilities,
+   `PROC_THREAD_ATTRIBUTE_JOB_LIST = {J}`, and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
+   restricted to the IPC and stdio handles.
+6. Verify `IsProcessInJob(worker, J)`. On mismatch, `TerminateProcess` the
+   suspended worker. No instruction of the worker has run.
+7. Write `ready {workerPid}`, then `ResumeThread`.
+8. Close the helper's copies of the IPC and stdio handles that it passed on (LC-9).
+
+#### 27.5.3 Worker-independent termination (CR-3)
+
+The parent writes `terminate` on the control channel. The helper calls
+`TerminateJobObject(J, code)` and writes `termination-delivered {ok}`. No member's
+cooperation is involved (H-W-04).
+
+Fallback (forfeits confirmation, T7f): if the control write fails, or no
+`termination-delivered` record follows, the parent may terminate the helper
+(`child.kill()`). Closing the helper's last handle to `J` makes the kernel apply
+`KILL_ON_JOB_CLOSE` (H-W-02), but nobody can query `J` any more:
+`CLEANUP_UNRESOLVED`.
+
+#### 27.5.4 Emptiness confirmation (CR-4)
+
+After a completion-port prompt (`EXIT_PROCESS`, `ACTIVE_PROCESS_ZERO`) or after
+`TerminateJobObject`, the helper **queries** `ActiveProcesses`. Only a query result
+of `0` produces `containment-empty` (H-W-05). Then the helper closes `J` and exits
+with the worker's exit code (LC-5). On the successful path the helper first purges
+the remaining members with `TerminateJobObject` once the leader has exited (LC-6).
+The helper needs no timer for correctness; the parent's `K_SETTLE` bounds the
+parent's wait (§14.5).
+
+#### 27.5.5 Parent death (CR-5)
+
+When the parent dies, the helper's control pipe reaches EOF, and the helper calls
+`TerminateJobObject` (H-W-11a). Independently of helper code, the helper's own
+termination by the kernel (H-W-11b) closes the last handle to `J`, which triggers
+`KILL_ON_JOB_CLOSE` (H-W-02). No product code needs to survive; no confirmation is
+possible (§27.6). If qualification shows that the helper's death cannot be bound to
+the parent's death without a persistent service, **STOP for PO** (PO-C6-5).
+
+#### 27.5.6 Failed or unresolved termination (CR-6)
+
+A failing `TerminateJobObject` (`termination-delivered{ok:false}`) leads the helper
+to write `cleanup-unresolved` and exit, which closes `J` (H-W-02, unconfirmed).
+Members held by pending I/O keep `ActiveProcesses > 0` until the parent's
+`K_SETTLE` → `CLEANUP_UNRESOLVED`.
+
+#### 27.5.7 Resources, nested jobs and cleanup (CR-7, CR-8)
+
+- `J` and its completion port are held only by the helper and die with it.
+- **Nested jobs:** the observed host shell runs inside a job with flags `0x1800`
+  (breakaway allowed, silent breakaway allowed, no kill-on-close; SMOKE S1). The
+  helper created its own job and placed a process in it (`inHelperJob=true`, SMOKE
+  S3, S6). Whether `J` nests under an outer job, and whether an outer job's limits
+  interact with `J`, is HQ-W-12. An outer job that terminates its members also
+  terminates `J`'s members, which is not harmful to safety.
+- **AppContainer principal.** The SMOKE runs needed a per-user profile
+  registration. File access for the worker needs ACL grants to the AppContainer SID
+  on the Node runtime and the package code (H-W-08). Both are **host security
+  setting changes**. Their production model (when, by whom, how it is cleaned up)
+  is **not designed** and needs PO-C6-2. No such change is prescribed or authorized
+  here.
+
+#### 27.5.8 Limitations
+
+Windows evidence is **setup smoke only** (S1–S7) on Windows 11 Home build 26300
+with **Node 24.22.1**. Node 22.x was unavailable on that host. The helper's IPC
+forwarding was never exercised. `isAppContainer` was not queried from inside the
+child. `WORKER_TERMINATION_UNCONFIRMED` was never exercised (§30.1).
+
+### 27.6 Parent death (both platforms)
+
+| Platform | Mechanism (kernel-backed) | Product code needed | Confirmation |
+|---|---|---|---|
+| Linux | parent-death `SIGKILL` to the monitor and the sandbox init → PID-namespace teardown (H-L-03, H-L-05) | none | **none possible**: the parent is gone |
+| Windows | helper terminated with the parent (H-W-11b) → last `J` handle closed → `KILL_ON_JOB_CLOSE` (H-W-02); in addition, helper control-pipe EOF → `TerminateJobObject` (H-W-11a) | none for (b) | **none possible** |
+
+Parent death is therefore a case where termination is **designed** (CR-5) but can
+never be confirmed at runtime. Its evidence can only come from qualification
+(HQ-L-05, HQ-W-05).
+
+### 27.7 Unresolved termination: responsibility (PD-C6-5)
+
+When the final state is `CLEANUP_UNRESOLVED`:
+
+1. The invocation fails closed. No result is accepted or committed. The outcome
+   is the proposed `WORKER_TERMINATION_UNCONFIRMED` (§29). The process is never
+   reported as terminated.
+2. Provider access was already revoked (Property A). The worker holds no
+   credential and has no network path (§28). An unresolved worker cannot make a
+   provider call through the design's paths.
+3. The parent emits one fixed diagnostic line (§14.5). It names the launcher PID,
+   and on Linux the sandbox init PID when known, so that the operator can finish
+   the cleanup. Operator documentation is a later deliverable, not designed here.
+4. The parent unrefs the launcher and may end. Ending the CLI triggers the
+   kernel-backed parent-death path (§27.6), which is a further, unconfirmed,
+   attempt.
+5. No permanent supervisor is introduced. If qualification finds a class of
+   unresolved states that cannot be bounded without one, **STOP for PO**
+   (PO-C6-5).
+
+### 27.8 FT0 integration (both modes)
+
+| Path | Sequence | Outcome |
+|---|---|---|
+| Normal success | requests answered → `result` → `revoke` → store → ACK → worker disconnects and exits 0 → `worker-exit 0` → descendant purge (LC-6) → `containment-empty` → launcher exits 0 → `exit 0` → `close` | INV-G12 holds → accept (PT-15) |
+| Disconnect **with** a stored result (the certified child-initiated disconnect) | no termination request. The certified worker exits next | as above |
+| Disconnect **without** a stored result (`IPC_LOST`) | termination decision (§14.4) → containment termination → event-driven settlement | `STAGE_FAILED` (1) when empty; else `CLEANUP_UNRESOLVED` |
+| Result stored, worker never exits (non-cooperative) | governed: the enforcement timer ends it (§14.4). Ungoverned: no timer exists (PD-R13). The CLI waits as in the baseline; the worker is revoked, credential-free and network-less. It ends with the CLI (§27.6) | **Residual** (Q-C6-6). No acceptance before `CONTAINMENT_EMPTY` |
+| Launcher `exit` without `close` (Windows, FT0-C2-D1) | `CAE` fallback | `result = null`. State per T7b unless `containment-empty` was read first |
+
+No time-based grace is introduced. The parent never requests termination on the
+successful path. The descendant purge is the launcher's emptiness step after the
+leader's own exit.
+
+---
+
+## 28. Direct provider-call prevention and credential boundary
+
+### 28.1 Network and filesystem needs of the stage child (repository analysis; AUTHOR-LOCAL at `a32a6cd7`)
+
+- `generative-runner.js` imports `crypto`, `../config`, `../providers/index` and
+  the five generator modules (L34–L43). `providers/index.js` imports only the
+  mock, Groq and Gemini providers (L13–L18).
+- A search of every non-test module under `scripts/ai/` for `http`, `https`,
+  `net`, `dgram`, `dns`, `tls`, `http2`, `fetch(`, `WebSocket` and `undici` finds
+  network use only in `collect-history.js`, `destinations/azure-devops-test-case-destination.js`,
+  `providers/azure-devops-requirements-provider.js`, `providers/jira-requirements-provider.js`,
+  and the Groq and Gemini providers. None of the first four is imported by the
+  runner's direct dependencies.
+- In C6 the worker no longer loads a network provider (it uses the Gateway
+  client). **Conclusion:** at the level of direct imports, the generative child
+  needs **no network access other than provider communication**. With the provider
+  moved to the parent, it needs **none**.
+- Filesystem: the generator modules read no files at run time. The plan
+  generator imports only constants and a pure predicate from
+  `automation-repository-context.js`. That module requires `fs` at load time; its
+  readers run in the parent. The worker reads module code and the Node runtime.
+- **Prerequisites (not established):** **PRQ-NET-1**, the full transitive import
+  closure and dynamic-require audit of the worker, confirmed by a deny-all network
+  run under qualification (HQ-L-08, HQ-W-09). **PRQ-FS-1**, the exact read-only
+  file set of the worker (runtime, package code, system libraries) and its temp
+  needs, confirmed under HQ-L-10 and HQ-W-10. Until both pass, "no network needed"
+  is a repository finding, not an established fact.
+
+### 28.2 No-network containment model (Property B, candidate)
+
+| Path | Linux (bwrap) | Windows (AppContainer + Job) | Status |
+|---|---|---|---|
+| Direct HTTP(S) to a provider or anywhere | no interface except an isolated loopback (H-L-08) | no network capability → outbound blocked (H-W-07) | DESIGNED · HOST_NOT_VERIFIED |
+| Raw and packet sockets, UDP, ICMP, IPv6 | same namespace: no route; no capability in the parent user namespace | blocked with the same AppContainer network isolation | DESIGNED · HOST_NOT_VERIFIED |
+| Host loopback services, including a local proxy or a local provider emulator | separate loopback; the host's `127.0.0.1` is unreachable (H-L-08) | loopback blocked unless a loopback exemption exists for the SID. Qualification checks that none exists (H-W-07) | DESIGNED · HOST_NOT_VERIFIED |
+| Proxy routes (environment variables, system or WinHTTP proxy) | the environment is cleared; a proxy is a network endpoint and is unreachable | the same; a proxy is not reachable without a capability | DESIGNED · HOST_NOT_VERIFIED |
+| DNS | no resolver reachable (no network; no host resolver socket bound) | **open question**: whether the system DNS client service resolves names for a capability-less AppContainer, which would be a covert channel to an attacker's authoritative server. Not a provider call (one needs HTTPS to the fixed origins) | Linux DESIGNED · Windows **SECURITY_GATE_OPEN** (HQ-W-09) |
+| Pathname UNIX sockets, named pipes, local RPC brokers | not in the filesystem view (H-L-09) | reachable only when their ACL grants the AppContainer SID or ALL APPLICATION PACKAGES (H-W-08). Broker services that grant this are a residual to characterize | DESIGNED · HOST_NOT_VERIFIED; Windows brokers HQ-W-09 |
+| Abstract UNIX sockets | scoped to the new network namespace | n/a | DESIGNED · HOST_NOT_VERIFIED |
+| Inherited descriptors and handles | only stdio, the IPC channel and the status pipe (launcher-side) cross; the worker gets stdio and IPC only | `HANDLE_LIST` restricted to stdio and IPC | DESIGNED · HOST_NOT_VERIFIED |
+| The IPC channel to the parent | the **only** provider path: closed schema, parent-authorized (§28.5) | same | DESIGNED · ALGORITHMICALLY_PROVEN (Lemma 4, 4b) |
+
+### 28.3 Credential boundary (candidate; SG-03)
+
+The credential is `AI_API_KEY`, read only from the parent's environment
+(`config.js` L38; there is no dotenv loading). The model name `AI_MODEL` is treated
+the same way.
+
+| Exposure path | Linux | Windows | Basis |
+|---|---|---|---|
+| Worker environment and argv | not present (`--clearenv` + allowlist; INV-G22) | not present (explicit environment block) | environment hygiene. **Never claimed sufficient on its own** |
+| Parent's environment block and memory | the parent is not in the worker's PID namespace and `/proc` shows only that namespace (H-L-07). No `ptrace` target is addressable | the AppContainer token cannot open the parent process (H-W-08) | process isolation (candidate) |
+| Secret files of the user (dotfiles, credential stores, workspace `.env`) | not in the filesystem view (PRQ-FS-1, H-L-09) | not readable without an ACL grant to the SID (H-W-08) | filesystem isolation (candidate) |
+| Other same-user processes (shells, editors, agents holding the key) | not addressable (PID namespace) | not openable (AppContainer) | process isolation (candidate) |
+| IPC and launcher channels | no credential field exists (§7.2, §27.3); INV-G14 | same | schema (ALG) |
+| Transport | parent only (governed: TS-8; pass-through: certified provider in the parent) | same | design |
+| Launcher | holds no credential (LC-8). Its environment is the worker environment | same | design |
+
+**Not claimed:** confinement against a compromised parent, launcher, OS or
+non-contained same-user process. The C6 credential boundary separates the worker
+tree only. It is a candidate design: **SG-03 remains open**. The BLOCKED spike did
+not verify it, and its cross-process credential-inspection component was itself
+blocked (§30.1).
+
+### 28.4 Trust boundaries
+
+| Component | Trust |
+|---|---|
+| CLI parent, Gateway, launcher (`bwrap` or helper), OS kernel | trusted computing base. Launcher review is SG-05 |
+| Worker tree (stage child and descendants) | **untrusted** after the payload is received (compromise assumed for B, credential and termination analysis) |
+| Provider responses | untrusted input (existing validation) |
+
+### 28.5 Governed and ungoverned routing; IPC authorization
+
+The worker's only provider path is a `provider-request` over the IPC channel. The
+parent serves it only when all of these hold: the message passes the closed-schema
+validation (§7.2); `id > lastId`; the session is not revoked; no request is active;
+and the containment state is `PROCESS_RUNNING` (INV-G20). The request can choose
+prompts only, never an endpoint, header, method or credential.
+
+Governed mode then applies admission (§8). Pass-through mode calls the certified
+provider (§25.3). Both modes revoke on the same triggers (§13.1).
+
+### 28.6 Child IPC under isolation
+
+- The IPC channel is created by the parent's `spawn` of the launcher and passed to
+  the worker unchanged (LC-9). Linux: the inherited descriptor and the Node channel
+  variables pass through `bwrap` (`--setenv`). Windows: handle-list inheritance
+  with Node's stdio encoding (H-W-10).
+- If the launcher kept a copy of the channel, the parent's `disconnect` event
+  would be delayed until the launcher exits. That is why LC-9 forbids it. Property
+  A does not depend on it, because revocation also happens on `exit`, `close` and
+  every termination decision.
+- Schema, validation, receipt/ACK and close-based settlement are unchanged (§7,
+  §14.1).
+- **Evidence:** none. Private IPC under containment was never exercised on either
+  platform (§30.1). Gates HQ-L-12 and HQ-W-13.
+
+---
+
+## 29. Candidate public failure reasons (PD-C6-4)
+
+**Status: the design direction is APPROVED. The canonical contract amendment is NOT
+AUTHORIZED.** Neither code is part of the public contract, and implementing either
+needs that separate authorization (PO-C6-1). No new numeric exit code is proposed.
+
+| Code (candidate) | Internal meaning | Occurrence | Proposed mapping | Precedence (§15.3) | Modes |
+|---|---|---|---|---|---|
+| `HOST_ISOLATION_UNAVAILABLE` | The product cannot establish its mandatory worker containment on this host, so it refuses provider-backed execution | (a) host not qualified or unsupported (§26.3), before spawn; (b) launcher `setup-failed` before the worker ran (T2) | top-level `errors[].code`; **exit 5** (authority refused: the product refuses a capability on this platform, like the existing "platform decision pending" refusal). Alternative: exit 3 ("provider/framework environment configuration"). Choice is PO-C6-1 | row 2a: after usage, configuration and the existing authority checks; before input, provider and spawn | both |
+| `WORKER_TERMINATION_UNCONFIRMED` | A provider-backed worker could not be confirmed terminated; its result is discarded | final containment state `CLEANUP_UNRESOLVED` (T7a–T7f) | top-level `errors[].code`; **exit 1** (the product cannot confirm its own safety invariant). The kill reason, if any, is appended to the message only | row 3a: above the kill outcomes (rows 4–5a) and every child outcome, below native signal termination, pre-spawn failures and spawn error. It is never masked by `STAGE_TIMEOUT` | both |
+
+Before authorization, nothing is implemented (AD-09). If the PO rejects the
+amendment, no fallback mapping onto an existing reason code is designed. Folding
+`WORKER_TERMINATION_UNCONFIRMED` into `STAGE_FAILED` would hide a safety-relevant
+state. That fallback would need a new PO decision.
+
+---
+
+## 30. Host feasibility evidence and qualification gates
+
+### 30.1 Evidence boundary (PD-C6-6: BLOCKED)
+
+Location: `C:\Users\artem\Desktop\OD-RATE-1-Host-Feasibility` (outside every
+repository). The report files were read, and their SHA-256 values were computed by
+the author at C6 authoring (AUTHOR-LOCAL). Their **contents** are SMOKE and
+author-observed, **not** independently verified.
+
+| File | SHA-256 |
+|---|---|
+| `REPORT.md` | `dd3cee3e607391d3f83771988d8cf0c85fe64a1a76545d093b170e515252c3d0` |
+| `evidence/results.md` | `cb4d19f6a2baf591c41a25315cf2e0937f48a81e10b174dd4a885dfd0088c0d2` |
+| `evidence/process-lifecycle.md` | `02bb6320a6063db584ace9113392d33f1ca64b9e51111559ed43b04edd50a458` |
+| `evidence/host-inventory.md` | `3f771f7baf18eed3b548278203718f4d026a5ad2ee7234c3ca210087083003c7` |
+| `evidence/commands.md` | `ca2f5dbc82e053a87eea7d4c0d3488210353e94065ed6caf0e51f397e9d4f15e` |
+| `evidence/source-hashes.sha256` | `e710ee1d5062feb467eac64e295d019ee3ddd0815fd4df87f4bc5ba6a6d8b3cf` (lists `win/helper.cs` `fcf4edf4…0e50`, `win/helper.exe` `046e51f3…e449`, `linux/inventory.sh` `08344fd0…8cad8d`, `raw/linux-inventory.txt` `3f92345c…056d`) |
+
+| Area | Status (from the report; preserved verbatim in substance) |
+|---|---|
+| Overall | **BLOCKED** |
+| Formal probes L1–L10, W1–W12 | **NOT EXECUTED** (all) |
+| W8 and the cross-process part of L7 | **BLOCKED**: safety restrictions on credential-inspection tooling. That tooling is not to be recreated, modified or substituted |
+| Dependent worker probes (L6/W7 network, L8/W9 file access, own-environment hygiene) | **BLOCKED** (worker authoring stopped) |
+| Windows Job Object | **setup smoke only** (S3, S6) |
+| Windows AppContainer | **setup smoke only** (S2–S6): profile registration and profile environment variables needed |
+| Linux bubblewrap | installed, **inventory only**; no sandbox started |
+| Parent-death cleanup | **NOT VERIFIED** |
+| Whole process-tree containment | **NOT VERIFIED** |
+| Direct network denial | **NOT VERIFIED** |
+| Credential confinement; SG-03 | **NOT VERIFIED** |
+| Private IPC under containment | **NOT VERIFIED** |
+| Fail-closed launcher before credential exposure | **not demonstrated** (incidental `HOST_ISOLATION_UNAVAILABLE` setup failures only, no credential involved) |
+| `WORKER_TERMINATION_UNCONFIRMED` | never exercised |
+| Windows Node 22.x | **UNAVAILABLE** (Node 24.22.1 only) |
+| Linux Node 22.x | available on **WSL2** (22.23.3). **Not** native Linux or CI qualification |
+| Surviving owned processes after the smoke runs | 0, author-observed (S7c); not a certification |
+
+**Author-reported possible scope deviation (not an approved procedure).** During
+the smoke runs the author once registered a temporary per-user AppContainer profile
+`odr1hf.spike.canary` (no capabilities) without prior PM approval, then deleted it
+(`DeleteAppContainerProfile` hr 0). Post-state: 0 HKCU mapping entries and 0
+package folders matching `odr1hf*`. The registry pre-state was **not recorded**.
+Other side effects were not checked. It is recorded for PM/PO disposition
+(PO-C6-4). C6 prescribes **no** such registration (§27.5.7).
+
+**SG-03 is not closed** by anything in this evidence.
+
+### 30.2 Qualification gates (future; none executed)
+
+**Lifecycle boundary.** These gates run only in a **separately authorized,
+independent qualification mission**. That mission comes after the independent
+Architecture and Security reviews accept this design, and before any implementation
+acceptance. It uses no real provider (PD-R9) and only test-owned listeners,
+canaries and synthetic credentials. Methods that inspect credentials across process
+boundaries need their own explicit authorization; **this author does not write or
+reproduce them**. Results are recorded with artifact hashes by the independent
+qualifier (provenance IND-VERIFIED). A class enters the QHM only when all of its
+gates pass. A failed gate leaves the class unqualified (refusal), or triggers a STOP
+where §31.2 says so.
+
+Common acceptance rules for the termination gates (HQ-L-02 … 06, HQ-L-13, HQ-W-02
+… 07): at least 100 repetitions per host class and Node 22.x line. Survivors are
+counted by an **external** process audit outside the containment, keyed on
+test-owned identities (GWV-02 method). The required survivor count is **0**.
+`CONTAINMENT_EMPTY` must never be recorded while any member exists. An unresolved
+case must be reported as `CLEANUP_UNRESOLVED` and never as empty.
+
+| Gate | Old probe | Acceptance criterion |
+|---|---|---|
+| HQ-L-01 | L9 | Launcher present with the qualified version, not setuid, unprivileged user namespace creation succeeds. When made unavailable: refusal before spawn, 0 provider requests, 0 child processes, credential never passed |
+| HQ-L-02 | L1 | Worker exits 0: `ready`, `worker-exit 0`, `CONTAINMENT_EMPTY`, monitor exit 0, FT0 acceptance; 0 survivors |
+| HQ-L-03 | L2 | Worker ignores `SIGTERM` and IPC loss (busy loop): after the termination request, `CONTAINMENT_EMPTY` within `K_SETTLE`; 0 survivors (H-L-02, H-L-03, H-L-10) |
+| HQ-L-04 | L3 | Worker creates descendants (plain, double-forked, `setsid`, one that outlives the leader): emptiness recorded only after the last member is gone; 0 survivors; no member visible outside the namespace (H-L-04, H-L-06, H-L-11) |
+| HQ-L-05 | L4, L10 | Parent killed with `SIGKILL` while the worker and descendants are active: external audit finds 0 members; the time to emptiness is measured and reported, not claimed (H-L-05) |
+| HQ-L-06 | L5 | Where reproducible, a member in an uninterruptible wait at the termination request: the parent reports `CLEANUP_UNRESOLVED` at `K_SETTLE` and never `CONTAINMENT_EMPTY` early |
+| HQ-L-07 | — | Process view: the worker can enumerate and signal only namespace members; the parent and other user processes are not addressable (H-L-07) |
+| HQ-L-08 | L6 | Network denial with positive controls: connections from inside to a test listener on host loopback, to a non-loopback test address, and name resolution all fail; the same attempts from outside succeed (H-L-08); PRQ-NET-1 |
+| HQ-L-09 | — | No host pathname socket in the filesystem view; abstract sockets isolated (H-L-09) |
+| HQ-L-10 | L8 | A test-owned secret canary outside the binds is unreadable; only the PRQ-FS-1 set is readable; only tmpfs is writable |
+| HQ-L-11 | L7 | Credential confinement (SG-03) against a synthetic credential by every path in §28.3. **Method requires separate authorization; the author's attempt was BLOCKED** |
+| HQ-L-12 | — | FT0 and provider-request exchanges through the sandbox; parent `disconnect` timing; the monitor retains no channel copy (LC-9) |
+| HQ-L-13 | — | Fault injection: PID-reuse guard preconditions and the fallback behave per §27.4.3; the fallback always yields `CLEANUP_UNRESOLVED` |
+| HQ-L-14 | — | Exit status propagation per LC-5; `exit-code` record precedes the monitor exit (H-L-06) |
+| HQ-L-15 | — | All `HQ-L` gates on each **native** Linux class and CI image. WSL2 results are recorded under `linux-wsl2` only |
+| HQ-W-01 | W10 | Helper present with its approved identity. When a required control is unavailable: refusal before the worker runs, 0 provider requests, credential never passed |
+| HQ-W-02 | W1 | Worker exits 0: `ready`, `worker-exit 0`, purge, `containment-empty` from `ActiveProcesses == 0`, helper exit 0, FT0 acceptance; 0 survivors |
+| HQ-W-03 | W2 | Non-cooperative worker: `TerminateJobObject` → `CONTAINMENT_EMPTY` within `K_SETTLE`; 0 survivors (H-W-04) |
+| HQ-W-04 | W3 | Descendants, including an attempted `CREATE_BREAKAWAY_FROM_JOB`: breakaway fails; all members end; 0 survivors (H-W-03) |
+| HQ-W-05 | W4 | Parent killed while the worker and descendants are active: the helper ends, the job is killed, external audit 0 members; time measured (H-W-02, H-W-11) |
+| HQ-W-06 | W5, W6 | No handle to `J` exists outside the helper; `KILL_ON_JOB_CLOSE` is effective on helper death; an inherited or retained handle is shown impossible under the design's attributes |
+| HQ-W-07 | W11 | Emptiness only from `ActiveProcesses == 0`; never from completion messages alone; pending-I/O case yields `CLEANUP_UNRESOLVED` where reproducible (H-W-05) |
+| HQ-W-08 | — | The AppContainer worker cannot open the parent, the helper or other user processes (H-W-06, H-W-08). Method authorization as HQ-L-11 |
+| HQ-W-09 | W7 | Network denial with positive controls, including loopback with no exemption; characterization of DNS-service and broker reachability (H-W-07). Any reachable covert channel is reported to Security |
+| HQ-W-10 | W9 | A test-owned file in the user profile is unreadable; only granted paths are readable |
+| HQ-W-11 | W8 | Credential confinement (SG-03). **BLOCKED method; separate authorization required** |
+| HQ-W-12 | W12 | Interaction with pre-existing jobs (the host shell's `0x1800` job, CI runner jobs): `J` creation, nesting, and termination behave per H-W-01 … H-W-04 |
+| HQ-W-13 | — | Node 22.x worker in the AppContainer with IPC handle passing (H-W-09, H-W-10); FT0 receipt/ACK and close-based settlement intact; the helper retains no channel copy |
+| HQ-W-14 | — | The AppContainer principal lifecycle and ACL grants follow the PO-C6-2 model; no residue beyond it after cleanup |
+| HQ-W-15 | — | All `HQ-W` gates on Node 22.x (unavailable on the author's host) |
+| HQ-X-01 | L9, W10 | Unsupported and unqualified classes refuse before spawn: 0 child processes, 0 provider requests (INV-G21) |
+| HQ-X-02 | — | Ungoverned compatibility golden on qualified hosts (D-1 … D-5; PRQ-COMPAT-1, PRQ-COMPAT-2) |
+| HQ-X-03 | — | Owned-process audit in every suite (GWV-02) |
+| HQ-X-04 | — | 0 real provider calls (PD-R9) |
+
+---
+
+## 31. STOP analysis, remaining decisions and reviewer questions
+
+### 31.1 STOP conditions checked by the author
+
+| Mission STOP condition | Result |
+|---|---|
+| Exact repository identity differs | not triggered (preflight matched every expected SHA) |
+| An unapproved public contract change is required | not triggered: candidate codes are proposed only (§29); D-1 … D-5 trace to PD-C6-1 / 3 / 4. D-5 is disclosed for Security |
+| Additional privileges or production dependencies committed or mandated without approval | not triggered: launchers are candidates (PD-C6-2); no privilege is required; host security changes on Windows are left to PO-C6-2, not mandated |
+| SEC-C1 cannot be met by a concrete specified architecture | not triggered: §27–§28 specify it, conditional on host assumptions with gates |
+| Host security assumptions treated as proven | not triggered: every `H-L…` / `H-W…` is ASSUMPTION or SMOKE |
+| Another experimental probe needed now | not triggered: qualification is a future, separately authorized lifecycle step (§30.2) |
+| Scope beyond three documents | not triggered |
+| A security waiver required | not triggered |
+| Concurrent work violates WIP = 1 | not triggered (preflight) |
+
+**Conditional STOP triggers, for qualification or review:** (S-1) H-L-04 or H-L-06
+refuted, so Linux emptiness needs cgroup delegation; (S-2) the Windows helper's
+lifetime cannot be bound to the parent without a persistent service; (S-3)
+unresolved states need a supervisor; (S-4) PRQ-COMPAT-1 or PRQ-COMPAT-2 shows a
+public difference beyond D-1 … D-5. Each one → PO disposition before work continues.
+
+### 31.2 Remaining PO decisions (identified; not decided here)
+
+| ID | Decision needed | Blocks |
+|---|---|---|
+| PO-C6-1 | Canonical contract amendment for `HOST_ISOLATION_UNAVAILABLE` and `WORKER_TERMINATION_UNCONFIRMED`, including the exit mapping (5 or 3; 1) and precedence (§29) | implementation |
+| PO-C6-2 | Windows AppContainer principal lifecycle (per-run or explicit setup) and the ACL-grant model for runtime and package paths. Both are host security setting changes | Windows qualification |
+| PO-C6-3 | Adoption of the launchers as production dependencies after qualification: bubblewrap as a required system package on qualified Linux classes; build, signing, distribution and integrity identity of the Windows helper | implementation |
+| PO-C6-4 | Disposition of the author-reported AppContainer profile registration during the BLOCKED spike (§30.1) | evidence acceptance |
+| PO-C6-5 | Conditional (S-1 … S-3): any cgroup delegation, persistent supervisor or additional privilege that qualification shows to be unavoidable | the affected platform |
+| — | Authorization of the independent qualification mission (§30.2) and of any credential-confinement method | qualification |
+
+PD-R1, PD-R4, PD-R7 and PD-R9 stay open as in §21.1.
+
+### 31.3 Questions for the independent reviewers (C6)
+
+- **Q-C6-1.** Is D-5 acceptable under PD-C6-1 and SG-04? D-5 means the parent's
+  runtime TLS and proxy inputs now apply to ungoverned provider traffic.
+- **Q-C6-2.** For `HOST_ISOLATION_UNAVAILABLE`, is exit 5 (authority) or exit 3
+  (environment configuration) the right existing class?
+- **Q-C6-3.** Is the Linux PID-reuse residual R-L-PID acceptable, or must the
+  launcher provide PID-descriptor-based termination, which would be a dependency?
+- **Q-C6-4.** Should `WORKER_TERMINATION_UNCONFIRMED` take precedence over
+  `STAGE_TIMEOUT` (exit 6) and `CHILD_UNRESPONSIVE` (§29)?
+- **Q-C6-5.** Ungoverned mode has no time bound before the launcher's `ready`, as
+  the baseline has none for child start. Is that acceptable?
+- **Q-C6-6.** In ungoverned mode, a worker that delivers a result and then never
+  exits keeps the CLI waiting, as in the baseline. It cannot call the provider and
+  ends with the CLI. Is that residual acceptable under SEC-C1 (§27.8)?
+- **Q-C6-7.** Security: does the candidate scope of Property B (§13.4) and of
+  credential separation (§28.3) satisfy SEC-D2 once its gates pass?
