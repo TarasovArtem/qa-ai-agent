@@ -1,172 +1,274 @@
-# OD-RATE-1-C2-R3 — Provider Governor Design (Consolidated Corrective C4)
+# OD-RATE-1-C2-R3 — Provider Gateway Design (Parent Gateway Replacement, C5)
 
 | Field | Value |
 |---|---|
 | Document | `docs/od-rate-1-c2-r3-design.md` (1 of 3; companions: [proofs](od-rate-1-c2-r3-proofs.md), [review matrix](od-rate-1-c2-r3-review-matrix.md)) |
-| Revision | **C4** (supersedes C3 at PR #262 head `eff78a0c8d05b85b422f9945ced664485d7d563f`). Change log: §20. |
-| Status | **DESIGN — PENDING INDEPENDENT HEAVY REVIEW.** Not approved. No implementation, contract amendment, ROADMAP entry, merge or release is authorized by this document. |
-| Issue | #258 (OPEN; not modified) |
-| Baseline (review) | `main` HEAD `a32a6cd7e0a1bdc9917fc3abc7f692039591a145`, TREE `5e15c577faf60d65887569772dd4dd3558e53c26` |
-| Baseline (historical C2) | HEAD `52e23acf0f7e5d2f7fce2b406a27de51ae1af68c`, TREE `176960ba98b1e7babfee553729200c49d748d7ca` |
-| Author | Claude Code (the same account that authored OD-RATE-1, C1, C2 and C3). **This author cannot approve this design.** |
+| Revision | **C5: Parent Gateway design replacement.** It replaces the child-owned C4 governor at PR #262 head `38121f95938b28e065283707d01a70b05893e94c` (tree `cf2b202dbbde6c5fa693ceeb41e2df3662fd6c4c`). C4 was REJECTED by the independent R4 review (§2.6). Superseded C4 material: §22. Change log: §23. |
+| Status | **DESIGN — PENDING INDEPENDENT EXACT-HEAD ARCHITECTURE REVIEW AND SECURITY REVIEW.** Not approved. It authorizes no implementation, test, contract amendment, ROADMAP entry, real-provider call, merge or release. |
+| Authority | Product Owner: **OD-RATE-1 Unified Architecture Decision Package v2, AD-01 … AD-09, APPROVED 2026-10-27** (§2.2) |
+| Issue | #258 (OPEN; not modified; its body predates the later PO decisions, §2.3) |
+| Baseline | `main` HEAD `a32a6cd7e0a1bdc9917fc3abc7f692039591a145`, TREE `5e15c577faf60d65887569772dd4dd3558e53c26` |
+| Author | Claude Code, the same account that authored OD-RATE-1, C1 … C4 and the Gateway spike. **This author cannot approve this design.** |
 
 Normative keywords: **MUST**, **MUST NOT**, **SHOULD**, **MAY** as in RFC 2119.
-Durations are integer milliseconds on a monotonic clock unless stated otherwise.
-"Contract" means `docs/controlled-v1-productization-contract-v1.md`.
+Durations are milliseconds on a monotonic clock (§6.2). "Contract" means
+`docs/controlled-v1-productization-contract-v1.md`. **D** = this document,
+**P** = proofs, **M** = review matrix.
 
 ---
 
-## 1. Purpose and scope
+## 1. Purpose, scope and decision record
 
-This document specifies an opt-in **provider governor** for the provider-backed
-generative stages (`design`, `plan`, `generate`) of the `qa-agent` CLI. The
-governor delays or refuses provider requests so that the process stays within
-operator-declared request-rate (RPM) and heuristic token-rate (TPM) budgets, and
-it bounds governed stages in time.
+This document specifies one production target: an opt-in, **parent-owned
+Provider Gateway** for the provider-backed generative stages (`design`, `plan`,
+`generate`) of the `qa-agent` CLI. When the governor is enabled, the parent
+process alone owns the provider credentials, the provider transport, admission,
+rate accounting, the wait budget, the dispatch deadline and revocation. The stage
+child keeps the generative work and asks the parent for each provider exchange
+over a validated private IPC protocol.
 
-C4 is a consolidated, design-only corrective. It answers the second independent
-HEAVY re-review (R3) of C3 (§2.3). It keeps the C3 corrections that R3 accepted:
-R2-ARCH-04 (wait-budget overshoot), R2-ARCH-05 (HTTP 408), DRIFT-01 (SEC-C1
-cancellation) and DRIFT-02 (IPC receipt/ACK).
+Decision record:
 
-In scope:
+- The child-owned governor of C3/C4 (a governed `fetchImpl` gate inside the
+  child, FIFO queue, union wait accounting) is **withdrawn**. It is kept only as
+  history (§22).
+- The PO approved the Parent Gateway direction (AD-01 … AD-09, §2.2). This
+  document turns it into one implementable design. It does **not** copy the
+  spike into production. The spike is feasibility evidence (§2.5); every spike
+  behavior used here is restated as a production requirement, and the spike-only
+  behaviors that production must not have are listed in §15.4 and §22.
 
-- Governor state model, joint RPM + TPM admission, the governed transport gate,
-  and reservation and usage accounting.
-- Wait accounting (including queueing), cancellation, stage deadline,
-  heartbeat, watchdog, and bounded post-kill settlement.
-- Closed reason-code propagation on normal-return and exception paths.
-- Configuration schema v2 (opt-in) and exact v1 compatibility.
+In scope: architecture, private IPC, admission, wait and deadline semantics,
+transport contract and HTTPS qualification, accounting, revocation, Property A/B
+and SEC-C1 analysis, FT0 lifecycle compatibility, failure propagation, public
+compatibility.
 
-Out of scope (unchanged and not designed here):
+Out of scope (unchanged and not designed here): triage (`stage-runner.js`, PD-R7);
+the attempt budget (PD-R1); provider request payload caps (PD-R4); real-provider
+validation (PD-R9); persistent or cross-process rate state (rejected in C1);
+OS-level network isolation of the child (Property B, §13.4); release, ROADMAP,
+governance, package exports, `README.md`, `SECURITY.md`, `PROVIDERS` docs.
 
-- Triage (`stage-runner.js`, TSB contracts); PD-R7 is open.
-- The attempt budget (PD-R1), provider request payload caps (PD-R4) and
-  real-provider validation (PD-R9), all open.
-- Persistent or cross-process rate state (rejected in C1).
-- Release, ROADMAP, governance, package exports, `README.md`, `SECURITY.md`.
+## 2. Authority, evidence and baseline
 
-## 2. Baseline, evidence and authority
+### 2.1 Evidence classes
 
-### 2.1 Certified code baseline (`main` `a32a6cd7`)
+Every claim in D, P and M carries one of these classes. They are never merged.
+
+| Class | Meaning | Example |
+|---|---|---|
+| **PO-CONV** | Approved by the Product Owner in conversation; not (yet) published on GitHub | AD-01 … AD-09; PD-R11 A, PD-R12 A, PD-R12-I1, PD-R15 |
+| **PO-GH** | Disposition published on GitHub (Issue #258 body, 2026-10-19) | PD-R2, PD-R3, PD-R5, PD-R6, PD-R8, PD-R10, PD-R13, PD-R14, SEC-C1 |
+| **HIST-C4** | Rejected child-owned C4 design and its numbers | §22; P §7.2 |
+| **SPIKE** | Behavior of the isolated Gateway spike, independently verified (§2.5) | P §8 |
+| **OPEN** | Production behavior not yet verified by anyone | HTTPS transport (§10.2), integrated lifecycle (§14), Windows on Node 22.x |
+
+Issue #258 still lists PD-R11 and PD-R12 as open. Its body predates the later PO
+decisions and is unsynchronized. It is **not** evidence that those decisions are
+absent. The R4 reviewer noted the same (§2.6).
+
+### 2.2 Approved architecture decisions (PO-CONV, 2026-10-27)
+
+| ID | Decision | Where C5 implements it |
+|---|---|---|
+| AD-01 | Parent exclusively owns governed provider transport, credentials, admission, accounting and revocation. Child uses validated private IPC. | §3, §7, §8, §10, §13.1 |
+| AD-02 | Preserve SEC-C1. Property A is verified; Property B is not provided. Mandatory Security reconciliation, no waiver. | §13; gates SG-01 … SG-04 (§21.2) |
+| AD-03 | 900 000 ms cumulative governor waiting; preserve the approved 65 000 ms cold start. | §9.1, §8.6 |
+| AD-04 | `now >= deadlineAt` means REFUSE. Timer overshoot may increase charged waiting but must never permit further dispatch. | §9.2, §9.3, §8.4 |
+| AD-05 | Count actual waiting elapsed before cancellation. | §9.3 |
+| AD-06 | One active Gateway request; a concurrent request receives a private BUSY refusal, not FIFO queueing. | §8.5 |
+| AD-07 | Preserve FT0 receipt/ACK and close-based settlement. No arbitrary 300 ms successful-exit grace. `K_SETTLE = 10 000 ms` for the governed post-kill phase. | §14 |
+| AD-08 | Preserve public error vocabulary, CLI semantics, IPC compatibility and configuration compatibility. | §4, §5, §15.4, §16 |
+| AD-09 | One replacement design, then independent exact-head Architecture and Security reviews. No implementation or real-provider testing authorization. | this PR; M §15 |
+
+### 2.3 Earlier PO dispositions used
+
+| Decision | Class | Status | Use in C5 |
+|---|---|---|---|
+| PD-R2 | PO-GH | APPROVED DIRECTION | Config schema v2 with opt-in `providerGovernor`; v1 unchanged (§5). |
+| PD-R3 | PO-GH | APPROVED FOR DESIGN REVIEW | 30 s request timeout, 65 s per wait, 900 s accumulated wait, 1 800 s stage deadline, 45 s watchdog, 10 s heartbeat (§6.1). |
+| PD-R5 | PO-GH | APPROVED | 65 s cold start per governed stage; counts toward wait and stage budgets (§9.1). |
+| PD-R6 | PO-GH | APPROVED | No exit 130; native user-signal termination; user cancellation never exit 6. |
+| PD-R8 | PO-GH | APPROVED DIRECTION | Closed reason-code extension (§16). |
+| PD-R10 | PO-GH | APPROVED | Heuristic, best-effort token admission; exceeding local budgets fails closed (§11.2). |
+| PD-R13 | PO-GH | APPROVED | Deadline and watchdog only when governed. |
+| SEC-C1 | PO-GH | APPROVED; FT0 implementation certified on `main` | "Parent IPC disconnection must abort pending waits and in-flight provider requests. No subsequent provider calls may be initiated. The child must terminate." (§13.6) |
+| PD-R14 | PO-GH | APPROVED | SEC-C1 unconditional, also when the governor is disabled. |
+| PD-R11 | PO-CONV | APPROVED: A | `charged = max(reserved, observed)` for valid usage; valid usage survives content failure (§11.4). |
+| PD-R12 | PO-CONV | APPROVED: A | Missing usage saturates (§11.4). |
+| PD-R12-I1 | PO-CONV | APPROVED | Malformed usage saturates **and** sets `RATE_ACCOUNTING_INVALID`; unavailable usage or uncertain completion saturates; never zero (§11.4). |
+| D+15 | PO-CONV | APPROVED: A | Separate measurable lifecycle phases; no whole-CLI 1 815 s claim (§17). |
+| PD-R15 | PO-CONV | APPROVED, value `K_SETTLE = 10 000 ms` (reaffirmed by AD-07) | Bounded post-kill settlement (§14.5). |
+| PD-R1, PD-R4, PD-R7, PD-R9 | PO-GH | OPEN | Status-quo assumptions (§21.1). |
+
+### 2.4 Certified code baseline (`main` `a32a6cd7`)
 
 | File | Blob | Facts used |
 |---|---|---|
-| `scripts/ai/cli/stage-process.js` | `4c9a8ab4` | First result stored in memory, then ACKed with the child's random receipt (L118–132). `close` settles (L139). After `exit`, a ref'd `CLOSE_AFTER_EXIT_MS = 10000` timer settles with `result = null` if `close` never arrives (L143–160). There is no timeout, watchdog or kill. Late `exit` after settlement is ignored (L147). |
-| `scripts/ai/cli/generative-runner.js` | `5adac686` | `guardParentLink()` (L130): parent `disconnect` → abort → `process.exit(1)` in the same turn. `report()` (L167) moves `running → sending → awaiting_ack → delivered \| failed`. `RESULT_ACK_DEADLINE_MS = 10000` (L115). `bindCancelSignal(parentLink.signal)` runs before any provider exists (L238). `runOnce` catch (L226–229) reports `{kind:"internal", code:"GENERATIVE_STAGE_FAILED"}`. |
-| `scripts/ai/providers/index.js` | `74c64cd3` | Process-scoped `bindCancelSignal()` (L28). `createProvider(name)` passes `{ cancelSignal }` (L37–). |
-| `scripts/ai/providers/groq-provider.js` | `3d97fd86` | Accepts injected `fetchImpl` (L141). `fetchImpl(url, {method, headers, body: JSON.stringify(...), signal})` with **no `redirect` member** (L185–199). A rejection from `fetchImpl` maps to `TIMEOUT` if `err.name === "AbortError"`, else `NETWORK` retryable (L200–219). Non-2xx → `mapHttpError(status)`: 401/403 AUTH ✗, 429 RATE_LIMIT ✓, 408 TIMEOUT ✓, 5xx UNKNOWN ✓, **every other status, including 3xx**, UNKNOWN ✗ (L41–72). Bounded JSON body read (L233), **then** the content check → `INVALID_RESPONSE` (L243–249). |
-| `scripts/ai/providers/gemini-provider.js` | `6559416d` | Same structure: `fetchImpl` without `redirect` (L195–210); bounded read (L241); `extractText` content check → `INVALID_RESPONSE` (L253–). `mapHttpError`: 401/403 AUTH ✗, 429 ✓, 5xx ✓, every other status incl. 408 and 3xx UNKNOWN ✗ (L44–69). |
-| `scripts/ai/cli/generative.js` | `418b5597` | Accepts only `result.ok === true && exitCode === 0` (L83). `classifyChildFailure()` (L50): `generation` failures → `PROVIDER_FAILURE` (6), or exit 4 when `providerAttempts` is 0 or not an integer (L58–60); `internal` → `STAGE_FAILED` (1). |
-| `scripts/ai/cli/run-artifacts.js` | `56946794` | `KNOWN_CODES` closed allowlist (L49); unknown codes → `UNKNOWN` (L62). |
-| Generators | — | `providerAttempts` is set before `provider.analyze()`; at most 2 attempts. Design-stage generators report `providerError.code`. `automation-plan-generator.js` L677 and `generate-change-set.js` L270 replace every provider error with `INVALID_VALUE`. Their attempt 2 after a retryable provider error uses the correction prompt. The attempt counter is local to the generator. |
-| Precedent | — | `jira-requirements-provider.js` (L108) and `azure-devops-requirements-provider.js` (L104–105, L620, L631) already send `redirect: "manual"` and treat any 3xx or `opaqueredirect` response as a hard failure. |
+| `scripts/ai/cli/stage-process.js` | `4c9a8ab4` | Generic child launcher (`spawn(process.execPath, [runner, stage])`, `shell:false`, `stdio: [ignore, pipe, pipe, ipc]`). The first `result` message is stored, then ACKed with the child's receipt `^[0-9a-f]{32}$` (L118–132); all other message types are ignored. `close` settles (L139). After `exit`, a ref'd `CLOSE_AFTER_EXIT_MS = 10000` timer settles with `result = null` if `close` never arrives (L143–160). Late events after settlement are ignored (`settled` guard). No timeout, watchdog or kill. |
+| `scripts/ai/cli/generative-runner.js` | `5adac686` | `guardParentLink()` (L130): parent `disconnect` → abort → `process.exit(1)` in the same turn. `report()` moves `running → sending → awaiting_ack → delivered \| failed`; `RESULT_ACK_DEADLINE_MS = 10000`. `bindCancelSignal(parentLink.signal)` before any provider exists (L238). The child creates its provider with `createProvider(PROVIDER)` (L215); a constructor error is reported as `provider-configuration`. |
+| `scripts/ai/cli/child-env.js` | — | `buildGenerativeEnv()` (L116) copies `AI_SECRET_KEYS = ["AI_API_KEY", "AI_MODEL"]` (L37) into the child's closed environment. **Today the generative child holds the credential.** |
+| `scripts/ai/cli/generative.js` | `418b5597` | The parent reads `AI_API_KEY` for redaction (L71). It accepts only `result.ok === true && exitCode === 0` (L83). `classifyChildFailure()` (L50): `generation` → `PROVIDER_FAILURE` (6), or exit 4 when `providerAttempts` is 0 or not an integer; `provider-configuration` → `PROVIDER_CONFIGURATION_INVALID`; missing failure → `STAGE_FAILED` (1). |
+| `scripts/ai/providers/index.js` | `74c64cd3` | Process-scoped `bindCancelSignal()`; `createProvider()` passes `{cancelSignal}` to Groq and Gemini. |
+| `scripts/ai/providers/groq-provider.js` | `3d97fd86` | `fetch(GROQ_API_URL, {POST, Authorization: Bearer, JSON body, signal})` with no `redirect` member; 30 s timer covers fetch and body read. Rejection: `AbortError` → `TIMEOUT` ✓, else `NETWORK` ✓. `mapHttpError`: 401/403 `AUTH` ✗, 429 `RATE_LIMIT` ✓, 408 `TIMEOUT` ✓, 5xx `UNKNOWN` ✓, every other status (incl. 3xx and 421) `UNKNOWN` ✗. Bounded body read (32 MiB), **then** the content check → `INVALID_RESPONSE` ✗. Cancellation → `UNKNOWN` ✗, no cause. |
+| `scripts/ai/providers/gemini-provider.js` | `6559416d` | Same structure; credential in header `x-goog-api-key`; model in the URL path. `mapHttpError`: 401/403 `AUTH` ✗, 429 ✓, 5xx ✓, every other status **incl. 408**, 3xx and 421 `UNKNOWN` ✗. |
+| `scripts/ai/cli/run-artifacts.js` | `56946794` | `KNOWN_CODES` closed allowlist; unknown codes → `UNKNOWN`. |
+| `scripts/ai/cli/config-file.js` | `65ed658f` | Config schema v1 is exactly `schemaVersion: 1`. |
+| Generators | — | At most 2 attempts; `providerAttempts` set before `provider.analyze()`. `automation-plan-generator.js` L677 and `generate-change-set.js` L270 replace every provider error with `INVALID_VALUE`. Calls are strictly sequential. |
+| `package.json` | — | `engines.node` = `22.x`. |
 
-CLI contract facts: exit taxonomy contract §10.7 (6 = provider failure,
-including "provider bounded-time exceeded"; 1 = internal or invariant violation);
-`--json` envelope `{schemaVersion, command, ok, exitCode, runId, artifacts, errors:[{code,message}]}`
-(contract §10.8); config schema v1 is exactly `schemaVersion: 1` (contract §11.2).
+(✓ retryable, ✗ not retryable.) CLI contract facts: exit taxonomy contract §10.7
+(6 = provider failure incl. provider bounded-time exceeded; 1 = internal or
+invariant violation); `--json` envelope contract §10.8; config v1 contract §11.2.
 
-### 2.2 Historical evidence (preserved, not rewritten)
+### 2.5 Spike evidence identity
 
-| Item | Identity |
+| Item | Value |
 |---|---|
-| Evidence package | `OD-RATE-1-C2-R2-EVIDENCE` (local PO package; not in the repository) |
-| `MANIFEST.sha256` SHA-256 | `eeb5a063b09803513eeb6ef77893802a37bf39e55d6abc8d5a955257d9ecbff9` |
-| `REMEDIATION-MANIFEST.sha256` SHA-256 | `006dae0d317d0ad35c9e0c0591d520f1d63e7f1b5cdbf443f9947ece57d9cdfc` |
-| `POST-AUTH-MANIFEST.sha256` SHA-256 | `1139919745bf35507bdbe732af3e8e5fb55313e3d9d9ee0b3f42aad2f5470fcc` |
-| C2 design file SHA-256 | `1c0851be7a40a9406c7d75daa7d9676534b4e61f7ff542a93be53f3e2f74c054` |
-| Issue #258 raw body SHA-256 | `e5b84e8118631885d8034f9d6eab1bc730d5ccda3598597ba5d6c935e95c86cc` |
+| Location | `C:\Users\artem\Desktop\OD-RATE-1-Gateway-Spike` (outside every repository) |
+| `src/gateway.js` SHA-256 | `f5bc4af4dca14005fa0cd592306aea95d6dd1a84f6e93bf07798a0e01c741ff4` — **matches** the PO-stated C2 identity |
+| `test/gateway.test.js` SHA-256 | `7059ad212e063addf39ba8a47b67e93e9def252b95e17f11a519b6b941744bb3` — **matches** |
+| Other sources (SHA-256) | `src/parent.js` `cfdc9ce9e181b58a7a0734af17c5e5b2f403c81156502947c8f0a818b6e58dc2`; `src/transport.js` `dabd7978557f094bd7ff0ed7ee6fa67f55a07a43e1e72e51bd2c2e70f2571af6`; `src/worker.js` `d9c9832db61a237b73babb3775a6ce46a23f559a4d25174e56c101236ea05c0c`; `src/schema.js` `b17ff59d79a62c9a9f05c98e4b3f92f2fd67c6c1b1bc7fe8e7a435fa582c3b09`; `src/clock.js` `80301a914e234fddd7d405bf46b785ecc3adbfedc6f9383997c3345a48de8e78`; `test/parent.test.js` `c3bf9e533d8a1490d3e03b7f9c50d72b996b8168d95be5636a212c372f4f5262`; `test/transport.test.js` `6e8b1ca6287c1d0da2ac9c3ec1cd65fa52712694f17bdd138b1895a9bcf26554`; `test/schema.test.js` `18320899ddc9d0d6fa9005a57f868a86a24d1867a4c1c9f4d0d230b614bbac79`; `test/helpers/fakeServer.js` `53745906e46d7be51c50fc8828597b0485747eba01f4fc7c7d8c30897c786d6e` |
+| Evidence outputs | `evidence/test-output.txt` `5881cc8881e477ef763e1d3314e5d5b16052ee9d26763158d0a2a5d616b018e6` (Windows 11, Node v24.22.1, 82/82); `evidence/test-output-linux.txt` `61fa4057f0eb5542316748735b38f5b914472f67497f474a85bb27e6dcab12ed` (WSL2 Linux, Node v22.23.3, 82/82). Both equal the hashes recorded in the spike's C2 record. |
+| Source manifest | PO-stated `8bcd557c82c50f54006fc84537b0fd72dc0503882e5ecc96bba7b7f743ea5f2c`. **Not reproduced:** the manifest's construction rule is not recorded locally, and the common `sha256sum`-style constructions over `src/`, `test/` and `package.json` did not yield it. Per-file identities above were verified directly. |
+| Independent verdict | **As stated by the PO mission:** C2 VERIFIED_PASS; Windows Node 24 82/82; Linux Node 22 82/82; GWV-01/02/03 FIXED_VERIFIED; F1–F5 PASS in spike scope; Property A VERIFIED_PASS; Property B NOT PROVIDED; real HTTPS/TLS not verified; 0 real provider calls. **Gap:** the independent verifier's report is not present on this machine (the only local verifier transcript dated 2026-10-27 is an aborted session without a verdict). The author relies on the PO-stated verdict plus the matching source identities. |
+| Spike scope limits | Loopback `node:http` only, no TLS; fake credential; scenario-driven worker, not the production runner; parent lifecycle disconnects first and uses a 300 ms graceful-exit window (not carried, §15.4); Windows ran Node 24 (outside `engines` 22.x); Windows ignored-kill is simulated with a no-op kill hook. |
 
-C2 clauses are cited as `C2:<line>`. C4 does not edit, re-hash or re-seal C2 or
-any manifest.
+### 2.6 Independent review history
 
-### 2.3 Review input
+Codex reviewer session `01a17740-3dc0-7ee2-b26e-a538092270cd` holds R2 (of C2),
+R3 (of C3 `eff78a0c`) and R4 (of C4 `38121f95`). Transcript SHA-256 at C5
+authoring time: `b70f2e614f380d0176a87b5ee18abb30c99709e68418116ba0eb54a38dbb3a6f`
+(it grew with each review; the C4-time hash `00c03958…` covered R2 and R3 only).
 
-Codex session `01a17740-3dc0-7ee2-b26e-a538092270cd` (one session holds both
-reviews; transcript SHA-256 at C4 authoring time
-`00c039587b2607e9eb017dc8da5118fc6bef03ef89c038de3af3717d8a46777c`; the C3-time
-hash `2f274459…22db` covered the R2 review only).
+R4 verdict: **REJECTED.** Findings and their R4 status:
 
-| Finding | Origin | Severity | R3 status | C4 section |
-|---|---|---|---|---|
-| R2-ARCH-01 | R2 | MAJOR | STILL_OPEN (actual HTTP sends not covered) | §7, §7.8, §7.9 (via R3-ARCH-03) |
-| R2-ARCH-02 | R2 | MAJOR | STILL_OPEN (exception path) | §11 |
-| R2-ARCH-03 | R2 | MAJOR | STILL_OPEN (dispatch-time guarantee) | §7.8, §14 (via R3-ARCH-02) |
-| R2-ARCH-04 | R2 | MAJOR | RESOLVED_BY_DESIGN, preserved | §8 |
-| R2-ARCH-05 | R2 | MINOR | RESOLVED_BY_DESIGN, preserved | §10 |
-| DRIFT-01 | R2 | corrective | RESOLVED_BY_DESIGN, preserved | §12 |
-| DRIFT-02 | R2 | corrective | RESOLVED_BY_DESIGN, preserved | §13 |
-| R3-ARCH-01 | R3 | MAJOR | NEW: usage lost when the inner call rejects | §9 |
-| R3-ARCH-02 | R3 | MAJOR | NEW: stale clock check at dispatch | §7.8 |
-| R3-ARCH-03 | R3 | MAJOR | NEW: one inner call, several HTTP requests (redirect) | §7.9 |
-| R3-ARCH-04 | R3 | MINOR | NEW: FIFO waiting not accounted | §8.3 |
-| R3-ARCH-05 | R3 | MINOR | NEW: wrong endpoint of the 40-send interval | proofs §5.2 |
+| Finding | Severity | R4 status | C5 treatment |
+|---|---|---|---|
+| R2-ARCH-01 | MAJOR | RESOLVED_BY_DESIGN (admission); physical sends via R4-ARCH-02 | §8.6, §10 |
+| R2-ARCH-02 | MAJOR | RESOLVED_BY_DESIGN | §15 (C4 machinery retained; parent-authoritative terminal) |
+| R2-ARCH-03 | MAJOR | RESOLVED_BY_DESIGN (conditional admission mathematics) | §9.2, §17 |
+| R2-ARCH-04 | MAJOR | **REGRESSED** (union wait grows after the last check) | §9.1 (R4-ARCH-01) |
+| R2-ARCH-05 | MINOR | RESOLVED_BY_DESIGN | §12 |
+| DRIFT-01 | corrective | RESOLVED_BY_DESIGN for observed cancellation; abandonment guarantee refuted (R4-ARCH-03) | §13 |
+| DRIFT-02 | corrective | RESOLVED_BY_DESIGN for receipt/ACK/close | §14.1 |
+| R3-ARCH-01 | MAJOR | RESOLVED_BY_DESIGN | §11 |
+| R3-ARCH-02 | MAJOR | RESOLVED_BY_DESIGN (gate-reading boundary) | §8.4 |
+| R3-ARCH-03 | MAJOR | **STILL_OPEN** (T1 refuted by HTTP 421) | §10 |
+| R3-ARCH-04 | MINOR | **STILL_OPEN** (admission budget and FIFO serialization) | §8.5, §9.1 |
+| R3-ARCH-05 | MINOR | RESOLVED_BY_DESIGN (conditional bounds) | P §7 |
+| **R4-ARCH-01** | MAJOR | NEW: wait budget exceeded before admission (computation inside `analyze()` grew union wait after the last check) | §9.1; P Lemma 2, P §6.1 |
+| **R4-ARCH-02** | MAJOR | NEW: `redirect: "manual"` does not give one HTTP request per `fetch` — HTTP 421 caused **2 POSTs** on Node 22.23.3/undici 6.28.1 and Node 24.22.1/undici 7.30.1 | §10; P Lemma 5, P §6.2 |
+| **R4-ARCH-03** | MAJOR | NEW: abandonment does not guarantee no new provider requests (a live child continued with `transportAllowed=true` after parent `disconnect()`) | §13; P Lemma 4, P §6.3 |
+| **R4-ARCH-04** | MINOR | NEW: FIFO released at admission contradicts the single slot | §8.5; P §6.4 |
 
-### 2.4 Product Owner decisions
+R4 also recorded: `K_SETTLE = 10 000 ms` accepted as PO-approved; widening the
+wait budget to synchronous computation would need a separate PO decision;
+weakening the surviving-child guarantee would need a separate PO disposition.
+C5 needs neither: §9.1 restores the sum-of-governor-waits meaning, and §13 does
+not weaken the guarantee but restates it as Property A with Property B handed to
+the mandatory Security gate (AD-02).
 
-| Decision | Status | Interpretation used in C4 |
-|---|---|---|
-| PD-R2 | APPROVED DIRECTION | Config schema v2 with opt-in `providerGovernor`; v1 unchanged (§5). |
-| PD-R3 | APPROVED FOR DESIGN REVIEW | 30 s request timeout, 65 s per wait, 900 s accumulated wait per stage, 1 800 s stage deadline, 45 s watchdog, 10 s heartbeat. Product constants (§6.1). |
-| PD-R5 | APPROVED | 65 s cold start per governed stage process; counts toward wait budget and deadline. |
-| PD-R6 | APPROVED | No exit 130; platform-native user-signal termination; never exit 6 for user cancellation. |
-| PD-R8 | APPROVED DIRECTION | Closed reason-code extension; exact envelope subject to review (§11, §15). |
-| PD-R10 | APPROVED | Heuristic, best-effort token admission; no provider-TPM guarantee. |
-| PD-R13 | APPROVED | Deadline, heartbeat, watchdog only when governed. |
-| SEC-C1 | APPROVED | Parent IPC loss aborts waits and in-flight requests; no new calls; child terminates. |
-| PD-R14 | APPROVED | SEC-C1 unconditional. |
-| PD-R11 | APPROVED: A | `charged = max(reserved, normalizedObserved)` for valid usage. Known valid usage survives content-validation failure and exception unwinding (§9). |
-| PD-R12 | APPROVED: A | Missing usage saturates (§9.5). |
-| **PD-R12-I1** | **APPROVED** | Malformed usage → saturate **and** `RATE_ACCOUNTING_INVALID`. Unavailable usage, failed exchange or uncertain remote completion → saturate. Never zero (§9.4). |
-| D+15 | APPROVED: A | Separate measurable lifecycle phases; no whole-CLI 1 815 s claim; no change to FT0 termination (§14). |
-| **PD-R15** | **BOUNDED SETTLEMENT DIRECTION APPROVED** | Parent settlement after a kill is bounded (§13.8). **The timeout value `K_SETTLE` is NOT approved.** C4 proposes 10 000 ms and requests PO disposition (§19.2). |
+### 2.7 Preserved historical evidence
 
-Open, not closed by C4: PD-R1, PD-R4, PD-R7, PD-R9, and the `K_SETTLE` value
-(§19). C4 assumes status-quo values for PD-R1/R4/R7/R9.
+C2 identities (unchanged, not re-sealed): C2 design SHA-256
+`1c0851be7a40a9406c7d75daa7d9676534b4e61f7ff542a93be53f3e2f74c054`; manifests
+`eeb5a063b09803513eeb6ef77893802a37bf39e55d6abc8d5a955257d9ecbff9`,
+`006dae0d317d0ad35c9e0c0591d520f1d63e7f1b5cdbf443f9947ece57d9cdfc`,
+`1139919745bf35507bdbe732af3e8e5fb55313e3d9d9ee0b3f42aad2f5470fcc`; Issue #258
+raw body `e5b84e8118631885d8034f9d6eab1bc730d5ccda3598597ba5d6c935e95c86cc`. The
+full C3 and C4 texts remain in git history at `eff78a0c` and `38121f95`. C2
+clauses are still cited as `C2:<line>`.
 
 ---
 
-## 3. Contract boundaries
+## 3. Architecture
 
-| Surface | Class | C4 effect |
+### 3.1 Components and ownership
+
+```text
+CLI parent process (qa-agent; generative.js + stage-process.js)
+ |
+ +-- Provider Gateway session (one per governed stage child; parent memory only)
+ |     +-- Admission / rate accounting   RPM + TPM ledgers, reservation, usage charge
+ |     +-- Deadline / wait budget        single monotonic origin tOpen; exclusive deadline
+ |     +-- Revocation                    synchronous, idempotent, parent-only
+ |     +-- Provider adapter              Groq / Gemini request build, response parse, error mapping
+ |     +-- Controlled HTTPS transport    single-send core https; no redirects, retries or reuse
+ |     +-- Provider credentials          AI_API_KEY, AI_MODEL read from the parent environment
+ |
+ +-- Lifecycle supervisor (stage-process.js, governed path)
+ |     +-- FT0 result store + receipt ACK, close-based settlement, CLOSE_AFTER_EXIT
+ |     +-- heartbeat watchdog, stage enforcement, kill, K_SETTLE abandonment
+ |
+ |   private IPC (validated, closed schema; no credentials, URLs or headers)
+ v
+Stage child (generative-runner.js, governed path)
+       +-- generators (unchanged)
+       +-- Gateway client provider       implements the provider contract via IPC
+       +-- StageContext                  step, per-step call count, sticky refusal (C4 §11 machinery)
+       +-- FT0 guardParentLink           cancellation on parent loss, result receipt/ACK (unchanged)
+       +-- heartbeat sender
+```
+
+| Responsibility | Owner | Notes |
 |---|---|---|
-| Package `exports`, `bin`, library API | public | **None.** |
+| Provider credential and model | parent Gateway | Never in child env or IPC (§3.3, §7.2) |
+| Transport and its 30 s timer | parent Gateway | §10 |
+| Admission, RPM/TPM ledgers, cold start, cooldown, hints | parent Gateway | §8 |
+| Wait budget and dispatch deadline | parent Gateway | §9 |
+| Usage observation and charging | parent Gateway | §11 |
+| Revocation | parent (session + supervisor) | §13 |
+| Provider error mapping | parent Gateway (same mapping code as today) | §12 |
+| Retry policy (two attempts) | child generators (unchanged) | §12 |
+| Step, attempt counting, return/unwind classification | child runner | §15.1 |
+| Authoritative governor refusal record | parent Gateway | §15.2 |
+| Result transfer and receipt | child (`report()`), parent stores + ACKs | §14.1 |
+| Kill, watchdog, enforcement, K_SETTLE | parent supervisor | §14 |
+
+### 3.2 Governed and ungoverned modes
+
+| Config | Gateway session | Child provider | Child env credentials | Heartbeat / watchdog / deadline / K_SETTLE | SEC-C1 |
+|---|---|---|---|---|---|
+| v1 | none | `createProvider()` + global `fetch` (certified) | present (certified) | none (PD-R13) | certified FT0 (PD-R14) |
+| v2, `providerGovernor` absent or `enabled: false` | none | same as v1 | present | none | certified FT0 |
+| v2, `enabled: true` | one per governed stage child | Gateway client (IPC) | **absent** | present | certified FT0 in the child **plus** parent revocation |
+
+**INV-G13 (ungoverned identity):** the first two rows MUST be indistinguishable
+from the certified baseline: spawn, environment, provider construction, IPC,
+exit codes and output. No Gateway module is loaded on those paths.
+
+### 3.3 What the governed child can and cannot do
+
+- It holds no provider credential and no model name: the governed environment is
+  `buildGenerativeEnv()` **without** `AI_SECRET_KEYS` (§20).
+- It never loads the Gateway, the adapter or the transport. Its only provider
+  path is the IPC request in §7.
+- It cannot name a URL, host, header, method or credential: the IPC schema has
+  no such fields (§7.2).
+- It **can** still open arbitrary network connections with Node's own modules, as
+  any process of the same OS user can. Parent ownership does not prevent this
+  (Property B, §13.4).
+
+## 4. Contract boundaries
+
+| Surface | Class | C5 effect |
+|---|---|---|
+| Package `exports`, `bin`, library API | public | **None.** New modules are internal only. |
 | CLI exit codes (contract §10.7) | public | **None new.** Governed outcomes use existing codes 3, 6 and 1. |
-| CLI reason codes | public | Closed additive extension under PD-R8 (§15). Unreachable with v1 config or a disabled governor. |
+| CLI reason codes | public | The PD-R8 closed extension of §16. **No code beyond the set already designed in C4.** Unreachable with v1 or a disabled governor. |
 | Config schema | public | v2 adds optional `providerGovernor` (§5). v1 unchanged. |
 | stdout | public | Unchanged. |
-| stderr | public (bounded diagnostics) | One new fixed-template diagnostic, only on governed post-kill abandonment (§13.8). |
-| Child environment | private | **Unchanged.** |
-| Parent → child IPC | private | Optional closed `governor` member on `payload` (§13.2). |
-| Child → parent IPC | private | Governed-only `heartbeat` message; `failure.kind: "stage-timeout"`; optional `failure.governorCode` on `internal` failures (§11.4). Receipt/ACK protocol unchanged. |
-| Provider constructors / `createProvider()` | private | Governed child only: an injected **gated `fetchImpl`** (§7.8–§7.9), which both providers already accept, and an internal-only `observer` option (§9.6). Ungoverned: unchanged. |
-| Generators | internal | **No change** (§11). |
-| Run manifest, run store, review packages, approval/apply | — | Unchanged. |
-
-## 4. Terminology
-
-| Term | Meaning |
-|---|---|
-| Admission | The synchronous governor decision that all budgets permit one transport invocation. It is linearized at **entry creation** (§7.3). |
-| Entry | The ledger record created at admission. Exactly one per admission. |
-| Gate | The governed `fetchImpl` wrapper injected into the provider. It is the last code under governor control before the transport (§7.8). |
-| Transport invocation | One call from the gate into the real `fetch`. At most one per admission. Timestamp `tDispatch`, read inside the gate. |
-| HTTP request | A request emitted by the transport onto a connection. Wire timing is not directly observable (§7.8). |
-| Hop | One HTTP request inside one transport invocation. Redirect-following would create more than one; C4 forbids it (§7.9). |
-| Settle | The instant the inner `analyze()` resolves or rejects, observed by the governor (`tSettle`). |
-| Exchange record | The per-admission record of transport, HTTP, body and usage outcomes (§9.1). |
-| `Res` / `U` / charged | Reservation, validated normalized usage, and the tokens counted for an entry (§9). |
-| `t0` / `tSpawn` / `tKill` | Child payload-receipt time; parent spawn time; parent kill-decision time. |
-| Governed | The governor is enabled for this stage (§5.3). |
-
----
+| stderr | bounded diagnostics | One governed-only fixed-template line on post-kill abandonment (§14.5), as designed in C4 under PD-R15. |
+| Persistent data, run manifest, run store, review packages | — | **Unchanged. No new persistent format.** Gateway state lives in parent memory and ends with the session. |
+| Child environment | private | Governed path only: credentials removed (§3.3). Ungoverned: unchanged. |
+| Parent ↔ child IPC | private | Governed path only: payload marker, `provider-request`, `provider-response`, `heartbeat`, `failure.kind: "stage-timeout"`, optional `failure.governorCode` (§7, §15). FT0 `result` / `result-ack` unchanged. |
+| Provider adapters | internal | Mapping functions shared with the ungoverned providers so classification is identical (§12). Ungoverned providers unchanged. |
+| Generators | internal | **No change.** |
 
 ## 5. Configuration and compatibility
 
-### 5.1 Schema v2
-
-`schemaVersion: 2` is v1 plus one optional top-level key:
+`schemaVersion: 2` is v1 plus one optional top-level key (unchanged from C4):
 
 ```json
 {
@@ -181,7 +283,7 @@ Open, not closed by C4: PD-R1, PD-R4, PD-R7, PD-R9, and the `K_SETTLE` value
 }
 ```
 
-The values are illustrative; C4 asserts no provider plan limit.
+The values are illustrative; no provider plan limit is asserted.
 
 | Key | Rule |
 |---|---|
@@ -191,892 +293,1041 @@ The values are illustrative; C4 asserts no provider plan limit.
 | `tokensPerMinute` | integer, 2 ≤ v ≤ 10 000 000 |
 | `requestsPerMinute` | integer, 1 ≤ v ≤ 100 000 |
 | `completionReserveTokens` | integer, 0 ≤ v ≤ 1 000 000 |
-| `reasoningReserveTokens` | optional integer, 0 ≤ v ≤ 1 000 000, default 0; operator-declared |
+| `reasoningReserveTokens` | optional integer, 0 ≤ v ≤ 1 000 000, default 0 |
 
 Timing values are product constants and MUST NOT be configurable. Validation
-failures are exit 3 before any provider exists.
+failures are exit 3 before any provider exists. When `enabled` is `true` and the
+effective generative provider has no `limits` entry, the command fails with exit
+3, `PROVIDER_GOVERNOR_LIMITS_MISSING`, before spawning the child (zero sends).
 
-### 5.2 Effective-provider rule
-
-When `enabled` is `true` and the effective generative provider (contract §10.4.2)
-has no `limits` entry, the command fails with exit 3,
-`PROVIDER_GOVERNOR_LIMITS_MISSING`, before spawning the child (zero sends).
-
-### 5.3 Governed vs. ungoverned
-
-| Config | Governor, gate, observer | Heartbeat / watchdog / deadline / post-kill settlement | SEC-C1 | IPC payload |
-|---|---|---|---|---|
-| v1 | absent | absent (PD-R13) | present (PD-R14) | byte-identical to baseline |
-| v2, absent or `enabled: false` | absent | absent | present | byte-identical to baseline |
-| v2, `enabled: true` | present | present | present | baseline + `governor` member |
-
-In the first two rows, providers keep the default `fetch`, with the default
-redirect mode, exactly as certified. **INV-13** requires those rows to be
-indistinguishable from the certified baseline.
+Governed provider configuration: the parent builds the adapter before spawn. A
+missing `AI_API_KEY` or `AI_MODEL` raises the same `CONFIGURATION` provider error
+the child raises today and maps to the same `PROVIDER_CONFIGURATION_INVALID`
+outcome (§15.3 row 2), only earlier and without a spawn.
 
 ---
 
-## 6. Governor state model
+## 6. Constants and clock
 
-### 6.1 Product constants
+### 6.1 Constants
 
-| Symbol | Value | Source |
+| Symbol | Value (ms unless noted) | Source |
 |---|---:|---|
-| `T_REQ` | 30 000 | existing provider timer; PD-R3 |
-| `C_COLD` | 65 000 | PD-R5 |
+| `T_REQ` | 30 000 | PD-R3; existing provider timer |
+| `C_COLD` | 65 000 | PD-R5, AD-03 |
 | `W_HOLD` | 65 000 | provider minute (60 000) + guard (5 000) |
 | `W_MAX` | 65 000 | PD-R3 per-wait cap |
-| `W_BUDGET` | 900 000 | PD-R3 accumulated wait per stage |
-| `D_STAGE` | 1 800 000 | PD-R3 stage deadline from `t0` |
-| `D_DISPATCH` | `D_STAGE − T_REQ` = 1 770 000 | last permitted transport invocation, from `t0` |
-| `S_MIN` | 50 | minimum sleep |
-| `I_MAX` | 64 | wait-loop iterations per `analyze()` |
+| `W_BUDGET` | 900 000 | PD-R3, AD-03 |
+| `D_STAGE` | 1 800 000 | PD-R3 |
+| `D_DISPATCH` | 1 770 000 = `D_STAGE − T_REQ` | last dispatch instant (exclusive), from `tOpen` |
+| `S_MIN` | 50 | minimum planned sleep |
+| `I_MAX` | 64 | wait-loop iterations per request |
 | `HB` | 10 000 | PD-R3 heartbeat |
 | `WD` | 45 000 | PD-R3 watchdog |
-| `K_PARENT` | 1 815 000 | parent enforcement point from `tSpawn` (D+15) |
-| `K_SETTLE` | **10 000, PROPOSED, NOT APPROVED** | PD-R15 post-kill settlement bound (§13.8, §19.2) |
+| `K_PARENT` | 1 815 000 | parent enforcement point from `tOpen` (D+15 A) |
+| `K_SETTLE` | **10 000, APPROVED** | PD-R15 / AD-07 |
 | `ACK` | 10 000 | FT0 `RESULT_ACK_DEADLINE_MS` (unchanged) |
 | `CAE` | 10 000 | FT0 `CLOSE_AFTER_EXIT_MS` (unchanged) |
+| `MAX_RESPONSE_BYTES` | 32 MiB | existing provider envelope bound (unchanged) |
 | `h` | 0.85 | token headroom |
-| `κ` | 3.0 bytes/token | heuristic estimator |
+| `κ` | 3.0 bytes/token | heuristic estimator (PD-R10) |
 | `O` | 32 tokens | template overhead |
-| `U_MAX` | 10 000 000 | maximum accepted usage value |
+| `U_MAX` | 10 000 000 tokens | maximum accepted usage value |
 
-Derived: `B_tok = floor(tokensPerMinute × h)`; `B_req = requestsPerMinute`.
+Derived per session: `B_tok = floor(tokensPerMinute × h)`; `B_req = requestsPerMinute`.
 
-### 6.2 State
+No other numeric constant exists. In particular there is **no** graceful-exit
+window and no acceptance grace (§14.6).
 
-One governor per governed child, for the single effective provider:
+### 6.2 Clock semantics
+
+- **One clock, one authority.** Every Gateway and supervisor decision reads the
+  parent's `process.hrtime.bigint()` (monotonic nanoseconds). The child's clock is
+  never used for a governed decision.
+- **One origin.** `tOpen` is read immediately before `spawn()`. Then
+  `coldUntil = tOpen + C_COLD`, `dispatchDeadline = tOpen + D_DISPATCH` and
+  `enforceAt = tOpen + K_PARENT`. All are absolute instants on the same clock.
+- **Exact arithmetic.** All comparisons and sums are done in integer nanoseconds
+  (constants × 10⁶). No rounding is applied before a comparison.
+- **Fresh readings.** Every time-dependent decision takes a new reading. A
+  reading is never reused across an `await`, and the final dispatch reading is
+  the last operation before the transport call (§8.4).
+- **Exclusive deadlines.** For every absolute deadline `X` used to refuse an
+  action, `now >= X` refuses (AD-04).
+- **Timers are prompts, not proofs.** A timer fires "at or after" its instant,
+  with unbounded lateness `ε ≥ 0`. A decision that matters is re-checked against
+  a fresh reading when it is taken.
+- **Regression guard.** If a reading is smaller than an earlier one, the session
+  refuses with sticky `RATE_ACCOUNTING_INVALID`. (`hrtime` is monotonic; the
+  guard is defensive.)
+- **Suspend.** No claim is made across system suspend (§19).
+
+---
+
+## 7. Private IPC protocol
+
+### 7.1 Messages (governed path only)
+
+| Direction | Message | Closed shape |
+|---|---|---|
+| parent → child | payload (existing) + marker | `{type:"payload", stage, payload, gateway:{v:1}}`. The `gateway` member is present only when governed. |
+| child → parent | provider request | `{type:"provider-request", v:1, id, systemPrompt, userPrompt}` |
+| parent → child | provider response | `{type:"provider-response", v:1, id, outcome:"content", content}` · `{…, outcome:"provider-error", code, retryable}` · `{…, outcome:"refused", code}` |
+| child → parent | heartbeat | `{type:"heartbeat", v:1, seq}` |
+| child → parent | result (FT0, existing) | `{type:"result", …, receipt}` |
+| parent → child | result ACK (FT0, existing) | `{type:"result-ack", receipt}` |
+
+Field domains:
+
+| Field | Domain |
+|---|---|
+| `id` | integer, `1 ≤ id ≤ 2³¹ − 1` |
+| `systemPrompt`, `userPrompt` | strings. No new size cap is introduced here (PD-R4 is open). |
+| `content` | non-empty string, from a response body already bounded by `MAX_RESPONSE_BYTES` |
+| `code` (provider-error) | one of `AUTH`, `RATE_LIMIT`, `TIMEOUT`, `NETWORK`, `INVALID_RESPONSE`, `UNKNOWN` |
+| `retryable` | boolean, exactly as the existing provider mapping would set it (§12) |
+| `code` (refused) | governor codes `RATE_REQUEST_EXCEEDS_BUDGET`, `RATE_BUDGET_EXHAUSTED`, `RATE_ACCOUNTING_INVALID`, `STAGE_TIMEOUT`; private codes `BUSY`, `REVOKED`, `INVALID_REQUEST` |
+| `seq` | integer, strictly increasing, `1 ≤ seq ≤ 2³¹ − 1` |
+
+### 7.2 Validation
+
+Both sides treat every received message as untrusted input.
+
+- Parent, for every child message: the value MUST be a non-array object; `type`
+  MUST be one of the child-to-parent types; the own key set MUST equal the closed
+  key set of that type exactly (no missing, no extra); every field MUST be in its
+  domain. On success the parent copies the fields into a fresh plain object and
+  uses only that copy (spike S1–S7).
+- A `provider-request` that fails validation but carries a valid `id` gets
+  `refused INVALID_REQUEST`. Anything else is dropped. Neither path dispatches.
+- Parent → child messages never contain a credential, model name, URL, header,
+  raw provider message, raw usage or raw body. The only provider text that crosses
+  IPC is `content`, which the child already receives today from its own provider.
+- Child, for every parent message: the same closed-shape rule. A `provider-response`
+  whose `id` is not the child's single pending request is ignored.
+- The governed child's environment and argv carry no credential (spike P13).
+
+### 7.3 Request IDs and correlation
+
+- The child numbers its requests `1, 2, 3, …` per process. The certified generators
+  have at most one request outstanding.
+- The parent keeps `lastId`. A request with `id ≤ lastId` (replay or duplicate) is
+  refused `INVALID_REQUEST` and makes no admission. Otherwise `lastId = id`.
+- Each `provider-response` echoes the request's `id`. Responses MAY arrive in any
+  order relative to other responses (a `BUSY` refusal can overtake an in-flight
+  reply; spike P4). The child matches only by `id`.
+
+### 7.4 Child Gateway client provider
+
+The governed child passes a `GatewayClientProvider` to the unchanged generators.
+It implements the existing provider contract (`name`, `analyze({systemPrompt,
+userPrompt})`) and passes `validateProvider()`.
+
+```text
+analyze({systemPrompt, userPrompt}):
+  if cancelSignal.aborted: throw cancelledError()          // certified SEC-C1 error: UNKNOWN, not retryable, no cause
+  ctx.calls += 1                                           // §15.1
+  id = ++nextId
+  send {type:"provider-request", v:1, id, systemPrompt, userPrompt}   // send error -> FT0 fail() exits
+  r = await response(id) or cancelSignal abort             // abort -> throw cancelledError()
+  switch r.outcome:
+    "content":        return r.content
+    "provider-error": throw ProviderError(FIXED_MESSAGE[r.code], {code: r.code, retryable: r.retryable})
+    "refused":
+      if r.code in GOVERNOR_CODES: refuseLocally(r.code)    // sets ctx.terminal, registers the error, throws (§15.1)
+      else /* BUSY, REVOKED, INVALID_REQUEST */: throw ProviderError(FIXED_MESSAGE.UNKNOWN, {code:"UNKNOWN", retryable:false})
+```
+
+The client has no timer of its own. A response always arrives, or the parent is
+lost (FT0 `fail()` exits the child), or the parent kills the child (§14.4).
+
+### 7.5 Parent routing
+
+`stage-process.js` routes child messages on the governed path only:
+
+```text
+on message m from child:
+  v = validate(m)                                         // §7.2
+  if v is heartbeat:         if !killed and result === null: re-arm watchdog
+  elif v is provider-request:
+      if killed or settled or session.revoked: reply(id, refused REVOKED); return
+      session.onRequest(v)                                 // §8
+  elif v is result (FT0):    session.revoke("result"); FT0 store-then-ACK (unchanged); disarm watchdog
+  else: ignore (FT0 behavior)
+on child "disconnect" | "exit" | "error":  session.revoke(<event>)   then the FT0 handlers run unchanged
+```
+
+`reply()` sends only when `child.connected`, inside `try`, with a callback that
+ignores errors. A failed reply never dispatches anything and never revives a
+session.
+
+---
+
+## 8. Gateway session and admission
+
+### 8.1 Session state
 
 | Field | Meaning |
 |---|---|
-| `t0` | monotonic ms at payload receipt |
-| `entries` | list of `{tAdmit, tSettle \| null, res, charged}` |
-| `W` | accumulated governor wait, union model (§8.3) |
-| `waiters`, `waitSince` | number of callers currently waiting; start of the current waiting interval |
-| `coldUntil`, `cooldownUntil`, `hintTok`, `hintReq`, `exhausted` | as C3 (§7.6) |
-| `slot` | `null` or the open exchange record of the one admitted send (§9.1) |
-| `queue` | FIFO of callers; only the head may evaluate admission |
-| `cancelSignal` | the process-scoped SEC-C1 signal |
-| `ctx` | the runner-owned stage context (§11.2); the governor writes to it |
+| `tOpen`, `coldUntil`, `dispatchDeadline` | §6.2 |
+| `B_tok`, `B_req`, adapter, credential | per effective provider (§5) |
+| `entries` | list of `{tCommit, tSettle \| null, res, charged}`; one per transport invocation |
+| `W` | charged governor waiting (ns); starts at `C_COLD` (§9.1) |
+| `cooldownUntil`, `hintTok`, `hintReq`, `exhausted` | C4 §7.6 semantics, unchanged (§8.6) |
+| `active` | `null` or `{id, controller}` of the one request in the pipeline |
+| `revoked` | boolean; set once, never reset |
+| `terminal` | `null` or `{code}`; sticky governor refusal (§15.2) |
+| `lastId` | §7.3 |
+| `stats` | private counters (busy refusals, invalid requests); never public |
 
 An entry is **live at `t`** iff `tSettle === null` or `t < tSettle + W_HOLD`.
 
-### 6.3 Clock
+### 8.2 Request states
 
-All times come from `process.hrtime.bigint()` as integer milliseconds. If a later
-reading is smaller than an earlier one, the governor refuses with
-`RATE_ACCOUNTING_INVALID`. The clock is read **again** at every decision that
-depends on time (§7.3, §7.8): a reading is never reused across code that can
-take time.
+```text
+RECEIVED --validate fail--------------------------------------------> REFUSED(INVALID_REQUEST)
+RECEIVED --revoked------------------------------------------------> REFUSED(REVOKED)
+RECEIVED --active !== null----------------------------------------> REFUSED(BUSY)            (no state change)
+RECEIVED --terminal !== null--------------------------------------> REFUSED(terminal.code)
+RECEIVED --accepted: active = this--> PLANNING
+PLANNING --Res > B_tok / budget / cap / deadline / exhausted------> REFUSED(governor code)   (active cleared)
+PLANNING --capacity free now--> COMMIT --send()--> IN_FLIGHT
+PLANNING --capacity later--> WAITING --sleep returns--> PLANNING
+WAITING  --revoked (sleep aborted)--------------------------------> CANCELLED (wait charged)
+IN_FLIGHT --transport outcome--> SETTLING --charge, hints--> RESPONDED   (active cleared before the reply)
+IN_FLIGHT --revoked--> abort --> SETTLING (UNAVAILABLE) --> no reply or REVOKED
+```
+
+Only COMMIT creates an entry and calls the transport. Every refusal before
+COMMIT leaves `entries`, `W`, hints and cooldown unchanged, except that a sleep
+that has already happened stays charged (§9.3).
+
+### 8.3 Admission algorithm (normative)
+
+```text
+onRequest(req):                                     // req is a validated copy (§7.2)
+  if req.id <= lastId: return reply(req.id, refused INVALID_REQUEST)
+  lastId = req.id
+  if revoked:           return reply(req.id, refused REVOKED)
+  if active !== null:   return reply(req.id, refused BUSY)          // §8.5, no other effect
+  if terminal !== null: return reply(req.id, refused terminal.code)
+  active = {id: req.id, controller: new AbortController()}
+  out = await run(req)                              // never throws; returns a reply value
+  active = null                                     // cleared BEFORE the reply is sent
+  if !revoked: reply(req.id, out)
+
+run(req):
+  res  = estimate(req)                              // PD-R10, §11.2
+  if res > B_tok: return refuse(RATE_REQUEST_EXCEEDS_BUDGET)
+  body = adapter.buildRequest(req)                  // pure; prepared once, before any wait
+  for it = 0, 1, …:
+    t = now()
+    if revoked:                return CANCELLED
+    if exhausted:              return refuse(RATE_BUDGET_EXHAUSTED)
+    if W > W_BUDGET:           return refuse(RATE_BUDGET_EXHAUSTED)   // after an overshooting sleep
+    if t >= dispatchDeadline:  return refuse(STAGE_TIMEOUT)
+    f = freeAt(res, t)                              // §8.6
+    if f <= t:
+      return commit(res, body)                      // §8.4: same synchronous turn, no await before send
+    if it >= I_MAX:            return refuse(RATE_BUDGET_EXHAUSTED)
+    planned = max(f − t, S_MIN)
+    if planned > W_MAX:                              return refuse(RATE_BUDGET_EXHAUSTED)
+    if W + chargeable(t, t + planned) > W_BUDGET:    return refuse(RATE_BUDGET_EXHAUSTED)
+    if t + planned >= dispatchDeadline:              return refuse(STAGE_TIMEOUT)
+    a = now(); fired = await sleep(planned, active.controller.signal); b = now()
+    if b < a: return refuse(RATE_ACCOUNTING_INVALID)  // clock regression guard (§6.2)
+    W += chargeable(a, b)                           // actual elapsed, incl. overshoot or cancellation (§9.3)
+    if !fired or revoked: return CANCELLED
+
+refuse(code): if terminal === null: terminal = {code}; return {outcome:"refused", code: terminal.code}
+chargeable(a, b) = max(0, b − max(a, coldUntil))    // §9.1
+```
+
+`refuse()` makes the first governor refusal sticky. `CANCELLED` produces no reply:
+the session is revoked and the stage is settling. Requests that arrive after
+revocation get `refused REVOKED` (§7.5). Revocation never sets `terminal`.
+
+### 8.4 Commit point (irrevocable boundary)
+
+```text
+commit(res, body):                                  // entered synchronously from run()
+  t2 = now()                                        // final reading, last operation before the checks
+  if revoked:                return CANCELLED
+  if t2 >= dispatchDeadline: return refuse(STAGE_TIMEOUT)
+  p = transport.send(body.bytes, body.headers(credential), active.controller.signal, T_REQ)   // IRREVOCABLE
+  e = {tCommit: t2, tSettle: null, res, charged: res}; entries.push(e)
+  return settleExchange(e, await p)                 // §11.6
+```
+
+- No `await`, I/O or allocation-heavy work (serialization, header building) lies
+  between `t2` and the call into `transport.send`. The request bytes and header
+  template were prepared before the wait loop. JavaScript run-to-completion means
+  no callback (revocation, message, timer) can run between the checks and the call.
+- Predicates evaluated at the loop reading `t ≤ t2` stay true at `t2`: live
+  entries only expire as time passes; `cooldownUntil`, hints and `exhausted`
+  change only at exchange settlement, and no exchange can be outstanding while
+  this request is active (§8.5); `W` changes only after a sleep (§9.1). Only the
+  deadline and revocation can flip, and both are re-checked at `t2` (P Lemma 3).
+- The entry is pushed in the same turn as the send call, so no other code can
+  observe the ledger between them.
+- The irreducible interval between reading `t2` and entering `send` (evaluating two
+  comparisons and a call) is the enforcement granularity. It is disclosed, not
+  claimed to be zero. After `send` is entered, socket, DNS, TLS and wire timing
+  are not observable or bounded by the Gateway, except by the 30 s timer (§10.1).
+
+### 8.5 Sequential BUSY policy (AD-06)
+
+- At most one request is in PLANNING, WAITING, COMMIT, IN_FLIGHT or SETTLING per
+  session (`active`).
+- A request that arrives while `active !== null` is refused `BUSY` at once. It
+  creates no entry, sleeps for no time, changes no counter except a private
+  statistic, and **is not queued**. There is no queue anywhere in the Gateway, so
+  queue waiting cannot exist (R3-ARCH-04, R4-ARCH-04).
+- `active` is cleared only after the exchange is settled and charged, and before
+  the reply is sent. A cooperative child sends its next request only after the
+  reply, so the certified sequential generators never meet `BUSY`.
+- The child maps `BUSY` to a non-retryable `UNKNOWN` provider error (§7.4). `BUSY`
+  is private: it never appears in IPC to the user, in the envelope or on stderr
+  (§15.4).
+
+### 8.6 Ledgers, cold start, cooldown and hints
+
+Unchanged in meaning from C4 §7.1, §7.6, now evaluated by the parent:
+
+- **Request ledger** `reqLive(t)` = number of entries live at `t`. **Token ledger**
+  `tokLive(t)` = Σ `charged` of entries live at `t`. An entry occupies both from
+  commit to `tSettle + W_HOLD` and is never removed early.
+- `freeAt(res, t)` = the earliest `t' ≥ t` such that all hold at `t'`:
+  `t' ≥ coldUntil`; `t' ≥ cooldownUntil`; `reqLive(t') + 1 ≤ B_req` and
+  (`hintReq === null` or `t' ≥ hintReq.until`); `max(tokLive(t'), hintTokUsed(t')) + res ≤ B_tok`.
+  Because every entry is settled when `freeAt` runs (single active request), the
+  ledgers only decrease with time and `freeAt` is finite unless `exhausted`.
+- **Cold start:** no commit before `coldUntil` (PD-R5).
+- **Cooldown:** after an HTTP 429, `cooldownUntil = tSettle + min(RA ?? 65 000, 65 000)`;
+  `RA > 65 000` sets `exhausted` (sticky `RATE_BUDGET_EXHAUSTED` at the next request).
+- **Hints** only tighten, under the strict grammars of C2:151. Groq
+  `remaining/reset-tokens` feed `hintTok`. Groq `remaining/reset-requests` are per
+  day and never relax `P_req`; `0` sets `hintReq`. Gemini: only `Retry-After` on
+  429. Header meanings are unverified (PD-R9). Hints and cooldown are applied only
+  at exchange settlement.
+
+**INV-G01.** Every transport invocation happens at a COMMIT whose final reading
+`t2` satisfies: not revoked, `t2 < dispatchDeadline`, `W ≤ W_BUDGET`, and every
+ledger, cold-start, cooldown and hint predicate.
 
 ---
 
-## 7. Admission, gate and transport
+## 9. Wait budget and deadline
 
-### 7.1 Two ledgers over one entry list
+### 9.1 What is charged (AD-03, R4-ARCH-01)
 
-- **Request ledger:** `reqLive(t)` = number of entries live at `t`.
-- **Token ledger:** `tokLive(t)` = Σ `charged` of entries live at `t`.
-
-An entry occupies both ledgers from admission until `tSettle + W_HOLD`. It is never
-removed early. An unsettled entry never expires.
-
-### 7.2 Admission predicate
-
-At reading `t`:
+`W` is **governor waiting**: time the Gateway deliberately spends asleep before
+a commit, plus the fixed cold-start charge.
 
 ```text
-P_cancel : cancelSignal not aborted
-P_term   : ctx.terminal === null and exhausted === false
-P_cold   : t ≥ coldUntil
-P_cool   : t ≥ cooldownUntil
-P_req    : reqLive(t) + 1 ≤ B_req   and (hintReq === null or t ≥ hintReq.until)
-P_tok    : max(tokLive(t), hintTokUsed(t)) + res ≤ B_tok
-P_wait   : Wnow(t) ≤ W_BUDGET                     (§8.3)
-P_dead   : t ≤ t0 + D_DISPATCH
-P_serial : slot === null and the caller is the queue head
+at session open:        W = C_COLD                            // 65 000 ms, charged once (PD-R5)
+after every sleep [a,b]: W += chargeable(a, b) = max(0, b − max(a, coldUntil))
+nowhere else
 ```
 
-### 7.3 Linearization of admission
+- **Cold start.** The 65 000 ms cold start is charged in full at session open,
+  whether or not the child's first request arrives before `coldUntil`. Sleeping
+  inside `[tOpen, coldUntil)` is already covered by that charge and is not charged
+  again. Sleeping past `coldUntil` (including overshoot of a cold-start sleep) is
+  charged. The charge is never reduced.
+- **Not charged:** request validation, estimation, request-body preparation,
+  `freeAt`, the commit section, transport time, response parsing, IPC latency,
+  child computation and parent lifecycle work. They are stage time, not governor
+  waiting. They still consume the deadline because the deadline is absolute.
+- **Why this resolves R4-ARCH-01.** C4's union model let `W` grow during
+  synchronous computation after the last budget check. Here `W` changes only in
+  the statement right after a sleep. The next loop iteration checks `W > W_BUDGET`
+  before any commit, and no sleep can occur between that check and the commit.
+  With one active request, no other request's sleep can change `W` either. So the
+  `W` at every commit is the `W` that was checked (P Lemma 2, P §6.1).
+- **Meaning.** This is the C3 "sum of observed governor sleeps" meaning that the
+  PO approved under PD-R3, with the PD-R5 cold-start charge. It does not include
+  computation, so the separate PO decision R4 mentioned for a widened meaning is
+  not needed.
 
-The admission decision and entry creation form one synchronous section with no
-`await`:
+### 9.2 Deadline predicate (AD-04)
 
-```text
-t = nowMs()                                  // fresh reading
-if all predicates hold at t:
-  e = {tAdmit: t, tSettle: null, res, charged: res}; entries.push(e)
-  slot = openExchange(e, dispatchDeadline = t0 + D_DISPATCH)
-```
+- **Dispatch deadline:** `dispatchDeadline = tOpen + D_DISPATCH`. A commit is
+  refused when its final reading satisfies `t2 >= dispatchDeadline`. A planned
+  sleep is refused before it starts when `t + planned >= dispatchDeadline`.
+- **Exchange bound:** the transport's `T_REQ` timer is armed inside `send`, so an
+  exchange committed before `dispatchDeadline` is aborted at the first timer
+  callback at or after its commit plus 30 000 ms, i.e. at or after (but normally
+  close to) `tOpen + D_STAGE`.
+- **Stage enforcement:** the supervisor's kill decision fires at the first timer
+  callback at or after `enforceAt = tOpen + K_PARENT` (§14.4).
+- **Authority:** the parent alone. The child has no deadline timer and no deadline
+  input. One absolute instant, computed once, is used by every Gateway check
+  (spike GWV-01 corrective).
 
-**Linearization point:** `entries.push(e)`. JavaScript run-to-completion ensures
-that no other callback can change ledger, slot, hint or cancellation state between
-the reading `t` and the push. Time **does** pass in that section. C4 does not treat
-the section as instantaneous. Passing time can only relax `P_cold`, `P_cool`,
-`P_req` and `P_tok` (entries only expire; nothing else changes while the section
-runs). It can falsify `P_dead` and `P_cancel`, and the gate re-checks both (§7.8).
-So the admission decision remains valid at the gate for every predicate the gate
-does not re-check (proofs Lemma 5).
+### 9.3 Overshoot and cancellation (AD-04, AD-05)
 
-After admission the governor calls `inner.analyze(req)`. The provider then
-builds the request: it creates its controller, arms its 30 s timer and runs
-`JSON.stringify` on the prompts. All of that runs **before** the gate.
-
-### 7.4 Serialization
-
-At most one admitted send exists (`slot !== null`) at a time. Callers wait in a
-FIFO queue. The certified generators call `analyze()` strictly sequentially, so
-the queue is always empty in the supported scope. Queue waiting is still accounted
-(§8.3). No fairness claim beyond FIFO order is made.
-
-### 7.5 Retries
-
-Each `analyze()` call makes at most one admission. A correction or transport
-retry is a separate call with a fresh estimate and a new entry. The governor makes
-zero retries (INV-08).
-
-### 7.6 Cold start, cooldown and hints
-
-Unchanged from C3. Cold start is `t0 + 65 000`. After a 429,
-`cooldownUntil = tSettle + min(RA ?? 65 000, 65 000)`, and `RA > 65 000` →
-`exhausted`. Hints only tighten, under the strict grammars of C2:151. Groq
-`remaining/reset-tokens` feed `hintTok`. Groq `remaining/reset-requests` are
-requests **per day** and never relax `P_req`; `0` sets `hintReq`. Gemini: only
-`Retry-After` on 429. Header meanings are unverified (PD-R9). Hints and cooldown
-are applied only at settlement, from the exchange record (§9.1).
-
-### 7.7 Invariant (admissions)
-
-**INV-01.** Every admission (entry creation) happens at a fresh reading `t` at
-which all §7.2 predicates hold. Proofs Lemma 1: any half-open 65 s interval holds
-at most `B_req` admissions and at most `floor(B_tok / Res_min)` admissions.
-
-### 7.8 Governed transport gate (R3-ARCH-02)
-
-The gate is the governed `fetchImpl` the governed child injects into the provider
-constructor. Both providers already accept `fetchImpl` (Groq L141; Gemini, same
-constructor shape). The gate is a closure over the governor. It receives the
-absolute deadline and the cancellation signal through `slot`, not through
-provider arguments.
-
-```text
-gate(url, init):                                   // called by the provider in place of fetch
-  s = governor.slot
-  t = nowMs()                                       // fresh reading at the closest enforceable boundary
-  if s === null or s.sealed or s.dispatched:  s && (s.gate = "DUPLICATE");  throw GateRefusal
-  if cancelSignal.aborted:                    s.gate = "CANCELLED";         throw abortError()
-  if t > s.dispatchDeadline:                  s.gate = "DEADLINE";          throw GateRefusal
-  s.dispatched = true; s.tDispatch = t
-  p = realFetch(url, {...init, redirect: "manual"})   // §7.9; init.signal is the provider's controller
-  return p.then(res => { recordResponse(s, res); return res })
-```
-
-Enforceable invariant (**INV-06**, restated):
-
-> Every transport invocation of a governed send happens at a monotonic reading
-> `tDispatch ≤ t0 + 1 770 000` taken inside the gate, immediately before the
-> call into `fetch`. At most one transport invocation happens per admission.
-
-What C4 does **not** claim, and why:
-
-- **Wire dispatch time.** After `fetch()` is called, Node's built-in transport
-  (undici) may resolve DNS, open a TCP/TLS connection and write the request in
-  later event-loop turns. User code cannot observe or bound when the first byte
-  leaves the host. C4 therefore makes no claim that no HTTP bytes leave after an
-  exact instant.
-- **What is bounded instead.** The provider's own 30 s controller is armed before
-  the gate and covers fetch and body read (certified). It aborts the exchange at the
-  first timer callback at or after `analyze start + 30 000`. So local transport
-  activity for a governed send ends no earlier than that and with OS-dependent
-  lateness `ε` (proofs §5).
-- **PO impact.** The public contract never promised wire-level timing.
-  PD-R3's 1 800 s stage deadline is enforced as above. Restating INV-06 at the
-  transport-invocation boundary narrows C3's wording to what is enforceable. It
-  does not weaken any approved contract text, so **no PO contract change is
-  required**. Reviewer question M §5 Q2 asks the reviewer to confirm this.
-
-Gate refusals and how the provider sees them:
-
-| Gate outcome | What the provider sees | What the governor does at settle |
+| Event | Effect on `W` | Effect on dispatch |
 |---|---|---|
-| `DEADLINE` | `fetchImpl` rejects with a non-Abort error; the provider maps it to `NETWORK` (retryable) | discards the provider error; refuses with sticky `STAGE_TIMEOUT` (§9.7) |
-| `CANCELLED` | `AbortError`; the provider reports its non-retryable cancellation error | rethrows cancellation (process is exiting, FT0) |
-| `DUPLICATE` (a second `fetchImpl` call inside one `analyze()`) | non-Abort error → `NETWORK` | refuses with sticky `RATE_ACCOUNTING_INVALID` (an invariant breach; certified providers never do this) |
+| Sleep ends on time | `+ chargeable(a, b)` | loop re-evaluates |
+| Sleep overshoots by `ε` | `+ chargeable(a, b)` including `ε` | loop top: if `W > W_BUDGET` → refuse; if `t >= dispatchDeadline` → refuse. No dispatch is ever allowed by an overshoot. |
+| Sleep cancelled by revocation after `x` ms | `+ chargeable(a, a + x)` (actual elapsed) | `CANCELLED`, zero dispatch |
+| Refusal before any sleep | unchanged | zero dispatch |
 
-**Lemma 5 (proofs).** Between admission and gate, `P_req`, `P_tok`, `P_cold`,
-`P_cool` and `P_wait` cannot become false. No entry can be created (slot held),
-no wait accrues (no sleep), and hints and cooldown change only at settle. The gate
-therefore re-checks exactly the predicates that time can falsify: `P_dead` and
-`P_cancel`.
+`W` can therefore exceed `W_BUDGET` by at most the lateness of one sleep plus
+`S_MIN`-scale rounding of that sleep. After that no commit occurs in the session.
+`W` never decreases.
 
-Adversarial 1 ms trace (proofs §4.4): admission reads `t = t0 + 1 770 000` (passes
-`P_dead`); provider setup takes 1 ms; the gate reads `t0 + 1 770 001 >`
-`dispatchDeadline` → `DEADLINE` → zero transport invocations → `STAGE_TIMEOUT`.
+### 9.4 Counterexamples (details in P §5, P §6)
 
-### 7.9 Redirects: never followed on governed calls (R3-ARCH-03)
-
-- The gate always passes `redirect: "manual"`, overriding any value. Certified
-  providers pass none.
-- With `redirect: "manual"`, Node's `fetch` returns the 3xx response itself and
-  makes no further request. Localhost observation on Node 22.23.3 and 24.22.1:
-  default mode → **2 POSTs** (`/first`, `/second`); `"manual"` → **1 POST**,
-  status 307, `Location: /second`; `"error"` → 1 POST, then `TypeError`
-  ("unexpected redirect") (proofs §4.5). This is observation, not certification.
-  It is test-specified in M T-R3-03.
-- `"error"` is rejected as the mode. The provider would map its `TypeError` to
-  retryable `NETWORK`, which invites attempt 2. `"manual"` yields a status the
-  certified providers already classify as non-retryable `UNKNOWN` (3xx falls into
-  their final branch). The redirect therefore fails closed, with no new provider
-  error code and no retry.
-- The gate records `httpOutcome = "REDIRECT_NOT_FOLLOWED"` when
-  `300 ≤ status ≤ 399` or `type === "opaqueredirect"`. The body is not read (the
-  provider releases it); usage is Unavailable; the entry saturates (§9.4).
-- This follows the repository precedent (Jira and Azure DevOps providers, §2.1).
-- Multi-hop admission (admitting and accounting each redirect hop) is **not**
-  designed and would need explicit authority.
-- Ungoverned calls keep the default redirect mode. FT0 and v1 behavior are
-  unchanged (INV-13).
-
-Transport assumption **T1** (proofs §1): with `redirect: "manual"`, no proxy
-configured, and a non-idempotent POST, one `fetch()` call emits at most one HTTP
-request. Node's `fetch` does not use environment proxy variables by default, and
-the governed child's environment is the closed `buildGenerativeEnv()` set. T1
-holds for the observed Node versions in the localhost experiment. It must be
-re-verified per supported Node line (M T-R3-03).
-
-**INV-08 (restated).** At most one admission per `analyze()`, at most one
-transport invocation per admission, and (under T1) at most one HTTP request per
-transport invocation. So proofs Lemma 1 and Corollary 1 bound HTTP requests, not
-only admissions (proofs Lemma 4).
+- `W = 899 990`, rate window needs 1 more ms → `planned = 50` →
+  `899 990 + 50 > 900 000` → `RATE_BUDGET_EXHAUSTED` before sleeping (PT-01, spike G1).
+- `t = dispatchDeadline − 500`, capacity at `dispatchDeadline` → `planned = 500`,
+  `t + planned = dispatchDeadline` → `STAGE_TIMEOUT` before sleeping (PT-02, spike E4a).
+- Planned 400, timer 100 ms late → loop reads `t = dispatchDeadline` → refused, 500 ms
+  charged (PT-03, spike E4b, GWV01-6).
 
 ---
 
-## 8. Wait loop and wait accounting
+## 10. Transport
 
-### 8.1 Rules (R2-ARCH-04 preserved)
+### 10.1 Single-send contract (TS)
 
-1. Each iteration takes a fresh reading and evaluates `P_cancel`, `P_term`,
-   `exhausted`, `P_wait`, `P_dead`, then availability.
-2. If all predicates hold, admit (§7.3).
-3. Otherwise compute `freeAt` and `planned = max(freeAt − now, S_MIN)`.
-4. Before sleeping, refuse if: `planned > W_MAX` → `RATE_BUDGET_EXHAUSTED`;
-   `Wnow + planned > W_BUDGET` → `RATE_BUDGET_EXHAUSTED`;
-   `now + planned > t0 + D_DISPATCH` → `STAGE_TIMEOUT`.
-5. Sleep on a timer bound to `cancelSignal`. Waiting time accrues through §8.3.
-6. Repeat. More than `I_MAX` iterations → `RATE_BUDGET_EXHAUSTED`.
+The Gateway's transport MUST satisfy, for each `send()` call:
 
-### 8.2 Consequences
+| ID | Requirement |
+|---|---|
+| TS-1 | At most **one** HTTP request is written for one `send()`. No automatic retry or resend for any status (including 421) or connection failure. |
+| TS-2 | Redirects are never followed. A 3xx response is returned as a response. |
+| TS-3 | No connection reuse: a fresh connection per `send()` (`agent: false` or an equivalent non-pooling agent) and `Connection: close`. A stale pooled socket can therefore never cause a silent resend. |
+| TS-4 | An explicit `AbortSignal` destroys the request. An already-aborted signal causes zero network activity. |
+| TS-5 | A `T_REQ` timer is armed inside `send()` and covers connect, TLS, request, response headers and the whole body read. On expiry the request is destroyed and the outcome is `timeout`. |
+| TS-6 | The response body is read with a hard byte bound (`MAX_RESPONSE_BYTES`) while streaming, before any JSON parse (TSB-F06 semantics, as `bounded-response.js` today). |
+| TS-7 | The outcome is classified (`response {status, rate headers, bounded body}`, `network_error`, `timeout`, `aborted`), never acted on. It settles exactly once. |
+| TS-8 | The credential is supplied by the session at the call and used only for the request header. It is never logged, traced or included in an outcome. |
+| TS-9 | Only the fixed provider origins are reachable: `https://api.groq.com:443` and `https://generativelanguage.googleapis.com:443`, with paths built by the adapter. The child cannot influence them. |
 
-- **INV-05.** Every admission happens with `Wnow ≤ 900 000`. The budget can be
-  exceeded by oversleep; an admission after it is exceeded cannot happen.
-- **INV-06** is enforced by the gate (§7.8). The rule-4 deadline check only avoids
-  pointless sleeps.
+Global `fetch` (undici) MUST NOT be used on the governed path: it resends a POST
+after 421 even with `redirect: "manual"` (R4-ARCH-02; spike B1 on Node 22 and 24).
+The spike's `node:http` transport (`agent:false`, `Connection: close`, no retry,
+no redirect logic, explicit abort and timeout) met TS-1 … TS-4 and TS-7 on
+loopback for 200, 301/302/303/307/308, **421**, 429, 500, connection reset,
+timeout, in-flight abort and pre-abort (spike T1–T10). That is the feasibility
+basis for TS.
 
-### 8.3 Queue and sleep accounting: union model (R3-ARCH-04)
+### 10.2 Production HTTPS qualification (OPEN; required before implementation acceptance)
 
-A caller is **waiting** from the moment it enters `analyze()` (queue entry) until
-it is admitted, refused or cancelled, **excluding** nothing. It waits in the queue
-while another caller holds the slot, and it waits during its own sleeps. The
-governor accounts **global** wait as the length of the union of waiting intervals
-on the stage timeline:
+The production transport is core `node:https` with the same structure. Loopback
+HTTP evidence does **not** show real Groq or Gemini HTTPS behavior. These items
+MUST be verified for the production transport on every supported Node line
+(`engines` 22.x) and on Windows and Linux, against a local TLS test server (test
+CA injected only through test-only transport options) and, only after PD-R9
+authorizes it, against the real providers:
 
-```text
-enterWaiting():  if waiters == 0: waitSince = nowMs();  waiters += 1
-leaveWaiting():  waiters -= 1;  if waiters == 0: W += nowMs() - waitSince
-Wnow(t)       =  W + (waiters > 0 ? t - waitSince : 0)
-```
+| ID | Qualification |
+|---|---|
+| TQ-01 | One `send()` → at most one TLS connection and one HTTP request for every status in §12, incl. 421 and each 3xx. |
+| TQ-02 | No retry on connection reset, TLS handshake failure, or handshake timeout. |
+| TQ-03 | Abort before connect, during handshake, during request write and during the body read: zero further requests; outcome `aborted`; uncertain completion recorded. |
+| TQ-04 | `T_REQ` covers handshake and body; slow-drip body ends as `timeout`. |
+| TQ-05 | TLS verification is on (`rejectUnauthorized` default true); SNI equals the fixed host; no `NODE_TLS_REJECT_UNAUTHORIZED` path is honored on the governed transport; behavior with `NODE_EXTRA_CA_CERTS` documented. |
+| TQ-06 | No proxy path: environment proxy variables and any runtime proxy switch present on the supported Node line do not route or duplicate governed requests. |
+| TQ-07 | HTTP/1.1 only; no ALPN negotiation to HTTP/2 on the governed transport. |
+| TQ-08 | The bounded body reader for Node streams matches `bounded-response.js` semantics (byte cap, abort mapping, no parse before full acquisition). |
+| TQ-09 | Credential never appears in any outcome, trace, error message, IPC message or diagnostic (marker test). |
+| TQ-10 | Request bytes are identical to the ungoverned provider's request body for the same prompts and model (golden comparison), so provider behavior is unchanged apart from transport semantics. |
 
-- **Entry and exit timestamps.** Enter at `analyze()` entry. Leave at admission
-  (inside the §7.3 section, before entry creation), at refusal, or at cancellation.
-- **Overlap with sleep.** A sleeping head and queued callers overlap in time.
-  The union counts the overlap once, so there is no double counting.
-- **Cancellation while queued.** Queue waits are bound to `cancelSignal`. On abort,
-  every waiter rejects (FT0 exits the process in the same turn anyway).
-- **Deadline.** Queue time is stage time, so it consumes the deadline naturally.
-  A caller's first deadline check happens when it becomes head.
-- **Budget.** Queue time counts toward the 900 s budget through `Wnow`.
+TQ-05, TQ-06 and TQ-09 are also Security gate SG-04 (§21.2).
 
-**Meaning of the 900 s budget is unchanged in the supported scope.** With the
-certified sequential generators, a caller enters `analyze()` only when no other
-caller exists. The queue wait is then zero. The only waiting intervals are the
-caller's own sleeps, plus the microseconds between entry and its first decision,
-which the union also counts. So `W` equals the C3 sum of observed sleeps, up to
-the time spent computing between entry and first sleep (sub-millisecond, and
-conservative because it only adds). Queue time is nonzero only for concurrent
-callers, and no current caller is concurrent. That is why C4 needs **no new PO
-disposition** of the budget's meaning. If the PO prefers per-caller accounting for
-a future concurrent caller, that is a separate decision (§19.3, informational).
+### 10.3 Evidence limits
 
-Deterministic traces: proofs §4.2 (Q1–Q3).
+- Spike: loopback `node:http`, fake server, no TLS, no DNS, no real provider.
+- R4 and spike B1: `fetch` sends 2 POSTs on 421 on Node 22.23.3 and 24.22.1.
+- Not shown by anyone: real provider handling of single-send requests, HTTP 421 or
+  3xx from real providers, TLS behavior, Windows on Node 22.x.
 
 ---
 
-## 9. Exchange outcome and usage accounting (R3-ARCH-01; PD-R11 A, PD-R12 A, PD-R12-I1)
+## 11. Exchange outcome and accounting (R3-ARCH-01; PD-R10, PD-R11 A, PD-R12 A, PD-R12-I1)
 
-### 9.1 The exchange record: six separate axes
+### 11.1 Exchange record
 
-Each admission opens one exchange record `slot`. The governor owns it. The gate
-and the observer write to it. The governor seals it at settle, and later writes
-are ignored.
+One record per commit, owned by the session, written only by the transport
+outcome and the adapter's parse, sealed once at settlement.
 
-| Axis | Values | Written by |
-|---|---|---|
-| A. Transport | `NOT_INVOKED` (gate refused) · `INVOKED_REJECTED` (fetch rejected: network, abort, timeout before headers) · `RESPONSE` | gate |
-| B. HTTP | `none` · `2xx` · `REDIRECT_NOT_FOLLOWED` · `4xx` · `5xx`; plus `status` and a frozen map of the §7.6 rate headers only | gate |
-| C. Body | `NOT_READ` (non-2xx; provider releases it) · `READ_FAILED` (timeout, oversize, invalid JSON) · `PARSED` | observer, see §9.6 |
-| D. Content (provider level) | `PRESENT` · `ABSENT` (provider throws `INVALID_RESPONSE`). Generator-level validity is invisible to the governor and irrelevant to accounting. | inferred at settle from resolve vs. reject |
-| E. Usage | `VALID(U)` · `MISSING` · `MALFORMED` · `UNAVAILABLE` | observer normalizer |
-| F. Inner result | resolved content, or the rejection error | governor at settle |
+| Axis | Values |
+|---|---|
+| A. Transport | `RESPONSE` · `NETWORK_ERROR` · `TIMEOUT` · `ABORTED` (every non-`RESPONSE` value after a send is **uncertain completion**) |
+| B. HTTP | `none` · `2xx` · `3xx` (not followed) · `4xx` (incl. 421) · `5xx`; `status`; frozen map of the §8.6 rate headers only |
+| C. Body | `NOT_READ` (non-2xx; discarded) · `READ_FAILED` (timeout, oversize, invalid JSON) · `PARSED` |
+| D. Content | `PRESENT` · `ABSENT` |
+| E. Usage | `VALID(U)` · `MISSING` · `MALFORMED` · `UNAVAILABLE` |
 
-**Usage classification** (axis E) depends only on axes C and E:
+Usage classification:
 
 | Condition | Usage class |
 |---|---|
-| C = `PARSED`, usage object present, every required field valid, consistency holds (§9.3) | `VALID(U)` |
+| C = `PARSED`, usage object present, every required field valid, consistency holds (§11.3) | `VALID(U)` |
 | C = `PARSED`, usage object absent or `null` | `MISSING` |
-| C = `PARSED`, usage object present but any required field absent, non-integer, negative, `> U_MAX`, inconsistent, or the normalizer threw | `MALFORMED` |
-| C ≠ `PARSED` (incl. A = `NOT_INVOKED`/`INVOKED_REJECTED`, redirects, non-2xx, read failure) | `UNAVAILABLE` |
+| C = `PARSED`, usage present but a required field absent, non-integer, negative, `> U_MAX`, inconsistent, or the normalizer threw | `MALFORMED` |
+| C ≠ `PARSED` | `UNAVAILABLE` |
 
-Content validity (axis D) and the inner result (axis F) never change the usage
-class.
+The adapter classifies usage **immediately after** the bounded JSON parse and
+**before** the content check. Content validity never changes the usage class.
 
-### 9.2 Estimate and reservation (PD-R10)
+### 11.2 Estimate and reservation (PD-R10)
 
-Unchanged: `Res = ceil(utf8Bytes(system + user) / κ) + O + completionReserveTokens + reasoningReserveTokens`.
-`Res > B_tok` → `RATE_REQUEST_EXCEEDS_BUDGET` with zero admissions.
+`Res = ceil(utf8Bytes(systemPrompt + userPrompt) / κ) + O + completionReserveTokens + reasoningReserveTokens`.
+`Res > B_tok` → `RATE_REQUEST_EXCEEDS_BUDGET` with zero commits. `Res` is the
+reservation charged from commit until settlement. It is heuristic; provider-side
+TPM compliance is not guaranteed.
 
-### 9.3 Usage normalization (unchanged rules)
+### 11.3 Usage normalization
 
-| Provider | Required | Optional | Consistency | `U` |
+| Provider | Required | Optional (absent = 0) | Consistency | `U` |
 |---|---|---|---|---|
 | Groq `usage` | `prompt_tokens`, `completion_tokens`, `total_tokens` | — | `total ≥ prompt + completion` | `total_tokens` |
-| Gemini `usageMetadata` | `promptTokenCount`, `totalTokenCount` | `candidatesTokenCount`, `thoughtsTokenCount`, `toolUsePromptTokenCount` (absent = 0) | `total ≥ prompt + candidates + thoughts + toolUse` | `totalTokenCount` |
+| Gemini `usageMetadata` | `promptTokenCount`, `totalTokenCount` | `candidatesTokenCount`, `thoughtsTokenCount`, `toolUsePromptTokenCount` | `total ≥ prompt + candidates + thoughts + toolUse` | `totalTokenCount` |
 
-Every field used is an integer in `[0, U_MAX]`.
+Every field used is an integer in `[0, U_MAX]`. The normalizer performs a fixed
+set of own-property reads on a `JSON.parse` product, never iterates unknown keys,
+never stringifies, and maps any throw to `MALFORMED`. It stores only `{class, U}`.
 
-### 9.4 Charge rule: by usage class only
+### 11.4 Charge rule
 
-| Usage class | `charged` | Terminal effect |
+| Usage class | Final `charged` | Effect |
 |---|---|---|
-| A = `NOT_INVOKED` (gate refused; nothing sent) | `Res` | per gate outcome (§7.8) |
-| `VALID(U)` | `max(Res, U)`, whether the inner call resolved or rejected | none from accounting |
+| `VALID(U)` | `max(Res, U)` whether content is present or absent | none from accounting |
 | `MISSING` | `B_tok` | none |
-| `MALFORMED` | `B_tok` | sticky `RATE_ACCOUNTING_INVALID` (PD-R12-I1) |
-| `UNAVAILABLE` | `B_tok` | none |
+| `MALFORMED` | `B_tok` | sticky `RATE_ACCOUNTING_INVALID` (PD-R12-I1), even if content is present |
+| `UNAVAILABLE` (non-2xx, 3xx, read failure, network error, timeout, abort, uncertain completion) | `B_tok` | none |
 
-`charged ≥ Res` always. No refund. `charged > B_tok` is possible (for example
-`U = 7 000`) and recorded unclamped. It blocks admission until expiry.
+`charged ≥ Res` always. `charged > B_tok` is possible for `VALID(U)` with
+`U > B_tok` and is recorded unclamped; it blocks token admission until expiry.
 
-Reviewer counterexample (`Res = 3 400`, `B_tok = 6 800`, valid
-`total_tokens = 7 000`, content absent): the provider parses the body, the observer
-records `VALID(7 000)`, and the provider then throws `INVALID_RESPONSE`. At settle:
-`charged = max(3 400, 7 000) = 7 000` (not 6 800). No terminal is set, and
-`INVALID_RESPONSE` is rethrown (proofs §4.3 AC-13).
+Reviewer counterexample (R3-ARCH-01, preserved): `Res = 3 400`, `B_tok = 6 800`,
+2xx, usage `{100, 6 900, 7 000}`, content absent → `charged = 7 000`; the child
+receives `provider-error INVALID_RESPONSE` (not retryable).
 
-The `NOT_INVOKED` charge of `Res` (rather than `B_tok`) is exact: the gate proves no
-transport invocation occurred. It still counts one request in the request ledger,
-which is conservative. It occurs only on a terminal or cancellation path.
+### 11.5 Saturation, expiry, no double charge, no hidden refund
 
-### 9.5 Saturation scope and expiry
+- Every commit creates exactly one entry. Refusals create none. There is no
+  "not invoked" entry class in C5: commit and send are one step (§8.4).
+- `charged` is set to `Res` at commit (reservation) and replaced exactly once at
+  settlement by the §11.4 value, which is `≥ Res`. It never changes afterwards.
+- An entry is never removed while live. It expires at `tSettle + W_HOLD` for both
+  ledgers. Saturation (`B_tok`) affects only this session's token ledger.
+- A retry is always a new IPC request, a new admission and a new entry.
+- `W` never decreases. No refund of reservation, charge or wait exists.
 
-Saturation (`charged = B_tok`) applies to the effective provider's token ledger in
-this child process. The request ledger is unaffected. It expires at
-`tSettle + W_HOLD`. Uncertain remote completion (axis A = `INVOKED_REJECTED` after
-a possible send, a body timeout, or a cancellation) is `UNAVAILABLE` and saturates.
-A retry is always a new admission and entry.
-
-### 9.6 Observation ownership and delivery on both paths
-
-- The governed child constructs providers with an internal-only `observer` whose
-  single method is `onParsedBody(usageSubobject)`. The provider calls it once,
-  **immediately after** `readBoundedResponseJson()` succeeds and **before** its
-  content check (Groq after L233, before L243; Gemini after L241, before L253).
-  It passes `body.usage` (Groq) or `body.usageMetadata` (Gemini) and nothing else.
-  The call is wrapped so that an observer exception cannot change provider behavior.
-- The observer marks axis C = `PARSED` and runs the §9.3 normalizer synchronously.
-  It stores only `{class, U}`. The raw object is not retained.
-- The normalizer is bounded. It performs a fixed set of own-property reads on a
-  `JSON.parse` product (plain data, no getters), `Number.isInteger` and range
-  checks, and one comparison. It never iterates unknown keys, never stringifies, and
-  never copies values into messages. Any throw → `MALFORMED`.
-- Because the observation is recorded **before** the provider decides between
-  resolving and throwing, the governor reads the same sealed record on the resolve
-  path and on the reject path. Known valid usage therefore survives content
-  failure and exception unwinding (INV-17).
-- The gate records axes A and B. The raw `Response`, body and other headers are
-  never stored.
-- Public outputs (envelope, stderr, IPC) never contain usage values, header values,
-  provider messages or content (INV-16). Only closed reason codes leave.
-
-### 9.7 Settlement procedure and terminal precedence
-
-At settle (resolve or reject), with the sealed record `s`:
+### 11.6 Settlement procedure and precedence
 
 ```text
-1. if cancelSignal.aborted (or s.gate == CANCELLED): seal; rethrow the provider's cancellation error. (FT0 exits)
-2. charge the entry by §9.4; set tSettle; apply hints and cooldown from axis B
-3. if s.gate == DEADLINE:   refuse STAGE_TIMEOUT          (sticky)
-4. if s.gate == DUPLICATE:  refuse RATE_ACCOUNTING_INVALID (sticky)
-5. if usage == MALFORMED:   refuse RATE_ACCOUNTING_INVALID (sticky), even if content was present
-6. otherwise: return the inner result unchanged (resolved content, or rethrow the original provider error)
+settleExchange(e, outcome):                            // runs once per commit
+  s = classify(outcome)                                // axes A–E (§11.1)
+  e.tSettle = now()
+  e.charged = s.usage == VALID ? max(e.res, s.U) : B_tok
+  applyHintsAndCooldown(s)                             // from status and frozen rate headers only
+  if revoked:                 return CANCELLED          // child is being settled; no reply
+  if s.usage == MALFORMED:    return refuse(RATE_ACCOUNTING_INVALID)
+  if s.transport == RESPONSE and s.http == 2xx and s.content == PRESENT:
+                              return {outcome:"content", content}
+  return {outcome:"provider-error", code, retryable} = adapter.mapFailure(s)   // §12
 ```
 
-Precedence: **cancellation > gate refusal > malformed-usage refusal > provider
-outcome**. Accounting (step 2) happens before any throw on every path except
-cancellation, where the process ends.
-
-**INV-17.** On every non-cancelled settle, the entry's charge is determined by the
-usage class alone. A `VALID(U)` observation is never discarded because the inner
-call rejected or the content was invalid.
+Precedence: **revocation > malformed-usage refusal > provider outcome**. Accounting
+runs before every branch, including revocation (§9.3, §13.7).
 
 ---
 
-## 10. Provider-specific retry semantics (R2-ARCH-05 preserved)
+## 12. Provider mapping and retry ownership (R2-ARCH-05 preserved)
 
-The governor adds zero retries. Generators keep two attempts (PD-R1 open).
+The adapter reuses the existing provider mapping functions. The governed child
+therefore sees the same `{code, retryable}` it would see from its own provider today.
 
-| Condition | Groq | Gemini | Usage class | Governor action |
+| Condition | Groq | Gemini | Usage class | Gateway action |
 |---|---|---|---|---|
-| HTTP 408 | `TIMEOUT` / retryable | `UNKNOWN` / not retryable | UNAVAILABLE | none |
-| HTTP 429 | `RATE_LIMIT` / retryable | `RATE_LIMIT` / retryable | UNAVAILABLE | cooldown; `RA > 65 s` → `exhausted` |
-| HTTP 3xx (governed: not followed) | `UNKNOWN` / not retryable | `UNKNOWN` / not retryable | UNAVAILABLE | records `REDIRECT_NOT_FOLLOWED` |
-| HTTP 401 / 403 | `AUTH` / no | `AUTH` / no | UNAVAILABLE | none |
-| Other 4xx | `UNKNOWN` / no | `UNKNOWN` / no | UNAVAILABLE | none |
-| HTTP 5xx | `UNKNOWN` / yes | `UNKNOWN` / yes | UNAVAILABLE | none |
-| Transport error | `NETWORK` / yes | `NETWORK` / yes | UNAVAILABLE | none |
-| Own 30 s timer (fetch or body) | `TIMEOUT` / yes | `TIMEOUT` / yes | UNAVAILABLE | none |
-| SEC-C1 cancellation | `UNKNOWN` / no, no cause | same | — | rethrow; process exits |
-| Body oversize / not JSON | `INVALID_RESPONSE` / no | same | UNAVAILABLE | none |
-| 2xx parsed, content absent | `INVALID_RESPONSE` / no | same | by usage (VALID / MISSING / MALFORMED) | §9.7 |
-| 2xx, content invalid for the model contract | generator correction retry | same | by usage | §9.7 |
-| Gate refusal | provider maps to `NETWORK` | same | `NOT_INVOKED` | governor replaces it (§9.7) |
-| Governor refusal before admission | `RATE_*` / `STAGE_TIMEOUT`, not retryable | same | no entry | sticky |
+| HTTP 408 | `TIMEOUT` ✓ | `UNKNOWN` ✗ | UNAVAILABLE | none |
+| HTTP 429 | `RATE_LIMIT` ✓ | `RATE_LIMIT` ✓ | UNAVAILABLE | cooldown; `RA > 65 s` → `exhausted` |
+| HTTP 421 | `UNKNOWN` ✗ | `UNKNOWN` ✗ | UNAVAILABLE | single send (TS-1); no transport retry |
+| HTTP 3xx (never followed) | `UNKNOWN` ✗ | `UNKNOWN` ✗ | UNAVAILABLE | none |
+| HTTP 401 / 403 | `AUTH` ✗ | `AUTH` ✗ | UNAVAILABLE | none |
+| Other 4xx | `UNKNOWN` ✗ | `UNKNOWN` ✗ | UNAVAILABLE | none |
+| HTTP 5xx | `UNKNOWN` ✓ | `UNKNOWN` ✓ | UNAVAILABLE | none |
+| Network error | `NETWORK` ✓ | `NETWORK` ✓ | UNAVAILABLE | none |
+| `T_REQ` timeout (connect, headers or body) | `TIMEOUT` ✓ | `TIMEOUT` ✓ | UNAVAILABLE | none |
+| Body oversize / not JSON | `INVALID_RESPONSE` ✗ | same | UNAVAILABLE | none |
+| 2xx parsed, content absent | `INVALID_RESPONSE` ✗ | same | by usage | §11.6 |
+| 2xx, content invalid for the model contract | content returned; generator correction retry | same | by usage | none |
+| Revocation (SEC-C1 or settlement) | child: certified cancellation `UNKNOWN` ✗ | same | UNAVAILABLE if sent | no reply / `REVOKED` |
+| Governor refusal | `RATE_*` / `STAGE_TIMEOUT` ✗, sticky | same | no entry | §15 |
+| `BUSY`, `INVALID_REQUEST` | child: `UNKNOWN` ✗ | same | no entry | none |
+
+Retry ownership: generators keep their two attempts (PD-R1 open). The Gateway and
+the transport make **zero** retries. Each attempt is a separate IPC request and a
+separate admission. Since 3xx and 421 map to non-retryable errors, they never
+trigger attempt 2.
 
 ---
 
-## 11. Closed failure propagation (R2-ARCH-02)
+## 13. Revocation, Property A, Property B and SEC-C1
 
-### 11.1 Problem
+### 13.1 Revocation authority and triggers
 
-C3 fixed the normal-return path: a generator returns `{ok:false}` after a
-non-retryable governor refusal. R3 found that the throw/unwind path was not
-specified. When a stage function throws, the runner had only `{code}` and no
-authoritative step or attempt count. The parent's exit-4 rule for missing counts
-could then misclassify the failure. The design must also not relabel an unrelated
-internal error as a governor refusal.
+Only the parent revokes. `session.revoke(reason)` is called synchronously by the
+supervisor as the **first** action on each of:
 
-### 11.2 Runner-owned stage context
+| Trigger | Where |
+|---|---|
+| Valid FT0 `result` stored | §7.5 (the child declared completion) |
+| Kill decision (watchdog or enforcement) | §14.4 step 1 |
+| Child `disconnect` (IPC loss seen by the parent) | §7.5 |
+| Child `exit`, `close` or spawn `error` | §7.5 |
+| Parent settlement of the stage (any path) | §14.6 |
 
-`generative-runner.js` creates one `StageContext` per governed child and passes it
-to the governor. Only the runner and the governor write to it.
+Parent process death (including native signal termination, PD-R6) destroys the
+session with the process. No Gateway can dispatch after its process has ended.
 
-| Field | Written by | Meaning |
-|---|---|---|
-| `stage` | runner | `design`, `plan` or `generate` |
-| `stepSeq` | runner | incremented by `beginStep()` before **every** generator invocation (each AutomationCandidate, plan and change set is its own step) |
-| `step` | runner | closed label: `requirementModel`, `testCaseModel`, `automationCandidate`, `automationPlan`, `generatedChangeSet` |
-| `calls` | governor | number of `analyze()` entries during the current `stepSeq`. It is reset by `beginStep()`. This is the authoritative count of real provider attempts: the baseline `providerAttempts` counts exactly the `analyze()` invocations of a generator call (generators increment it immediately before calling). |
-| `terminal` | governor | `null`, or `{code, stepSeq, step, callOrdinal}`, set once at the first refusal (sticky) |
-| `refusals` | governor | `WeakSet` of the exact error objects thrown by governor refusals |
-| `cancelled` | derived | `cancelSignal.aborted` |
-
-The governor increments `ctx.calls` at `analyze()` entry, before any check, and
-records `terminal` and adds the error object to `refusals` before throwing a
-refusal. No count is ever synthesized. Every number reported comes from
-`ctx.calls` or from the generator's own `providerAttempts`.
-
-### 11.3 Runner algorithm
+### 13.2 Revocation procedure
 
 ```text
-for each generator invocation g with label L:
-  ctx.beginStep(L)
-  try:
-    r = await g(...)
-  catch (e):
-    return classifyThrow(e)
-  if !r.ok: return classifyReturn(r)
-  if ctx.terminal !== null: return failClosed()        // unreachable by construction
-...
-classifyReturn(r):                                     // NORMAL-RETURN PATH
-  if ctx.cancelled: return NO_RESULT                   // FT0 is exiting
-  t = ctx.terminal
-  if t === null: return existing stepFailure(L, r)     // unchanged baseline
-  n = isPositiveInt(r.providerAttempts) ? r.providerAttempts : ctx.calls   // ctx.calls ≥ t.callOrdinal ≥ 1
-  if t.code == STAGE_TIMEOUT: return {kind:"stage-timeout", step: t.step, providerAttempts: n}
-  return {kind:"generation", step: t.step, providerAttempts: n,
-          codes: dedupe([t.code, ...failureCodes(r.errors)]).slice(0, 8)}
-
-classifyThrow(e):                                      // THROW / UNWIND PATH
-  if ctx.cancelled: return NO_RESULT
-  t = ctx.terminal
-  E1: if t !== null and ctx.refusals.has(e) and t.stepSeq == ctx.stepSeq:
-        the generator rethrew the governor's own refusal: same result as classifyReturn,
-        with providerAttempts = ctx.calls
-  E2: if t !== null (and E1 does not apply):
-        an unrelated exception after a refusal:
-        {kind:"internal", code:"GENERATIVE_STAGE_FAILED", governorCode: t.code}
-  E3: otherwise: {kind:"internal", code:"GENERATIVE_STAGE_FAILED"}  // unchanged baseline
+revoke(reason):
+  if revoked: return                 // idempotent
+  revoked = true                     // first statement, synchronous
+  if active: active.controller.abort()   // ends a sleep (charged, §9.3) or destroys an in-flight request (TS-4)
 ```
 
-A throw outside any generator invocation (runner code) is E3 unless a terminal
-exists, in which case it is E2.
+A session is never un-revoked. A later stage gets a new session with a new origin.
 
-### 11.4 Child result shapes and parent classification
+### 13.3 Property A
 
-| Path | Child `failure` | Parent result |
+> **Property A.** After `session.revoke()` returns, the session makes no new
+> `transport.send()` call. (Equivalently: no authorized Gateway dispatch after
+> parent revocation.)
+
+Design argument (P Lemma 4): `transport.send()` is called only from `commit()`,
+which checks `revoked` after its final reading with no `await` before the call.
+`revoke()` runs to completion in one turn. Either `revoke()` runs before that
+check (the check refuses) or after `send()` was entered (that send was authorized
+before revocation and is now aborted, best effort). Every other path re-checks
+`revoked` after each `await`. The transport object and credential are private to
+the session.
+
+Status: **SPIKE_VERIFIED** in prototype scope (spike G4, G9, G11, G12, P5, P7,
+P9, P12, GWV01-7). **DESIGNED** for production. Integrated production evidence:
+**OPEN** (M §12).
+
+### 13.4 Property B
+
+> **Property B.** A surviving or compromised child has no arbitrary direct
+> network access.
+
+**NOT PROVIDED.** The Gateway does not and cannot provide it. A child is an
+ordinary Node process of the same OS user. It can load `node:http`, `node:https`,
+`node:net` or any file from disk and connect anywhere the user can. Spike P12
+measured an abandoned child making **53 (Windows) / 55 (Linux)** unauthenticated
+direct HTTP requests while the Gateway made zero. Property A does **not** imply
+Property B. Providing B needs OS-level isolation of the worker (sandbox, network
+namespace, per-process firewall rule, or a separate OS user), which is a separate
+security/architecture requirement. It is not designed here (SG-02).
+
+### 13.5 Scenario analysis
+
+| Scenario | Gateway dispatch (A) | Credentialed provider call by the child | Unauthenticated network by the child (B) | Notes |
+|---|---|---|---|---|
+| Normal completion | stops at revocation on result | impossible (no credential) | possible only if child code is compromised | certified child code makes none |
+| Parent IPC loss (parent alive, channel broken) | revoked at the parent's `disconnect` event | impossible | as above | child FT0 `fail()` aborts and exits in the same turn |
+| Parent process dies | no Gateway exists | impossible | as above | child FT0 exits on `disconnect` |
+| Delayed IPC disconnect | revoked at the parent's decision, before disconnect | impossible | as above | late requests over the still-open channel are refused `REVOKED` (spike P7) |
+| Kill not delivered / delayed (surviving child) | revoked before `kill()` | impossible | **possible** | K_SETTLE abandonment bounds the parent phase only (§14.5); spike P11, P12 |
+| Child blocked in synchronous computation | revoked by the watchdog decision | impossible while blocked; refused after | possible after unblocking if compromised | queued requests reach a revoked session (R4-ARCH-03 no longer affects A) |
+| Compromised child | revoked as above; IPC requests validated and refused | **not prevented**: a same-user process may read the credential from the parent's initial environment block (e.g. `/proc/<ppid>/environ` on Linux) or process memory, or from wherever the operator stores it | **possible** | analysis, not experiment; SG-03 |
+| Missing OS-level isolation | — | — | **possible** | Property B NOT PROVIDED (SG-02) |
+
+**Parent-owned credentials versus arbitrary network permission.** Moving the
+credential out of the child's environment and IPC removes it from the child's
+normal reach and from every artifact the child produces. It does not confine the
+credential against a compromised same-user process, and it does not restrict
+network access. Both need OS-level controls.
+
+### 13.6 SEC-C1 reconciliation (mandatory Security gate, AD-02)
+
+SEC-C1 (PO-GH): "Parent IPC disconnection must abort pending waits and in-flight
+provider requests. No subsequent provider calls may be initiated. The child must
+terminate."
+
+| Clause | C5 mechanism | Relation to the certified FT0 implementation |
 |---|---|---|
-| Return or E1, `RATE_*` | `{kind:"generation", step, providerAttempts ≥ 1, codes:[terminal, …]}` | `PROVIDER_FAILURE`, exit 6; reason codes start with the governor code |
-| Return or E1, `STAGE_TIMEOUT` | `{kind:"stage-timeout", step, providerAttempts ≥ 1}` | `STAGE_TIMEOUT`, exit 6 |
-| E2 | `{kind:"internal", code:"GENERATIVE_STAGE_FAILED", governorCode}` | `STAGE_FAILED`, exit 1. The message adds "(governor reason code: X)". `governorCode` is checked against `GOVERNOR_TERMINAL_CODES`; otherwise it is dropped. |
-| E3 / ungoverned | unchanged | unchanged (`STAGE_FAILED`, exit 1) |
+| Abort pending waits | Gateway waits live in the parent; `revoke()` aborts them (§13.2). The child has no governor waits. | Stronger: the waiting party is the revoking party. |
+| Abort in-flight provider requests | `revoke()` destroys the in-flight request (TS-4). The child's pending IPC call rejects through the certified cancel signal. | Equal. Abort cannot undo a transmitted request (§13.7). |
+| No subsequent provider calls initiated | **Authorized** calls: Property A (§13.3), and the child holds no credential. **Unauthenticated** network use: not prevented (Property B). | Certified FT0 relies on the cooperative child exiting; a compromised FT0 child holds the credential and raw network. C5 is not weaker on any path, and removes the credential from the child. |
+| Child must terminate | Unchanged child `guardParentLink()` exits in the same turn; governed parent adds kill on watchdog/enforcement and K_SETTLE abandonment. | Equal for a cooperative child. A child that does not run its handlers (blocked, compromised, kill undelivered) is not guaranteed to terminate, in FT0 or in C5. |
+| Disabled governor (PD-R14) | Unchanged certified FT0. | Identical. |
 
-### 11.5 What this proves (details: proofs §4.6)
+**The Gateway design does not weaken SEC-C1 relative to its certified
+implementation.** Whether the approved SEC-C1 text is satisfied by Property A plus
+certified child self-termination, or requires Property B (and a termination
+guarantee for non-cooperative children), is a **Security decision this author
+cannot make**. It is recorded as **SG-01, SECURITY_GATE_OPEN**. If Security
+concludes that SEC-C1 requires Property B, this design is **BLOCKED** until an
+OS-isolation requirement is approved and designed, because C5 cannot provide B.
+No waiver is requested or assumed.
 
-1. **A terminal refusal survives a generator exception.** If the generator rethrows
-   the refusal object (E1), the result is identical to the normal-return path, with
-   an attempt count from `ctx.calls` (≥ 1). If it throws anything else after the
-   refusal (E2), the refusal code is still delivered, as `governorCode`.
-2. **Unrelated internal errors are not relabelled.** E2 and E3 keep
-   `GENERATIVE_STAGE_FAILED` → `STAGE_FAILED` / exit 1. A governor code becomes the
-   primary classification only if the thrown object is the governor's own refusal
-   (identity, not message or code matching) in the same step. A wrapped or copied
-   error is not treated as the refusal (E2).
-3. **Correct envelope and exit status.** `providerAttempts ≥ 1` on every
-   governor-classified result, so the parent's exit-4 rule cannot trigger.
-   `STAGE_TIMEOUT` → 6; `RATE_*` → 6 inside `PROVIDER_FAILURE`; E2 → 1.
-4. **External compatibility.** Ungoverned runs create no context and no governor,
-   so results are byte-identical (INV-13). Generator sources and their return
-   contracts are unchanged. New IPC members are private and governed-only. Public
-   codes are those of §15.
+### 13.7 Abort is not rollback
 
-### 11.6 Precedence (highest first)
-
-| # | Outcome | CLI result |
-|---|---|---|
-| 1 | Parent IPC loss (SEC-C1) | child exits 1 with no result; the parent outcome is decided by what ended it (PD-R6) or `STAGE_FAILED` (1) |
-| 2 | Parent enforcement kill | `STAGE_TIMEOUT`, 6; any stored result discarded |
-| 3 | Parent watchdog kill | `CHILD_UNRESPONSIVE`, 1; any stored result discarded |
-| 4 | Governor `STAGE_TIMEOUT` (pre-admission or gate) | `STAGE_TIMEOUT`, 6 |
-| 5 | Governor `RATE_*` (incl. malformed usage) | `PROVIDER_FAILURE`, 6, governor code first |
-| 6 | Internal exception after a refusal (E2) | `STAGE_FAILED`, 1, with the governor reason code |
-| 7 | Existing generator / provider failure | unchanged |
-| 8 | Existing input refusal before any provider call | unchanged (exit 4); the governor is never reached |
-
-Rules 2–3 come from the parent's sticky `killed` reason only.
-
-### 11.7 Future implementation touchpoints (not implemented)
-
-`generative-runner.js`: `StageContext`, `beginStep()` before each generator call
-in its own `runDesign` / `runPlan` / `runGenerate`, `classifyReturn` /
-`classifyThrow`, and the new failure kinds. `generative.js`
-`classifyChildFailure()`: `stage-timeout`, `governorCode` and killed reasons.
-`run-artifacts.js`: separate `GOVERNOR_REASON_CODES` allowlist. Governor module:
-`ctx` writes. **No generator file changes.**
+Once `transport.send()` has been entered, the request may already be on the wire
+or processed remotely. Revocation and abort end local activity and suppress any
+reply, but cannot retract the request, its remote processing, or any provider-side
+charge. The exchange is recorded as uncertain completion and charged `B_tok`
+(§11.4). This applies equally to the certified FT0 path.
 
 ---
 
-## 12. Cancellation (DRIFT-01 preserved)
+## 14. Process lifecycle and FT0 compatibility (DRIFT-02; AD-07)
 
-The governor uses the certified process-scoped `parentLink.signal`, the same object
-passed to `bindCancelSignal()`. It creates no competing mechanism or handler.
+### 14.1 Unchanged FT0 behavior
 
-| Event | Effect |
-|---|---|
-| Parent `disconnect` while running | FT0 `fail()`: abort, then `process.exit(1)` in the same turn |
-| Queued or sleeping caller | its wait is bound to the signal and rejects (defense in depth) |
-| Between admission and transport | the gate checks `P_cancel` and does not invoke `fetch` (§7.8) |
-| In-flight fetch | the provider's certified signal link aborts it |
-| `analyze()` after abort | `P_cancel` is first in every gate; zero admissions |
-| Governor disabled | SEC-C1 exactly as certified (PD-R14) |
+On every path, governed or not, these stay exactly as certified:
 
-**INV-10.** After `cancelSignal` aborts, no admission and no transport invocation
-occurs. No signal handler is added (PD-R6).
+- Receipt and ACK: the child sends its result with a fresh random receipt; the
+  parent stores the **first** result in memory, then ACKs the matching receipt.
+  Only that ACK counts as delivery, even if it overtakes the send callback.
+- Child result transfer: `running → sending → awaiting_ack → delivered | failed`;
+  missing ACK within `ACK`, a send error or parent loss → child exit 1.
+- Close-based settlement; `CAE` recovery after `exit` without `close` (FT0-C2-D1)
+  with `result = null`.
+- Exit failure semantics: accept only `result.ok === true && exitCode === 0` after
+  `close` (generative.js L83). A result followed by a nonzero exit or a signal is
+  not accepted.
+- Native signal handling: no handler is added; PD-R6 holds.
+- Exactly-once settlement via the certified `settled` guard; late events ignored.
+- Ungoverned paths: byte-identical (INV-G13).
 
----
-
-## 13. Process and IPC lifecycle (DRIFT-02 preserved; PD-R15)
-
-### 13.1 Unchanged FT0 protocol
-
-The result is sent with a random receipt. The parent stores the first result in
-memory and then ACKs it. Only the matching ACK counts as delivery, even if it
-overtakes the send callback. Missing ACK within `ACK`, a send error or parent loss
-→ child exit 1. Delivered → `setImmediate` disconnect. The ACK means "stored in
-parent memory", not "committed".
-
-### 13.2 Governed additions
+### 14.2 Governed additions
 
 | Addition | Rule |
 |---|---|
-| Payload member | `governor:{provider, tokensPerMinute, requestsPerMinute, completionReserveTokens, reasoningReserveTokens}`, closed and range-checked; invalid → `STAGE_PAYLOAD_INVALID` |
-| Heartbeat | `{type:"heartbeat", seq}`, `seq` strictly increasing `1 … 2^31 − 1`; first at `t0`, then every `HB`; send callback ignores errors |
-| Heartbeat stop | cleared at `report()` and in FT0 `fail()` |
-| Watchdog | parent timer `WD` from `tSpawn`; re-armed by valid heartbeats while no result is stored; disarmed when a result is stored. Invalid heartbeats are ignored. |
-| Enforcement timer | parent timer at `tSpawn + K_PARENT`, armed until settlement |
+| Payload marker | `gateway: {v:1}`; closed; invalid → `STAGE_PAYLOAD_INVALID` (existing) |
+| Heartbeat | child sends `{type:"heartbeat", v:1, seq}` from payload receipt, then every `HB`; cleared at `report()` and in FT0 `fail()`; send errors ignored |
+| Watchdog | parent timer `WD` from `tOpen`; re-armed by valid heartbeats while no result is stored; disarmed when a result is stored |
+| Enforcement | parent timer at `enforceAt = tOpen + K_PARENT`, armed until settlement |
+| Revocation hooks | §13.1 |
 
-### 13.3 Child timers
+The child has no governor timer, deadline timer or new abort source.
 
-At `report()` and `fail()` the heartbeat interval is cleared. The governor has no
-timer outside an active `analyze()`. No child self-deadline timer and no new abort
-source exist. The child-side deadline is the gate (§7.8) plus the provider's
-30 s timer.
-
-### 13.4 Parent message handling
+### 14.3 Parent message handling
 
 ```text
 on message m:
-  if killed: return
-  if valid heartbeat and result === null: re-arm watchdog; return
-  if m.type == "result" and result === null: (FT0) store, ACK; disarm watchdog
-  else ignore
+  if killed: (provider-request → reply REVOKED if connected); return
+  heartbeat (valid) and result === null:  re-arm watchdog
+  provider-request (valid):               session.onRequest (§8.3)
+  result (FT0):                           session.revoke("result"); store first result; ACK; disarm watchdog
+  else:                                   ignore
 ```
 
-### 13.5 Kill decision
+### 14.4 Kill decision
 
-When the watchdog or the enforcement timer fires before settlement, at parent
-reading `tKill`:
+When the watchdog or enforcement timer fires before settlement:
 
-1. `killed = {reason}` (`STAGE_TIMEOUT` or `CHILD_UNRESPONSIVE`); first reason wins, sticky.
-2. `result = null`. A stored or ACKed result is discarded.
-3. Disarm the watchdog and enforcement timers.
-4. `child.kill("SIGKILL")` inside `try` (POSIX SIGKILL; Windows `TerminateProcess`).
-   The return value or exception is recorded as `killIssued: true | false`.
-5. Arm the **post-kill settlement timer** `K_SETTLE` (§13.8).
+1. `session.revoke(reason)` (synchronous, first).
+2. `killed = {reason}` (`STAGE_TIMEOUT` or `CHILD_UNRESPONSIVE`); first reason wins; sticky.
+3. `result = null`: a stored or ACKed result is discarded.
+4. Disarm watchdog and enforcement timers.
+5. `child.kill("SIGKILL")` inside `try` (POSIX SIGKILL; Windows `TerminateProcess`);
+   record `killIssued`.
+6. Arm the `K_SETTLE` timer (§14.5).
 
-The parent does **not** disconnect IPC at the kill decision. On Windows, a
-parent-side `disconnect()` can stop `close` from ever firing. That would turn
-every normal kill into a `CAE`-delayed settlement.
+The parent does **not** disconnect IPC at the kill decision. On Windows a
+parent-side `disconnect()` can prevent `close` from firing, which would turn every
+kill into a `CAE`-delayed settlement (C4 NDI-12). Property A does not depend on
+disconnect: revocation is step 1.
 
-### 13.6 Settlement and acceptance
+### 14.5 Post-kill settlement (`K_SETTLE = 10 000 ms`, APPROVED)
 
-Settle on the first of: `close`; FT0 `CAE` after `exit`; `K_SETTLE` expiry
-(§13.8); spawn `error`. Accept (validate, then commit) only if a result is stored,
-`exitCode === 0`, `killed === null` and settlement was by `close`. Otherwise
-nothing is written (**INV-12**).
-
-### 13.7 Platform differences
-
-| Aspect | POSIX | Windows |
-|---|---|---|
-| Kill | SIGKILL, uncatchable. Once delivered, the process never returns to user mode, so no JavaScript runs. | `TerminateProcess`. Once termination begins, no user-mode code runs. The process object can linger while I/O completes. |
-| Kill → `exit` latency | not bounded by the OS for a task in uninterruptible I/O | not bounded while pending I/O drains |
-| `close` after `exit` | normally prompt | may never arrive if IPC data is unread (FT0-C2-D1); `CAE` handles it |
-| Parent-side `disconnect()` | `close` follows normally | `close` may not fire. Hence no disconnect at the kill decision (§13.5). |
-| After the CLI exits | an unreaped child is reparented to init, which reaps it | libuv places spawned children in a job object; closing the parent's job handle is expected to terminate them (to be verified, M T-D2-14) |
-| User interrupt | `128 + n` | `0xC000013A` |
-| Timer granularity | ≈ 1 ms | ≈ 15.6 ms by default |
-
-### 13.8 Bounded post-kill settlement (PD-R15)
-
-**Phase K** starts at `tKill` (§13.5). It ends at the first of:
+Phase K starts at the kill decision `tKill` and ends at the first of:
 
 | Event | Next |
 |---|---|
 | `exit` | clear `K_SETTLE`; FT0 phase S (`close`, or `CAE` after `exit`) |
-| `close` | settle normally (result already discarded) |
+| `close` | settle (result already discarded) |
 | spawn `error` | settle |
-| `K_SETTLE` expiry (first timer callback at or after `tKill + K_SETTLE`) with no `exit` | **abandonment** |
+| first `K_SETTLE` callback at or after `tKill + K_SETTLE`, no `exit` | **abandonment** |
 
-Abandonment procedure (one-shot, then `settled = true`):
+Abandonment (one-shot, then `settled = true`):
 
-1. If `child.connected`, call `child.disconnect()` inside `try`. If the child is
-   still running JavaScript (for example `killIssued === false`), this fires its
-   certified SEC-C1 `disconnect` path: abort and `process.exit(1)`, with zero
-   further transport invocations (INV-10).
-2. Destroy `child.stdout` and `child.stderr` if present.
-3. `child.unref()`, so the child handle cannot keep the parent's event loop alive.
-4. Clear every parent timer the governed path armed (watchdog, enforcement,
-   `K_SETTLE`, `CAE`).
-5. Settle once with `result = null`, `exitCode = null`, `signal = null` and
-   `abandoned = true`. The classification is `killed.reason`: `STAGE_TIMEOUT` (6)
-   or `CHILD_UNRESPONSIVE` (1). No new code, and no commit.
-6. Emit one fixed-template stderr line:
-   `[qa-agent] <stage> process did not exit within <K_SETTLE/1000>s after termination (pid <n>); it was abandoned and may still be finishing.`
-   It contains an integer pid and no secrets.
-7. Late `exit`, `close` or messages after settlement are ignored (the certified
-   `settled` guard, L134/L140/L147).
+1. If `child.connected`, `child.disconnect()` inside `try`. A cooperative child
+   then runs its SEC-C1 path. **Nothing depends on this for Property A**: the
+   session was revoked at `tKill`, and any request that still arrives is refused.
+2. Destroy `child.stdout` and `child.stderr`.
+3. `child.unref()`.
+4. Clear every governed timer (watchdog, enforcement, `K_SETTLE`, `CAE`).
+5. Settle once: `result = null`, `abandoned = true`; classification is
+   `killed.reason`; no commit.
+6. One stderr line:
+   `[qa-agent] <stage> process did not exit within 10s after termination (pid <n>); it was abandoned and may still be finishing.`
+7. Late `exit`, `close` and messages are ignored (`settled` guard).
 
-Responsibility for a possibly surviving child:
+Bound (**INV-G18**, parent clock): the post-kill settlement decision is taken at
+the first callback at or after `tKill + K_SETTLE` without `exit`, or at or after
+`tExit + CAE` when `exit` arrived first; so by `tKill + K_SETTLE + CAE` plus timer
+lateness. `K_SETTLE` does **not** guarantee that a surviving process terminates,
+and it bounds a phase, not the whole CLI (§17).
 
-- **Kill delivered** (POSIX SIGKILL or Windows termination started): no user-mode
-  code runs again, so no new provider request can start. Only the kernel may
-  finish I/O already in progress. The product does not wait for it. The OS reaps
-  or reclaims the process: init on POSIX; job-object closure or process exit on
-  Windows.
-- **Kill not delivered** (`killIssued === false`, or an unknown failure): step 1's
-  disconnect engages SEC-C1 in the child. Its governor also still enforces the gate
-  deadline. If the child cannot observe the disconnect either (its event loop is
-  blocked), it can make no request while blocked. When it unblocks, the
-  `disconnect` event is delivered first and SEC-C1 runs. This last point relies on
-  Node delivering the queued `disconnect` before any new provider work, which is
-  certified FT0 behavior.
-- In every case the CLI reports the kill reason and writes nothing. The stderr line
-  tells the operator that a process may linger.
+### 14.6 Result acceptance and separated mechanisms
 
-Bound (**INV-18**, ALGORITHMIC on the parent clock): after `tKill`, the parent
-settles at the first timer callback at or after `tKill + K_SETTLE` if `exit` has
-not arrived. If `exit` arrives at `tExit < tKill + K_SETTLE`, the parent settles no
-later than the first callback at or after `tExit + CAE`. So the parent's settlement
-decision is due by `tKill + K_SETTLE + CAE` at the latest, plus timer lateness `ε`.
-This bounds a **phase**, not the whole CLI (§14).
+Acceptance rule (unchanged FT0, plus the C4 governed-only kill discard): commit
+only if a result is stored, `exitCode === 0`, `killed === null` and settlement was
+by `close` (**INV-G12**). There is **no** time-based acceptance grace, and the
+parent never kills a child on the successful path. A child that stores a result
+but never exits is ended by the enforcement timer, and its result is discarded.
 
-**`K_SETTLE` value: PROPOSED 10 000 ms, NOT APPROVED.** Justification and
-alternatives are in §19.2. The design is complete for any approved value in
-`[1 000, 60 000]`. Only the constant changes.
+These mechanisms stay separate and never substitute for each other:
+
+| Mechanism | Trigger | Effect |
+|---|---|---|
+| Ordinary successful-result acceptance | `result` + `exit 0` + `close` | validate and commit |
+| Gateway dispatch deadline | `t2 >= dispatchDeadline` | refuse dispatch (`STAGE_TIMEOUT`) |
+| Stage enforcement | callback at or after `enforceAt` | kill decision, `STAGE_TIMEOUT` (6) |
+| Watchdog termination | no valid heartbeat for `WD` before a result | kill decision, `CHILD_UNRESPONSIVE` (1) |
+| Post-kill `K_SETTLE` | no `exit` within `K_SETTLE` after a kill | abandonment |
+| FT0 `CLOSE_AFTER_EXIT` recovery | `exit` without `close` for `CAE` | settle with `result = null` |
+| Parent finalization | settlement | classification (§15.3); validation and commit only on acceptance |
+
+### 14.7 Platform differences
+
+| Aspect | POSIX | Windows |
+|---|---|---|
+| Kill | SIGKILL; uncatchable; no further user-mode code once delivered | `TerminateProcess`; no further user-mode code once termination begins |
+| Ignorable termination | SIGTERM can be ignored (spike P12 used it); C5 uses SIGKILL | cannot be ignored; "kill not delivered" exists only as a fault (spike simulated it with a no-op hook) |
+| Kill → `exit` latency | unbounded in uninterruptible I/O | unbounded while pending I/O drains |
+| `close` after `exit` | normally prompt | may never arrive with unread IPC data (FT0-C2-D1); `CAE` handles it |
+| Parent-side `disconnect()` | `close` follows | `close` may not fire; hence none at the kill decision |
+| After the CLI exits | an unreaped child is reparented and reaped | libuv job object closure expected to terminate children (to be verified, M §10) |
+| Credential exposure to a same-user child | `/proc/<ppid>/environ` readable subject to ptrace access checks | process memory readable at equal integrity |
+| Timer granularity | ≈ 1 ms | ≈ 15.6 ms by default |
+| Spike runtime | Node 22.23.3 (WSL2) | Node 24.22.1 — **outside `engines` 22.x**; Windows on Node 22.x is unverified |
 
 ---
 
-## 14. Deadline and termination phases (R2-ARCH-03 via R3-ARCH-02; D+15 A)
+## 15. Failure propagation and error precedence (R2-ARCH-02 preserved)
 
-| Phase | Clock / origin | Boundary | On violation |
+### 15.1 Child-side stage context
+
+The C4 §11 machinery is retained in the child, with the Gateway client as the
+governor's local proxy:
+
+- `StageContext {stage, stepSeq, step, calls, terminal, refusals, cancelled}`,
+  created by the runner on the governed path only; `beginStep(label)` before every
+  generator invocation.
+- The client increments `ctx.calls` per `analyze()` and, on a governor refusal,
+  sets `ctx.terminal = {code, stepSeq, step, callOrdinal}` once and registers the
+  thrown error object in `ctx.refusals` (identity, `WeakSet`).
+- `classifyReturn` and `classifyThrow` (E1 identity-matched rethrow, E2 unrelated
+  exception after a refusal, E3 unchanged baseline) are exactly as C4 §11.3. R4
+  found this path RESOLVED_BY_DESIGN.
+- Child failure shapes: `{kind:"generation", step, providerAttempts ≥ 1, codes}`,
+  `{kind:"stage-timeout", step, providerAttempts ≥ 1}`,
+  `{kind:"internal", code:"GENERATIVE_STAGE_FAILED", governorCode}` (E2), baseline
+  shapes otherwise.
+
+### 15.2 Parent-authoritative terminal
+
+The parent knows exactly which governor refusal its session issued
+(`session.terminal`). The child's report is used only for the step and the
+per-step attempt count.
+
+- A governor code in the child's report that the session did not issue is
+  removed. The child cannot introduce a governor code.
+- `kind:"stage-timeout"` without `session.terminal.code === STAGE_TIMEOUT` is an
+  invariant violation → `STAGE_FAILED` (1).
+- When `session.terminal` is set and the child's `providerAttempts` is not a
+  positive integer, the parent does not synthesize a count; it classifies
+  `STAGE_FAILED` (1) (invariant violation). It never falls into the exit-4 rule.
+
+### 15.3 Parent classification and precedence (highest first)
+
+| # | Outcome | CLI result |
+|---|---|---|
+| 1 | Parent's own native signal termination | process ends natively (PD-R6); no classification |
+| 2 | Pre-spawn failure: config, `PROVIDER_GOVERNOR_LIMITS_MISSING`, provider configuration | existing exit 3 codes |
+| 3 | Spawn `error` | `STAGE_SPAWN_FAILED` (1), existing |
+| 4 | Kill by enforcement | `STAGE_TIMEOUT` (6); result discarded |
+| 5 | Kill by watchdog | `CHILD_UNRESPONSIVE` (1); result discarded |
+| 6 | Accepted result (INV-G12) | existing validation and commit |
+| 7 | `session.terminal = STAGE_TIMEOUT`, child report generation/stage-timeout/E1 | `STAGE_TIMEOUT` (6) |
+| 8 | `session.terminal = RATE_*`, child report generation/E1 | `PROVIDER_FAILURE` (6), governor code first, then the child's sanitized codes |
+| 9 | `session.terminal` set, child internal failure (E2) | `STAGE_FAILED` (1), message adds "(governor reason code: X)" |
+| 10 | Invariant violations of §15.2 | `STAGE_FAILED` (1) |
+| 11 | No terminal: existing child failure classification | unchanged (incl. exit 4 when attempts 0) |
+| 12 | No result, nonzero exit, signal, `CAE` recovery, SEC-C1 child exit | `STAGE_FAILED` (1), existing |
+
+### 15.4 Private field mapping (spike and IPC names)
+
+| Name | Origin | Production treatment | Public? |
 |---|---|---|---|
-| G1 — admission | child, `t0` | admission only at a fresh reading `≤ t0 + D_DISPATCH` | `STAGE_TIMEOUT` |
-| G2 — transport invocation | child, gate reading | `tDispatch ≤ t0 + D_DISPATCH` (INV-06) | gate refusal → `STAGE_TIMEOUT`, zero invocations |
-| G3 — exchange | child, provider timer | aborted at the first callback `≥ analyze start + T_REQ` (certified) | provider `TIMEOUT` |
-| W — wait | child, union `W` | `Wnow ≤ 900 000` at every admission | `RATE_BUDGET_EXHAUSTED` |
-| P — post-response processing | child | not bounded by the governor; liveness via heartbeat | phase H |
-| H — heartbeat liveness | parent | silence `≤ WD` while no result is stored | kill, `CHILD_UNRESPONSIVE` (1) |
-| E — enforcement | parent, `tSpawn` | decision at the first callback `≥ tSpawn + K_PARENT` | kill, `STAGE_TIMEOUT` (6) |
-| A — result transfer | child, `report()` | ACK within `ACK` (FT0) | child exit 1 |
-| K — termination | parent, `tKill` | ends at `exit`/`close`/`error`, or abandonment at the first callback `≥ tKill + K_SETTLE` (PD-R15; value pending) | abandonment (§13.8) |
-| S — settlement | parent, `tExit` | `close`, or `CAE` after `exit` (FT0) | settle with `result = null` |
-| V — validation and commit | parent | not bounded (synchronous validation and writes); only on accepted results | existing errors |
+| `BUSY` | spike, AD-06 | private refusal; child `UNKNOWN` ✗; private counter | **No** |
+| `REVOKED`, `REVOKED_IN_FLIGHT` | spike | private; settlement precedence decides the outcome | **No** |
+| `INVALID_REQUEST` (spike `rejected`, `DUPLICATE_ID`) | spike | private refusal; child `UNKNOWN` ✗ | **No** |
+| `DEADLINE` | spike | `STAGE_TIMEOUT` via `session.terminal` | as `STAGE_TIMEOUT` (§16) |
+| `WAIT_BUDGET`, `WAIT_BUDGET_EXCEEDED_AFTER_WAIT`, `RATE_WINDOW` | spike | `RATE_BUDGET_EXHAUSTED` | as `RATE_BUDGET_EXHAUSTED` |
+| `PREPARE_FAILED` | spike | not applicable (no prepare hook); a request-build exception → `UNKNOWN` ✗ | **No** |
+| `child_failed` + `resultRejection: NONZERO_EXIT \| SIGNAL` | spike C1 | existing FT0 path: no acceptance → `STAGE_FAILED` (1) | **No** new field |
+| `resultRejection: KILLED \| NOT_EXITED` | spike C1 | `killed.reason` (rows 4–5) | **No** new field |
+| `completed`, `child_exited`, `timeout` reasons; trace events | spike | not emitted | **No** |
+| `maybeReachedRemote` | spike | internal → `UNAVAILABLE`, charge `B_tok` | **No** |
+| `GRACEFUL_EXIT_MS = 300` | spike | **not carried** (AD-07) | — |
+| `stage-timeout`, `governorCode`, `heartbeat`, `provider-*` | C4/C5 private IPC | parent-only, validated, closed | **No** |
 
-Statements that hold:
-
-- ALGORITHMIC, child clock: no governed transport invocation at a gate reading
-  `> t0 + 1 770 000`.
-- ALGORITHMIC, parent clock: kill decision at the first callback
-  `≥ tSpawn + 1 815 000` if not settled. Settlement decision after a kill at the
-  first callback `≥ tKill + K_SETTLE`, or `≥ tExit + CAE`.
-
-Statements that do **not** hold:
-
-- "The CLI settles by 1 815 s." Phases K, S and V, and timer lateness, come after
-  it. With an approved `K_SETTLE`, the post-kill decision is due by `K_SETTLE + CAE`
-  after `tKill`, plus `ε`. That is a phase bound, not a whole-CLI bound.
-- "No HTTP bytes leave after 1 770 s." Wire timing is not observable (§7.8).
-- "The 900 s budget binds before the deadline." It does not in general (proofs §5).
-- Node does not guarantee timer punctuality. Every timer boundary means "at or after".
-
----
-
-## 15. Closed reason-code mapping
+## 16. Public reason codes (PD-R8; unchanged from C4)
 
 | Code | Where | Origin | Exit | Reachable when |
 |---|---|---|---:|---|
 | `RATE_REQUEST_EXCEEDS_BUDGET` | reason code in `PROVIDER_FAILURE` | `Res > B_tok` | 6 | governed |
-| `RATE_BUDGET_EXHAUSTED` | reason code in `PROVIDER_FAILURE` | wait cap, budget, iteration cap, over-cap hint | 6 | governed |
-| `RATE_ACCOUNTING_INVALID` | reason code in `PROVIDER_FAILURE` | malformed usage (PD-R12-I1); clock regression; duplicate transport invocation | 6 | governed |
-| `STAGE_TIMEOUT` | top-level `errors[].code` | admission or gate deadline; parent enforcement kill | 6 | governed |
-| `CHILD_UNRESPONSIVE` | top-level `errors[].code` | parent watchdog | 1 | governed |
+| `RATE_BUDGET_EXHAUSTED` | reason code in `PROVIDER_FAILURE` | budget, per-wait cap, iteration cap, over-cap 429 hint | 6 | governed |
+| `RATE_ACCOUNTING_INVALID` | reason code in `PROVIDER_FAILURE` | malformed usage (PD-R12-I1); clock regression | 6 | governed |
+| `STAGE_TIMEOUT` | top-level `errors[].code` | dispatch deadline; enforcement kill | 6 | governed |
+| `CHILD_UNRESPONSIVE` | top-level `errors[].code` | watchdog kill | 1 | governed |
 | `PROVIDER_GOVERNOR_LIMITS_MISSING` | top-level `errors[].code` | enabled, no limits for the effective provider | 3 | v2 enabled |
 
-Governor codes can also appear as an additional reason in a `STAGE_FAILED` (1)
-message (E2, §11.4). None is reachable with v1 or a disabled governor.
+No other code is added. None is reachable with v1 or a disabled governor. These
+codes still need the separate canonical contract amendment (§20).
 
-## 16. Invariants
+## 17. Deadline and termination phases (D+15 A)
+
+| Phase | Clock / origin | Boundary | On violation |
+|---|---|---|---|
+| G1 — admission | parent, `tOpen` | commit only at `t2 < tOpen + D_DISPATCH` | `STAGE_TIMEOUT` |
+| G2 — exchange | parent transport timer | aborted at the first callback at or after commit + `T_REQ` | provider `TIMEOUT` |
+| W — wait | parent `W` | `W ≤ W_BUDGET` at every commit | `RATE_BUDGET_EXHAUSTED` |
+| C — child computation | child | not bounded by the Gateway; liveness via heartbeat | phase H |
+| H — heartbeat liveness | parent | silence `< WD` while no result is stored | kill, `CHILD_UNRESPONSIVE` (1) |
+| E — enforcement | parent, `tOpen` | first callback at or after `tOpen + K_PARENT` | kill, `STAGE_TIMEOUT` (6) |
+| A — result transfer | child | ACK within `ACK` (FT0) | child exit 1 |
+| K — post-kill | parent, `tKill` | `exit` / `close` / `error`, or abandonment at or after `tKill + K_SETTLE` | abandonment |
+| S — settlement | parent, `tExit` | `close`, or `CAE` after `exit` (FT0) | settle with `result = null` |
+| V — validation and commit | parent | not bounded | existing errors |
+
+Statements that hold (algorithmic): no governed transport invocation at a parent
+reading `>= tOpen + 1 770 000`; kill decision at the first callback at or after
+`tOpen + 1 815 000`; post-kill settlement decision at or after `tKill + K_SETTLE`
+or `tExit + CAE`.
+
+Statements that do **not** hold: "the CLI settles by 1 815 s"; "no HTTP bytes leave
+after 1 770 s" (wire timing is not observable); "the 900 s budget binds before the
+deadline"; any punctual timer.
+
+## 18. Invariants
 
 | ID | Invariant |
 |---|---|
-| INV-01 | Every admission occurs at a fresh reading at which all §7.2 predicates hold, linearized at entry creation. |
-| INV-02 | Any half-open 65 s interval holds ≤ `B_req` and ≤ `floor(B_tok / Res_min)` admissions, transport invocations and (under T1) HTTP requests (proofs Lemma 1, Lemma 4). |
-| INV-03 | One entry per admission; never released while live; `charged` monotone and `≥ Res`; unsettled entries never expire. |
-| INV-04 | `charged ∈ {Res (not invoked), max(Res, U), B_tok}`. Missing, malformed or unavailable usage is never zero. |
-| INV-05 | Every admission has `Wnow ≤ W_BUDGET` (union model); every sleep starts only if `Wnow + planned ≤ W_BUDGET`. |
-| INV-06 | Every transport invocation has a gate reading `≤ t0 + D_DISPATCH`. |
-| INV-07 | No admission before `t0 + C_COLD`. |
-| INV-08 | ≤ 1 admission per `analyze()`, ≤ 1 transport invocation per admission, ≤ 1 HTTP request per transport invocation (T1); zero governor retries; ≤ 1 admitted send outstanding. |
-| INV-09 | `ctx.terminal` is sticky; afterwards every `analyze()` refuses with zero admissions. |
-| INV-10 | After cancellation, zero admissions and zero transport invocations. |
-| INV-11 | A terminal refusal reaches the envelope on both the return and the unwind path, as primary classification (return, E1) or as `governorCode` (E2), unless a higher-precedence outcome applies. Unrelated exceptions keep `STAGE_FAILED`. |
-| INV-12 | Commit only if a result is stored, `exitCode === 0`, `killed === null` and settlement was by `close`. |
-| INV-13 | v1 or disabled governor: spawn, environment, provider construction (default `fetch` and redirect mode), IPC, exit codes and output identical to baseline; SEC-C1 present. |
-| INV-14 | All accounting values are safe integers. |
-| INV-15 | Hints only tighten; invalid hints are ignored. |
-| INV-16 | No prompt, content, key, raw header, raw usage or raw provider error reaches IPC, logs or the envelope. |
-| INV-17 | Charges depend only on the usage class; valid usage survives rejection and content failure. |
-| INV-18 | After a kill decision, parent settlement is decided by `tKill + K_SETTLE` (no `exit`) or `tExit + CAE`, at or after those instants; abandonment discards the result. |
+| INV-G01 | Every transport invocation happens at a COMMIT whose final reading satisfies not-revoked, `t2 < dispatchDeadline`, `W ≤ W_BUDGET` and all ledger, cold-start, cooldown and hint predicates (§8.4). |
+| INV-G02 | At most one active request per session; a concurrent request is refused `BUSY` without queueing or any accounting effect (§8.5). |
+| INV-G03 | Any half-open 65 s interval holds at most `B_req` and at most `floor(B_tok / Res_min)` commits (P Lemma 6). |
+| INV-G04 | One entry per commit; `charged ∈ {max(Res, U), B_tok}`, set once at settlement, `≥ Res`; never removed while live (§11.5). |
+| INV-G05 | `W` starts at `C_COLD`, changes only by `chargeable()` after a sleep, never decreases, and is `≤ W_BUDGET` at every commit (§9.1). |
+| INV-G06 | No commit at a final reading `t2 >= dispatchDeadline`, and no sleep is started when it is planned to end at or after `dispatchDeadline` (§9.2). |
+| INV-G07 | No commit before `coldUntil`. |
+| INV-G08 | Zero Gateway and transport retries; at most one transport invocation per commit; under TS at most one HTTP request per invocation (§10.1). |
+| INV-G09 | The first governor refusal is sticky in the session; afterwards every request is refused with that code and zero commits. |
+| INV-G10 | **Property A:** after `revoke()` returns, zero `transport.send()` calls in that session (§13.3). |
+| INV-G11 | A governor refusal reaches the envelope on the return and unwind paths as primary classification or as `governorCode` (E2), unless a higher-precedence outcome applies; the code comes from the parent's session record (§15.2). |
+| INV-G12 | Commit only if a result is stored, `exitCode === 0`, `killed === null` and settlement was by `close`. |
+| INV-G13 | v1 or disabled governor: spawn, environment, provider construction, IPC, exit codes and output identical to baseline; SEC-C1 certified behavior present. |
+| INV-G14 | No credential, model name, URL, header, raw usage, raw provider message or body other than validated `content` crosses IPC; none reaches logs or the envelope. |
+| INV-G15 | Hints only tighten; invalid hints are ignored. |
+| INV-G16 | All accounting arithmetic is exact (BigInt ns, integer tokens). |
+| INV-G17 | Valid usage is charged `max(Res, U)` whether or not content is present; malformed usage always sets `RATE_ACCOUNTING_INVALID`. |
+| INV-G18 | After a kill decision, parent settlement is decided at or after `tKill + K_SETTLE` (no `exit`) or `tExit + CAE`; abandonment discards the result. |
 
-## 17. Non-guarantees
+## 19. Non-guarantees
 
-C4 does **not** guarantee:
+C5 does **not** guarantee:
 
-1. Compliance with any provider's TPM, RPM, RPD or TPD accounting (PD-R10).
-2. Isolation from other processes, earlier invocations or other tools on the account.
-3. That an aborted or timed-out request was not processed or charged remotely.
-4. Estimator accuracy.
-5. Provider header meanings (PD-R9).
-6. Timer punctuality, or any wall-clock bound across system suspend.
-7. The time at which HTTP bytes physically leave the host after a transport invocation.
-8. T1 on Node versions other than those verified by M T-R3-03.
-9. That an abandoned child has exited when the CLI ends; only that it can start no new request.
+1. **Property B** (no arbitrary network access by a surviving or compromised child).
+2. Credential confinement against a compromised same-user child (§13.5).
+3. Termination of a child whose kill is not delivered or that never yields; only
+   that the parent settles and the Gateway dispatches nothing more.
+4. That an aborted, timed-out or abandoned request was not processed or charged remotely.
+5. Compliance with any provider's TPM, RPM, RPD or TPD accounting (PD-R10); estimator accuracy; provider header meanings (PD-R9).
+6. Isolation from other processes, earlier invocations or other tools on the account.
+7. Timer punctuality, or any bound across system suspend.
+8. The instant at which HTTP bytes leave the host after `transport.send()` is entered.
+9. TS on real HTTPS before TQ-01 … TQ-10 pass; real provider behavior before PD-R9.
 10. Parent validation and commit time (phase V), or whole-CLI settlement time.
-11. Completion of any particular N.
-12. That a healthy child is never killed by the watchdog if one synchronous segment
-    or result transfer exceeds about 45 s without heartbeats (proofs §5.5).
+11. That a healthy child is never killed by the watchdog if one synchronous segment
+    or result transfer exceeds about 45 s without heartbeats.
+12. Completion of any particular amount of work N.
 
-## 18. Future implementation touchpoints (design only)
+## 20. Future implementation touchpoints (design only; not authorized)
 
 | Area | Expected change |
 |---|---|
-| New internal governor module(s) | ledgers, estimator, normalizer, hints, wait loop with union accounting, gate, exchange record, `ctx` writes; requires a package-surface inventory update and external install proof (C2:444) |
-| `providers/groq-provider.js`, `gemini-provider.js` | internal `observer.onParsedBody()` call between bounded read and content check; nothing else (`fetchImpl` injection already exists) |
-| `providers/index.js` | internal pass-through of the gate and observer for the governed child only |
-| `cli/generative-runner.js` | `StageContext`, `beginStep()`, `classifyReturn` / `classifyThrow`, governor construction, heartbeat start/stop |
-| `cli/stage-process.js` | governed-only heartbeat validation, watchdog, enforcement, kill sequence, `K_SETTLE` abandonment |
-| `cli/generative.js` | `stage-timeout`, `governorCode`, killed reasons, abandonment diagnostic |
-| `cli/run-artifacts.js` | `GOVERNOR_REASON_CODES` allowlist |
-| `cli/config-file.js` | schema v2 |
-| Contract docs | contract §10.7 reason codes and §11 schema v2 (separate canonical amendment) |
+| New internal modules (parent) | Gateway session (admission, ledgers, wait, deadline, revocation, accounting), single-send `https` transport, bounded stream reader, adapters, IPC schema. Package-surface inventory update and external install proof (C2:444). |
+| New internal module (child) | `GatewayClientProvider`, heartbeat sender, `StageContext`. |
+| `providers/groq-provider.js`, `gemini-provider.js` | Export the existing pure pieces (request build, `mapHttpError`, body-read and content mapping) for reuse by the adapters; ungoverned behavior byte-identical. |
+| `cli/child-env.js` | Governed variant of `buildGenerativeEnv()` without `AI_SECRET_KEYS`. |
+| `cli/generative-runner.js` | Governed mode from the payload marker; client provider instead of `createProvider()`; heartbeat; `StageContext`, `classifyReturn` / `classifyThrow`. |
+| `cli/stage-process.js` | Governed routing, revocation hooks, watchdog, enforcement, kill sequence, `K_SETTLE` abandonment. |
+| `cli/generative.js` | Session open before spawn, adapter construction, classification of §15.3, abandonment diagnostic. |
+| `cli/run-artifacts.js` | `GOVERNOR_REASON_CODES` allowlist. |
+| `cli/config-file.js` | Schema v2. |
+| Contract docs | Canonical amendment for contract §10.7 reason codes and §11 schema v2 (separate). |
+| Tests | Specifications in M §12, including owned-process audits based on observed exit status (spike GWV-02 lesson). |
 
 Generators: **no change.**
 
-## 19. Open PO decisions
+## 21. Open PO decisions and Security gates
 
-### 19.1 Unchanged open decisions
+### 21.1 PO decisions
 
-| ID | C4 assumption | Blocking for design review? |
+| ID | C5 assumption | Blocks design review? |
 |---|---|---|
 | PD-R1 | two attempts | No |
-| PD-R4 | no completion cap | No |
+| PD-R4 | no completion cap; no new IPC prompt cap | No |
 | PD-R7 | generative scope only | No |
-| PD-R9 | no real-provider calls | No; required before S4 |
+| PD-R9 | no real-provider calls; required before production qualification against real endpoints (TQ) | No; blocks production acceptance |
+| PO-B (joint with SG-02) | Property B scope: accept it as out of scope for Controlled v1, or open a separate OS-isolation requirement | No for design review; required before implementation authorization |
 
-### 19.2 PD-R15 `K_SETTLE` value: disposition requested
+No other PO decision is needed by C5: AD-03 … AD-07 settle overshoot, cancelled
+waits, BUSY, the 300 ms grace and `K_SETTLE`; §9.1 keeps the approved wait meaning.
 
-The bounded-settlement **direction** is approved; the **number** is not.
+### 21.2 Security gates (all SECURITY_GATE_OPEN)
 
-| Option | Pros | Cons |
+| ID | Gate |
+|---|---|
+| SG-01 | SEC-C1 reconciliation (§13.6): confirm that "no subsequent provider calls" is met by Property A plus the credential-free child, and "the child must terminate" by certified child self-termination plus parent kill and K_SETTLE abandonment. If Security requires Property B or a stronger termination guarantee, C5 is BLOCKED. |
+| SG-02 | Property B: NOT PROVIDED. Security and PO decide scope (with PO-B). |
+| SG-03 | Credential confinement against a compromised same-user child (§13.5): NOT PROVIDED; accept as residual or require OS isolation. |
+| SG-04 | Production HTTPS transport security qualification: TQ-05, TQ-06, TQ-09 and host allowlist TS-9. |
+
+## 22. Superseded C4 material (historical; not normative)
+
+The following C4 content is withdrawn and MUST NOT be implemented. It stays
+readable at `38121f95`:
+
+| C4 item | Why withdrawn | C5 replacement |
 |---|---|---|
-| 2 000 ms | shortest CLI hang after a kill | likelier to abandon a child that would have exited under CI load (safe, but noisier) |
-| 5 000 ms | short | same risk, smaller |
-| **10 000 ms (proposed)** | same scale as the certified FT0 `ACK` and `CAE` bounds (10 s each); orders of magnitude above normal kill → `exit` latency (milliseconds); post-kill decision due by `K_SETTLE + CAE = 20 s` | 10 s extra hang only in the rare no-`exit` case |
-| 30 000 ms | fewer abandonments on very slow hosts | longer hang; exceeds every existing lifecycle constant |
+| Child-owned governor, governed `fetchImpl` gate, usage `observer` injected into the child's providers | AD-01; R4-ARCH-03 | Parent Gateway (§3, §8, §11) |
+| `redirect: "manual"` with global `fetch`; transport assumption T1 | R4-ARCH-02 (421 → 2 POSTs) | single-send `https` transport (§10) |
+| FIFO queue, `P_serial`, union wait accounting | R4-ARCH-01, R4-ARCH-04; AD-06 | BUSY, sum of governor sleeps (§8.5, §9.1) |
+| Deadline predicate that admitted a reading equal to the dispatch deadline | AD-04, spike GWV-01 | exclusive predicate (§9.2) |
+| `NOT_INVOKED` charge of `Res` after a gate refusal | no separate gate exists | refusals create no entry (§11.5) |
+| `K_SETTLE` presented as a proposal awaiting a value | AD-07 approved 10 000 ms | §14.5 |
+| Abandonment relying on the child observing `disconnect` before new provider work | R4-ARCH-03 | revocation first; Property A independent of disconnect (§14.4–§14.5) |
+| Child clock origin `t0` (payload receipt) for admission and deadline | parent authority | single parent origin `tOpen` (§6.2) |
+| Admission counts 36/38/40/39/41/54 and per-stage tables as statements about the governor | model changed | historical only, with assumptions (P §7.2) |
 
-Technical justification for 10 000 ms: a delivered SIGKILL or `TerminateProcess`
-normally produces `exit` within milliseconds. Only uninterruptible kernel I/O or a
-heavily loaded host delays it. Abandonment is safe in every case: the result is
-discarded and no new request can start (§13.8). So the value trades only CLI
-latency against diagnostic noise. Matching the certified 10 s FT0 constants keeps
-one lifecycle time scale.
+The C4 parts that R4 found RESOLVED_BY_DESIGN are kept in substance: the
+`StageContext` E1/E2/E3 paths (§15.1), the usage classes and charge rule (§11),
+the provider-specific retry table (§12), the reason-code set (§16), the FT0
+receipt/ACK protocol (§14.1), the kill sequence without disconnect and the
+abandonment procedure's parent-side steps (§14.4–§14.5).
 
-**Requested disposition:** "PD-R15: approve `K_SETTLE = 10 000 ms` as a product
-constant on the governed path only, or choose another value in
-`[1 000, 60 000]` ms." Implementation of the post-kill path is gated on this
-disposition. The design itself is complete for any value in that range.
-
-### 19.3 Informational (no decision required now)
-
-- Per-caller queue-wait accounting for a future concurrent caller (§8.3). Not
-  needed in the supported sequential scope.
-- Acknowledgement that the deadline is enforced at the transport-invocation boundary
-  (§7.8). No approved contract text changes.
-
-## 20. Change log
+## 23. Change log
 
 | Rev | Change |
 |---|---|
 | C3 (`eff78a0c`) | Initial consolidated corrective for R2. |
-| C4 | §7.3 linearization and the "time passes" rule; §7.8 governed transport gate (fresh deadline and cancellation check at `fetchImpl`, one invocation per admission); §7.9 `redirect: "manual"` with fail-closed 3xx; §8.3 union wait accounting incl. queue; §9 six-axis exchange record, observation before the content check, charge by usage class on both paths, explicit terminal precedence; §11 runner-owned `StageContext` with return and unwind paths (E1/E2/E3); §13.5–§13.8 kill sequence without disconnect and bounded post-kill settlement (PD-R15, value pending); §16 INV-01/02/04/05/06/08/11/12/13 revised, INV-17/18 added; PD-R12-I1 recorded as approved; `D_DISPATCH` constant. |
+| C4 (`38121f95`) | Child-owned gate, redirect `manual`, union wait, six-axis exchange record, StageContext, bounded post-kill settlement. REJECTED by R4. |
+| C5 | **Replacement.** Parent-owned Provider Gateway (AD-01 … AD-09): credentials, single-send `https` transport, admission, accounting, deadline and revocation in the parent; private validated IPC; BUSY instead of FIFO; wait = cold-start charge + measured governor sleeps; exclusive deadline at a final commit reading; Property A designed, Property B explicitly not provided with Security gates SG-01 … SG-04; FT0 lifecycle unchanged, no successful-exit grace, `K_SETTLE = 10 000 ms` approved; parent-authoritative refusal record; spike-only fields mapped to private or existing outcomes; HTTPS qualification TQ-01 … TQ-10. |
