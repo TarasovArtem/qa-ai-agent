@@ -4922,6 +4922,41 @@ N-15 and N-21 retain distinct closure PRs (#205 and #206).
 AT-07/TB-01 remain separately governed; no new waiver or release activation
 is granted.)*
 
+### OD-TPR-GEN-CONTEXT-I1 implementation evidence
+
+```text
+mission:             OD-TPR-GEN-CONTEXT-I1 — generate-stage project guidance
+baseline:            main a32a6cd7e0a1bdc9917fc3abc7f692039591a145
+                     (tree 5e15c577faf60d65887569772dd4dd3558e53c26)
+design:              OD-TPR-GEN-CONTEXT-D1 (sha256 984e1525…d7fb, local)
+dispositions:        PD-1 APPROVED LIMITED, PD-2 DEFERRED, PD-3 CONDITIONAL,
+                     PD-4 APPROVED, PD-5 APPROVED LIMITED
+production scope:    scripts/ai/test-automation/generate-change-set.js,
+                     scripts/ai/test-automation/generate-change-set-prompt.js
+status:              implementation PR — not merged; no lifecycle change
+```
+
+Defect: the C6 (`generateChangeSet`) positive projection omitted the bound
+repository context's ProjectProfile guidance, so a CREATE (`existingContent:
+null`) reached the provider with no verified project facts and produced
+non-existent selectors (TPR run `20261028T125527Z-05c21184836a5702`, 3×
+REJECT). C5 already projects that guidance.
+
+Change: `generateChangeSet()` validates optional `guidance` on the frozen
+snapshot (exact keys `displayName`/`knownProjectConstraints`, ProjectProfile
+v1 bounds, no control characters) before any provider call, and passes
+`includeGuidance: true` so `buildPositiveProjection()` adds exactly those two
+fields. The default stays the legacy projection, so the only other importer
+(`regenerate-change-set.js`) is byte-for-byte unchanged. The static system
+prompt declares guidance UNTRUSTED DATA (rule 6). Guidance absent: legacy
+behavior. No change to CLI, artifact schemas, digest labels or algorithms,
+`automationPlanDigest`/`repositoryContextDigest`/`changeSetDigest`/
+`packageDigest` (golden-digest test against `a32a6cd7`), Stage 4 bindings,
+exports, shipped files or the static module graph. Requirements/test-case
+expansion (PD-2) is not implemented. A new package and demo re-pin remain
+conditional on separately authorized merge and post-merge certification
+(PD-3).
+
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
 ```text
