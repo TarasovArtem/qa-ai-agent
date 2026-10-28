@@ -221,7 +221,7 @@ D §11.2–§11.3. `applyHintsAndCooldown` changes only `cooldownUntil`, `hintTo
 `provider-request` only when `C.state === PROCESS_RUNNING` and the session is not
 revoked (D §7.5, INV-G20). It routes to `onRequest` (governed) or `onRequestPT`
 (pass-through). The parent decides termination with `IPC_LOST` on a child
-`disconnect` while `result === null`, and with `LAUNCHER_FAULT` on T7d.
+`disconnect` without a valid C7 post-ACK intent/permit transaction (D §32.4), and with `LAUNCHER_FAULT` on T7d.
 
 ---
 
@@ -372,7 +372,11 @@ reaches the envelope only if the parent session issued it.
 adds `session.terminal.code` only when set; a `stage-timeout` report without the
 matching terminal is an invariant violation (`STAGE_FAILED`). ∎
 
-### C6 containment lemmas (ALG/H: the logic of the design, conditional on A6; HOST_NOT_VERIFIED)
+### C6 containment lemmas — HISTORICAL / REFUTED / SUPERSEDED BY C7 §10
+
+**C7 notice:** C6 Lemmas 11–15 depended on false H-L-04/H-L-06 or unestablished Windows lifetime assumptions. They are not normative evidence of C7 correctness. Use C7 §10 instead.
+
+#### Historical C6 containment lemmas
 
 **Lemma 11 (no false termination).** The containment state becomes `CONTAINMENT_EMPTY`
 only through T6, that is, a valid `containment-empty` record (Windows) or rule
@@ -590,7 +594,11 @@ checks unchanged).
 `CAE` (10 000) and `K_SETTLE` (10 000) never fired. Neither is a lower bound. C5's
 INV-G18 would have placed the decision at or after 10 000 here, which was wrong.
 
-### PT-15 Normal worker termination (ALG/H, Lemmas 11–12; HQ-L-02, HQ-W-02)
+### PT-15–PT-26 Historical C6 lifecycle traces — SUPERSEDED BY C7 §10
+
+**C7 notice:** C6 PT-15…26 remain historical counterexamples and must not be used to establish Linux emptiness or Windows parent death. See C7-T01…13.
+
+#### Historical C6 PT-15 Normal worker termination
 
 | Step | Linux | Windows |
 |---|---|---|
@@ -879,3 +887,26 @@ rollback; confirmation of termination after parent death (PT-18).
 
 SPIKE-labelled statements rest on PO-SUPPLIED independence plus AUTHOR-LOCAL identities.
 No statement in this document is IND-VERIFIED in the sense of D §2.8.
+
+
+---
+
+## 10. C7 normative proof obligations (all HOST_NOT_VERIFIED where OS-dependent)
+
+**Lemma C7-A: no recycled PID signalling.** Termination selects the retained cgroup.kill descriptor or the held Windows Job, never numeric process IDs. Given a valid unique, sealed containment object, a recycled unrelated PID cannot receive a signal. Qualify cgroup membership and handle ownership; no host proof claimed.
+
+**Lemma C7-B: no false emptiness.** Linux success needs retained cgroup.events populated=0 after populated=1 and closed admission. Windows success needs sealed worker Job membership and queried ActiveProcesses=0. Monitor/leader exits, completion-port notifications, K_SETTLE and CAE are never emptiness. A remaining descendant prevents success under these documented witness semantics, conditional on verified membership/non-escape.
+
+**Lemma C7-C: parent death.** Linux requires armed parent-death signalling before worker release, including child-init teardown; Windows requires native creation-time helper Job enrollment and exclusive parent J_life last handle. Parent callbacks are not part of these obligations. All atomic-start and zero-survivor claims are future HQ gates, not executed tests.
+
+**Lemma C7-D: event ordering.** Worker cannot issue IPC until the parent has processed trusted ready and sent RELEASE. Exit callback is not final; only trusted status drained to EOF before close/CAE settlement can support classification. Thus ready/status cross-stream callback races cannot reject otherwise valid normal work or falsely accept it.
+
+**Lemma C7-E: post-result SEC-C1.** Storing a result, sending an ACK, or receiving a child exit event does not establish normal disconnect. Only the child's post-ACK receipt-matched intent followed by parent permit is a normal disconnect. All other IPC loss synchronously aborts/revokes and requests containment kill, with stored result discarded. Even on normal disconnect, non-exit triggers 10000 ms security-only termination guard. Success additionally needs exit 0, OS emptiness and close. This preserves both governed and disabled-governor SEC-C1, conditional on OS enforcement.
+
+**Lemma C7-F: transport D-5.** Built-in Worker thread explicit env/execArgv and thread-local CA configuration furnish a concrete baseline-equivalence *candidate*, not a proof that Undici ignores every parent process startup setting. The finite TLS/proxy golden qualification is mandatory. Failure excludes the host; relaxing certificate validation is never allowed.
+
+### 10.1 C7 mandatory traces and qualification
+
+D §32.5 C7-T01…13 are normative verification scenarios; C6 PT-15…26 and Lemmas 11…15 are historical where contradicted. Required host gates: HQ-L-C7-01…05, HQ-W-C7-01…04, HQ-X-C7-01 readiness, HQ-X-C7-02 status-drain, HQ-X-C7-03 unexpected loss and valid ACK intent, HQ-X-C7-04 guard at 10000, HQ-X-C7-05 unsupported-host refusal, and PRQ-D5-1…3. All are NOT RUN. At least 100 per-host-class repetitions and an external zero-survivor audit are required for termination cases. Witness mismatch ⇒ CLEANUP_UNRESOLVED and never accepted success. Keep SG-01…05, legacy HQ/TQ suites and FT0 tests pending independent review and qualification.
+
+C5 timer regression PT-13 (stale pre-sleep refusal) and PT-14 (kill 0, exit 3, close 5 ⇒ settle at 5) remain normative and unchanged. No new public error or exit code is established by this proof.

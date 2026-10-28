@@ -4,7 +4,7 @@
 |---|---|
 | Document | `docs/od-rate-1-c2-r3-review-matrix.md` (3 of 3; companions: [design](od-rate-1-c2-r3-design.md), [proofs](od-rate-1-c2-r3-proofs.md)) |
 | Revision | C6 (amends the C5 matrix at `0c91393d68f9ac66f8ae5a7e9a719d76187fed03`; C5 replaced the C4 matrix at `38121f95`) |
-| Status | **PENDING INDEPENDENT EXACT-HEAD ARCHITECTURE REVIEW AND SECURITY REVIEW.** No row is closed, approved or verified for production by this author. **Host feasibility: BLOCKED. No host is qualified.** |
+| Status | **C7 AUTHOR DESIGN, C6 ARCHITECTURE_REJECTED, PENDING NEW INDEPENDENT EXACT-HEAD ARCHITECTURE/SECURITY REVIEW.** No row is closed, approved or verified for production by this author. **Host feasibility: BLOCKED. No host is qualified.** |
 | Authority | PO: OD-RATE-1 Unified Architecture Decision Package v2, AD-01 … AD-09, APPROVED 2026-10-27; C6 decisions PD-C6-1 … PD-C6-6 and SEC-D1 … SEC-D3 (D §24.1) |
 | Review input | Codex session `01a17740-3dc0-7ee2-b26e-a538092270cd` (R2, R3, R4; R4 verdict REJECTED for C4). Transcript SHA-256 at C5 authoring: `b70f2e614f380d0176a87b5ee18abb30c99709e68418116ba0eb54a38dbb3a6f` |
 | Baseline | `main` `a32a6cd7e0a1bdc9917fc3abc7f692039591a145` / tree `5e15c577faf60d65887569772dd4dd3558e53c26` |
@@ -245,7 +245,7 @@ owned-process registry keyed on observed exit status (GWV-02). No real provider.
 | V-04 | Transport TQ-01 … TQ-10 (local TLS server; Windows and Linux; Node 22.x) | one request per `send()` for every status incl. 421 and 3xx; no proxy or reuse path; credential never leaked |
 | V-05 | Accounting: PT-11 for Groq and Gemini; uncertain completion; expiry; marker strings in usage, headers and content | charges per D §11.4; nothing unclamped lost; no raw values in IPC, stderr or envelope |
 | V-06 | Lifecycle: PT-09, PT-10, PT-14 (immediate close after kill), PT-22 (`K_SETTLE` unresolved settlement); spy that no disconnect occurs at the termination decision and no termination request on the success path | as D §14; one settlement; event-driven; result discarded after a termination decision |
-| V-07 | Ungoverned golden: all existing generative and FT0 suites; package-surface inventory | byte-identical behavior; no Gateway module loaded |
+| V-07 | C7 ungoverned golden: Gateway/pass-through + SEC-C1 present, rate governance absent, D-5 baseline parity | Gateway loaded; no governor RPM/TPM/wait/watchdog; externally compatible on qualified host; PRQ-D5-1…3 pass |
 | V-08 | Classification: D §15.3 table; forged governor codes; `stage-timeout` without terminal; C4 T-R2-02-1 … 10 equivalents | outcomes as tabled; never exit 4 after a refusal |
 | V-09 | IPC schema: S1–S7 equivalents for every production message; governed child env without `AI_API_KEY` / `AI_MODEL` | closed shapes enforced; credential absent |
 | V-10 | Process hygiene: owned-process audit in every child-process test | suite fails on any surviving owned process |
@@ -331,3 +331,25 @@ Next permitted step: **PM verification and the authorized PR metadata sync, then
 independent exact-head Architecture review of the C6 head**, followed by the
 independent Security review. Host qualification (D §30.2) and implementation remain
 **not authorized**.
+
+
+---
+
+## 16. C7 exact-head author traceability (overrides contradicted C6 entries)
+
+Independent C6 reviewer: Codex session 01a17dff-71ab-7b83-a099-9efe8f7fac47, ARCHITECTURE_REJECTED at HEAD 79169d3158d749461855ef7bf1b55faf8713fc49. Findings C6-ARCH-01…05 MAJOR and C6-ARCH-06 MINOR. PO authorized one consolidated documentation-only C7 and approved OD-C7-OS-1, OD-C7-FT0-1 and D-5 baseline TLS/proxy parity. All below are author dispositions only.
+
+| Finding | Normative C7 mechanism | Verification | Lifecycle |
+|---|---|---|---|
+| C6-ARCH-01 MAJOR | cgroup.events populated=0 on sealed dedicated cgroup; withdraw R-L-EMPTY and H-L-04/H-L-06 | D §32.2; P Lemma C7-B; C7-T01/11 | AUTHOR_DESIGNED, HQ-L-C7-01/02 OPEN |
+| C6-ARCH-02 MAJOR | cgroup.kill by opened stable cgroup object, no numeric PID | D §32.2; P Lemma C7-A; C7-T02 | AUTHOR_DESIGNED, HQ-L-C7-03 OPEN |
+| C6-ARCH-03 MAJOR | native J_life at helper creation, parent-only handle, nested J_worker | D §32.3; P Lemma C7-C; C7-T03/04 | AUTHOR_DESIGNED, HQ-W-C7-01/02 OPEN |
+| C6-ARCH-04 MAJOR | ready→parent state→RELEASE, trusted status EOF/close finalization | D §32.4; P Lemma C7-D; C7-T05/06 | AUTHOR_DESIGNED, HQ-X-C7-01/02 OPEN |
+| C6-ARCH-05 MAJOR | unexpected loss even with result→revoke/kill; private ACK intent+permit; 10000 exit guard | D §32.4; P Lemma C7-E; C7-T07…10 | AUTHOR_DESIGNED, HQ-X-C7-03/04 OPEN |
+| C6-ARCH-06 MINOR | replace no-Gateway V-07 by mandatory pass-through Gateway/no rate governor | D §32.7; V-07 above | AUTHOR_DESIGNED, V-07/V-15 OPEN |
+| D-5 | parent-owned trusted transport thread with explicit CA policy / closed environment, fail-closed unqualified host | D §32.6; P Lemma C7-F; C7-T13 | AUTHOR_DESIGNED, PRQ-D5-1…3 / SG-04 OPEN |
+| SG01-SEC-01 | design corrective for termination/revocation; NOT independently closed | D §32; P Lemmas C7-A…E | SECURITY_GATE_OPEN, HOST_NOT_VERIFIED |
+
+**Author pre-commit gates:** all six corrective mechanisms identified; Linux numeric-PID kill withdrawn; false monitor-emptiness inference withdrawn; Windows Node post-spawn binding assumption withdrawn; causal startup and drain specified; stored result does not bypass SEC-C1; V-07 fixed; D-5 candidate is falsifiable and no widened trust is claimed; all OS/Node host assumptions remain unqualified. There has been no implementation/test/probe, public reason-code amendment, external dependency adoption, host privilege change, security waiver, merge or independent C7 approval.
+
+**Outstanding authority:** PO-C6-1…5 remain OPEN; SG-01…05 OPEN; all old/new HQ and TQ acceptance gates OPEN. Host Feasibility Spike BLOCKED. PR metadata sync remains PM responsibility. WIP=1, next lifecycle gate independent exact-head Architecture Review; not a merge or production authorization.
