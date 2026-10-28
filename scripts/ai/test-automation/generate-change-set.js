@@ -164,10 +164,12 @@ function deriveChangesWithBaseDigests(parsedChanges, contextSnapshot) {
 
 // OD-TPR-GEN-CONTEXT-I1: the bound repository context's optional project
 // guidance (ProjectProfile displayName/knownProjectConstraints, already
-// covered by repositoryContextDigest). Absent: nothing to check and nothing
-// projected (private callers may omit it). Present: it must be exactly the
-// ProjectProfile v1 shape and bounds, validated on the frozen snapshot and
-// rejected before any provider call. Messages never echo the value.
+// covered by repositoryContextDigest). Absent (no own `guidance` property):
+// nothing to check and nothing projected (private callers may omit it).
+// Present (an own property, whatever its value - an explicit `undefined`
+// included, SEC-01): it must be exactly the ProjectProfile v1 shape and
+// bounds, validated on the frozen snapshot and rejected before any provider
+// call. Messages never echo the value.
 function checkGuidanceText(value, path, maxLength, errors) {
   if (typeof value !== "string") {
     errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be a string`));
@@ -188,8 +190,9 @@ function checkGuidanceText(value, path, maxLength, errors) {
   return true;
 }
 
-function validateGuidanceSnapshot(guidance, path, errors) {
-  if (guidance === undefined) return;
+function validateGuidanceSnapshot(contextSnapshot, path, errors) {
+  if (!Object.hasOwn(contextSnapshot, "guidance")) return;
+  const guidance = contextSnapshot.guidance;
   if (!isPlainObject(guidance)) {
     errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be an object`));
     return;
@@ -312,7 +315,7 @@ async function generateChangeSet({ automationPlan, repositoryContext, provider, 
   const planResult = validateAutomationPlan(planSnapshot, { expectedProjectId });
   const contextErrors = [];
   validateRepositoryContextSnapshot(contextSnapshot, "$.repositoryContext", contextErrors, { expectedProjectId });
-  if (isPlainObject(contextSnapshot)) validateGuidanceSnapshot(contextSnapshot.guidance, "$.repositoryContext.guidance", contextErrors);
+  if (isPlainObject(contextSnapshot)) validateGuidanceSnapshot(contextSnapshot, "$.repositoryContext.guidance", contextErrors);
 
   const localErrors = [...(planResult.ok ? [] : planResult.errors), ...contextErrors];
   if (localErrors.length > 0) {

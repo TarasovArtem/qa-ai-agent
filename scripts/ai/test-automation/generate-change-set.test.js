@@ -534,6 +534,35 @@ test("T3 malformed guidance is refused before any provider call", async () => {
   }
 });
 
+test("T3 an own guidance property set to undefined is refused before any provider call (SEC-01)", async () => {
+  // validContext(), not guidedContext(): its default parameter would turn an
+  // undefined argument into valid guidance instead of an own undefined value.
+  const context = validContext({ guidance: undefined });
+  assert.equal(Object.prototype.hasOwnProperty.call(context, "guidance"), true);
+  const { provider, getCalls } = fakeProvider([createResponse()]);
+  const result = await generateChangeSet({ automationPlan: validPlan(), repositoryContext: context, provider });
+  assert.equal(result.ok, false);
+  assert.equal(result.providerAttempts, 0);
+  assert.equal(getCalls(), 0);
+  assert.deepEqual(result.errors.map((e) => e.path), ["$.repositoryContext.guidance"]);
+  assert.ok(result.errors.every((e) => typeof e.code === "string" && typeof e.message === "string"));
+  // The caller's object is neither frozen nor rewritten by the refusal.
+  assert.equal(Object.isFrozen(context), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(context, "guidance"), true);
+});
+
+test("T3 an omitted guidance property keeps legacy generation (SEC-01 counterpart)", async () => {
+  const context = validContext();
+  assert.equal(Object.prototype.hasOwnProperty.call(context, "guidance"), false);
+  const { provider, getCalls, getCaptured } = fakeProvider([createResponse()]);
+  const result = await generateChangeSet({ automationPlan: validPlan(), repositoryContext: context, provider });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(result.providerAttempts, 1);
+  assert.equal(getCalls(), 1);
+  assert.equal(getCaptured()[0].userPrompt.includes("\"guidance\""), false);
+  assert.equal(validateGeneratedChangeSet({ automationPlan: validPlan(), repositoryContext: context, generatedChangeSet: result.generatedChangeSet, expectedProjectId: "proj-1" }).ok, true);
+});
+
 test("T3 boundary values at the ProjectProfile v1 limits are accepted", async () => {
   const accepted = [
     guidance({ displayName: "d".repeat(256) }),
