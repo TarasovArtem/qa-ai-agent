@@ -519,6 +519,11 @@ on message m from child:
           reply(id, refused REVOKED); return              // C6: no dispatch before launcher "ready" (§27.3)
       session.onRequest(v)                                 // §8 governed, §25 pass-through
   elif v is result (FT0):    session.revoke("result"); FT0 store-then-ACK (unchanged); disarm watchdog
+                               record C7 private result-delivery state (§32.4)
+  elif v is disconnect-intent (C7 private): validate closed control record and
+                               gate by result receipt/delivery state (§32.4);
+                               this control path MAY run with session.revoked === true
+                               solely from the prior result (provider requests stay REVOKED)
   else: ignore (FT0 behavior)
 on child "disconnect" | "exit" | "error":  session.revoke(<event>)   then the FT0 handlers and the
                                            C6 containment rules (§27.2, §27.8) run
@@ -1160,6 +1165,8 @@ on message m:
   heartbeat (valid) and result === null:  re-arm watchdog
   provider-request (valid):               session.onRequest (§8.3)
   result (FT0):                           session.revoke("result"); store first result; ACK; disarm watchdog
+                                         record private result delivery receipt (§32.4)
+  disconnect-intent (C7 private):         gate receipt + result-only revocation + no failure (§32.4)
   else:                                   ignore
 ```
 
@@ -2454,11 +2461,15 @@ An observed, freshly queried JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.ActiveProces
 
 **Exit/drain barrier:** launcher exit is only a process-exit observation. It does not set final CLEANUP_UNRESOLVED. Parent first drains the trusted status stream to its EOF (including incomplete-record detection) and waits for child close, or for existing CAE fallback after exit when close does not arrive. Valid containment-empty status received before EOF is accepted as OS evidence; absent/malformed status is unresolved at settlement. A K_SETTLE timeout likewise may settle unresolved but is not an emptiness witness. Timer and close races settle exactly once; no late record upgrades a terminal failure.
 
-**Private post-ACK protocol:** after the child receives and validates result-ack(receipt), it sends disconnect-intent(receipt). Parent accepts that closed private intent only for the stored receipt, while unrevoked, with no prior termination and while connected, then returns disconnect-permit(receipt). Child voluntarily disconnects only after receiving permit. This is additional to (never a replacement for) the certified FT0 random receipt/ACK, and does not create any public status. Until permit arrives, child-side parent loss still triggers existing SEC-C1 abort/exit behavior.
+**Private post-ACK protocol (C7-C1, C7-AUTH-01 corrective):** the existing FT0 parent result handler MUST call `session.revoke("result")` synchronously **before** storing the first result and attempting `result-ack(receipt)`. This revocation is permanent for provider requests; no post-result provider dispatch is allowed. A separate **private delivery-control state**, not the Gateway's `session.revoked` boolean, authorizes only the additional post-ACK control messages.
 
-**Unexpected disconnect:** if parent sees IPC loss without a completed valid intent/permit transaction, including after it stored a result or attempted ACK, it synchronously revokes/aborts, discards the result, marks IPC_LOST and requests worker-independent termination. This applies with governor disabled. A stored result and ACK-send callback are NOT evidence that the child received ACK or intended disconnect.
+On first valid stored result, the parent retains the private receipt and records `delivery=ACK_PENDING` and `resultRevoked=true` after the result-triggered revocation. An attempted ACK send does not itself prove the child received ACK. After the child **receives and validates** `result-ack(receipt)`, it sends one closed `disconnect-intent(receipt)`. The parent validates the exact stored receipt and accepts the intent **only if** `delivery===ACK_PENDING`, the stored result is still present, the result-triggered revocation has occurred, the ACK was attempted, **no non-result revocation/fault/IPC loss has occurred**, `killed===null`, `settled===false`, the parent IPC is connected and containment is in `PROCESS_RUNNING`. `session.revoked===true` due **solely** to `revoke("result")` is expected and MUST NOT refuse this private control message. A separate `provider-request` still receives `REVOKED`. A mismatched/replayed/late intent cannot authorize a permit.
 
-**Normal post-ACK disconnect:** a completed intent/permit transaction followed by voluntary disconnect is handled as a normal pending process exit. Start one SECURITY_ONLY_EXIT_GUARD_MS=10000 monotonic timer. If the leader still has not exited when that timer fires, revoke, discard result and request containment termination; apply the already authorized K_SETTLE and CAE fallback machinery. This guard is independent of governor admission/deadline/heartbeat. It is not a new public STAGE_TIMEOUT reason: abnormal liveness maps to the existing generic stage failure, subject to no public-contract amendment. If a new public status/code/timing contract is later proposed, STOP for separate PO authorization. The 10 s bound parallels existing FT0 ACK/CAE safety bounds but is triggered only after the normal private disconnect handshake; it does not impose a deadline on a still-connected ungoverned worker.
+On a valid intent, the parent records `delivery=INTENT_ACCEPTED` and sends one closed `disconnect-permit(receipt)` while the IPC is connected, then records `delivery=PERMIT_SENT` only for successful send initiation. The child voluntarily disconnects **only after receiving** that matching permit. An unexpected send failure, other revocation reason, termination decision, launcher fault, IPC loss or settlement **invalidates** the delivery-control state; it can never re-enable provider requests or override `killed`. A parent-observed normal disconnect requires the same valid `PERMIT_SENT` transaction and no disqualifying event; otherwise it is unexpected IPC loss (§32.4 below). This is strictly private FT0 control-plane extension, not a public protocol/status change. Child-side parent loss while awaiting ACK or permit still invokes SEC-C1 failure, abort and exit.
+
+**Unexpected disconnect:** if parent sees IPC loss without a completed valid `PERMIT_SENT` delivery-control transaction, or after any non-result revocation/fault/termination invalidated it, including after it stored a result or attempted ACK, it synchronously revokes/aborts, discards the result, marks IPC_LOST and requests worker-independent termination. This applies with governor disabled. A stored result, the result-triggered `session.revoked` state and the ACK-send callback are NOT evidence that the child received ACK or intended disconnect.
+
+**Normal post-ACK disconnect:** a validated `PERMIT_SENT` transaction, with no intervening failure invalidation, followed by voluntary disconnect is handled as a normal pending process exit. Start one SECURITY_ONLY_EXIT_GUARD_MS=10000 monotonic timer. If the leader still has not exited when that timer fires, revoke, discard result and request containment termination; apply the already authorized K_SETTLE and CAE fallback machinery. This guard is independent of governor admission/deadline/heartbeat. It is not a new public STAGE_TIMEOUT reason: abnormal liveness maps to the existing generic stage failure, subject to no public-contract amendment. If a new public status/code/timing contract is later proposed, STOP for separate PO authorization. The 10 s bound parallels existing FT0 ACK/CAE safety bounds but is triggered only after the normal private disconnect handshake; it does not impose a deadline on a still-connected ungoverned worker.
 
 **Success:** the existing normal path still requires result, valid ACK, voluntary exit 0, true OS containment-empty, trusted status-stream drain and close. A result in memory alone never suffices. Connected workers that never finish are a distinct retained baseline liveness question; no covert rate-governor timer is introduced.
 
@@ -2473,8 +2484,9 @@ An observed, freshly queried JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.ActiveProces
 | C7-T05 | provider IPC races separate ready status pipe | impossible to execute until parent RELEASE |
 | C7-T06 | process exit callback before last containment-empty record | status EOF drained; classify only at close/CAE |
 | C7-T07 | result stored, ACK not received, unexpected IPC loss | revoke, discard, containment kill in both modes |
-| C7-T08 | ACK received → intent → permit → disconnect → exit 0 → OS empty → close | accept exactly once |
+| C7-T08 | parent `revoke("result")` → store/ACK → child receives ACK → valid intent accepted despite result revocation → permit → disconnect → exit 0 → OS empty → close | accept exactly once; provider still revoked |
 | C7-T09 | valid normal disconnect; worker never exits | security-only guard fires at 10000; kill; no result acceptance |
+| C7-T09A | parent revokes for launcher fault / IPC loss before `disconnect-intent`, even if result was stored | deny permit, discard result, terminate containment; no normal-path classification |
 | C7-T10 | governor disabled; unexpected loss mid-request | no new provider call, in-flight abort, OS termination, no rate controls |
 | C7-T11 | worker leader exited but descendant alive | neither OS witness empty; cannot accept |
 | C7-T12 | no delegated cgroup or native Windows bootstrap | pre-worker host refusal; zero provider sends |
