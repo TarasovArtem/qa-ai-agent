@@ -772,3 +772,240 @@ test("Stage 3 write safety: an output.dir symlink into a protected path is refus
   assert.equal(r.code, 3, r.stderr);
   noSpawn(rec.calls);
 });
+
+// --- OD-265-A1: run-wide cross-plan target identity --------------------------------------
+// Identifiers A01-A22 are this implementation's derived acceptance mapping.
+
+const artifacts = require("./run-artifacts");
+
+const A1_SPEC = "cypress/e2e/generated/shared.cy.js";
+
+function multiTestCaseModel(n) {
+  const base = fx.testCaseModel().testCases;
+  return fx.testCaseModel({ testCases: Array.from({ length: n }, (_, i) => ({ ...base[i % 2], id: `tc-${i + 1}`, title: `Case ${i + 1}` })) });
+}
+
+function multiCandidates(n, framework = fx.FRAMEWORK) {
+  return Array.from({ length: n }, (_, i) => ({ ...fx.candidate(`tc-${i + 1}`, "AUTOMATE", `ac-${i + 1}`), targetFrameworks: [framework] }));
+}
+
+function multiDesign(n, framework = fx.FRAMEWORK) {
+  return { requirementModel: fx.requirementModel(), testCaseModel: multiTestCaseModel(n), automationCandidates: multiCandidates(n, framework) };
+}
+
+// changes: per plan, a list of [operation, path].
+function multiPlans(changes, framework = fx.FRAMEWORK) {
+  return changes.map((list, i) => fx.automationPlan({ id: `plan-${i + 1}`, automationCandidateId: `ac-${i + 1}`, framework, plannedChanges: list.map(([operation, p]) => ({ path: p, operation, purpose: `${MARKER} plan ${i + 1}` })) }));
+}
+
+const A1_RESPONSES = {
+  design: (n) => [fx.json(fx.requirementModel()), fx.json(multiTestCaseModel(n)), ...multiCandidates(n).map(fx.json)],
+  plan: (changes) => multiPlans(changes).map(fx.json),
+  generate: (paths) => paths.map((p) => fx.json(fx.changeSetResponse({ path: p }))),
+};
+
+function inProcess(design, plans, framework = fx.FRAMEWORK) {
+  const fresh = artifacts.validatePlans({ ...design, automationPlans: plans }, { projectId: fx.PROJECT_ID, framework });
+  let persisted = null;
+  try {
+    artifacts.readPlan([{ kind: "AutomationRepositoryContext", value: {} }, ...plans.map((value) => ({ kind: "AutomationPlan", value }))], design, fx.stage3Config({ framework }));
+  } catch (error) {
+    persisted = error;
+  }
+  return { fresh, persisted };
+}
+
+function assertConfidential(r, ...forbidden) {
+  const text = r.stdout + r.stderr;
+  for (const value of [MARKER, fx.SECRET, ...forbidden]) assert.equal(text.includes(value), false, `diagnostics must not echo ${value}`);
+}
+
+test("OD-265-A1 A01-A05/A09: fresh and persisted plan sets refuse every colliding operation combination and accept distinct files", () => {
+  const design = multiDesign(2);
+  const cases = [
+    [[["CREATE", A1_SPEC]], [["CREATE", A1_SPEC]], ["DUPLICATE_ID"]],
+    [[["CREATE", A1_SPEC]], [["CREATE", A1_SPEC.replace("shared", "Shared")]], ["DUPLICATE_ID"]],
+    [[["CREATE", A1_SPEC]], [["MODIFY", A1_SPEC]], ["DUPLICATE_ID"]],
+    [[["MODIFY", A1_SPEC]], [["CREATE", A1_SPEC]], ["DUPLICATE_ID"]],
+    [[["MODIFY", A1_SPEC]], [["MODIFY", A1_SPEC]], ["DUPLICATE_ID"]],
+    [[["CREATE", "cypress/e2e/generated"]], [["CREATE", A1_SPEC]], ["INVARIANT_VIOLATION"]],
+    [[["MODIFY", A1_SPEC]], [["CREATE", "cypress/e2e/Generated"]], ["INVARIANT_VIOLATION"]],
+    [[["CREATE", "cypress/e2e/generated/a.cy.js"]], [["CREATE", "cypress/e2e/generated/b.cy.js"], ["MODIFY", fx.EXISTING_SPEC]], []],
+  ];
+  for (const [first, second, expected] of cases) {
+    const label = JSON.stringify([first, second]);
+    const { fresh, persisted } = inProcess(design, multiPlans([first, second]));
+    assert.deepEqual(fresh, expected, label);
+    if (expected.length === 0) {
+      assert.equal(persisted, null, label);
+      continue;
+    }
+    assert.equal(persisted.code, "RUN_ARTIFACT_INVALID", label);
+    assert.equal(persisted.exitCode, 4, label);
+    assert.equal(persisted.message, `the persisted plan artifacts of this run failed validation (reason codes: ${expected.join(", ")}).`);
+  }
+});
+
+test("OD-265-A1 A08/A10: dual condition is ordered INVARIANT_VIOLATION, DUPLICATE_ID and the result is plan-order independent", () => {
+  const design = multiDesign(3);
+  const lists = [[["CREATE", "cypress/e2e/x"]], [["CREATE", "cypress/e2e/x/a.cy.js"]], [["MODIFY", "cypress/e2e/X"]]];
+  for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+    const { fresh, persisted } = inProcess(design, multiPlans(order.map((i) => lists[i])));
+    assert.deepEqual(fresh, ["INVARIANT_VIOLATION", "DUPLICATE_ID"], String(order));
+    assert.match(persisted.message, /\(reason codes: INVARIANT_VIOLATION, DUPLICATE_ID\)\.$/);
+  }
+});
+
+test("OD-265-A1 A11: per-plan schema, reference and PPI-1 refusals keep precedence; the run-wide rule never masks or adds to them", () => {
+  const design = multiDesign(3);
+  const colliding = [["CREATE", A1_SPEC]];
+  for (const [label, plans, expected] of [
+    ["PPI-1 reserved name", multiPlans([[["CREATE", "cypress/e2e/CON.cy.js"]], colliding, colliding]), ["INVALID_PATH"]],
+    ["PPI-1 dot segment", multiPlans([[["CREATE", "cypress/e2e/.hidden.cy.js"]], colliding, colliding]), ["INVALID_PATH"]],
+    ["PPI-1 case alias in one plan", multiPlans([[["CREATE", A1_SPEC], ["CREATE", A1_SPEC.toUpperCase().replace("CYPRESS", "cypress")]], colliding, colliding]), ["INVALID_PATH"]],
+    ["candidate reference", multiPlans([colliding, colliding, [["CREATE", "cypress/e2e/c.cy.js"]]]).map((p, i) => (i === 2 ? { ...p, automationCandidateId: "ac-9" } : p)), ["INVALID_REFERENCE"]],
+    ["plan count", multiPlans([colliding, colliding]), ["INVALID_REFERENCE"]],
+  ]) {
+    const { fresh, persisted } = inProcess(design, plans);
+    assert.deepEqual(fresh, expected, label);
+    assert.equal(persisted.code, "RUN_ARTIFACT_INVALID", label);
+  }
+  for (const paths of require("../../../test/helpers/ppi1-path-vectors").hostilePathSets) {
+    const { fresh } = inProcess(design, multiPlans([paths.map((p) => ["CREATE", p]), colliding, colliding]));
+    assert.equal(fresh.includes("DUPLICATE_ID") || fresh.includes("INVARIANT_VIOLATION"), false, JSON.stringify(paths));
+    assert.ok(fresh.length > 0);
+  }
+});
+
+test("OD-265-A1 A19/A20: TPR Run A (4 plans) and Run B (6 plans) Playwright topologies are refused fresh and persisted", () => {
+  const T = "playwright/tests";
+  for (const names of [
+    ["tasks", "tasks-add-and-counter", "tasks", "task-counter-completion"],
+    ["tasks", "tasks", "empty-task-validation", "empty-task-validation", "task-completion-counter", "tasks"],
+  ]) {
+    const design = multiDesign(names.length, "playwright");
+    const plans = multiPlans(names.map((n) => [["CREATE", `${T}/${n}.spec.js`]]), "playwright");
+    const { fresh, persisted } = inProcess(design, plans, "playwright");
+    assert.deepEqual(fresh, ["DUPLICATE_ID"], names.join());
+    assert.equal(persisted.code, "RUN_ARTIFACT_INVALID");
+    assert.equal(persisted.exitCode, 4);
+    assert.equal(persisted.message.includes(T), false);
+    const unique = [...new Set(names)];
+    assert.deepEqual(inProcess(multiDesign(unique.length, "playwright"), multiPlans(unique.map((n) => [["CREATE", `${T}/${n}.spec.js`]]), "playwright"), "playwright").fresh, []);
+  }
+});
+
+test("OD-265-A1 A12/A22: real CLI plan refuses fresh colliding provider output (exit 6), writes nothing, never re-calls the provider and stays retryable", async () => {
+  for (const [label, n, changes, codes] of [
+    ["CREATE/CREATE", 2, [[["CREATE", A1_SPEC]], [["CREATE", A1_SPEC]]], "DUPLICATE_ID"],
+    ["CREATE/MODIFY case-fold", 2, [[["CREATE", A1_SPEC]], [["MODIFY", A1_SPEC.replace("generated", "GENERATED")]]], "DUPLICATE_ID"],
+    ["MODIFY/CREATE", 2, [[["MODIFY", fx.EXISTING_SPEC]], [["CREATE", fx.EXISTING_SPEC]]], "DUPLICATE_ID"],
+    ["MODIFY/MODIFY", 2, [[["MODIFY", fx.EXISTING_SPEC]], [["MODIFY", fx.EXISTING_SPEC]]], "DUPLICATE_ID"],
+    ["file/directory", 2, [[["CREATE", "cypress/e2e/generated"]], [["CREATE", A1_SPEC]]], "INVARIANT_VIOLATION"],
+    ["TPR Run A shape", 4, ["tasks", "tasks-add-and-counter", "tasks", "task-counter-completion"].map((t) => [["CREATE", `cypress/e2e/${t}.cy.js`]]), "DUPLICATE_ID"],
+  ]) {
+    const root = fx.makeStage3Root();
+    const d = await stage(["design"], root, A1_RESPONSES.design(n));
+    assert.equal(d.code, 0, `${label}: ${d.stderr}`);
+    const runId = d.json.runId;
+    const dir = runDir(root, runId);
+    const before = fs.readFileSync(path.join(dir, "manifest.json"));
+    const tree = fx.snapshotTree(root);
+    // Exactly n scripted responses: any extra provider call would exhaust the double.
+    const r = await stage(["plan"], root, A1_RESPONSES.plan(changes), { runId });
+    assert.equal(r.code, 6, `${label}: ${r.stderr}`);
+    assert.equal(r.json.errors[0].code, "PROVIDER_OUTPUT_REFUSED", label);
+    assert.equal(r.json.errors[0].message, `the plan output failed runtime validation (reason codes: ${codes}); nothing was written.`, label);
+    assert.equal(r.calls.length, 1, `${label}: one child, no automatic retry`);
+    assertConfidential(r, ...changes.flat().map(([, p]) => p));
+    assert.deepEqual(fs.readFileSync(path.join(dir, "manifest.json")), before, label);
+    assert.equal(fs.existsSync(path.join(dir, "plan")), false, label);
+    assert.deepEqual(fx.snapshotTree(root), tree, `${label}: no target write`);
+
+    const distinct = changes.map((_, i) => [["CREATE", `cypress/e2e/generated/plan-${i + 1}.cy.js`]]);
+    const retry = await stage(["plan"], root, A1_RESPONSES.plan(distinct), { runId });
+    assert.equal(retry.code, 0, `${label} retry: ${retry.stderr}`);
+    assert.deepEqual(retry.json.summary, { automationPlans: n, plannedChanges: n });
+  }
+});
+
+async function persistedCollidingRun({ generate = true } = {}) {
+  const root = fx.makeStage3Root();
+  const paths = ["cypress/e2e/generated/a.cy.js", "cypress/e2e/generated/b.cy.js"];
+  const d = await stage(["design"], root, A1_RESPONSES.design(2));
+  const runId = d.json.runId;
+  assert.equal((await stage(["plan"], root, A1_RESPONSES.plan(paths.map((p) => [["CREATE", p]])), { runId })).code, 0);
+  if (generate) assert.equal((await stage(["generate"], root, A1_RESPONSES.generate(paths), { runId })).code, 0);
+  // A plan set as a pre-fix build could have persisted it: plan 2 now targets
+  // plan 1's path; digests are re-recorded so only validation can refuse it.
+  const rel = "plan/automation-plan-0002.json";
+  const plan2 = readJson(path.join(runDir(root, runId), ...rel.split("/")));
+  plan2.plannedChanges[0].path = paths[0].replace("a.cy.js", "A.cy.js");
+  rewriteConsistently(root, runId, rel, JSON.stringify(plan2));
+  return { root, runId, dir: runDir(root, runId), collidingPath: plan2.plannedChanges[0].path };
+}
+
+test("OD-265-A1 A13/A14/A22: persisted colliding plans are refused on reload by generate and review show (exit 4) before any provider call", async () => {
+  const expected = "the persisted plan artifacts of this run failed validation (reason codes: DUPLICATE_ID).";
+  const planned = await persistedCollidingRun({ generate: false });
+  const before = fs.readFileSync(path.join(planned.dir, "manifest.json"));
+  const g = await stage(["generate"], planned.root, fx.RESPONSES.generate(), { runId: planned.runId });
+  assert.equal(g.code, 4, g.stderr);
+  assert.equal(g.json.errors[0].code, "RUN_ARTIFACT_INVALID");
+  assert.equal(g.json.errors[0].message, expected);
+  noSpawn(g.calls);
+  assertConfidential(g, planned.collidingPath);
+  assert.equal(fs.existsSync(path.join(planned.dir, "generate")), false);
+  assert.deepEqual(fs.readFileSync(path.join(planned.dir, "manifest.json")), before);
+
+  const again = await stage(["plan"], planned.root, fx.RESPONSES.plan(), { runId: planned.runId });
+  assert.equal(again.code, 4);
+  assert.equal(again.json.errors[0].code, "RUN_STAGE_ALREADY_COMPLETED", "no replay path");
+  noSpawn(again.calls);
+
+  const generated = await persistedCollidingRun();
+  for (const extra of [["--json"], ["--offline", "--json"]]) {
+    const show = await runCli(["review", "show", "--run", generated.runId, "--root", generated.root, ...extra]);
+    assert.equal(show.code, 4, show.stderr);
+    assert.equal(show.json.errors[0].code, "RUN_ARTIFACT_INVALID");
+    assert.equal(show.json.errors[0].message, expected);
+    assertConfidential(show, generated.collidingPath);
+  }
+});
+
+test("OD-265-A1 A16: earlier digest and stage-order refusals keep precedence over the run-wide rule", async () => {
+  const r = await persistedCollidingRun({ generate: false });
+  const file = path.join(r.dir, "plan", "automation-plan-0002.json");
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("A.cy.js", "a.cy.js"));
+  const digest = await stage(["generate"], r.root, fx.RESPONSES.generate(), { runId: r.runId });
+  assert.equal(digest.code, 4);
+  assert.equal(digest.json.errors[0].code, "RUN_ARTIFACT_DIGEST_MISMATCH");
+  noSpawn(digest.calls);
+
+  const order = await persistedCollidingRun({ generate: false });
+  const show = await runCli(["review", "show", "--run", order.runId, "--root", order.root, "--json"]);
+  assert.equal(show.code, 4);
+  assert.equal(show.json.errors[0].code, "RUN_STAGE_ORDER");
+});
+
+test("OD-265-A1 A17/A18: runs bound to product 1.0.0 are refused with RUN_BINDING_MISMATCH before any artifact is read", async () => {
+  assert.equal(pkg.version, "1.0.1");
+  for (const corrupt of [false, true]) {
+    const r = await persistedCollidingRun();
+    const manifestFile = path.join(r.dir, "manifest.json");
+    const manifest = readJson(manifestFile);
+    assert.deepEqual(manifest.product, { name: pkg.name, version: "1.0.1" });
+    manifest.product.version = "1.0.0";
+    fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+    if (corrupt) fs.writeFileSync(path.join(r.dir, "plan", "automation-plan-0001.json"), "{ not json");
+    for (const command of [["plan"], ["generate"]]) {
+      const res = await stage(command, r.root, fx.RESPONSES.plan(), { runId: r.runId });
+      assert.equal(res.code, 4, res.stderr);
+      assert.equal(res.json.errors[0].code, "RUN_BINDING_MISMATCH", `${command} corrupt=${corrupt}`);
+      noSpawn(res.calls);
+    }
+    const show = await runCli(["review", "show", "--run", r.runId, "--root", r.root, "--json"]);
+    assert.equal(show.code, 4);
+    assert.equal(show.json.errors[0].code, "RUN_BINDING_MISMATCH", `review show corrupt=${corrupt}`);
+  }
+});

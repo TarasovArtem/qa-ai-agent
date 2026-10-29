@@ -16,7 +16,8 @@
  *   plan           validateGenerationChain incl. plans, one plan per AUTOMATE
  *                  candidate, config framework; the repository context is
  *                  rebuilt from the live repository (#23B) and must equal the
- *                  persisted one exactly; target paths satisfy PPI-1
+ *                  persisted one exactly; target paths satisfy PPI-1 per plan
+ *                  and are collision-free across all plans (OD-265-A1)
  *   generate       validateGeneratedChangeSet (#23D, TSB-F01) per plan, and
  *                  the review package rebuilt with
  *                  buildGeneratedChangeSetReviewPackage (#23E) must equal the
@@ -41,7 +42,7 @@ const { buildAutomationRepositoryContext } = require("../test-automation/automat
 const { validateGeneratedChangeSet } = require("../test-automation/generated-change-set");
 const { buildGeneratedChangeSetReviewPackage, recomputeReviewPackageDigest } = require("../test-automation/generated-change-set-review-package");
 const { configError, inputRefused } = require("./errors");
-const { assertPathIdentity } = require("./path-identity");
+const { assertPathIdentity, asciiFold } = require("./path-identity");
 const store = require("./run-store");
 
 const { requirementsDigest, canonicalJson } = store;
@@ -168,7 +169,56 @@ function validatePlans({ requirementModel, testCaseModel, automationCandidates, 
       errors.push({ code: ERROR_CODES.INVALID_PATH });
     }
   });
-  return codesOf(errors);
+  if (errors.length > 0) return codesOf(errors);
+  // The run-wide rule is evaluated only over a set every plan of which is
+  // already individually valid, so earlier refusals keep their exact codes.
+  return crossPlanPathCodes(automationPlans.map((plan) => plan.plannedChanges.map((change) => change.path)));
+}
+
+const PLAN_PATH_CHARSET = /^[A-Za-z0-9._/-]+$/;
+
+// OD-265-A1: run-wide target identity across every AutomationPlan of one
+// plan stage. The identity key is the PPI-1 key (ASCII case-fold of the exact
+// path), so exact and case-fold duplicates collide whatever the operations
+// (CREATE/CREATE, CREATE/MODIFY, MODIFY/MODIFY) -> DUPLICATE_ID; a key that is
+// a proper "/"-segment prefix of another (file vs directory, either order) ->
+// INVARIANT_VIOLATION. Nothing is normalized, renamed or merged. The code
+// list has a fixed order (INVARIANT_VIOLATION before DUPLICATE_ID), so it does
+// not depend on plan order. Segments are held in a Map trie: linear in the
+// total path length, and segment names such as __proto__ cannot collide with
+// object keys. An entry outside the PPI-1 alphabet or with an empty, "." or
+// ".." segment is reported as INVALID_PATH and never registered; it is
+// unreachable after the per-plan PPI-1 check (defense in depth).
+function crossPlanPathCodes(pathLists) {
+  const root = { file: false, children: new Map() };
+  let invalid = false, prefix = false, duplicate = false;
+  for (const paths of pathLists) {
+    for (const p of paths) {
+      const segments = typeof p === "string" && p.length <= 300 && PLAN_PATH_CHARSET.test(p) ? asciiFold(p).split("/") : null;
+      if (!segments || segments.some((s) => s === "" || s === "." || s === "..")) {
+        invalid = true;
+        continue;
+      }
+      let node = root;
+      for (const segment of segments) {
+        if (node.file) prefix = true;
+        let next = node.children.get(segment);
+        if (!next) {
+          next = { file: false, children: new Map() };
+          node.children.set(segment, next);
+        }
+        node = next;
+      }
+      if (node.file) duplicate = true;
+      if (node.children.size > 0) prefix = true;
+      node.file = true;
+    }
+  }
+  const codes = [];
+  if (invalid) codes.push(ERROR_CODES.INVALID_PATH);
+  if (prefix) codes.push(ERROR_CODES.INVARIANT_VIOLATION);
+  if (duplicate) codes.push(ERROR_CODES.DUPLICATE_ID);
+  return codes;
 }
 
 function sameContext(a, b) {
@@ -301,6 +351,7 @@ module.exports = {
   automateCandidates,
   buildLiveRepositoryContext,
   validatePlans,
+  crossPlanPathCodes,
   sameContext,
   validateGenerated,
   readDesign,
