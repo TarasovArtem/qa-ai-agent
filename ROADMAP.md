@@ -4933,7 +4933,7 @@ dispositions:        PD-1 APPROVED LIMITED, PD-2 DEFERRED, PD-3 CONDITIONAL,
                      PD-4 APPROVED, PD-5 APPROVED LIMITED
 production scope:    scripts/ai/test-automation/generate-change-set.js,
                      scripts/ai/test-automation/generate-change-set-prompt.js
-status:              implementation PR — not merged; no lifecycle change
+status:              COMPLETE_ON_MAIN / POST-MERGE CERTIFIED (PR #263; I1 + C1)
 ```
 
 Defect: the C6 (`generateChangeSet`) positive projection omitted the bound
@@ -4953,9 +4953,49 @@ behavior. No change to CLI, artifact schemas, digest labels or algorithms,
 `automationPlanDigest`/`repositoryContextDigest`/`changeSetDigest`/
 `packageDigest` (golden-digest test against `a32a6cd7`), Stage 4 bindings,
 exports, shipped files or the static module graph. Requirements/test-case
-expansion (PD-2) is not implemented. A new package and demo re-pin remain
-conditional on separately authorized merge and post-merge certification
-(PD-3).
+expansion (PD-2) is not implemented. The exact-head merge and fresh
+post-merge push-CI prerequisites of PD-3 are now satisfied by PR #263; new
+package identity, demo re-pin, live generation, apply, execution and TPR
+publication remain separate PO-controlled lifecycle/operational gates.
+
+#### OD-TPR-GEN-CONTEXT-I1/C1 — canonical closure evidence
+
+**Implementation scope only:** OD-TPR-GEN-CONTEXT-I1 and its narrow SEC-01
+corrective C1 are `COMPLETE_ON_MAIN / POST-MERGE CERTIFIED`. This is not
+Technical Preview Release acceptance, publication, Stage 5 enablement or
+authorization to execute generated code.
+
+- Implementation PR [#263](https://github.com/TarasovArtem/qa-ai-agent/pull/263):
+  two commits `f8b1ed492a4743879ac8c95ebd43098d7c5ee59b` (I1) and
+  `62b4cc828bc1950e3e847730bb6bbbfefcefcdd3` (C1).
+- Independent exact-head Architecture and Security re-reviews: **APPROVED**
+  for HEAD `62b4cc828bc1950e3e847730bb6bbbfefcefcdd3`,
+  TREE `513ca7f546686db2e9ddef01087995b283e320ff`.
+  The SEC-01 LOW finding (explicit own `guidance: undefined` made a
+  provider call) is **FIX VERIFIED**: malformed supplied guidance now
+  fails structured validation before any provider call; omitted guidance
+  remains backward-compatible. These are reviewer-session technical
+  verdicts, not separate-account GitHub review submissions.
+- PO-authorized `STANDARD_TWO_PARENT` merge:
+  [`bff7b5d57c91e0c53d2c8e5837dda2e0be0ed28f`](https://github.com/TarasovArtem/qa-ai-agent/commit/bff7b5d57c91e0c53d2c8e5837dda2e0be0ed28f)
+  with parents `a32a6cd7e0a1bdc9917fc3abc7f692039591a145` (main)
+  and `62b4cc828bc1950e3e847730bb6bbbfefcefcdd3` (reviewed PR HEAD).
+  Merge TREE: `513ca7f546686db2e9ddef01087995b283e320ff`.
+- Fresh automatic
+  [post-merge `push` CI run 40840839581](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/40840839581):
+  event `push`, branch `main`, attempt 1, exact merge SHA
+  `bff7b5d57c91e0c53d2c8e5837dda2e0be0ed28f`, **SUCCESS 7/7**.
+- Scope preservation: C6 only projects the two approved ProjectProfile
+  guidance fields to the existing provider as untrusted user-prompt DATA;
+  C7 default projection, public contracts, schema, digest algorithms,
+  Stage 4 approval/apply boundaries and `qa-agent execute` authority
+  remain unchanged. PD-2 requirements/test-case expansion is DEFERRED.
+- [Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199)
+  remains **OPEN** for TPR/R1 release dependencies and acceptance.
+  No new demo package was pinned or qualified here. No Gemini run,
+  generated-spec Human Review/apply/Playwright execution, release
+  distribution, TPR completion or Controlled Agent R1 readiness is
+  certified or authorized by this I1/C1 closure.
 
 ## 9. AISEC — Agentic Trust / AI Security Foundation
 
