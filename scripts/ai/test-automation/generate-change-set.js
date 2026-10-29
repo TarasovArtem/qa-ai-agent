@@ -82,11 +82,24 @@ const LIMITS = Object.freeze({
   // A maximal legitimate projection (100 planned changes, each with a
   // 300-char path and a 4000-char purpose, plus up to 40,000 chars of
   // aggregate existing-file content reused from the bound repository
-  // context's own MAX_AGGREGATE_EVIDENCE_LENGTH) is well under 600,000
+  // context's own MAX_AGGREGATE_EVIDENCE_LENGTH, plus at most ~8.5K chars
+  // of project guidance - before JSON escaping) is well under 600,000
   // characters - set with generous headroom, mirroring automation-plan-
   // generator.js's own MAX_OUTBOUND_PROMPT_CHARS defensive-cap posture.
   MAX_OUTBOUND_PROMPT_CHARS: 600000,
+  // OD-TPR-GEN-CONTEXT-I1: project guidance bounds, equal to ProjectProfile
+  // v1 (project-profile.js) and proven equal at every boundary by test
+  // rather than imported (no new module edge for this private stage).
+  MAX_GUIDANCE_DISPLAY_NAME_LENGTH: 256,
+  MIN_GUIDANCE_CONSTRAINTS: 1,
+  MAX_GUIDANCE_CONSTRAINTS: 32,
+  MAX_GUIDANCE_CONSTRAINT_LENGTH: 2048,
+  MAX_GUIDANCE_AGGREGATE_CONSTRAINTS_LENGTH: 8192,
 });
+
+const GUIDANCE_ALLOWED_KEYS = Object.freeze(["displayName", "knownProjectConstraints"]);
+// Same set ProjectProfile v1 rejects: C0 controls and DEL.
+const GUIDANCE_CONTROL_CHARACTER = /[\u0000-\u001F\u007F]/;
 
 const PROVIDER_CHANGE_ALLOWED_KEYS = Object.freeze(["operation", "path", "content"]);
 
@@ -149,6 +162,72 @@ function deriveChangesWithBaseDigests(parsedChanges, contextSnapshot) {
   });
 }
 
+// OD-TPR-GEN-CONTEXT-I1: the bound repository context's optional project
+// guidance (ProjectProfile displayName/knownProjectConstraints, already
+// covered by repositoryContextDigest). Absent (no own `guidance` property):
+// nothing to check and nothing projected (private callers may omit it).
+// Present (an own property, whatever its value - an explicit `undefined`
+// included, SEC-01): it must be exactly the ProjectProfile v1 shape and
+// bounds, validated on the frozen snapshot and rejected before any provider
+// call. Messages never echo the value.
+function checkGuidanceText(value, path, maxLength, errors) {
+  if (typeof value !== "string") {
+    errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be a string`));
+    return false;
+  }
+  if (value.length > maxLength) {
+    errors.push(err(path, ERROR_CODES.INVALID_VALUE, `${path} exceeds the maximum of ${maxLength} characters`));
+    return false;
+  }
+  if (value.trim().length === 0) {
+    errors.push(err(path, ERROR_CODES.INVALID_VALUE, `${path} must contain a non-whitespace character`));
+    return false;
+  }
+  if (GUIDANCE_CONTROL_CHARACTER.test(value)) {
+    errors.push(err(path, ERROR_CODES.INVALID_VALUE, `${path} must not contain control characters`));
+    return false;
+  }
+  return true;
+}
+
+function validateGuidanceSnapshot(contextSnapshot, path, errors) {
+  if (!Object.hasOwn(contextSnapshot, "guidance")) return;
+  const guidance = contextSnapshot.guidance;
+  if (!isPlainObject(guidance)) {
+    errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be an object`));
+    return;
+  }
+  collectUnknownKeyErrors(guidance, GUIDANCE_ALLOWED_KEYS, path, errors);
+  if (!("displayName" in guidance)) {
+    errors.push(err(`${path}.displayName`, ERROR_CODES.MISSING_FIELD, `${path}.displayName is required`));
+  } else {
+    checkGuidanceText(guidance.displayName, `${path}.displayName`, LIMITS.MAX_GUIDANCE_DISPLAY_NAME_LENGTH, errors);
+  }
+  const constraints = guidance.knownProjectConstraints;
+  const cPath = `${path}.knownProjectConstraints`;
+  if (constraints === undefined) {
+    errors.push(err(cPath, ERROR_CODES.MISSING_FIELD, `${cPath} is required`));
+    return;
+  }
+  if (!Array.isArray(constraints)) {
+    errors.push(err(cPath, ERROR_CODES.INVALID_TYPE, `${cPath} must be an array`));
+    return;
+  }
+  if (constraints.length < LIMITS.MIN_GUIDANCE_CONSTRAINTS || constraints.length > LIMITS.MAX_GUIDANCE_CONSTRAINTS) {
+    errors.push(err(cPath, ERROR_CODES.INVALID_VALUE, `${cPath} must contain ${LIMITS.MIN_GUIDANCE_CONSTRAINTS}..${LIMITS.MAX_GUIDANCE_CONSTRAINTS} entries`));
+    return;
+  }
+  let aggregate = 0;
+  let allText = true;
+  constraints.forEach((entry, i) => {
+    if (checkGuidanceText(entry, `${cPath}[${i}]`, LIMITS.MAX_GUIDANCE_CONSTRAINT_LENGTH, errors)) aggregate += entry.length;
+    else allText = false;
+  });
+  if (allText && aggregate > LIMITS.MAX_GUIDANCE_AGGREGATE_CONSTRAINTS_LENGTH) {
+    errors.push(err(cPath, ERROR_CODES.INVALID_VALUE, `${cPath} aggregate length exceeds ${LIMITS.MAX_GUIDANCE_AGGREGATE_CONSTRAINTS_LENGTH} characters`));
+  }
+}
+
 // Builds the ONLY object ever sent to the provider - a deliberate positive
 // allowlist, never `JSON.stringify(automationPlan)`/
 // `JSON.stringify(repositoryContext)` wholesale (mirrors automation-plan-
@@ -156,22 +235,35 @@ function deriveChangesWithBaseDigests(parsedChanges, contextSnapshot) {
 // carries its own `existingContent` (the bound repository context's
 // current content for that path, or `null` for CREATE / no matching
 // evidence) rather than a separate cross-referenced evidence list, so the
-// provider never has to correlate two arrays itself.
-function buildPositiveProjection({ planSnapshot, contextSnapshot }) {
+// provider never has to correlate two arrays itself. OD-TPR-GEN-CONTEXT-I1:
+// with `includeGuidance` (passed only by generateChangeSet(), after
+// validateGuidanceSnapshot()) and a context that carries project guidance,
+// exactly its displayName and knownProjectConstraints are added - the only
+// source of verified project facts for a CREATE, whose existingContent is
+// null. The default keeps every other importer (regenerate-change-set.js)
+// on the legacy projection, byte for byte.
+function buildPositiveProjection({ planSnapshot, contextSnapshot, includeGuidance = false }) {
   const evidenceByPath = new Map(contextSnapshot.repositoryEvidence.map((item) => [item.evidenceRef.location, item]));
-  return {
+  const projection = {
     projectId: planSnapshot.projectId,
     framework: planSnapshot.framework,
-    plannedChanges: planSnapshot.plannedChanges.map((change) => {
-      const existing = change.operation === "MODIFY" ? evidenceByPath.get(change.path) : undefined;
-      return {
-        path: change.path,
-        operation: change.operation,
-        purpose: change.purpose,
-        existingContent: existing ? existing.content : null,
-      };
-    }),
   };
+  if (includeGuidance === true && contextSnapshot.guidance !== undefined) {
+    projection.guidance = {
+      displayName: contextSnapshot.guidance.displayName,
+      knownProjectConstraints: [...contextSnapshot.guidance.knownProjectConstraints],
+    };
+  }
+  projection.plannedChanges = planSnapshot.plannedChanges.map((change) => {
+    const existing = change.operation === "MODIFY" ? evidenceByPath.get(change.path) : undefined;
+    return {
+      path: change.path,
+      operation: change.operation,
+      purpose: change.purpose,
+      existingContent: existing ? existing.content : null,
+    };
+  });
+  return projection;
 }
 
 /**
@@ -223,6 +315,7 @@ async function generateChangeSet({ automationPlan, repositoryContext, provider, 
   const planResult = validateAutomationPlan(planSnapshot, { expectedProjectId });
   const contextErrors = [];
   validateRepositoryContextSnapshot(contextSnapshot, "$.repositoryContext", contextErrors, { expectedProjectId });
+  if (isPlainObject(contextSnapshot)) validateGuidanceSnapshot(contextSnapshot, "$.repositoryContext.guidance", contextErrors);
 
   const localErrors = [...(planResult.ok ? [] : planResult.errors), ...contextErrors];
   if (localErrors.length > 0) {
@@ -245,7 +338,7 @@ async function generateChangeSet({ automationPlan, repositoryContext, provider, 
   }
 
   const framework = planSnapshot.framework;
-  const projection = deepFreeze(buildPositiveProjection({ planSnapshot, contextSnapshot }));
+  const projection = deepFreeze(buildPositiveProjection({ planSnapshot, contextSnapshot, includeGuidance: true }));
   const systemPrompt = buildGenerateChangeSetSystemPrompt({ framework });
 
   let providerAttempts = 0;
