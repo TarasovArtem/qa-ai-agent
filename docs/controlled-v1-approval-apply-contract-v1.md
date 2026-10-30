@@ -1321,14 +1321,51 @@ propose overlapping targets **across** its AutomationPlans:
    plans: every reload (`generate`, `review show`, `review record`, `apply`)
    refuses before any provider call, presentation, record or target write
    (`RUN_ARTIFACT_INVALID`, exit 4). The product never renames, merges or
-   repairs a conflicting path and never calls the provider again on its own.
+   repairs a conflicting path, and after a refusal it never re-runs the plan
+   stage or calls the provider again on its own; only a new `plan` command
+   from the operator does. (The bounded second attempt a single generator
+   call may make before it returns is defined in item 8.)
 7. **Historical runs.** Runs created by `1.0.0` are refused with
    `RUN_BINDING_MISMATCH` (exit 4) by the existing product-version binding
    before any artifact is read; they must be discarded and recreated.
+8. **Coordinated planning (`OD-265-B1`, since `1.0.2`).** `plan` generates
+   one AutomationPlan per AUTOMATE candidate, strictly in candidate order.
+   Each provider call additionally receives, as data, `scope` - the
+   candidate's own TestCase `id`, `title` and `objective` and the `id` and
+   `text` of the requirements that TestCase references, resolved by exact id
+   equality and listed once each in first-occurrence order - and
+   `reservedPaths` - the target paths of the plans already accepted in this
+   run, sorted ascending. TestCase steps, preconditions and priority, other
+   TestCases and requirements, and any content of earlier plans other than
+   their target paths are never sent. A path is reserved only after its plan
+   was accepted and passed PPI-1. The child re-validates every reserved path
+   on every call and checks each proposed path against the reserved paths
+   and the plan's other paths under items 1-3; a conflict can only be
+   corrected on the generator's existing second attempt (at most two provider
+   calls per candidate; no further retry, rename, merge or fallback).
+   Exhausted attempts refuse with `PROVIDER_FAILURE` (exit 6) and nothing is
+   written; malformed coordination input refuses with
+   `GENERATION_INPUT_REFUSED` (exit 4) before any provider call; an
+   unresolved or ambiguous Candidate -> TestCase -> Requirement reference
+   refuses with `RUN_ARTIFACT_INVALID` (exit 4) before the child starts.
+   Coordination is advisory: items 1-6 remain the only acceptance rule for
+   every plan set that reaches the parent. Runs created by `1.0.1` are
+   refused with `RUN_BINDING_MISMATCH` (exit 4) as in item 7.
+   Retry bounds, explicitly: within one `plan` command, each candidate's
+   generator call may use its existing second attempt before it returns a
+   refusal - at most two provider attempts per candidate, unchanged. That is
+   the only repetition: when a candidate is refused, the remaining
+   candidates are not planned, nothing is written, and neither the parent
+   nor the child restarts the plan stage or retries it automatically. The
+   attempt count in a refusal (`... after N provider attempt(s)`, or
+   `before any provider call for that candidate`) is that of the refused
+   candidate only; earlier candidates of the same command may already have
+   called the provider.
 
-This rule is a deterministic acceptance check only. It does not coordinate
-plan generation (no prompt, projection or provider change) and it does not
-alter #23F, approval or apply semantics (§13.6 and §22 are unchanged).
+The run-wide rule is a deterministic acceptance check only; coordination
+(item 8) changes what the provider is shown and when a plan is refused,
+never what is accepted. Neither alters #23F, approval or apply semantics
+(§13.6 and §22 are unchanged).
 
 ---
 

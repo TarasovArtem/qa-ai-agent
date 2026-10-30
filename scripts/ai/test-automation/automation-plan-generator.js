@@ -83,14 +83,26 @@
  * pass through that validator. Nothing is ever repaired, filled in, or
  * silently stripped from a provider response - every failure is reported
  * or the whole attempt is rejected.
+ *
+ * COORDINATED PLANNING (OD-265-B1): a caller may pass one optional
+ * `coordination` object {planScope, reservedPaths}. It is snapshotted like
+ * the other inputs, validated in full on every call before any provider
+ * call, and is all-or-nothing: the provider sees `scope` and `reservedPaths`
+ * (and the two coordinated system-prompt rules) only when it validated.
+ * Each attempt's plan is then also checked, per entry, against the
+ * reserved paths, so a collision can be corrected on the existing second
+ * attempt. This check is advisory; the parent's run-wide rule
+ * (contract §13.9) remains the only acceptance gate.
  */
 
 "use strict";
 
 const { ERROR_CODES, err } = require("../generation/errors");
 const { isPlainObject, isValidId, isBoundedText, collectUnknownKeyErrors, collectDuplicateIdErrors, validateProjectId, validateEvidenceRef } = require("../generation/primitives");
+const { LIMITS: F0_LIMITS } = require("../generation/limits");
 const { validateAutomationCandidate } = require("../generation/automation-candidate");
-const { validateAutomationPlan } = require("../generation/automation-plan");
+const { validateAutomationPlan, isSafeRepoRelativePath, isCanonicalPlanPath } = require("../generation/automation-plan");
+const { isProtectedPath } = require("./generated-change-set");
 const { normalizeProviderError } = require("../providers/provider-error");
 const { buildAutomationPlanSystemPrompt, buildAutomationPlanUserPrompt, buildAutomationPlanCorrectionPrompt } = require("./automation-plan-prompt");
 // Roadmap #23C-C1: exact-parity reuse of #23B's own real output contract -
@@ -529,15 +541,217 @@ function validatePlanBinding(plan, candidateSnapshot, framework) {
   return errors;
 }
 
+// --- OD-265-B1: coordinated planning ------------------------------------------
+//
+// `planScope` binds a call to the candidate's own TestCase (resolved by exact
+// ids in the parent; this module never sees the TestCaseModel) and carries
+// only the fields the provider may see. `reservedPaths` are the target paths
+// of the run's earlier accepted plans, sorted ascending. Nothing here can
+// accept a plan: the parent's run-wide rule (contract §13.9) is the gate, and
+// this module never requires a cli/ module.
+
+const COORDINATION_ALLOWED_KEYS = Object.freeze(["planScope", "reservedPaths"]);
+const PLAN_SCOPE_ALLOWED_KEYS = Object.freeze(["candidateId", "testCase", "requirements"]);
+const SCOPE_TEST_CASE_ALLOWED_KEYS = Object.freeze(["id", "title", "objective"]);
+const SCOPE_REQUIREMENT_ALLOWED_KEYS = Object.freeze(["id", "text"]);
+// Every target path of a maximal run: MAX_TEST_CASES plans x MAX_PLANNED_CHANGES.
+const MAX_RESERVED_PATHS = F0_LIMITS.MAX_TEST_CASES * F0_LIMITS.MAX_PLANNED_CHANGES;
+
+// The per-path PPI-1 predicate of scripts/ai/cli/path-identity.js (contract
+// §13.3), rebuilt from the same lower-layer helpers because a test-automation
+// module may not require a cli/ module. A differential test pins it to
+// assertPathIdentity.
+const PPI1_CHARSET = /^[A-Za-z0-9._/-]+$/;
+const PPI1_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+const PPI1_DEVICE_NAME = /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])$/;
+const PPI1_RESERVED_SEGMENTS = Object.freeze([".git", ".github", "node_modules", "secrets", "credentials"]);
+const PPI1_RESERVED_FILES = Object.freeze(["package.json", "package-lock.json"]);
+
+function asciiFold(s) {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
+function isPpi1Path(p, framework) {
+  if (typeof p !== "string" || p.length < 1 || p.length > 300 || !PPI1_CHARSET.test(p) || !isSafeRepoRelativePath(p) || !isCanonicalPlanPath(p) || isProtectedPath(p)) return false;
+  const parts = p.split("/");
+  return (
+    parts.length >= 2 &&
+    parts[0] === framework &&
+    parts.every((s) => s.length >= 1 && s.length <= 100 && PPI1_SEGMENT.test(s) && !s.endsWith(".") && !PPI1_DEVICE_NAME.test(s.split(".")[0].toUpperCase()) && !PPI1_RESERVED_SEGMENTS.includes(asciiFold(s))) &&
+    !PPI1_RESERVED_FILES.includes(asciiFold(parts[parts.length - 1])) &&
+    !isProtectedPath(asciiFold(p))
+  );
+}
+
+// Per-entry run-wide target conflicts over ordered path lists (a non-string
+// entry is skipped; callers pass only PPI-1 paths). The key is the PPI-1 key
+// (ASCII case-fold of the exact path) and operations are not consulted, so
+// CREATE and MODIFY collide alike. Each conflicting pair is reported once, at
+// its LATER entry: an equal key -> DUPLICATE_ID; a key that is a proper
+// "/"-segment ancestor or descendant of an earlier key -> INVARIANT_VIOLATION;
+// both -> both, in that order. Its code set equals the parent's
+// crossPlanPathCodes() for the same input (differential test). A Map trie
+// keeps it linear in total path length and immune to keys like __proto__.
+// Returns [{ list, index, code }] in entry order.
+function findPlanPathConflicts(pathLists) {
+  const findings = [];
+  const root = { file: false, children: new Map() };
+  for (let li = 0; li < pathLists.length; li++) {
+    const list = pathLists[li];
+    for (let ei = 0; ei < list.length; ei++) {
+      if (typeof list[ei] !== "string") continue;
+      let node = root;
+      let overlap = false;
+      for (const segment of asciiFold(list[ei]).split("/")) {
+        if (node.file) overlap = true;
+        let next = node.children.get(segment);
+        if (!next) {
+          next = { file: false, children: new Map() };
+          node.children.set(segment, next);
+        }
+        node = next;
+      }
+      if (node.children.size > 0) overlap = true;
+      if (overlap) findings.push({ list: li, index: ei, code: ERROR_CODES.INVARIANT_VIOLATION });
+      if (node.file) findings.push({ list: li, index: ei, code: ERROR_CODES.DUPLICATE_ID });
+      node.file = true;
+    }
+  }
+  return findings;
+}
+
+function validatePlanScope(scope, candidateSnapshot, errors) {
+  const p = "$.coordination.planScope";
+  if (!isPlainObject(scope)) {
+    errors.push(err(p, ERROR_CODES.INVALID_TYPE, `${p} must be an object`));
+    return;
+  }
+  collectUnknownKeyErrors(scope, PLAN_SCOPE_ALLOWED_KEYS, p, errors);
+  if (!isValidId(scope.candidateId)) {
+    errors.push(err(`${p}.candidateId`, ERROR_CODES.INVALID_TYPE, `${p}.candidateId must be a bounded string id`));
+  } else if (scope.candidateId !== candidateSnapshot.id) {
+    errors.push(err(`${p}.candidateId`, ERROR_CODES.INVALID_REFERENCE, `${p}.candidateId does not match the authorized AutomationCandidate`));
+  }
+  const testCase = scope.testCase;
+  if (!isPlainObject(testCase)) {
+    errors.push(err(`${p}.testCase`, ERROR_CODES.INVALID_TYPE, `${p}.testCase must be an object`));
+  } else {
+    collectUnknownKeyErrors(testCase, SCOPE_TEST_CASE_ALLOWED_KEYS, `${p}.testCase`, errors);
+    if (!isValidId(testCase.id)) {
+      errors.push(err(`${p}.testCase.id`, ERROR_CODES.INVALID_TYPE, `${p}.testCase.id must be a bounded string id`));
+    } else if (testCase.id !== candidateSnapshot.testCaseId) {
+      errors.push(err(`${p}.testCase.id`, ERROR_CODES.INVALID_REFERENCE, `${p}.testCase.id does not match the candidate's testCaseId`));
+    }
+    if (!isBoundedText(testCase.title, F0_LIMITS.SHORT_TEXT_MAX_LENGTH)) {
+      errors.push(err(`${p}.testCase.title`, ERROR_CODES.INVALID_TYPE, `${p}.testCase.title must be a bounded, non-empty string`));
+    }
+    if (!isBoundedText(testCase.objective, F0_LIMITS.LONG_TEXT_MAX_LENGTH)) {
+      errors.push(err(`${p}.testCase.objective`, ERROR_CODES.INVALID_TYPE, `${p}.testCase.objective must be a bounded, non-empty string`));
+    }
+  }
+  const requirements = scope.requirements;
+  if (!Array.isArray(requirements)) {
+    errors.push(err(`${p}.requirements`, ERROR_CODES.INVALID_TYPE, `${p}.requirements must be an array`));
+    return;
+  }
+  if (requirements.length === 0 || requirements.length > F0_LIMITS.MAX_RELATED_IDS) {
+    errors.push(err(`${p}.requirements`, ERROR_CODES.INVALID_VALUE, `${p}.requirements must hold 1 to ${F0_LIMITS.MAX_RELATED_IDS} requirements`));
+    return;
+  }
+  requirements.forEach((requirement, i) => {
+    const rp = `${p}.requirements[${i}]`;
+    if (!isPlainObject(requirement)) {
+      errors.push(err(rp, ERROR_CODES.INVALID_TYPE, `${rp} must be an object`));
+      return;
+    }
+    collectUnknownKeyErrors(requirement, SCOPE_REQUIREMENT_ALLOWED_KEYS, rp, errors);
+    if (!isValidId(requirement.id)) errors.push(err(`${rp}.id`, ERROR_CODES.INVALID_TYPE, `${rp}.id must be a bounded string id`));
+    if (!isBoundedText(requirement.text, F0_LIMITS.LONG_TEXT_MAX_LENGTH)) errors.push(err(`${rp}.text`, ERROR_CODES.INVALID_TYPE, `${rp}.text must be a bounded, non-empty string`));
+  });
+  collectDuplicateIdErrors(requirements, "id", `${p}.requirements`, errors);
+}
+
+// Re-validated on every call, independently of the caller: each entry a
+// PPI-1 path of this framework, strictly ascending, and the list itself
+// conflict-free. Messages never contain a path value.
+function validateReservedPaths(paths, framework, errors) {
+  const p = "$.coordination.reservedPaths";
+  if (!Array.isArray(paths)) {
+    errors.push(err(p, ERROR_CODES.INVALID_TYPE, `${p} must be an array`));
+    return;
+  }
+  if (paths.length > MAX_RESERVED_PATHS) {
+    errors.push(err(p, ERROR_CODES.INVALID_VALUE, `${p} exceeds the maximum of ${MAX_RESERVED_PATHS} entries`));
+    return;
+  }
+  let valid = true;
+  for (let i = 0; i < paths.length; i++) {
+    if (!isPpi1Path(paths[i], framework)) {
+      errors.push(err(`${p}[${i}]`, ERROR_CODES.INVALID_VALUE, `${p}[${i}] is not a canonical PPI-1 target path of this framework`));
+      valid = false;
+    } else if (i > 0 && typeof paths[i - 1] === "string" && !(paths[i - 1] < paths[i])) {
+      errors.push(err(`${p}[${i}]`, ERROR_CODES.INVALID_VALUE, `${p} must be sorted strictly ascending`));
+      valid = false;
+    }
+  }
+  if (!valid) return;
+  for (const finding of findPlanPathConflicts([paths])) {
+    errors.push(err(`${p}[${finding.index}]`, ERROR_CODES.INVALID_VALUE, `${p}[${finding.index}] conflicts with an earlier reserved path`));
+  }
+}
+
+function validateCoordinationSnapshot(coordination, candidateSnapshot, framework) {
+  if (!isPlainObject(coordination)) {
+    return [err("$.coordination", ERROR_CODES.INVALID_TYPE, "coordination must be a plain object")];
+  }
+  const errors = [];
+  collectUnknownKeyErrors(coordination, COORDINATION_ALLOWED_KEYS, "$.coordination", errors);
+  for (const key of COORDINATION_ALLOWED_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(coordination, key)) errors.push(err(`$.coordination.${key}`, ERROR_CODES.MISSING_FIELD, `$.coordination.${key} is required`));
+  }
+  if (Object.prototype.hasOwnProperty.call(coordination, "planScope")) validatePlanScope(coordination.planScope, candidateSnapshot, errors);
+  if (Object.prototype.hasOwnProperty.call(coordination, "reservedPaths")) validateReservedPaths(coordination.reservedPaths, framework, errors);
+  return errors;
+}
+
+// Fixed correction-prompt messages: they name the rule, never a path.
+const RESERVATION_MESSAGES = Object.freeze({
+  [ERROR_CODES.INVALID_PATH]: "this target path is not a canonical PPI-1 path of this framework",
+  [ERROR_CODES.DUPLICATE_ID]: "this target path equals a reserved or earlier target path (exactly or by letter case); choose a different path",
+  [ERROR_CODES.INVARIANT_VIOLATION]: "this target path is a parent directory of, or lies inside, a reserved or earlier target path; choose a different path",
+});
+
+// The advisory per-entry check of one attempt's plan against the reserved
+// paths (coordinated mode only). An entry whose path is not a string is left
+// to validateAutomationPlan; a non-PPI-1 path is INVALID_PATH and is not
+// compared, so the provider can correct it on its remaining attempt.
+function validateReservedPathBinding(plan, reservedPaths, framework) {
+  const errors = [];
+  if (!isPlainObject(plan) || !Array.isArray(plan.plannedChanges)) return errors;
+  const paths = plan.plannedChanges.map((change, i) => {
+    const target = isPlainObject(change) ? change.path : undefined;
+    if (typeof target !== "string") return null;
+    if (isPpi1Path(target, framework)) return target;
+    errors.push(err(`$.plannedChanges[${i}].path`, ERROR_CODES.INVALID_PATH, RESERVATION_MESSAGES[ERROR_CODES.INVALID_PATH]));
+    return null;
+  });
+  for (const finding of findPlanPathConflicts([reservedPaths, paths])) {
+    if (finding.list === 1) errors.push(err(`$.plannedChanges[${finding.index}].path`, finding.code, RESERVATION_MESSAGES[finding.code]));
+  }
+  return errors;
+}
+
 // Builds the ONLY object ever sent to the provider. A deliberate positive
 // allowlist - never `JSON.stringify(repositoryContext)` /
 // `JSON.stringify(automationCandidate)` wholesale (see this module's own
 // docstring). Package script COMMAND bodies are never included - only
 // names (Roadmap #23C, Phase 15: AutomationRepositoryContext guarantees
 // only targeted minimization, not that a selected script's command text
-// is free of secret-shaped values).
-function buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework }) {
-  return {
+// is free of secret-shaped values). OD-265-B1: a validated `coordination`
+// adds exactly `scope` (TestCase id/title/objective, requirement id/text;
+// never planScope.candidateId) and `reservedPaths`, field by field.
+function buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework, coordination }) {
+  const projection = {
     projectId: contextSnapshot.projectId,
     framework,
     candidate: {
@@ -557,6 +771,15 @@ function buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework
       content: item.content,
     })),
   };
+  if (coordination !== undefined) {
+    const { testCase, requirements } = coordination.planScope;
+    projection.scope = {
+      testCase: { id: testCase.id, title: testCase.title, objective: testCase.objective },
+      requirements: requirements.map((requirement) => ({ id: requirement.id, text: requirement.text })),
+    };
+    projection.reservedPaths = coordination.reservedPaths.map((p) => p);
+  }
+  return projection;
 }
 
 /**
@@ -585,12 +808,20 @@ function buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework
  * context, an outbound prompt that exceeds LIMITS.MAX_OUTBOUND_PROMPT_CHARS)
  * also makes zero provider calls for that attempt.
  *
+ * `coordination` (OD-265-B1), when not `undefined`, must be exactly
+ * {planScope: {candidateId, testCase: {id, title, objective}, requirements:
+ * [{id, text}]}, reservedPaths: [PPI-1 path, ...]} bound to this candidate;
+ * anything partial, extra, mistyped or unbound is refused with zero provider
+ * calls. There is no separate mode flag: coordinated prompts are used iff it
+ * validated. Collisions with the reserved paths use only the remaining
+ * attempt of `maxAttempts`.
+ *
  * Returns { ok: true, automationPlan, providerAttempts } or { ok: false,
  * errors: [{path,code,message}, ...], providerAttempts } - never the raw
  * provider response, the prompt, the repository context, or any caller
  * object.
  */
-async function generateAutomationPlan({ automationCandidate, repositoryContext, provider, expectedProjectId, maxAttempts } = {}) {
+async function generateAutomationPlan({ automationCandidate, repositoryContext, provider, expectedProjectId, maxAttempts, coordination } = {}) {
   if (maxAttempts !== undefined && maxAttempts !== 1 && maxAttempts !== 2) {
     return { ok: false, errors: [err("$.maxAttempts", ERROR_CODES.INVALID_VALUE, "maxAttempts must be exactly 1 or 2 (or omitted for the default of 2)")], providerAttempts: 0 };
   }
@@ -609,6 +840,8 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
   // repositoryContext again.
   const candidateSnapshot = deepFreeze(snapshotOwnData(automationCandidate));
   const contextSnapshot = deepFreeze(snapshotOwnData(repositoryContext));
+  const coordinated = coordination !== undefined;
+  const coordinationSnapshot = coordinated ? deepFreeze(snapshotOwnData(coordination)) : undefined;
 
   const candidateResult = validateAutomationCandidate(candidateSnapshot, { expectedProjectId });
   const contextErrors = validateRepositoryContextSnapshot(contextSnapshot, { expectedProjectId });
@@ -646,8 +879,18 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
     };
   }
 
-  const projection = deepFreeze(buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework }));
-  const systemPrompt = buildAutomationPlanSystemPrompt({ framework });
+  if (coordinated) {
+    const coordinationErrors = validateCoordinationSnapshot(coordinationSnapshot, candidateSnapshot, framework);
+    if (coordinationErrors.length > 0) return { ok: false, errors: coordinationErrors, providerAttempts: 0 };
+  }
+
+  const projection = deepFreeze(buildPositiveProjection({ candidateSnapshot, contextSnapshot, framework, coordination: coordinationSnapshot }));
+  // OD-265-B1 consistency: the coordinated rules and both projection keys are
+  // present together or not at all.
+  if (Object.prototype.hasOwnProperty.call(projection, "scope") !== coordinated || Object.prototype.hasOwnProperty.call(projection, "reservedPaths") !== coordinated) {
+    return { ok: false, errors: [err("$.coordination", ERROR_CODES.INVALID_VALUE, "coordination and provider projection disagree")], providerAttempts: 0 };
+  }
+  const systemPrompt = buildAutomationPlanSystemPrompt({ framework, coordinated });
 
   let providerAttempts = 0;
   let lastErrors = [];
@@ -705,7 +948,8 @@ async function generateAutomationPlan({ automationCandidate, repositoryContext, 
 
     const planResult = validateAutomationPlan(parsedPlan, { expectedProjectId: contextSnapshot.projectId });
     const bindingErrors = validatePlanBinding(parsedPlan, candidateSnapshot, framework);
-    const allErrors = [...(planResult.ok ? [] : planResult.errors), ...bindingErrors];
+    const reservationErrors = coordinated ? validateReservedPathBinding(parsedPlan, coordinationSnapshot.reservedPaths, framework) : [];
+    const allErrors = [...(planResult.ok ? [] : planResult.errors), ...bindingErrors, ...reservationErrors];
 
     if (allErrors.length === 0) {
       return { ok: true, automationPlan: deepFreeze(parsedPlan), providerAttempts };
@@ -727,4 +971,5 @@ module.exports = {
   LIMITS,
   buildPositiveProjection,
   snapshotOwnData,
+  findPlanPathConflicts,
 };

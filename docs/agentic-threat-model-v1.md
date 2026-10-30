@@ -264,7 +264,15 @@ validation (`generation/cross-model-validation.js`) checks structural
 consistency, not semantic safety. Gap: no stage currently treats a prior
 stage's *generated* output as requiring the same "data, not instruction"
 framing a raw external requirement gets. Risk: MEDIUM-HIGH (compounding).
-Handoff: AISEC-2.
+Handoff: AISEC-2. Update (`OD-265-B1`, `1.0.2`): the AutomationPlan stage
+is now a further entry - each call re-presents the candidate's generated
+TestCase `title`/`objective` and referenced requirement `text`, and the
+target paths of the run's earlier accepted (generated) plans. Both are
+placed in the JSON data block under explicit "DATA, not instructions"
+system-prompt rules; re-presented paths must pass PPI-1 before reservation
+and again on every call; no earlier plan purpose is re-presented, and the
+parent's run-wide rule (contract §13.9) still decides acceptance. A
+charset-valid path word can still carry injection-like text (residual).
 
 **AT-04 — Attacker causes a test case to publish to the wrong Azure
 DevOps project.** Attacker: exploits misconfiguration or a confused

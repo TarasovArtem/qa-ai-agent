@@ -134,6 +134,47 @@ function automateCandidates(automationCandidates) {
   return automationCandidates.filter((c) => c.decision === "AUTOMATE");
 }
 
+// OD-265-B1: the planning scope of each AUTOMATE candidate, in candidate
+// order, resolved by exact id equality only: candidate.testCaseId -> the one
+// TestCase with that id -> its requirementIds -> the one Requirement with
+// each id (first occurrence; a repeated id is listed once). Never by
+// candidate position or id format. Only the provider-visible fields are
+// copied, plus candidateId for the child's binding check. An unresolved
+// (INVALID_REFERENCE) or ambiguous (DUPLICATE_ID) reference refuses the run
+// as an invalid persisted design before any child exists; after
+// validateDesign that is unreachable (defense in depth).
+function buildPlanScopes({ requirementModel, testCaseModel }, automate) {
+  const errors = [];
+  const index = (items) => {
+    const byId = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+      const id = item && typeof item === "object" ? item.id : undefined;
+      if (byId.has(id)) errors.push({ code: ERROR_CODES.DUPLICATE_ID });
+      else byId.set(id, item);
+    }
+    return byId;
+  };
+  const testCases = index(testCaseModel && testCaseModel.testCases);
+  const requirements = index(requirementModel && requirementModel.requirements);
+  const scopes = automate.map((candidate) => {
+    const testCase = typeof candidate.testCaseId === "string" ? testCases.get(candidate.testCaseId) : undefined;
+    if (!testCase || !Array.isArray(testCase.requirementIds)) {
+      errors.push({ code: ERROR_CODES.INVALID_REFERENCE });
+      return null;
+    }
+    const ids = [...new Set(testCase.requirementIds)];
+    const referenced = ids.map((id) => requirements.get(id));
+    if (referenced.includes(undefined)) errors.push({ code: ERROR_CODES.INVALID_REFERENCE });
+    return {
+      candidateId: candidate.id,
+      testCase: { id: testCase.id, title: testCase.title, objective: testCase.objective },
+      requirements: referenced.filter(Boolean).map((r) => ({ id: r.id, text: r.text })),
+    };
+  });
+  if (errors.length > 0) throw persistedInvalid("design", codesOf(errors));
+  return scopes;
+}
+
 // --- plan -------------------------------------------------------------------------------
 
 function buildLiveRepositoryContext(root, config) {
@@ -349,6 +390,7 @@ module.exports = {
   frameworkCapability,
   validateDesign,
   automateCandidates,
+  buildPlanScopes,
   buildLiveRepositoryContext,
   validatePlans,
   crossPlanPathCodes,
