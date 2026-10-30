@@ -93,12 +93,12 @@ test("CLI --version prints exactly the package version", async () => {
   assert.equal(r.stderr, "");
 });
 
-test("CLI version is 1.0.1 (OD-265-A1): the run-wide plan rule binds new runs to a version distinct from pre-fix 1.0.0 runs", async () => {
+test("CLI version is 1.0.2 (OD-265-B1): coordinated planning binds new runs to a version distinct from 1.0.1 and pre-fix 1.0.0 runs", async () => {
   const lock = require("../../../package-lock.json");
-  assert.equal(pkg.version, "1.0.1");
-  assert.equal(lock.version, "1.0.1");
-  assert.equal(lock.packages[""].version, "1.0.1");
-  assert.equal((await runCli(["--version"])).stdout, "1.0.1\n");
+  assert.equal(pkg.version, "1.0.2");
+  assert.equal(lock.version, "1.0.2");
+  assert.equal(lock.packages[""].version, "1.0.2");
+  assert.equal((await runCli(["--version"])).stdout, "1.0.2\n");
 });
 
 test("CLI --help lists supported commands, marks reserved ones, and offers no --provider flag", async () => {

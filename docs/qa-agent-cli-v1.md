@@ -262,6 +262,23 @@ binding, stage-order, digest and per-plan refusals keep precedence. Runs
 created by `1.0.0` fail the product-version binding (`RUN_BINDING_MISMATCH`).
 Normative text: `controlled-v1-approval-apply-contract-v1.md` §13.9.
 
+**Coordinated planning (OD-265-B1, since 1.0.2).** The parent resolves each
+`AUTOMATE` candidate's own TestCase and its referenced requirements by exact
+id (unresolved or ambiguous → exit 4 `RUN_ARTIFACT_INVALID` before the child
+starts) and passes them to the child, which plans the candidates strictly in
+order. Each provider call also sees, as data, that TestCase's `id`, `title`
+and `objective`, those requirements' `id` and `text`, and the sorted target
+paths of the plans already accepted in this run — never TestCase steps,
+preconditions or priority, unrelated TestCases or requirements, or earlier
+plans' purposes. A conflict with an earlier target can be corrected only on
+the generator's existing second attempt (at most two provider calls per
+candidate); if it persists the child refuses with exit 6 `PROVIDER_FAILURE`
+and nothing is written, so an honest child usually reports conflicts this
+way rather than as `PROVIDER_OUTPUT_REFUSED`. Malformed coordination input →
+exit 4 `GENERATION_INPUT_REFUSED` before any provider call. The run-wide rule
+above stays the acceptance gate for whatever the child returns. Runs created
+by `1.0.1` fail the product-version binding (`RUN_BINDING_MISMATCH`).
+
 **Run manifest and binding** (`manifest.json`, `QaAgentRunManifest` v1):
 run id, product name/version, `RunSemanticProjection` v1 version + SHA-256
 (`projectProfile`, `framework`, `frameworkRuntime`, `knowledge`,

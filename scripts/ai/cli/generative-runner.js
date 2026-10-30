@@ -8,13 +8,21 @@
  * (scripts/ai/config.js via providers/index.js) are first loaded here, in a
  * process whose environment already equals the parent's effective decision.
  *
- * It is a thin adapter onto the existing provider-backed generators - no
- * generation, validation or prompt logic lives here:
+ * It is an adapter onto the existing provider-backed generators - no
+ * generation or prompt logic lives here:
  *
  *   design    generateRequirementModel -> generateTestCaseModel ->
  *             generateAutomationCandidate (one per test case)
  *   plan      generateAutomationPlan (one per AUTOMATE candidate)
  *   generate  generateChangeSet (one per AutomationPlan)
+ *
+ * The plan step additionally performs bounded sequential coordination
+ * (OD-265-B1): candidates are planned strictly in order, each call receives
+ * its own parent-resolved scope and a sorted copy of the target paths of the
+ * plans already accepted, and a plan's paths are reserved only after the
+ * plan was accepted and passed PPI-1. That is advisory; acceptance of the
+ * whole set stays with the parent's run-wide rule. It never adds a provider
+ * attempt: each candidate has at most the generator's own two.
  *
  * Its inputs are values the parent already validated; its outputs are
  * re-validated by the parent before anything is written. It never touches
@@ -41,6 +49,7 @@ const { generateTestCaseModel } = require("../generative-test-design/test-case-m
 const { generateAutomationCandidate } = require("../generative-test-design/automation-candidate-generator");
 const { generateAutomationPlan } = require("../test-automation/automation-plan-generator");
 const { generateChangeSet } = require("../test-automation/generate-change-set");
+const { assertPathIdentity } = require("./path-identity");
 
 const GENERATIVE_PROVIDERS = Object.freeze(["groq", "gemini"]);
 const CODE_PATTERN = /^[A-Z][A-Z_]{0,63}$/;
@@ -85,11 +94,36 @@ async function runDesign(provider, p) {
   return { ok: true, artifacts: { requirementModel: rm.requirementModel, testCaseModel: tcm.testCaseModel, automationCandidates } };
 }
 
+// OD-265-B1: one scope per candidate, aligned by candidate id, else nothing
+// is called. With no candidate there is no call to coordinate, so an absent
+// list is the empty list (the pre-B1 zero-call result; the parent itself
+// never plans zero candidates).
+function scopesAligned(candidates, scopes) {
+  if (Array.isArray(candidates) && candidates.length === 0 && scopes === undefined) return true;
+  if (!Array.isArray(candidates) || !Array.isArray(scopes) || scopes.length !== candidates.length) return false;
+  return scopes.every((scope, i) => scope !== null && typeof scope === "object" && candidates[i] !== null && typeof candidates[i] === "object" && typeof scope.candidateId === "string" && scope.candidateId === candidates[i].id);
+}
+
 async function runPlan(provider, p) {
+  const candidates = p.automationCandidates;
+  if (!scopesAligned(candidates, p.planScopes)) return stepFailure("automationPlan", { errors: [{ code: "INVALID_REFERENCE" }], providerAttempts: 0 });
   const automationPlans = [];
-  for (const automationCandidate of p.automationCandidates) {
-    const r = await generateAutomationPlan({ automationCandidate, repositoryContext: p.repositoryContext, provider, expectedProjectId: p.projectId });
+  const reserved = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const coordination = { planScope: p.planScopes[i], reservedPaths: [...reserved].sort() };
+    const r = await generateAutomationPlan({ automationCandidate: candidates[i], repositoryContext: p.repositoryContext, provider, expectedProjectId: p.projectId, coordination });
     if (!r.ok) return stepFailure("automationPlan", r);
+    const paths = r.automationPlan.plannedChanges.map((change) => change.path);
+    // PPI-1 before reservation, so no non-canonical provider string is ever
+    // forwarded into a later prompt; no correction call (the generator's
+    // attempts are spent).
+    try {
+      assertPathIdentity(paths, r.automationPlan.framework);
+    } catch (error) {
+      if (!error || error.code !== "PATH_IDENTITY_REFUSED") throw error;
+      return stepFailure("automationPlan", { errors: [{ code: "INVALID_PATH" }], providerAttempts: r.providerAttempts });
+    }
+    reserved.push(...paths);
     automationPlans.push(r.automationPlan);
   }
   return { ok: true, artifacts: { automationPlans } };

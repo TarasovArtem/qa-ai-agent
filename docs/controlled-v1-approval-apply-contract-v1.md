@@ -1325,10 +1325,34 @@ propose overlapping targets **across** its AutomationPlans:
 7. **Historical runs.** Runs created by `1.0.0` are refused with
    `RUN_BINDING_MISMATCH` (exit 4) by the existing product-version binding
    before any artifact is read; they must be discarded and recreated.
+8. **Coordinated planning (`OD-265-B1`, since `1.0.2`).** `plan` generates
+   one AutomationPlan per AUTOMATE candidate, strictly in candidate order.
+   Each provider call additionally receives, as data, `scope` - the
+   candidate's own TestCase `id`, `title` and `objective` and the `id` and
+   `text` of the requirements that TestCase references, resolved by exact id
+   equality and listed once each in first-occurrence order - and
+   `reservedPaths` - the target paths of the plans already accepted in this
+   run, sorted ascending. TestCase steps, preconditions and priority, other
+   TestCases and requirements, and any content of earlier plans other than
+   their target paths are never sent. A path is reserved only after its plan
+   was accepted and passed PPI-1. The child re-validates every reserved path
+   on every call and checks each proposed path against the reserved paths
+   and the plan's other paths under items 1-3; a conflict can only be
+   corrected on the generator's existing second attempt (at most two provider
+   calls per candidate; no further retry, rename, merge or fallback).
+   Exhausted attempts refuse with `PROVIDER_FAILURE` (exit 6) and nothing is
+   written; malformed coordination input refuses with
+   `GENERATION_INPUT_REFUSED` (exit 4) before any provider call; an
+   unresolved or ambiguous Candidate -> TestCase -> Requirement reference
+   refuses with `RUN_ARTIFACT_INVALID` (exit 4) before the child starts.
+   Coordination is advisory: items 1-6 remain the only acceptance rule for
+   every plan set that reaches the parent. Runs created by `1.0.1` are
+   refused with `RUN_BINDING_MISMATCH` (exit 4) as in item 7.
 
-This rule is a deterministic acceptance check only. It does not coordinate
-plan generation (no prompt, projection or provider change) and it does not
-alter #23F, approval or apply semantics (§13.6 and §22 are unchanged).
+The run-wide rule is a deterministic acceptance check only; coordination
+(item 8) changes what the provider is shown and when a plan is refused,
+never what is accepted. Neither alters #23F, approval or apply semantics
+(§13.6 and §22 are unchanged).
 
 ---
 

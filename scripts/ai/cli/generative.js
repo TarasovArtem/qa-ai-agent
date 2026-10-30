@@ -167,9 +167,12 @@ async function runPlan(ctx) {
   const design = loadDesignStage(run, config);
   const automate = artifacts.automateCandidates(design.automationCandidates);
   if (automate.length === 0) throw inputRefused("NO_AUTOMATE_CANDIDATE", "the design stage of this run produced no AUTOMATE candidate; there is nothing to plan.");
+  // OD-265-B1: each candidate's exact TestCase/Requirement scope for the
+  // child's coordinated planning; the run-wide rule below stays the gate.
+  const planScopes = artifacts.buildPlanScopes(design, automate);
   const repositoryContext = artifacts.buildLiveRepositoryContext(root, config);
 
-  const out = await runGenerativeChild("plan", { automationCandidates: automate, repositoryContext, projectId }, ctx);
+  const out = await runGenerativeChild("plan", { automationCandidates: automate, planScopes, repositoryContext, projectId }, ctx);
   const codes = artifacts.validatePlans({ ...design, automationPlans: out.automationPlans }, { projectId, framework: config.framework });
   if (codes.length > 0) throw providerOutputRefused("plan", codes);
 

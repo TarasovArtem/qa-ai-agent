@@ -5,6 +5,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { EventEmitter } = require("node:events");
+const { PassThrough } = require("node:stream");
 const artifacts = require("./run-artifacts");
 const { assertPathIdentity } = require("./path-identity");
 const { hostilePathSets } = require("../../../test/helpers/ppi1-path-vectors");
@@ -107,12 +109,45 @@ function refused(r, code, reason) {
   assert.equal((r.stdout + r.stderr).includes("CON.cy.js"), false, "hostile path is withheld");
 }
 
+// OD-265-B1: a plan child that skips the coordinated generator's checks and
+// reports `automationPlans` as given, so only the parent gate is exercised.
+function compromisedChild(automationPlans) {
+  const calls = [];
+  const impl = (command, args) => {
+    calls.push({ command, args: [...args] });
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.send = () => {
+      setImmediate(() => {
+        child.emit("message", { type: "result", ok: true, artifacts: { automationPlans } });
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 0, null);
+      });
+      return true;
+    };
+    return child;
+  };
+  return { impl, calls };
+}
+
 test("SEC-S4A-01: real plan hostile CON provider output exits 6 before plan persistence", async () => {
   const { root, runId } = await designed(), dir = runDir(root, runId);
   const before = fs.readFileSync(path.join(dir, "manifest.json"));
+  // OD-265-B1: the coordinated child refuses the non-PPI-1 target itself, after its two attempts.
   const r = await stage("plan", root, [fx.json(planFor(["cypress/e2e/generated/CON.cy.js"]))], runId);
-  refused(r, 6, "PROVIDER_OUTPUT_REFUSED");
+  refused(r, 6, "PROVIDER_FAILURE");
+  assert.match(r.json.errors[0].message, /failed after 2 provider attempt\(s\) \(reason codes: [A-Z_, ]*INVALID_PATH[A-Z_, ]*\); provider output is withheld\.$/);
   assert.equal(r.calls.length, 1);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "manifest.json")), before);
+  assert.equal(fs.existsSync(path.join(dir, "plan")), false);
+  // A child that skips those checks still meets the parent's canonical PPI-1 gate.
+  const child = compromisedChild([planFor(["cypress/e2e/generated/CON.cy.js"])]);
+  const parent = await runCli(["plan", "--run", runId, "--root", root, "--json"], { env: fx.generativeEnv(), spawnImpl: child.impl });
+  refused(parent, 6, "PROVIDER_OUTPUT_REFUSED");
+  assert.equal(parent.json.errors[0].message, "the plan output failed runtime validation (reason codes: INVALID_PATH); nothing was written.");
+  assert.equal(child.calls.length, 1);
   assert.deepEqual(fs.readFileSync(path.join(dir, "manifest.json")), before);
   assert.equal(fs.existsSync(path.join(dir, "plan")), false);
 });
