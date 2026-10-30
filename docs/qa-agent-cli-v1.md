@@ -253,13 +253,19 @@ per-plan checks, `plan` refuses a set of AutomationPlans in which two planned
 changes share a target identity (exact or ASCII case-fold duplicate, any
 `CREATE`/`MODIFY` combination → `DUPLICATE_ID`) or in which one target is a
 `/`-segment ancestor of another (file vs directory → `INVARIANT_VIOLATION`;
-both → `INVARIANT_VIOLATION, DUPLICATE_ID`). Fresh output → exit 6
-`PROVIDER_OUTPUT_REFUSED`, nothing written, the stage stays retryable;
-persisted plans re-read by `generate`, `review show`, `review record` or
-`apply` → exit 4 `RUN_ARTIFACT_INVALID` before any provider call. Paths are
-never repaired and the provider is never re-called automatically; earlier
-binding, stage-order, digest and per-plan refusals keep precedence. Runs
-created by `1.0.0` fail the product-version binding (`RUN_BINDING_MISMATCH`).
+both → `INVARIANT_VIOLATION, DUPLICATE_ID`). The parent applies this rule
+to every plan set the child returns, whatever the child itself checked; it
+is the authoritative acceptance gate and coordinated planning (below) never
+weakens or bypasses it. Fresh output → exit 6 `PROVIDER_OUTPUT_REFUSED` for
+the entire set, nothing written, the stage stays retryable; persisted plans
+re-read by `generate`, `review show`, `review record` or `apply` → exit 4
+`RUN_ARTIFACT_INVALID` before any provider call. Paths are never renamed,
+merged or repaired. After a refusal the product never re-runs the plan stage
+or calls the provider again on its own; only a new `plan` command from the
+operator does (the bounded per-candidate second attempt within one `plan`
+command is described below). Earlier binding, stage-order, digest and
+per-plan refusals keep precedence. Runs created by `1.0.0` fail the
+product-version binding (`RUN_BINDING_MISMATCH`).
 Normative text: `controlled-v1-approval-apply-contract-v1.md` §13.9.
 
 **Coordinated planning (OD-265-B1, since 1.0.2).** The parent resolves each
@@ -270,14 +276,39 @@ order. Each provider call also sees, as data, that TestCase's `id`, `title`
 and `objective`, those requirements' `id` and `text`, and the sorted target
 paths of the plans already accepted in this run — never TestCase steps,
 preconditions or priority, unrelated TestCases or requirements, or earlier
-plans' purposes. A conflict with an earlier target can be corrected only on
-the generator's existing second attempt (at most two provider calls per
-candidate); if it persists the child refuses with exit 6 `PROVIDER_FAILURE`
-and nothing is written, so an honest child usually reports conflicts this
-way rather than as `PROVIDER_OUTPUT_REFUSED`. Malformed coordination input →
-exit 4 `GENERATION_INPUT_REFUSED` before any provider call. The run-wide rule
-above stays the acceptance gate for whatever the child returns. Runs created
-by `1.0.1` fail the product-version binding (`RUN_BINDING_MISMATCH`).
+plans' purposes.
+
+Retries are bounded per candidate: within one `plan` command each candidate
+may use at most two provider attempts, and the generator's existing second
+attempt may correct an invalid response, including a conflict with a
+reserved or earlier target. That is the only repetition. Once a candidate is
+finally refused, no later candidate is planned, nothing is written, and
+neither the parent nor the child restarts the plan stage; planning again
+needs a new `plan` command from the operator. No path is ever silently
+repaired, merged or renamed. Plan-stage refusals map as follows:
+
+- a conflict that persists after the candidate's attempts → the honest
+  child refuses with exit 6 `PROVIDER_FAILURE`;
+- a child that returns a conflicting plan set despite its own checks → the
+  parent's run-wide rule above refuses the entire set with exit 6
+  `PROVIDER_OUTPUT_REFUSED`;
+- a candidate refused locally before its own first provider call (for
+  example malformed coordination input) → exit 4 `GENERATION_INPUT_REFUSED`,
+  even when earlier candidates of the same command already called the
+  provider;
+- an unresolved or ambiguous Candidate → TestCase → Requirement reference →
+  exit 4 `RUN_ARTIFACT_INVALID` before the child starts; a persisted plan
+  set that is invalid is refused on every later reload with exit 4
+  `RUN_ARTIFACT_INVALID` (above).
+
+The attempt count in a plan refusal (the child's `providerAttempts`, shown
+as `… after N provider attempt(s)` or `… before any provider call for that
+candidate`) describes the refused candidate only, never the cumulative calls
+of the whole stage. A refused `plan` command writes no plan artifact and no
+manifest update, so no accepted partial plan-stage output remains and the
+run stays at "design complete". Under `1.0.2`, runs created by `1.0.0` or
+`1.0.1` fail the existing product-version binding (`RUN_BINDING_MISMATCH`,
+exit 4).
 
 **Run manifest and binding** (`manifest.json`, `QaAgentRunManifest` v1):
 run id, product name/version, `RunSemanticProjection` v1 version + SHA-256
