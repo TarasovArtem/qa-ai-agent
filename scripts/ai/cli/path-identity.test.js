@@ -3,6 +3,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { assertPathIdentity, asciiFold } = require("./path-identity");
 const { crossPlanPathCodes } = require("./run-artifacts");
+const { LIMITS } = require("../generation/limits");
 const { hostilePathSets } = require("../../../test/helpers/ppi1-path-vectors");
 test("PPI-1 refuses every contract hostile identity without repairing it", () => {
   for (const paths of hostilePathSets) assert.throws(() => assertPathIdentity(paths, "cypress"), { code: "PATH_IDENTITY_REFUSED" }, JSON.stringify(paths));
@@ -11,6 +12,9 @@ test("PPI-1 refuses every contract hostile identity without repairing it", () =>
 
 // --- OD-265-A1: run-wide target identity across AutomationPlans --------------------
 // Each inner array is the plannedChanges paths of one plan, in plan order.
+// The "Axx" labels in these test names are the implementation's derived
+// labels, not the canonical A01-A22 of the OD-265 Option A decision package
+// section 6; the canonical traceability matrix is recorded on PR #266 (C1).
 
 const T = "playwright/tests";
 const DUP = ["DUPLICATE_ID"], PREFIX = ["INVARIANT_VIOLATION"], BOTH = ["INVARIANT_VIOLATION", "DUPLICATE_ID"];
@@ -44,6 +48,9 @@ test("OD-265-A1 A06/A07: segment-boundary file/directory prefixes collide in bot
     [`${T}/foo/deep/er/a.spec.js`, `${T}/foo`],
     ["playwright/Tests", `${T}/a.spec.js`],
     ["playwright/A/b", "playwright/a/B/c"],
+    // The decision package's own example: a file-shaped name as the ancestor.
+    [`${T}/a.spec.js`, `${T}/a.spec.js/child`],
+    [`${T}/a.spec.js/child`, `${T}/a.spec.js`],
   ]) {
     assert.deepEqual(crossPlanPathCodes([[first], [second]]), PREFIX, `${first} | ${second}`);
     assert.deepEqual(crossPlanPathCodes([[first, second]]), PREFIX, `same plan: ${first} | ${second}`);
@@ -90,7 +97,7 @@ test("OD-265-A1 A10: the identity key is exactly the PPI-1 key (asciiFold parity
 });
 
 test("OD-265-A1 A21: adversarial entries never throw, are never registered and never repaired", () => {
-  const hostile = [null, undefined, 7, {}, [], `${T}/a b.js`, `${T}/./a.js`, `${T}//a.js`, `/${T}/a.js`, `${T}/../a.js`, `${T}\\a.js`, `${T}/a.js/`, "x".repeat(301), `${T}/‮gnp.js`];
+  const hostile = [null, undefined, 7, {}, [], `${T}/a b.js`, `./${T}/a.js`, `${T}/./a.js`, `${T}//a.js`, `/${T}/a.js`, `${T}/../a.js`, `${T}\\a.js`, `${T}/a.js/`, "x".repeat(301), `${T}/\u202egnp.js`];
   for (const h of hostile) {
     assert.deepEqual(crossPlanPathCodes([[h]]), ["INVALID_PATH"], String(h));
     // An alias form is never silently distinct from - nor merged with - its canonical twin.
@@ -104,13 +111,20 @@ test("OD-265-A1 A21: adversarial entries never throw, are never registered and n
 });
 
 test("OD-265-A1 A21: maximum-size input (200 plans x 100 changes x 300 characters) completes and stays exact", () => {
+  // The defined bounds: one plan per AUTOMATE candidate (at most one per test
+  // case), MAX_PLANNED_CHANGES per plan, and a path is short text.
+  assert.deepEqual([LIMITS.MAX_TEST_CASES, LIMITS.MAX_PLANNED_CHANGES, LIMITS.SHORT_TEXT_MAX_LENGTH], [200, 100, 300]);
   const seg = "s".repeat(90);
   const at = (i, j) => { const head = `${T}/${seg}/${seg}/${String(i).padStart(3, "0")}-${String(j).padStart(3, "0")}-`; return head + "z".repeat(300 - head.length); };
   const lists = Array.from({ length: 200 }, (_, i) => Array.from({ length: 100 }, (_, j) => at(i, j)));
   assert.equal(lists[0][0].length, 300);
+  const started = Date.now();
   assert.deepEqual(crossPlanPathCodes(lists), []);
   lists[199][99] = lists[0][0].toUpperCase().replace("PLAYWRIGHT", "playwright");
   assert.deepEqual(crossPlanPathCodes(lists), DUP);
+  // Coarse guard against a super-linear regression only (~0.2 s observed for
+  // both passes); not a performance benchmark.
+  assert.ok(Date.now() - started < 5000);
 });
 
 test("OD-265-A1 A19/A20: TPR Run A and Run B target topologies are refused with DUPLICATE_ID only", () => {
