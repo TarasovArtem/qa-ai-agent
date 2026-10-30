@@ -12,6 +12,12 @@ const { openStage4Run, selectedRecord } = require("./stage4-run");
 const { resolvePrincipal } = require("./stage4-principal");
 const { TerminalSession } = require("./terminal-session");
 const { unescapeValue } = require("./canonical-review-serialization");
+const crypto = require("node:crypto");
+const s3 = require("../../../test/helpers/stage3-fixtures");
+const store = require("./run-store");
+const { buildGeneratedChangeSet } = require("../test-automation/generated-change-set");
+const { buildGeneratedChangeSetReviewPackage } = require("../test-automation/generated-change-set-review-package");
+const pkg = require("../../../package.json");
 after(cleanupScratch);
 test("ARCH-S4A-01: approval expires during confirmation, no attempt/#23F/target write (5)", async () => {
   const f = fx.makeRun(); await runReviewRecord(f.ctx);
@@ -116,6 +122,67 @@ for (const kind of ["applied", "outcome"]) for (const phase of ["create", "write
   assert.match(warning, /#23F status: APPLIED/); for (const p of ["cypress/e2e/generated/login.cy.js", "attempt-", "applied-", "outcome-", "approval remains consumed", "quarantined"]) assert.ok(warning.includes(p), p);
   assert.doesNotMatch(tty.output, /apply completed/);
   await assert.rejects(runApply(fx.withTerminal(f, fx.scriptedTerminal())), e => ["PACKAGE_QUARANTINED", "PACKAGE_ALREADY_APPLIED"].includes(e.code) && e.exitCode === 5);
+});
+// OD-265-A1 (derived A15/A18): Stage 4 reloads the plan stage through the same
+// run-wide validator, so a persisted colliding plan set can neither be
+// presented for approval nor applied, and a run bound to product 1.0.0 is
+// refused by its binding before any artifact is read.
+function collidingRun({ version = pkg.version } = {}) {
+  const f = fx.makeRun(), { root, config, protectedPaths } = f.ctx;
+  const runId = "20261012T120000Z-fedcba9876543210", runDirRel = store.runDirectoryRel(config, runId);
+  // TPR Run A shape: two plans propose CREATE of one target with different content.
+  const plans = [1, 2].map(i => s3.automationPlan({ id: `plan-${i}`, automationCandidateId: `ac-${i}` }));
+  const generated = plans.map((automationPlan, i) => {
+    const built = buildGeneratedChangeSet({ automationPlan, repositoryContext: f.context, changes: [{ operation: "CREATE", path: s3.GENERATED_SPEC, content: `${s3.GENERATED_CONTENT}// ${i}\n`, baseContentDigest: null }], expectedProjectId: s3.PROJECT_ID });
+    assert.equal(built.ok, true, JSON.stringify(built.errors));
+    return { cs: built.generatedChangeSet, rp: buildGeneratedChangeSetReviewPackage({ automationPlan, repositoryContext: f.context, generatedChangeSet: built.generatedChangeSet, expectedProjectId: s3.PROJECT_ID }).reviewPackage };
+  });
+  const n = i => String(i + 1).padStart(4, "0");
+  let manifest = store.newManifest({ runId, product: { name: pkg.name, version }, projection: store.computeProjection(config, store.requirementsDigest(root, config)), createdAt: "2026-10-12T12:00:00.000Z" }), previousDigest = null;
+  for (const [stage, files] of [
+    ["design", [{ path: "design/requirement-model.json", kind: "RequirementModel", value: s3.requirementModel() }, { path: "design/test-case-model.json", kind: "TestCaseModel", value: s3.testCaseModel() }, ...[s3.candidate("tc-1", "AUTOMATE", "ac-1"), s3.candidate("tc-2", "AUTOMATE", "ac-2")].map((value, i) => ({ path: `design/automation-candidate-${n(i)}.json`, kind: "AutomationCandidate", value }))]],
+    ["plan", [{ path: "plan/automation-repository-context.json", kind: "AutomationRepositoryContext", value: f.context }, ...plans.map((value, i) => ({ path: `plan/automation-plan-${n(i)}.json`, kind: "AutomationPlan", value }))]],
+    ["generate", generated.flatMap(({ cs, rp }, i) => [{ path: `generate/generated-change-set-${n(i)}.json`, kind: "GeneratedChangeSet", value: cs }, { path: `generate/review-package-${n(i)}.json`, kind: "GeneratedChangeSetReviewPackage", value: rp }])],
+  ]) {
+    manifest = store.commitStage(root, runDirRel, protectedPaths, { manifest, previousDigest, stage, files, provider: "groq", model: "test", now: new Date("2026-10-12T12:00:00.000Z") });
+    previousDigest = store.loadManifest(path.join(f.root, runDirRel)).digest;
+  }
+  return { ...f, ctx: { ...f.ctx, runId }, runDirReal: path.join(f.root, runDirRel) };
+}
+test("OD-265-A1: review record refuses a persisted colliding plan set (Run A shape) on reload, exit 4, no record, no target write", async () => {
+  for (const ordinal of ["0001", "0002"]) {
+    const f = collidingRun(), before = fs.readFileSync(path.join(f.runDirReal, "manifest.json"));
+    await assert.rejects(runReviewRecord({ ...f.ctx, packageOrdinal: ordinal }), e => e.code === "RUN_ARTIFACT_INVALID" && e.exitCode === 4 && e.message === "the persisted plan artifacts of this run failed validation (reason codes: DUPLICATE_ID)." && !e.message.includes(s3.GENERATED_SPEC));
+    assert.equal(fs.existsSync(path.join(f.runDirReal, "review")), false);
+    assert.equal(f.tty.output, "", "nothing is presented");
+    assert.deepEqual(fs.readFileSync(path.join(f.runDirReal, "manifest.json")), before);
+    assert.equal(fs.existsSync(path.join(f.root, s3.GENERATED_SPEC)), false);
+  }
+});
+test("OD-265-A1: apply refuses an approved run whose persisted plan set now collides, exit 4, approval not consumed, no target write", async () => {
+  const f = fx.makeRun(); await runReviewRecord(f.ctx);
+  const rel = "plan/automation-plan-0001.json", file = path.join(f.runDirReal, ...rel.split("/"));
+  // File/directory overlap inside one plan: valid per PPI-1, refused run-wide.
+  const plan = { ...f.plan, plannedChanges: [...f.plan.plannedChanges, { path: "cypress/e2e/generated", operation: "CREATE", purpose: "Overlap." }] };
+  const text = JSON.stringify(plan); fs.writeFileSync(file, text);
+  const manifestFile = path.join(f.runDirReal, "manifest.json"), manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  for (const s of manifest.stages) for (const a of s.artifacts) if (a.path === rel) a.sha256 = `sha256:${crypto.createHash("sha256").update(text).digest("hex")}`;
+  fs.writeFileSync(manifestFile, store.serialize(manifest));
+  const before = fs.readFileSync(manifestFile);
+  await assert.rejects(runApply(fx.withTerminal(f, fx.scriptedTerminal())), e => e.code === "RUN_ARTIFACT_INVALID" && e.exitCode === 4 && /reason codes: INVARIANT_VIOLATION\)\.$/.test(e.message));
+  assert.equal(fs.existsSync(path.join(f.runDirReal, "apply")), false);
+  assert.equal(fs.existsSync(path.join(f.root, s3.GENERATED_SPEC)), false);
+  assert.deepEqual(fs.readFileSync(manifestFile), before);
+  assert.equal(openStage4Run(f.ctx).state.state, "APPROVED");
+});
+test("OD-265-A1: Stage 4 refuses a run bound to product 1.0.0 with RUN_BINDING_MISMATCH before reading artifacts", async () => {
+  assert.equal(pkg.version, "1.0.1");
+  const f = collidingRun({ version: "1.0.0" });
+  fs.writeFileSync(path.join(f.runDirReal, "plan", "automation-plan-0001.json"), "{ not json");
+  await assert.rejects(runReviewRecord(f.ctx), { code: "RUN_BINDING_MISMATCH", exitCode: 4 });
+  await assert.rejects(runApply(fx.withTerminal(f, fx.scriptedTerminal())), { code: "RUN_BINDING_MISMATCH", exitCode: 4 });
+  assert.equal(fs.existsSync(path.join(f.runDirReal, "review")), false);
+  assert.equal(fs.existsSync(path.join(f.root, s3.GENERATED_SPEC)), false);
 });
 test("ARCH-S4A-04: report values preserve marker/bidi/control/escape tokens across wrap boundaries", async () => {
   const tty = fx.scriptedTerminal(), session = new TerminalSession(tty);

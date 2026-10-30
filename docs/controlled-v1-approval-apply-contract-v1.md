@@ -1288,6 +1288,48 @@ check cannot be performed, apply refuses. Which operating systems are
 SEC-S3-m02 = DESIGN RESOLVED
 ```
 
+### 13.9 Run-wide target identity across AutomationPlans (`OD-265-A1`, Issue #265)
+
+PPI-1 (§13.2-§13.4) refuses duplicate identities **within one** plan or
+package. Since `qa-ai-agent` `1.0.1`, one plan stage additionally MUST NOT
+propose overlapping targets **across** its AutomationPlans:
+
+1. **Identity key.** The PPI-1 key — the ASCII case-fold of the exact path
+   string. No other normalization is performed and nothing is persisted.
+2. **Duplicate identity.** Two planned changes (in the same or in different
+   plans) with equal keys are refused with `DUPLICATE_ID`, whatever their
+   operations: `CREATE`/`CREATE`, `CREATE`/`MODIFY`, `MODIFY`/`CREATE` and
+   `MODIFY`/`MODIFY`. AutomationPlan v1 defines no cross-plan ordering or
+   ownership semantics, so shared-file edits by two plans are unsupported.
+3. **File/directory overlap.** A key that is a proper `/`-segment prefix of
+   another key (a file and a directory of the same name, in either order,
+   at any depth) is refused with `INVARIANT_VIOLATION`. Keys that merely
+   share a parent directory or a string prefix within one segment
+   (`a.cy.js` / `a.cy.js.snap`) do not conflict.
+4. **Reason codes.** Only the existing closed codes are used. When both
+   conditions hold, the order is `INVARIANT_VIOLATION`, `DUPLICATE_ID`; the
+   list does not depend on plan or entry order. Diagnostics never contain a
+   path, purpose or other provider-chosen text.
+5. **Precedence.** The run-wide rule is evaluated only after every plan has
+   passed the existing schema, chain, reference, framework and per-plan PPI-1
+   checks; an earlier refusal reports its own codes only. Manifest binding
+   (`RUN_BINDING_MISMATCH`), stage order and artifact digest checks run before
+   any plan artifact is validated and keep their precedence.
+6. **Acceptance points.** Fresh provider output: `plan` refuses before any
+   plan artifact or manifest write (`PROVIDER_OUTPUT_REFUSED`, exit 6); the
+   run stays at "design complete" and `plan` remains retryable. Persisted
+   plans: every reload (`generate`, `review show`, `review record`, `apply`)
+   refuses before any provider call, presentation, record or target write
+   (`RUN_ARTIFACT_INVALID`, exit 4). The product never renames, merges or
+   repairs a conflicting path and never calls the provider again on its own.
+7. **Historical runs.** Runs created by `1.0.0` are refused with
+   `RUN_BINDING_MISMATCH` (exit 4) by the existing product-version binding
+   before any artifact is read; they must be discarded and recreated.
+
+This rule is a deterministic acceptance check only. It does not coordinate
+plan generation (no prompt, projection or provider change) and it does not
+alter #23F, approval or apply semantics (§13.6 and §22 are unchanged).
+
 ---
 
 ## 14. Reviewer identity

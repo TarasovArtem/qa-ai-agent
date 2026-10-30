@@ -248,6 +248,20 @@ invocation, GitHub or `npm_*` key. The parent never loads `config.js` or a
 provider; it validates the child's output with the existing validators before
 writing anything.
 
+**Run-wide plan target identity (OD-265-A1, since 1.0.1).** Besides the
+per-plan checks, `plan` refuses a set of AutomationPlans in which two planned
+changes share a target identity (exact or ASCII case-fold duplicate, any
+`CREATE`/`MODIFY` combination → `DUPLICATE_ID`) or in which one target is a
+`/`-segment ancestor of another (file vs directory → `INVARIANT_VIOLATION`;
+both → `INVARIANT_VIOLATION, DUPLICATE_ID`). Fresh output → exit 6
+`PROVIDER_OUTPUT_REFUSED`, nothing written, the stage stays retryable;
+persisted plans re-read by `generate`, `review show`, `review record` or
+`apply` → exit 4 `RUN_ARTIFACT_INVALID` before any provider call. Paths are
+never repaired and the provider is never re-called automatically; earlier
+binding, stage-order, digest and per-plan refusals keep precedence. Runs
+created by `1.0.0` fail the product-version binding (`RUN_BINDING_MISMATCH`).
+Normative text: `controlled-v1-approval-apply-contract-v1.md` §13.9.
+
 **Run manifest and binding** (`manifest.json`, `QaAgentRunManifest` v1):
 run id, product name/version, `RunSemanticProjection` v1 version + SHA-256
 (`projectProfile`, `framework`, `frameworkRuntime`, `knowledge`,
