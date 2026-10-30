@@ -965,7 +965,7 @@ test("OD-265-A1 A19/A20: TPR Run A (4 plans) and Run B (6 plans) Playwright topo
   }
 });
 
-test("OD-265-A1 A12/A22: real CLI plan refuses fresh colliding provider output (exit 6), writes nothing, never re-calls the provider and stays retryable", async () => {
+test("OD-265-A1 A12/A22: real CLI plan refuses fresh colliding provider output (exit 6), writes nothing, uses at most the generator's two attempts per candidate, never re-runs the plan stage and stays retryable", async () => {
   // first: index of the first plan that collides with an earlier one.
   for (const [label, n, changes, codes, first] of [
     ["CREATE/CREATE", 2, [[["CREATE", A1_SPEC]], [["CREATE", A1_SPEC]]], "DUPLICATE_ID", 1],
@@ -1505,5 +1505,110 @@ test("OD-265-B1 mandatory 12: runs bound to product 1.0.1 are refused with RUN_B
     const show = await runCli(["review", "show", "--run", runId, "--root", root, "--json"]);
     assert.equal(show.code, 4);
     assert.equal(show.json.errors[0].code, "RUN_BINDING_MISMATCH");
+  }
+});
+
+// --- OD-265-B1-C1 (B1-R1): attempt counts belong to the failing candidate ----------------
+
+const PER_CANDIDATE_REFUSAL = (codes) =>
+  `the AutomationPlan step refused one candidate's input before any provider call for that candidate (reason codes: ${codes}); earlier candidates of this step may already have called the provider; nothing was written.`;
+
+// A scope whose coordinated prompt exceeds the unchanged 100000-character cap,
+// so the generator refuses that candidate locally (0 attempts).
+function oversizeScope(scope) {
+  return { ...scope, requirements: Array.from({ length: 30 }, (_, i) => ({ id: `req-big-${i + 1}`, text: "a".repeat(4000) })) };
+}
+
+// A plan child that reports the given generation failure, so only the
+// parent's classification and persistence are exercised.
+function failingChild(failure) {
+  const calls = [];
+  const impl = (command, args) => {
+    calls.push({ command, args: [...args] });
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.send = () => {
+      setImmediate(() => {
+        child.emit("message", { type: "result", ok: false, failure });
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 1, null);
+      });
+      return true;
+    };
+    return child;
+  };
+  return { impl, calls };
+}
+
+test("OD-265-B1-C1 B1-R1: a zero-attempt AutomationPlan refusal speaks only for the refused candidate; codes, exit codes and every other message are unchanged", () => {
+  const plan = (providerAttempts, codes) => classifyChildFailure("plan", { result: { ok: false, failure: { kind: "generation", step: "automationPlan", providerAttempts, codes } } });
+  const zero = plan(0, ["INVALID_VALUE", MARKER]);
+  assert.deepEqual([zero.code, zero.exitCode], ["GENERATION_INPUT_REFUSED", 4]);
+  assert.equal(zero.message, PER_CANDIDATE_REFUSAL("INVALID_VALUE, UNKNOWN"));
+  assert.doesNotMatch(zero.message, /refused its input before any provider call \(/, "no stage-wide 'no provider call' claim");
+  const two = plan(2, ["DUPLICATE_ID"]);
+  assert.deepEqual([two.code, two.exitCode, two.message], ["PROVIDER_FAILURE", 6, "the AutomationPlan step failed after 2 provider attempt(s) (reason codes: DUPLICATE_ID); provider output is withheld."]);
+  for (const step of ["requirementModel", "testCaseModel", "automationCandidate", "generatedChangeSet"]) {
+    const e = classifyChildFailure("design", { result: { ok: false, failure: { kind: "generation", step, providerAttempts: 0, codes: ["INVALID_TYPE"] } } });
+    assert.deepEqual([e.code, e.exitCode], ["GENERATION_INPUT_REFUSED", 4], step);
+    assert.match(e.message, /^the [A-Za-z]+ step refused its input before any provider call \(reason codes: INVALID_TYPE\)\.$/, step);
+  }
+});
+
+test("OD-265-B1-C1 B1-R1: real runner - a first candidate refused locally makes 0 calls; a later one refused locally after earlier calls reports 0 attempts for itself only; a later one corrected on attempt 2 stays within 2 per candidate", async () => {
+  const design = multiDesign(2);
+  const context = cypressContext();
+  const refusal = { ok: false, failure: { kind: "generation", step: "automationPlan", providerAttempts: 0, codes: ["INVALID_VALUE"] } };
+
+  const first = planPayload(design, context);
+  first.planScopes[0] = oversizeScope(first.planScopes[0]);
+  const none = scriptedProvider(["must not be called"]);
+  assert.deepEqual(await RUNNER_STAGES.plan(none, first), refusal);
+  assert.equal(none.prompts.length, 0, "first candidate: zero provider calls in the whole stage");
+  assert.deepEqual(classified(await RUNNER_STAGES.plan(none, first)), ["GENERATION_INPUT_REFUSED", 4]);
+
+  const later = planPayload(design, context);
+  later.planScopes[1] = oversizeScope(later.planScopes[1]);
+  const earlier = scriptedProvider(["not json", fx.automationPlan({ id: "plan-1", automationCandidateId: "ac-1" }), "a third call must never happen"]);
+  const r = await RUNNER_STAGES.plan(earlier, later);
+  assert.deepEqual(r, refusal, "the failure carries the refused candidate's own 0 attempts");
+  assert.equal(earlier.prompts.length, 2, "candidate 1 used both of its attempts; candidate 2 none");
+  const e = classifyChildFailure("plan", { result: r });
+  assert.deepEqual([e.code, e.exitCode, e.message], ["GENERATION_INPUT_REFUSED", 4, PER_CANDIDATE_REFUSAL("INVALID_VALUE")]);
+
+  const corrected = scriptedProvider([
+    fx.automationPlan({ id: "plan-1", automationCandidateId: "ac-1" }),
+    fx.automationPlan({ id: "plan-2", automationCandidateId: "ac-2" }),
+    fx.automationPlan({ id: "plan-2", automationCandidateId: "ac-2", plannedChanges: [{ path: "cypress/e2e/generated/other.cy.js", operation: "CREATE", purpose: "x" }] }),
+    "a fourth call must never happen",
+  ]);
+  const ok = await RUNNER_STAGES.plan(corrected, planPayload(design, context));
+  assert.equal(ok.ok, true, JSON.stringify(ok.failure));
+  assert.deepEqual(ok.artifacts.automationPlans.map((p) => p.id), ["plan-1", "plan-2"]);
+  assert.equal(corrected.prompts.length, 3, "1 + 2 attempts; never a third for one candidate");
+});
+
+test("OD-265-B1-C1 B1-R1: through the real CLI parent a later-candidate local refusal exits 4 with the per-candidate message, an exhausted one still exits 6, and neither writes a plan artifact or restarts the stage", async () => {
+  const root = fx.makeStage3Root();
+  const d = await stage(["design"], root, A1_RESPONSES.design(2));
+  const runId = d.json.runId;
+  const dir = runDir(root, runId);
+  const manifest = fs.readFileSync(path.join(dir, "manifest.json"));
+  const designFiles = filesUnder(path.join(dir, "design"));
+  for (const [failure, exit, code, message] of [
+    [{ kind: "generation", step: "automationPlan", providerAttempts: 0, codes: ["INVALID_VALUE"] }, 4, "GENERATION_INPUT_REFUSED", PER_CANDIDATE_REFUSAL("INVALID_VALUE")],
+    [{ kind: "generation", step: "automationPlan", providerAttempts: 2, codes: ["DUPLICATE_ID"] }, 6, "PROVIDER_FAILURE", "the AutomationPlan step failed after 2 provider attempt(s) (reason codes: DUPLICATE_ID); provider output is withheld."],
+  ]) {
+    const child = failingChild(failure);
+    const r = await runCli(["plan", "--run", runId, "--root", root, "--json"], { env: fx.generativeEnv(), spawnImpl: child.impl });
+    assert.equal(r.code, exit, r.stderr);
+    assert.deepEqual([r.json.errors[0].code, r.json.errors[0].message], [code, message]);
+    assert.equal(child.calls.length, 1, "one child; the plan stage is never restarted");
+    assertConfidential(r);
+    assert.deepEqual(fs.readFileSync(path.join(dir, "manifest.json")), manifest);
+    assert.deepEqual(filesUnder(path.join(dir, "design")), designFiles);
+    assert.equal(fs.existsSync(path.join(dir, "plan")), false, "no partial plan artifact");
   }
 });

@@ -57,6 +57,12 @@ function classifyChildFailure(stage, outcome) {
     const step = Object.prototype.hasOwnProperty.call(STEP_LABELS, failure.step) ? STEP_LABELS[failure.step] : "generation";
     const attempts = Number.isInteger(failure.providerAttempts) && failure.providerAttempts >= 0 ? failure.providerAttempts : 0;
     const codes = artifacts.sanitizeCodes(failure.codes).join(", ");
+    // OD-265-B1-C1: providerAttempts counts only the failing call. The plan
+    // step makes one coordinated call per candidate, so earlier candidates
+    // may already have called the provider.
+    if (attempts === 0 && failure.step === "automationPlan") {
+      return inputRefused("GENERATION_INPUT_REFUSED", `the ${step} step refused one candidate's input before any provider call for that candidate (reason codes: ${codes}); earlier candidates of this step may already have called the provider; nothing was written.`);
+    }
     if (attempts === 0) return inputRefused("GENERATION_INPUT_REFUSED", `the ${step} step refused its input before any provider call (reason codes: ${codes}).`);
     return providerFailure("PROVIDER_FAILURE", `the ${step} step failed after ${attempts} provider attempt(s) (reason codes: ${codes}); provider output is withheld.`);
   }

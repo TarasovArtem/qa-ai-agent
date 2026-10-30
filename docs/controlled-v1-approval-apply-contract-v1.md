@@ -1321,7 +1321,10 @@ propose overlapping targets **across** its AutomationPlans:
    plans: every reload (`generate`, `review show`, `review record`, `apply`)
    refuses before any provider call, presentation, record or target write
    (`RUN_ARTIFACT_INVALID`, exit 4). The product never renames, merges or
-   repairs a conflicting path and never calls the provider again on its own.
+   repairs a conflicting path, and after a refusal it never re-runs the plan
+   stage or calls the provider again on its own; only a new `plan` command
+   from the operator does. (The bounded second attempt a single generator
+   call may make before it returns is defined in item 8.)
 7. **Historical runs.** Runs created by `1.0.0` are refused with
    `RUN_BINDING_MISMATCH` (exit 4) by the existing product-version binding
    before any artifact is read; they must be discarded and recreated.
@@ -1348,6 +1351,16 @@ propose overlapping targets **across** its AutomationPlans:
    Coordination is advisory: items 1-6 remain the only acceptance rule for
    every plan set that reaches the parent. Runs created by `1.0.1` are
    refused with `RUN_BINDING_MISMATCH` (exit 4) as in item 7.
+   Retry bounds, explicitly: within one `plan` command, each candidate's
+   generator call may use its existing second attempt before it returns a
+   refusal - at most two provider attempts per candidate, unchanged. That is
+   the only repetition: when a candidate is refused, the remaining
+   candidates are not planned, nothing is written, and neither the parent
+   nor the child restarts the plan stage or retries it automatically. The
+   attempt count in a refusal (`... after N provider attempt(s)`, or
+   `before any provider call for that candidate`) is that of the refused
+   candidate only; earlier candidates of the same command may already have
+   called the provider.
 
 The run-wide rule is a deterministic acceptance check only; coordination
 (item 8) changes what the provider is shown and when a plan is refused,
