@@ -38,7 +38,21 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Latest certified repository main / FT0 ROADMAP-only closure:
+Current repository main (TPR product baseline; read-only verified 2026-11-04):
+  main: efeac7a96a5f79b4f7cd01a38baa1ff5ffff0417
+  TREE: da2188f0d629d3c76cb37bbd1b1ba2dd82fc8b7b
+  product: qa-ai-agent@1.0.2
+  PR #267: MERGED / STANDARD_TWO_PARENT (OD-265-B1 scope only)
+  reviewed HEAD: 1f7f7443650fcdf0d9e7353d90eefe1be2f5c23d
+  merge parents: cdb5cc68d4409bb179106f3b15bc82dd831bbae0, 1f7f7443650fcdf0d9e7353d90eefe1be2f5c23d
+  fresh automatic push-event CI on exact merge SHA:
+    Cypress E2E Tests #41071697724 — SUCCESS 7/7 jobs (unit tests 6667/6667)
+    Supply-Chain Audit #41071697622 — SUCCESS 1/1 job
+  review: PO-approved NON-INDEPENDENT ADVISORY exception; no independent
+    Architecture/Security approval claimed
+  TPR Issue #199 OPEN / NOT RELEASED; dependency Issue #265 OPEN
+
+Historical certified repository main / FT0 ROADMAP-only closure:
   main: fd11db77df0c2fa3e71ffd6c5225a8e345d053c9
   PR #260 MERGED / POST-MERGE CERTIFIED
   reviewed HEAD: 78536948b3b9e00e73eed3bffb26a7af4a213b8f
@@ -116,8 +130,8 @@ Historical RTI certification anchor (not the current repository HEAD):
 record](#od-06-execution-design-certification-record) in §8); it is
 documentation-only and changes no runtime behavior. Stage 4B
 `2c666e1261df747eb8ca4ce8d33870c8d47404f4` is a historical Controlled-v1
-implementation certification anchor. The most recent certified repository `main` is the FT0 canonical closure
-merge `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9` (PR #260). The FT0 implementation merge
+implementation certification anchor. At the time of the FT0 sync, the certified repository `main` was the FT0 canonical closure
+merge `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9` (PR #260); it is now a historical anchor, not the current `main`. The FT0 implementation merge
 `742ba32baa64a7fccf5f0af642c89cfdf10295e1` (PR #259) and all earlier
 certified anchors remain historically valid.
 `8aa7c5191e662942f1d73539c740904d385c646d` is the `TSB-F04` + `TSB-F07` +
@@ -153,6 +167,32 @@ baseline. `ca9bfa051206ea4e2f96741f276c660dcc6444ac` is preserved as
 the historical commit the RTI Integrated Audit's targeted re-verification
 (`RTIA-B01`/`RTIA-I01` closure) certified. See [§15](#15-final-target-state)
 and README's own RTI section for the full RTI evidence chain.
+
+### Current PO-approved delivery priority — Technical Preview before Controlled R1
+
+This delivery overlay supersedes the older Stage-5-before-demo order in §7/§15
+**for the bounded Technical Preview only** (OD-R1-RECOVERY-1, PO decision
+2026-10-28; [TPR Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199);
+PO-approved TPR Execution Lock, 2026-11-04).
+
+1. **Technical Preview Release (TPR) first** — one external, disposable
+   `qa-agent-demo` consumer on exact product 1.0.2: requirements/test design
+   → automation planning/generation → human review/conditional approval and apply
+   → human-triggered Playwright Chromium run in a separately assessed isolated
+   runner → evidence. The full acceptance remains unproven; TPR is NOT RELEASED.
+2. **QA AI Agent v1.0 Controlled Agent Release (R1) next** — retain all existing
+   RC-01..RC-12, Controlled-v1 productization and applicable security/review
+   gates, including the separate Stage 5 execution lifecycle
+   (`READY / NOT AUTHORIZED`; `qa-agent execute` remains disabled).
+3. **Full Autonomy after R1** — MEM/RAG/LEARN and the subsequent Full Project
+   Strict Audit, retaining their existing internal order and statuses.
+
+TPR is a **separate, narrower preview**, not an early certification of R1 or
+Stage 5. Provider use, human approval/apply, generated-code execution, and
+publication each retain their own applicable security and PO authorization
+gates. WIP = 1: TPR is the sole active engineering stream. This sync changes
+delivery precedence and current identity only; no engineering stage status,
+security contract, historical certification or release authority changes.
 
 ## 4. Completed major tracks
 
@@ -1405,7 +1445,7 @@ CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE
   →  Full-Autonomy productization / release
 ```
 
-**Current sequence (OD-RATE-1 FT0 ROADMAP-only closure sync).** Per
+**Controlled-v1/R1 sequence as recorded at the historical OD-RATE-1 FT0 ROADMAP-only closure sync.** Per
 the [Controlled v1
 decision](#subsequent-owner-decision--controlled-v1-two-stage-release-model)
 recorded in §7, the QA AI Agent v1.0 Controlled Agent Release precedes
@@ -5518,6 +5558,13 @@ Recording this scope now does not start the audit; it remains
 
 ## 12. Productization
 
+**TPR exception to the R1 productization order:** The PO-approved Technical
+Preview precedes R1 and does not activate or require Stage 5
+(`qa-agent execute` remains disabled). All Stage 5 and full Controlled-v1
+release requirements remain prerequisites of **R1**, not the bounded TPR; see
+[§3](#current-po-approved-delivery-priority--technical-preview-before-controlled-r1)
+and [TPR Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199).
+
 ```text
 Controlled-v1 productization:   STAGES 1–3 COMPLETE_ON_MAIN / REQUIRED BEFORE CONTROLLED V1.0
 Stage 4 design:                APPROVED / MERGED / POST-MERGE CERTIFIED
@@ -5714,6 +5761,12 @@ This file will be updated at each transition;
 `README.md`'s own roadmap section will continue to carry the detailed
 technical evidence for whatever completes.
 
+**Current delivery order:** TPR (bounded external preview, separately
+authorized operations, NOT RELEASED) → Controlled Agent R1 (full Stage 5 and
+other existing R1 gates remain required) → Full Autonomy. The following
+Controlled-v1 sequence is retained for R1 only; it is not a prerequisite chain
+that moves Stage 5 ahead of TPR. No lifecycle status or authority is changed.
+
 **Controlled v1 two-stage release model (current).**
 
 ```text
@@ -5796,7 +5849,7 @@ MEM / RAG / LEARN:               NOT_STARTED / NOT ACTIVATED
 Controlled Release:              NOT APPROVED
 Full autonomy:                   NOT APPROVED
 
-Canonical release sequence:
+Controlled-v1/R1 release sequence (historical scope; the separate TPR precedes Stage 5):
   AISEC-7 COMPLETE_ON_MAIN
   → Type & Schema Boundary Audit COMPLETE_ON_MAIN
   → applicable Controlled-v1 release blockers / required remediations
