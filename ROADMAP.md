@@ -38,7 +38,7 @@ for *sequence and current gate*; README.md remains authoritative for
 ## 3. Certified current baseline
 
 ```text
-Current repository main (TPR product baseline; read-only verified 2026-11-04):
+TPR product baseline main (pre-ROADMAP-SYNC-TPR-1; verified 2026-11-04):
   main: efeac7a96a5f79b4f7cd01a38baa1ff5ffff0417
   TREE: da2188f0d629d3c76cb37bbd1b1ba2dd82fc8b7b
   product: qa-ai-agent@1.0.2
@@ -131,7 +131,7 @@ record](#od-06-execution-design-certification-record) in §8); it is
 documentation-only and changes no runtime behavior. Stage 4B
 `2c666e1261df747eb8ca4ce8d33870c8d47404f4` is a historical Controlled-v1
 implementation certification anchor. At the time of the FT0 sync, the certified repository `main` was the FT0 canonical closure
-merge `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9` (PR #260); it is now a historical anchor, not the current `main`. The FT0 implementation merge
+merge `fd11db77df0c2fa3e71ffd6c5225a8e345d053c9` (PR #260); it is a historical anchor superseded as the recorded baseline. The FT0 implementation merge
 `742ba32baa64a7fccf5f0af642c89cfdf10295e1` (PR #259) and all earlier
 certified anchors remain historically valid.
 `8aa7c5191e662942f1d73539c740904d385c646d` is the `TSB-F04` + `TSB-F07` +
@@ -170,7 +170,7 @@ and README's own RTI section for the full RTI evidence chain.
 
 ### Current PO-approved delivery priority — Technical Preview before Controlled R1
 
-This delivery overlay supersedes the older Stage-5-before-demo order in §7/§15
+This delivery overlay supersedes the older Stage-5-before-demo order in §7/§8/§15
 **for the bounded Technical Preview only** (OD-R1-RECOVERY-1, PO decision
 2026-10-28; [TPR Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199);
 PO-approved TPR Execution Lock, 2026-11-04).
@@ -1394,6 +1394,10 @@ and Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`.
   decision and implemented nothing.
 
 ## 8. Current critical path
+
+**Scope:** The diagram below preserves the historical Controlled-v1/R1 path;
+it is not the current TPR execution order. Under the PO-approved §3 delivery
+overlay, the bounded TPR precedes Stage 5 and the R1 release gates.
 
 ```text
 CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)
@@ -5799,8 +5803,8 @@ TSB-F04 + TSB-F07 + XI-01 + XI-02 remediation:
                                  implementation PR #238; merge
                                  8aa7c5191e662942f1d73539c740904d385c646d)
 FT0 governance lifecycle:        PR #260 MERGED / POST-MERGE CERTIFIED
-active engineering stream:        NONE AUTHORIZED
-next engineering lifecycle:       NOT AUTHORIZED (WIP = 1)
+active engineering stream:        TPR ONLY (WIP = 1; see §3)
+next R1 engineering lifecycle:    NOT AUTHORIZED (Stage 5; WIP = 1)
 Audit findings:                  TSB-F01, TSB-F03, TSB-F04, TSB-F05, TSB-F06,
                                  TSB-F07 CLOSED_ON_MAIN / REMEDIATED;
                                  TSB-F02 OPEN / LOW / CONDITIONAL
@@ -5816,8 +5820,8 @@ Triage-boundary review debt:     ARCH-IMPL-m01; 6 Architecture implementation
                                  SEC-C2-I01..SEC-C2-I07 OPEN / PRESERVED
 TSB-F02 trigger:                 FALSE (no dependent supported consumer;
                                  remains OPEN / LOW / CONDITIONAL)
-subsequent lifecycle:            Stage 5 READY / NOT AUTHORIZED; separate owner
-                                 authorization required; no next engineering
+subsequent R1 lifecycle:         Stage 5 READY / NOT AUTHORIZED; separate PO
+                                 authorization required; no R1 engineering
                                  stage authorized
 Controlled-v1 productization:    Stages 1–3 COMPLETE_ON_MAIN
 Stage 4 design:                  APPROVED / MERGED / POST-MERGE CERTIFIED
