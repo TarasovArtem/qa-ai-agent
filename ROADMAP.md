@@ -182,9 +182,13 @@ PO-approved TPR Execution Lock, 2026-11-04).
 > attempt was **FAILED / CONSUMED** (Design Gate STOP; Plan/Generate not run).
 > G3/G4/G5 remain **NOT AUTHORIZED / NOT COMPLETED** and TPR is **NOT RELEASED**.
 > The original G2 STOP was preserved and the failure evidence was sealed with
-> explicitly **UNVERIFIED** provider-side usage metrics. R1/R2 blockers and
-> B5 runner mismatch remain unresolved. `PD-R1-1` / `PD-R2-1` are design
-> directions only, not implementation grants. WIP = 1; Stage 5 remains disabled.
+> explicitly **UNVERIFIED** provider-side usage metrics. G2 finding R1
+> (verbatim acceptance-criteria fidelity) and G2 finding R2 (gate user-namespace
+> ownership), plus the B5 Chromium runner mismatch, remain unresolved.
+> R3 evidence-seal scope limitation is retained; credential rotation/revocation
+> remains **PENDING**. `PD-R1-1` / `PD-R2-1` are design directions only,
+> not implementation grants. WIP = 1. Stage 5 remains `READY / NOT AUTHORIZED`;
+> `qa-agent execute` remains **DISABLED**.
 > This note is documentary status only; it does not alter the engineering
 > lifecycle, authorize recovery or supersede the required TPR acceptance gates.
 > See [PO-approved NO-GO evidence record](docs/tpr-execution-lock-no-go-2026-11-05.md)
