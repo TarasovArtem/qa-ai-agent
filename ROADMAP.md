@@ -175,6 +175,21 @@ This delivery overlay supersedes the older Stage-5-before-demo order in §7/§8/
 2026-10-28; [TPR Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199);
 PO-approved TPR Execution Lock, 2026-11-04).
 
+> **TPR 96-hour Execution Lock early NO-GO (PO approved 2026-11-05):**
+> The original 2026-11-08 11:04 CET checkpoint ended in an early
+> **NO-GO / BLOCKED** disposition under `OD-TPR-DEADLINE-REBASELINE-1`.
+> G1 unqualified technical PASS was not established; the single bounded G2
+> attempt was **FAILED / CONSUMED** (Design Gate STOP; Plan/Generate not run).
+> G3/G4/G5 remain **NOT AUTHORIZED / NOT COMPLETED** and TPR is **NOT RELEASED**.
+> The original G2 STOP was preserved and the failure evidence was sealed with
+> explicitly **UNVERIFIED** provider-side usage metrics. R1/R2 blockers and
+> B5 runner mismatch remain unresolved. `PD-R1-1` / `PD-R2-1` are design
+> directions only, not implementation grants. WIP = 1; Stage 5 remains disabled.
+> This note is documentary status only; it does not alter the engineering
+> lifecycle, authorize recovery or supersede the required TPR acceptance gates.
+> See [PO-approved NO-GO evidence record](docs/tpr-execution-lock-no-go-2026-11-05.md)
+> and [Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199).
+
 1. **Technical Preview Release (TPR) first** — one external, disposable
    `qa-agent-demo` consumer on exact product 1.0.2: requirements/test design
    → automation planning/generation → human review/conditional approval and apply
