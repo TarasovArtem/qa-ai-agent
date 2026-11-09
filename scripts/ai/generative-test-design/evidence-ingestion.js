@@ -46,7 +46,7 @@
  * below is the ONE explicit, opt-in, one-directional seam between RTI's
  * deterministic `RequirementArtifact` contract (scripts/ai/
  * requirement-artifact.js) and this #22 evidence layer - see
- * docs/architecture-model-boundary-v2.md for the full normative contract.
+ * docs/architecture-model-boundary-v3.md for the full normative contract.
  * It is a thin adapter, not a second ingestion engine: it validates each
  * supplied `RequirementArtifact` with RTI-1's own
  * `assertValidRequirementArtifact()`, deterministically projects it to
@@ -74,8 +74,22 @@
  * every evidence bundle against these exact same thresholds regardless of
  * ingestion path, so no relaxation here could ever be honored end-to-end
  * without also changing that separate, out-of-scope, security-reviewed
- * trust boundary. See docs/architecture-model-boundary-v2.md's "Artifact
+ * trust boundary. See docs/architecture-model-boundary-v3.md's "Artifact
  * evidence budget" section for the full rationale.
+ *
+ * CANONICAL REQUIREMENT PROJECTION (TPR G2 finding R1,
+ * docs/architecture-model-boundary-v3.md): the same adapter call also
+ * returns `canonicalRequirements` - the one bounded, deterministic projection
+ * v3 authorizes from a validated `RequirementArtifact` into
+ * `RequirementModel.requirements[]`. Only `content` and each
+ * `acceptanceCriteria[].text` are copied, byte-for-byte, as requirement
+ * text; requirement ids are built ONLY from this module's own canonical
+ * `EvidenceRef.id` (`<evidenceRefId>.content`, `<evidenceRefId>.ac-NNNN`,
+ * NNNN = 1-based criterion position) - never from `RequirementArtifact.id`
+ * or an optional source criterion id, so the two identity spaces stay
+ * separate. `verifyCanonicalRequirements()` re-derives the same leaves from
+ * evidence text alone, so a consumer holding only the bundle can prove a
+ * supplied requirement list is exactly this projection.
  *
  * INPUT SAFETY / GETTER SAFETY: `assertValidRequirementArtifact(artifact,
  * ...)` is called FIRST, before the adapter reads a single property of
@@ -99,7 +113,8 @@
 "use strict";
 
 const { ERROR_CODES, err } = require("../generation/errors");
-const { isPlainObject, isBoundedText, collectUnknownKeyErrors, collectDuplicateIdErrors, validateProjectId } = require("../generation/primitives");
+const { LIMITS: GENERATION_LIMITS } = require("../generation/limits");
+const { isPlainObject, isBoundedText, isValidId, collectUnknownKeyErrors, collectDuplicateIdErrors, validateProjectId } = require("../generation/primitives");
 const { assertValidRequirementArtifact } = require("../requirement-artifact");
 
 // Roadmap #22B-owned bounds - deliberately local to this module, never
@@ -140,7 +155,7 @@ const LIMITS = Object.freeze({
 // bundle would simply be rejected later, by #22C's own re-validation, with
 // an even more disconnected error that can no longer be traced back to the
 // originating RequirementArtifact. See
-// docs/architecture-model-boundary-v2.md's "Artifact evidence budget"
+// docs/architecture-model-boundary-v3.md's "Artifact evidence budget"
 // section for the full rationale and its explicit consequence: RTI-1
 // structural validity alone does not guarantee a RequirementArtifact's
 // projection is accepted by this adapter.
@@ -291,11 +306,12 @@ function ingestRequirementEvidence(input, { expectedProjectId } = {}) {
 }
 
 // Roadmap ACG-A3 (Architecture Conformance Gate finding A-3) - the one
-// explicit, opt-in adapter allowed by docs/architecture-model-boundary-v2.md:
-// RequirementArtifact[] -> #22 evidence, never the reverse, never a direct
-// RequirementModel coercion. See this module's own docstring for the full
-// rationale, including the INPUT SAFETY / GETTER SAFETY reasoning this
-// function relies on.
+// explicit, opt-in adapter allowed by docs/architecture-model-boundary-v3.md:
+// RequirementArtifact[] -> #22 evidence (+ v3's bounded canonical requirement
+// projection), never the reverse, never any other RequirementModel field or
+// identity. See this module's own docstring for the full rationale,
+// including the INPUT SAFETY / GETTER SAFETY reasoning this function relies
+// on.
 const ARTIFACT_INPUT_ALLOWED_KEYS = Object.freeze(["projectId", "artifacts"]);
 const INGEST_ARTIFACTS_CALLER_LABEL = "ingestRequirementArtifactsAsEvidence";
 
@@ -309,19 +325,159 @@ const INGEST_ARTIFACTS_CALLER_LABEL = "ingestRequirementArtifactsAsEvidence";
 // RequirementArtifact's own contract explicitly defers). `type`/`priority`/
 // `labels` are likewise left out of v1: none carry requirement *wording*,
 // and omitting them keeps the projection minimal-sufficient rather than
-// maximal - see docs/architecture-model-boundary-v2.md for the full
+// maximal - see docs/architecture-model-boundary-v3.md for the full
 // rationale and how to extend this list if a real caller ever needs one of
 // these fields as grounding text.
+const TITLE_LINE_PREFIX = "Title: ";
+const CONTENT_LINE_PREFIX = "Content: ";
+const CRITERIA_HEADER_LINE = "Acceptance Criteria:";
+const CRITERION_LINE_PREFIX = "- ";
+
 function projectRequirementArtifactToEvidenceText(artifact) {
-  const lines = [`Title: ${artifact.title}`];
+  const lines = [`${TITLE_LINE_PREFIX}${artifact.title}`];
   if (typeof artifact.content === "string" && artifact.content.length > 0) {
-    lines.push(`Content: ${artifact.content}`);
+    lines.push(`${CONTENT_LINE_PREFIX}${artifact.content}`);
   }
   if (artifact.acceptanceCriteria.length > 0) {
-    lines.push("Acceptance Criteria:");
-    artifact.acceptanceCriteria.forEach((criterion) => lines.push(`- ${criterion.text}`));
+    lines.push(CRITERIA_HEADER_LINE);
+    artifact.acceptanceCriteria.forEach((criterion) => lines.push(`${CRITERION_LINE_PREFIX}${criterion.text}`));
   }
   return lines.join("\n");
+}
+
+// --- canonical requirement projection (TPR G2 finding R1, boundary v3) -----
+//
+// A requirement "leaf" is one requirement-bearing string of one validated
+// artifact, in the fixed projection order: `content` (when present), then
+// each acceptance criterion in its original array order. `title` is never a
+// leaf (it names the requirement, it does not state it). Leaf text is the
+// exact source string - never trimmed, case-folded, re-punctuated or
+// otherwise normalized.
+function artifactRequirementLeaves(artifact) {
+  const leaves = [];
+  if (typeof artifact.content === "string" && artifact.content.length > 0) {
+    leaves.push({ kind: "content", text: artifact.content });
+  }
+  artifact.acceptanceCriteria.forEach((criterion, index) => leaves.push({ kind: "criterion", index, text: criterion.text }));
+  return leaves;
+}
+
+// Requirement ids live in the #22 identity space only: they are derived from
+// the canonical EvidenceRef.id this module itself assigned, plus a fixed
+// leaf suffix. RequirementArtifact.id and optional criterion ids (which
+// RTI-1 neither bounds to the v1 id limits nor checks for uniqueness) are
+// never used.
+function leafRequirementId(evidenceRefId, leaf) {
+  return leaf.kind === "content" ? `${evidenceRefId}.content` : `${evidenceRefId}.ac-${formatOrdinal(leaf.index + 1)}`;
+}
+
+function leavesToRequirements(evidenceRefId, leaves) {
+  return leaves.map((leaf) => ({ id: leafRequirementId(evidenceRefId, leaf), text: leaf.text, evidenceRefIds: [evidenceRefId] }));
+}
+
+// Re-derives the leaves of one evidence text produced by
+// projectRequirementArtifactToEvidenceText(). RTI-1 rejects every control
+// character in title/content/criterion text, so "\n" only ever separates the
+// fixed lines and the parse is unambiguous. Returns null for any text that is
+// not exactly that shape (for example direct user text from
+// ingestRequirementEvidence()), never a best-effort partial result.
+function parseArtifactEvidenceLeaves(text) {
+  if (typeof text !== "string") return null;
+  const lines = text.split("\n");
+  if (!lines[0].startsWith(TITLE_LINE_PREFIX)) return null;
+  const leaves = [];
+  let i = 1;
+  if (i < lines.length && lines[i].startsWith(CONTENT_LINE_PREFIX)) {
+    leaves.push({ kind: "content", text: lines[i].slice(CONTENT_LINE_PREFIX.length) });
+    i += 1;
+  }
+  if (i < lines.length) {
+    if (lines[i] !== CRITERIA_HEADER_LINE || i + 1 >= lines.length) return null;
+    for (let index = 0, j = i + 1; j < lines.length; index += 1, j += 1) {
+      if (!lines[j].startsWith(CRITERION_LINE_PREFIX)) return null;
+      leaves.push({ kind: "criterion", index, text: lines[j].slice(CRITERION_LINE_PREFIX.length) });
+    }
+  }
+  return leaves.length > 0 ? leaves : null;
+}
+
+// Shape/bounds of an already-projected requirement list against the frozen
+// v1 RequirementModel limits. By construction every check below holds for
+// the adapter's own output; they exist so a defect can never surface as an
+// invalid RequirementModel later, only as a refusal here.
+function collectCanonicalRequirementBoundErrors(requirements, path, errors) {
+  if (requirements.length > GENERATION_LIMITS.MAX_REQUIREMENTS) {
+    errors.push(err(path, ERROR_CODES.INVALID_VALUE, `${path} exceeds the maximum of ${GENERATION_LIMITS.MAX_REQUIREMENTS} canonical requirements`));
+    return;
+  }
+  const seen = new Set();
+  requirements.forEach((requirement, i) => {
+    if (!isValidId(requirement.id) || seen.has(requirement.id)) {
+      errors.push(err(`${path}[${i}].id`, ERROR_CODES.INVARIANT_VIOLATION, `${path}[${i}].id is not a valid, unique canonical requirement id`));
+    }
+    seen.add(requirement.id);
+    if (!isBoundedText(requirement.text, GENERATION_LIMITS.LONG_TEXT_MAX_LENGTH)) {
+      errors.push(err(`${path}[${i}].text`, ERROR_CODES.INVALID_VALUE, `${path}[${i}].text is not representable as RequirementModel requirement text`));
+    }
+  });
+}
+
+const CANONICAL_REQUIREMENT_KEYS = Object.freeze(["id", "text", "evidenceRefIds"]);
+
+/**
+ * Proves that `canonicalRequirements` is exactly the canonical requirement
+ * projection of `evidenceItems` (ids, verbatim text, single evidence
+ * reference, order and count), re-derived from the evidence text alone.
+ * Returns bounded `{path, code, message}` errors (empty when exact); messages
+ * never echo requirement or evidence text. Every evidence item must be an
+ * artifact projection with at least one leaf, so every supplied evidence
+ * reference is cited.
+ */
+function verifyCanonicalRequirements(canonicalRequirements, evidenceItems) {
+  const errors = [];
+  if (!Array.isArray(evidenceItems) || evidenceItems.length === 0) {
+    return [err("$.evidenceItems", ERROR_CODES.MISSING_FIELD, "$.evidenceItems must be a non-empty array")];
+  }
+  if (!Array.isArray(canonicalRequirements) || canonicalRequirements.length === 0) {
+    return [err("$.canonicalRequirements", ERROR_CODES.MISSING_FIELD, "$.canonicalRequirements must be a non-empty array")];
+  }
+  if (canonicalRequirements.length > GENERATION_LIMITS.MAX_REQUIREMENTS) {
+    return [err("$.canonicalRequirements", ERROR_CODES.INVALID_VALUE, `$.canonicalRequirements exceeds the maximum of ${GENERATION_LIMITS.MAX_REQUIREMENTS}`)];
+  }
+
+  const expected = [];
+  evidenceItems.forEach((item, i) => {
+    const ref = isPlainObject(item) && isPlainObject(item.evidenceRef) ? item.evidenceRef : null;
+    const leaves = ref && typeof ref.id === "string" ? parseArtifactEvidenceLeaves(item.text) : null;
+    if (!leaves) {
+      errors.push(err(`$.evidenceItems[${i}]`, ERROR_CODES.INVARIANT_VIOLATION, `$.evidenceItems[${i}] is not a canonical RequirementArtifact evidence projection`));
+      return;
+    }
+    expected.push(...leavesToRequirements(ref.id, leaves));
+  });
+  if (errors.length > 0) return errors;
+
+  collectCanonicalRequirementBoundErrors(expected, "$.canonicalRequirements", errors);
+  if (errors.length > 0) return errors;
+
+  if (expected.length !== canonicalRequirements.length) {
+    return [err("$.canonicalRequirements", ERROR_CODES.INVARIANT_VIOLATION, "$.canonicalRequirements does not match the canonical projection of the supplied evidence")];
+  }
+  canonicalRequirements.forEach((actual, i) => {
+    const want = expected[i];
+    const path = `$.canonicalRequirements[${i}]`;
+    const exact =
+      isPlainObject(actual) &&
+      Object.keys(actual).length === CANONICAL_REQUIREMENT_KEYS.length &&
+      CANONICAL_REQUIREMENT_KEYS.every((key) => Object.prototype.hasOwnProperty.call(actual, key)) &&
+      actual.id === want.id &&
+      actual.text === want.text &&
+      Array.isArray(actual.evidenceRefIds) &&
+      actual.evidenceRefIds.length === 1 &&
+      actual.evidenceRefIds[0] === want.evidenceRefIds[0];
+    if (!exact) errors.push(err(path, ERROR_CODES.INVARIANT_VIOLATION, `${path} does not exactly match its canonical projection`));
+  });
+  return errors;
 }
 
 /**
@@ -351,13 +507,18 @@ function projectRequirementArtifactToEvidenceText(artifact) {
  * `options.expectedProjectId` behaves exactly as it does for
  * `ingestRequirementEvidence()` - passed straight through.
  *
- * Returns `{ ok: true, bundle, mapping }` on success - `bundle` is the
+ * Returns `{ ok: true, bundle, mapping, canonicalRequirements }` on success - `bundle` is the
  * IDENTICAL shape `ingestRequirementEvidence()` itself returns (frozen,
  * canonical `EvidenceRef`s, never caller-influenced), and `mapping` is a
  * separate, frozen, adapter-owned array of `{ requirementArtifactId,
  * evidenceRefId }` pairs (input order preserved) giving traceability back
  * to the source `RequirementArtifact` WITHOUT adding any new field to the
- * frozen v1 `EvidenceRef` schema. Returns `{ ok: false, errors }` on any
+ * frozen v1 `EvidenceRef` schema. `canonicalRequirements` (TPR G2 finding
+ * R1, boundary v3) is the frozen, deterministic RequirementModel
+ * requirement list `[{ id, text, evidenceRefIds: [evidenceRefId] }]` in
+ * artifact -> content -> criteria order (see the module docstring); more
+ * than LIMITS.MAX_REQUIREMENTS (200) leaves fail closed as a `$.artifacts`
+ * error. Returns `{ ok: false, errors }` on any
  * validation failure, including an oversized projection (see
  * `ARTIFACT_EVIDENCE_LIMITS` above) - errors never echo raw artifact
  * content, matching this module's own existing privacy convention, and
@@ -450,6 +611,18 @@ function ingestRequirementArtifactsAsEvidence(input, { expectedProjectId } = {})
         );
       }
     }
+
+    // TPR G2 finding R1 (boundary v3): one canonical requirement per leaf
+    // must fit the frozen v1 RequirementModel bound. Checked here, before any
+    // bundle exists, so an over-limit collection fails closed as an
+    // artifact-facing input refusal - never truncated, never merged, never
+    // handed to a provider to "summarize" into fewer requirements.
+    const leafCount = validatedArtifacts.reduce((sum, artifact) => sum + artifactRequirementLeaves(artifact).length, 0);
+    if (leafCount > GENERATION_LIMITS.MAX_REQUIREMENTS) {
+      errors.push(
+        err("$.artifacts", ERROR_CODES.INVALID_VALUE, `$.artifacts project more than the maximum of ${GENERATION_LIMITS.MAX_REQUIREMENTS} canonical requirements`)
+      );
+    }
   }
 
   if (errors.length > 0) {
@@ -470,12 +643,28 @@ function ingestRequirementArtifactsAsEvidence(input, { expectedProjectId } = {})
     }))
   );
 
-  return { ok: true, bundle, mapping };
+  // TPR G2 finding R1 (boundary v3): built from the validated artifacts (the
+  // authority), index-aligned with the bundle just built from them, then
+  // proven against that bundle's own evidence text before it is returned.
+  const projected = [];
+  validatedArtifacts.forEach((artifact, i) => {
+    projected.push(...leavesToRequirements(bundle.evidenceItems[i].evidenceRef.id, artifactRequirementLeaves(artifact)));
+  });
+  const projectionErrors = [];
+  collectCanonicalRequirementBoundErrors(projected, "$.artifacts", projectionErrors);
+  if (projectionErrors.length === 0) projectionErrors.push(...verifyCanonicalRequirements(projected, bundle.evidenceItems));
+  if (projectionErrors.length > 0) {
+    return { ok: false, errors: projectionErrors };
+  }
+  const canonicalRequirements = deepFreeze(projected);
+
+  return { ok: true, bundle, mapping, canonicalRequirements };
 }
 
 module.exports = {
   ingestRequirementEvidence,
   ingestRequirementArtifactsAsEvidence,
+  verifyCanonicalRequirements,
   LIMITS,
   ARTIFACT_EVIDENCE_LIMITS,
   EVIDENCE_KIND_USER_INPUT,

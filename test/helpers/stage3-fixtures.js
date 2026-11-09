@@ -10,6 +10,13 @@
  * Provider responses are deterministic because #22B evidence ingestion is:
  * requirement i of the requirements file always becomes canonical evidence
  * `evidence-000i` / `user-input-000i`.
+ *
+ * TPR G2 finding R1 (architecture-model-boundary-v3): the RequirementModel's
+ * requirements are the deterministic canonical projection of REQUIREMENTS
+ * (content, then each acceptance criterion, verbatim) with ids derived from
+ * the evidence ids, and the RequirementModel provider call answers only
+ * {assumptions, openQuestions} - see requirementModelResponse(). The
+ * accepted/persisted model is requirementModel().
  */
 
 const crypto = require("node:crypto");
@@ -74,21 +81,36 @@ const EVIDENCE = [
   { id: "evidence-0002", kind: "user_input", sourceId: "user-input-0002" },
 ];
 
+// The canonical projection of REQUIREMENTS (boundary v3): exact source text,
+// ids from the evidence ids, never from REQ-n / AC-n.
+const REQUIREMENT_MODEL_ID = "requirement-model-0001";
+const REQ_1 = "evidence-0001.content";
+const REQ_1_AC_1 = "evidence-0001.ac-0001";
+const REQ_2 = "evidence-0002.content";
+const CANONICAL_REQUIREMENTS = Object.freeze([
+  { id: REQ_1, text: REQUIREMENTS.requirements[0].content, evidenceRefIds: ["evidence-0001"] },
+  { id: REQ_1_AC_1, text: REQUIREMENTS.requirements[0].acceptanceCriteria[0].text, evidenceRefIds: ["evidence-0001"] },
+  { id: REQ_2, text: REQUIREMENTS.requirements[1].content, evidenceRefIds: ["evidence-0002"] },
+]);
+
+// The accepted (and persisted) RequirementModel for REQUIREMENTS.
 function requirementModel(overrides = {}) {
   return {
     schemaVersion: 1,
     kind: "RequirementModel",
-    id: "rm-1",
+    id: REQUIREMENT_MODEL_ID,
     projectId: PROJECT_ID,
     evidenceRefs: EVIDENCE,
-    requirements: [
-      { id: "req-1", text: "Invalid credentials show an error on the login page.", evidenceRefIds: ["evidence-0001"] },
-      { id: "req-2", text: "Logging out shows the login page.", evidenceRefIds: ["evidence-0002"] },
-    ],
+    requirements: CANONICAL_REQUIREMENTS.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] })),
     assumptions: [],
     openQuestions: [],
     ...overrides,
   };
+}
+
+// The RequirementModel provider call's response: gap analysis only.
+function requirementModelResponse(overrides = {}) {
+  return { assumptions: [], openQuestions: [], ...overrides };
 }
 
 function testCaseModel(overrides = {}) {
@@ -97,21 +119,21 @@ function testCaseModel(overrides = {}) {
     kind: "TestCaseModel",
     id: "tcm-1",
     projectId: PROJECT_ID,
-    requirementModelId: "rm-1",
+    requirementModelId: REQUIREMENT_MODEL_ID,
     testCases: [
       {
         id: "tc-1",
         title: "Invalid login shows error",
         objective: "Verify the error for invalid credentials.",
-        requirementIds: ["req-1"],
-        steps: [{ action: "Submit invalid credentials.", expectedResult: "An error message is displayed.", requirementIds: ["req-1"] }],
+        requirementIds: [REQ_1],
+        steps: [{ action: "Submit invalid credentials.", expectedResult: "An error message is displayed.", requirementIds: [REQ_1] }],
       },
       {
         id: "tc-2",
         title: "Logout returns to login",
         objective: "Verify logout.",
-        requirementIds: ["req-2"],
-        steps: [{ action: "Log out.", expectedResult: "The login page is displayed.", requirementIds: ["req-2"] }],
+        requirementIds: [REQ_2],
+        steps: [{ action: "Log out.", expectedResult: "The login page is displayed.", requirementIds: [REQ_2] }],
       },
     ],
     ...overrides,
@@ -156,7 +178,7 @@ function changeSetResponse(overrides = {}) {
 const json = (value) => ({ response: JSON.stringify(value) });
 
 const RESPONSES = Object.freeze({
-  design: () => [json(requirementModel()), json(testCaseModel()), json(candidate("tc-1", "AUTOMATE", "ac-1")), json(candidate("tc-2", "DO_NOT_AUTOMATE", "ac-2"))],
+  design: () => [json(requirementModelResponse()), json(testCaseModel()), json(candidate("tc-1", "AUTOMATE", "ac-1")), json(candidate("tc-2", "DO_NOT_AUTOMATE", "ac-2"))],
   plan: () => [json(automationPlan())],
   generate: () => [json(changeSetResponse())],
 });
@@ -191,10 +213,16 @@ module.exports = {
   EXISTING_SPEC,
   SECRET,
   REQUIREMENTS,
+  REQUIREMENT_MODEL_ID,
+  REQ_1,
+  REQ_1_AC_1,
+  REQ_2,
+  CANONICAL_REQUIREMENTS,
   stage3Config,
   makeStage3Root,
   generativeEnv,
   requirementModel,
+  requirementModelResponse,
   testCaseModel,
   candidate,
   automationPlan,

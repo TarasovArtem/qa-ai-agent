@@ -12,7 +12,12 @@
  *   design         validateGenerationChain (frozen F0 cross-model rules),
  *                  checkCanonicalProvenance (#22C), validateFrameworkAuthorization
  *                  + validateEvidenceProvenance (#22E-R1), one candidate per
- *                  test case in TestCaseModel order
+ *                  test case in TestCaseModel order; and (TPR G2 finding R1,
+ *                  architecture-model-boundary-v3) the RequirementModel's id,
+ *                  evidenceRefs and requirements must EXACTLY equal the fixed
+ *                  REQUIREMENT_MODEL_ID, the full canonical evidence registry
+ *                  and the canonical requirement projection recomputed from
+ *                  the requirements file by this very command
  *   plan           validateGenerationChain incl. plans, one plan per AUTOMATE
  *                  candidate, config framework; the repository context is
  *                  rebuilt from the live repository (#23B) and must equal the
@@ -33,7 +38,7 @@
 
 const { loadRequirementsFromFile } = require("../requirements-file");
 const { ingestRequirementArtifactsAsEvidence } = require("../generative-test-design/evidence-ingestion");
-const { checkCanonicalProvenance } = require("../generative-test-design/requirement-model-generator");
+const { checkCanonicalProvenance, REQUIREMENT_MODEL_ID } = require("../generative-test-design/requirement-model-generator");
 const { validateFrameworkAuthorization, validateEvidenceProvenance, buildTrustedEvidenceRegistry } = require("../generative-test-design/automation-candidate-generator");
 const { validateGenerationChain } = require("../generation/cross-model-validation");
 const { ERROR_CODES } = require("../generation/errors");
@@ -98,7 +103,11 @@ function loadEvidence(root, config) {
   if (!ingested.ok) {
     throw inputRefused("REQUIREMENTS_EVIDENCE_REFUSED", `the requirements cannot be represented as design evidence (reason codes: ${codesOf(ingested.errors).join(", ")}).`);
   }
-  return { evidenceBundle: ingested.bundle, requirementsDigest: before, requirementCount: artifacts.length };
+  // TPR G2 finding R1: the canonical requirement projection comes from the
+  // same validated artifacts and the same single adapter call as the
+  // evidence bundle (more than 200 leaves already refused above as
+  // REQUIREMENTS_EVIDENCE_REFUSED, before any child exists).
+  return { evidenceBundle: ingested.bundle, canonicalRequirements: ingested.canonicalRequirements, requirementsDigest: before, requirementCount: artifacts.length };
 }
 
 function frameworkCapability(config) {
@@ -107,7 +116,22 @@ function frameworkCapability(config) {
 
 // --- design ---------------------------------------------------------------------------
 
-function validateDesign({ requirementModel, testCaseModel, automationCandidates }, { evidenceBundle, projectId, framework }) {
+// TPR G2 finding R1 (boundary v3): the deterministic part of a design's
+// RequirementModel, compared byte-for-byte (canonical JSON) with what this
+// command recomputed from the requirements file - never with anything the
+// child or a persisted file asserted about itself. A missing or empty
+// projection fails closed; there is no "no projection, skip the check" path.
+function canonicalRequirementModelCodes(requirementModel, { evidenceBundle, canonicalRequirements }) {
+  if (!Array.isArray(canonicalRequirements) || canonicalRequirements.length === 0) return [ERROR_CODES.INVARIANT_VIOLATION];
+  const evidenceRefs = evidenceBundle.evidenceItems.map((item) => item.evidenceRef);
+  const exact =
+    requirementModel.id === REQUIREMENT_MODEL_ID &&
+    canonicalJson(requirementModel.evidenceRefs) === canonicalJson(evidenceRefs) &&
+    canonicalJson(requirementModel.requirements) === canonicalJson(canonicalRequirements);
+  return exact ? [] : [ERROR_CODES.INVARIANT_VIOLATION];
+}
+
+function validateDesign({ requirementModel, testCaseModel, automationCandidates }, { evidenceBundle, canonicalRequirements, projectId, framework }) {
   if (!Array.isArray(automationCandidates) || automationCandidates.length === 0) return [ERROR_CODES.MISSING_FIELD];
   const chain = validateGenerationChain({ requirementModel, testCaseModel, automationCandidates }, { expectedProjectId: projectId });
   if (!chain.ok) return codesOf(chain.errors);
@@ -115,6 +139,7 @@ function validateDesign({ requirementModel, testCaseModel, automationCandidates 
   const errors = [];
   const registry = new Map(evidenceBundle.evidenceItems.map((item) => [item.evidenceRef.id, item.evidenceRef]));
   errors.push(...checkCanonicalProvenance(requirementModel.evidenceRefs, registry));
+  errors.push(...canonicalRequirementModelCodes(requirementModel, { evidenceBundle, canonicalRequirements }).map((code) => ({ code })));
 
   if (automationCandidates.length !== testCaseModel.testCases.length) errors.push({ code: ERROR_CODES.INVALID_REFERENCE });
   const ids = new Set();
@@ -323,7 +348,7 @@ function readDesign(loaded, evidence, config) {
     testCaseModel: exactlyOne(byKind(loaded, "TestCaseModel"), "design"),
     automationCandidates: byKind(loaded, "AutomationCandidate"),
   };
-  const codes = validateDesign(design, { evidenceBundle: evidence.evidenceBundle, projectId: config.projectProfile.id, framework: config.framework });
+  const codes = validateDesign(design, { evidenceBundle: evidence.evidenceBundle, canonicalRequirements: evidence.canonicalRequirements, projectId: config.projectProfile.id, framework: config.framework });
   if (codes.length > 0) throw persistedInvalid("design", codes);
   return design;
 }

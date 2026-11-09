@@ -11,8 +11,10 @@
  * It is an adapter onto the existing provider-backed generators - no
  * generation or prompt logic lives here:
  *
- *   design    generateRequirementModel -> generateTestCaseModel ->
- *             generateAutomationCandidate (one per test case)
+ *   design    generateRequirementModel (canonical requirements from the
+ *             parent; provider adds assumptions/open questions only) ->
+ *             generateTestCaseModel -> generateAutomationCandidate (one per
+ *             test case)
  *   plan      generateAutomationPlan (one per AUTOMATE candidate)
  *   generate  generateChangeSet (one per AutomationPlan)
  *
@@ -72,8 +74,11 @@ function stepFailure(step, result) {
   };
 }
 
+// TPR G2 finding R1: the parent's canonical requirement projection is passed
+// through unchanged; the generator re-proves it against the bundle and
+// refuses a missing or misaligned one before any provider call.
 async function runDesign(provider, p) {
-  const rm = await generateRequirementModel({ evidenceBundle: p.evidenceBundle, provider, expectedProjectId: p.projectId });
+  const rm = await generateRequirementModel({ evidenceBundle: p.evidenceBundle, canonicalRequirements: p.canonicalRequirements, provider, expectedProjectId: p.projectId });
   if (!rm.ok) return stepFailure("requirementModel", rm);
   const tcm = await generateTestCaseModel({ requirementModel: rm.requirementModel, provider, expectedProjectId: p.projectId });
   if (!tcm.ok) return stepFailure("testCaseModel", tcm);

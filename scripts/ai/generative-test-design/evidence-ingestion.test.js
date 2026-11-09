@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { ingestRequirementEvidence, ingestRequirementArtifactsAsEvidence, LIMITS, ARTIFACT_EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
+const { ingestRequirementEvidence, ingestRequirementArtifactsAsEvidence, verifyCanonicalRequirements, LIMITS, ARTIFACT_EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
 const { validateEvidenceRef, EVIDENCE_REF_KINDS } = require("../generation/primitives");
 const { validateRequirementArtifact } = require("../requirement-artifact");
 
@@ -339,7 +339,7 @@ test("the returned bundle is deeply frozen", () => {
 // =========================================================================
 // ACG-A3: ingestRequirementArtifactsAsEvidence() - the RequirementArtifact
 // evidence adapter (Architecture Conformance Gate finding A-3). See
-// docs/architecture-model-boundary-v2.md for the normative contract this
+// docs/architecture-model-boundary-v3.md for the normative contract this
 // adapter implements.
 // =========================================================================
 
@@ -858,5 +858,113 @@ test("A3-R02: processing a large artifact (valid or oversized) does not mutate t
     const snapshot = structuredClone(artifact);
     ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
     assert.deepEqual(artifact, snapshot);
+  }
+});
+
+// =========================================================================
+// TPR G2 finding R1 (docs/architecture-model-boundary-v3.md): the canonical
+// requirement projection returned by ingestRequirementArtifactsAsEvidence()
+// and its independent verifier verifyCanonicalRequirements().
+// =========================================================================
+
+function criteria(n, prefix = "c") {
+  return Array.from({ length: n }, (_, i) => ({ text: `${prefix}${i + 1}` }));
+}
+
+test("R1: the adapter returns {ok, bundle, mapping, canonicalRequirements}; bundle and mapping are unchanged by the projection", () => {
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput());
+  assert.deepEqual(Object.keys(result).sort(), ["bundle", "canonicalRequirements", "mapping", "ok"]);
+  assert.deepEqual(result.mapping, [{ requirementArtifactId: "req-1", evidenceRefId: "evidence-0001" }]);
+  assert.equal(result.bundle.evidenceItems[0].text, "Title: Login error handling\nContent: The login page must show an error on invalid credentials.\nAcceptance Criteria:\n- Given invalid credentials, an error message is shown.");
+  assert.deepEqual(result.canonicalRequirements, [
+    { id: "evidence-0001.content", text: "The login page must show an error on invalid credentials.", evidenceRefIds: ["evidence-0001"] },
+    { id: "evidence-0001.ac-0001", text: "Given invalid credentials, an error message is shown.", evidenceRefIds: ["evidence-0001"] },
+  ]);
+});
+
+test("R1: canonicalRequirements are deeply frozen, deterministic, and in artifact -> content -> criteria order", () => {
+  const input = validArtifactsInput({
+    artifacts: [
+      validArtifact({ id: "b", content: undefined, acceptanceCriteria: [{ text: "B1" }, { text: "B2" }] }),
+      validArtifact({ id: "a", content: "A content", acceptanceCriteria: undefined }),
+    ],
+  });
+  const first = ingestRequirementArtifactsAsEvidence(input);
+  const second = ingestRequirementArtifactsAsEvidence(input);
+  assert.deepEqual(first.canonicalRequirements, second.canonicalRequirements);
+  assert.deepEqual(first.canonicalRequirements.map((r) => [r.id, r.text]), [
+    ["evidence-0001.ac-0001", "B1"],
+    ["evidence-0001.ac-0002", "B2"],
+    ["evidence-0002.content", "A content"],
+  ]);
+  assert.ok(Object.isFrozen(first.canonicalRequirements));
+  assert.ok(Object.isFrozen(first.canonicalRequirements[0]));
+  assert.ok(Object.isFrozen(first.canonicalRequirements[0].evidenceRefIds));
+});
+
+test("R1: requirement text is the exact source string (whitespace, punctuation, Unicode); title is never a requirement", () => {
+  const content = "  spaced  “quoted” — ünïcödé 🚀\u00a0end  ";
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ title: "TITLE-NOT-A-REQUIREMENT", content, acceptanceCriteria: [{ text: "  ac  " }] })] }));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.canonicalRequirements.map((r) => r.text), [content, "  ac  "]);
+  assert.equal(JSON.stringify(result.canonicalRequirements).includes("TITLE-NOT-A-REQUIREMENT"), false);
+});
+
+test("R1: requirement ids come only from canonical evidence ids - artifact ids and optional/duplicate/missing criterion ids never enter them", () => {
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({
+    artifacts: [
+      validArtifact({ id: "REQ.1", acceptanceCriteria: [{ id: "AC-1", text: "x" }, { id: "AC-1", text: "y" }, { text: "z" }] }),
+      validArtifact({ id: "a".repeat(200), acceptanceCriteria: [{ id: "b".repeat(200), text: "w" }] }),
+    ],
+  }));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.canonicalRequirements.map((r) => r.id), [
+    "evidence-0001.content",
+    "evidence-0001.ac-0001",
+    "evidence-0001.ac-0002",
+    "evidence-0001.ac-0003",
+    "evidence-0002.content",
+    "evidence-0002.ac-0001",
+  ]);
+  for (const forbidden of ["REQ.1", "AC-1", "aaaa", "bbbb"]) assert.equal(JSON.stringify(result.canonicalRequirements).includes(forbidden), false, forbidden);
+});
+
+test("R1: exactly 200 canonical requirements are accepted; 201 fail closed as a $.artifacts INVALID_VALUE refusal (never truncated)", () => {
+  const ok = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ id: "a", content: "c", acceptanceCriteria: criteria(150) }), validArtifact({ id: "b", content: undefined, acceptanceCriteria: criteria(49) })] })); // 1 + 150 + 49 = 200
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+  assert.equal(ok.canonicalRequirements.length, 200);
+  const refused = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ id: "a", content: "c", acceptanceCriteria: criteria(150) }), validArtifact({ id: "b", content: "d", acceptanceCriteria: criteria(49) })] })); // 1 + 150 + 1 + 49 = 201
+  assert.equal(refused.ok, false);
+  assert.deepEqual(refused.errors.map((e) => [e.path, e.code]), [["$.artifacts", "INVALID_VALUE"]]);
+  assert.equal(refused.bundle, undefined);
+  assert.equal(refused.canonicalRequirements, undefined);
+});
+
+test("R1: verifyCanonicalRequirements accepts the adapter's own projection and refuses every misalignment without echoing text", () => {
+  const { bundle, canonicalRequirements } = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ content: "SECRET_CONTENT" }), validArtifact({ id: "req-2", acceptanceCriteria: [{ text: "SECRET_AC" }] })] }));
+  assert.deepEqual(verifyCanonicalRequirements(canonicalRequirements, bundle.evidenceItems), []);
+  const copy = () => canonicalRequirements.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] }));
+  const mutations = [
+    (rs) => rs.slice(1),
+    (rs) => [...rs, rs[0]],
+    (rs) => [rs[1], rs[0], ...rs.slice(2)],
+    (rs) => { rs[0].text += "."; return rs; },
+    (rs) => { rs[0].id = "req-1"; return rs; },
+    (rs) => { rs[0].evidenceRefIds = ["evidence-0002"]; return rs; },
+    (rs) => { rs[0].extra = true; return rs; },
+    () => [],
+    () => undefined,
+  ];
+  for (const [i, mutate] of mutations.entries()) {
+    const errors = verifyCanonicalRequirements(mutate(copy()), bundle.evidenceItems);
+    assert.ok(errors.length > 0, `mutation ${i}`);
+    assert.equal(JSON.stringify(errors).includes("SECRET_"), false, `mutation ${i} never echoes text`);
+  }
+  // Evidence that is not an artifact projection (direct user text) is refused.
+  const direct = ingestRequirementEvidence(validInput());
+  assert.ok(verifyCanonicalRequirements(canonicalRequirements, direct.bundle.evidenceItems).some((e) => e.code === "INVARIANT_VIOLATION"));
+  // Malformed projections of the fixed line format are refused, never parsed best-effort.
+  for (const text of ["Title: t", "Title: t\nAcceptance Criteria:", "Title: t\nContent: c\nNot a criterion", "No title\nContent: c"]) {
+    assert.ok(verifyCanonicalRequirements([{ id: "evidence-0001.content", text: "c", evidenceRefIds: ["evidence-0001"] }], [{ evidenceRef: { id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }, text }]).length > 0, text);
   }
 });
