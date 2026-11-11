@@ -1008,3 +1008,60 @@ test("R1: verifyCanonicalRequirements accepts the adapter's own projection and r
     assert.ok(verifyCanonicalRequirements([{ id: "evidence-0001.content", text: "c", evidenceRefIds: ["evidence-0001"] }], [{ evidenceRef: { id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }, text }]).length > 0, text);
   }
 });
+
+// TPR-R1-PR270-C2 (F-02): Array.prototype.forEach() skips holes, so a sparse
+// list of the right length used to be accepted with those positions never
+// compared. Every expected index must be an own, exactly matching element.
+test("R1-C2: fully and partially sparse canonicalRequirements arrays are refused at every missing index, dense arrays are unaffected", () => {
+  const { bundle, canonicalRequirements } = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ content: "SECRET_CONTENT" }), validArtifact({ id: "req-2", acceptanceCriteria: [{ text: "SECRET_AC" }] })] }));
+  const n = canonicalRequirements.length;
+  assert.ok(n >= 3, "fixture has at least three leaves");
+  const dense = () => canonicalRequirements.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] }));
+  assert.deepEqual(verifyCanonicalRequirements(dense(), bundle.evidenceItems), [], "dense exact copy is still accepted");
+
+  const holeAt = (...indexes) => { const rs = dense(); for (const i of indexes) delete rs[i]; return rs; };
+  const truncatedThenPadded = dense().slice(0, 1);
+  truncatedThenPadded.length = n;
+  const allIndexes = Array.from({ length: n }, (_, i) => i);
+  const cases = [
+    ["fully sparse (new Array(n))", new Array(n), allIndexes],
+    ["fully sparse (every element deleted)", holeAt(...allIndexes), allIndexes],
+    ["hole at the first index", holeAt(0), [0]],
+    ["hole in the middle", holeAt(1), [1]],
+    ["hole at the last index", holeAt(n - 1), [n - 1]],
+    ["only the first element present", truncatedThenPadded, allIndexes.slice(1)],
+    ["only the last element present", holeAt(...allIndexes.slice(0, -1)), allIndexes.slice(0, -1)],
+  ];
+  for (const [label, sparse, missing] of cases) {
+    assert.equal(sparse.length, n, `${label}: length equals the expected projection length`);
+    const errors = verifyCanonicalRequirements(sparse, bundle.evidenceItems);
+    assert.deepEqual(errors.map((e) => e.path), missing.map((i) => `$.canonicalRequirements[${i}]`), `${label}: one error per missing index, none for present ones`);
+    assert.ok(errors.every((e) => e.code === "INVARIANT_VIOLATION"), `${label}: existing reason code`);
+    assert.equal(JSON.stringify(errors).includes("SECRET_"), false, `${label}: never echoes text`);
+  }
+
+  // A sparse list of the wrong length keeps its existing whole-list refusal.
+  assert.deepEqual(verifyCanonicalRequirements(new Array(n + 1), bundle.evidenceItems).map((e) => `${e.code}@${e.path}`), ["INVARIANT_VIOLATION@$.canonicalRequirements"]);
+
+  // A hole in the single-element evidenceRefIds array is refused as well.
+  const sparseRefIds = dense();
+  sparseRefIds[0].evidenceRefIds = new Array(1);
+  assert.deepEqual(verifyCanonicalRequirements(sparseRefIds, bundle.evidenceItems).map((e) => e.path), ["$.canonicalRequirements[0]"]);
+
+  // A hole is never satisfied through the prototype chain.
+  const inherited = dense()[1];
+  Object.defineProperty(Array.prototype, 1, { value: inherited, configurable: true, writable: true });
+  try {
+    assert.deepEqual(verifyCanonicalRequirements(holeAt(1), bundle.evidenceItems).map((e) => e.path), ["$.canonicalRequirements[1]"]);
+  } finally {
+    delete Array.prototype[1];
+  }
+  const inheritedRefId = dense();
+  inheritedRefId[0].evidenceRefIds = new Array(1);
+  Object.defineProperty(Array.prototype, 0, { value: canonicalRequirements[0].evidenceRefIds[0], configurable: true, writable: true });
+  try {
+    assert.deepEqual(verifyCanonicalRequirements(inheritedRefId, bundle.evidenceItems).map((e) => e.path), ["$.canonicalRequirements[0]"]);
+  } finally {
+    delete Array.prototype[0];
+  }
+});

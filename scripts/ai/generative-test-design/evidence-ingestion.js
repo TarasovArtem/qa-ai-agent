@@ -471,9 +471,16 @@ function verifyCanonicalRequirements(canonicalRequirements, evidenceItems) {
   if (expected.length !== canonicalRequirements.length) {
     return [err("$.canonicalRequirements", ERROR_CODES.INVARIANT_VIOLATION, "$.canonicalRequirements does not match the canonical projection of the supplied evidence")];
   }
-  canonicalRequirements.forEach((actual, i) => {
+  // TPR-R1-PR270-C2 (F-02): every expected index is checked by position, and
+  // must be an OWN element. Array.prototype.forEach() skips holes, so a fully
+  // or partially sparse list of the right length would otherwise be accepted
+  // with those positions never compared; an own-element check (rather than a
+  // plain index read) also keeps a hole from being satisfied through the
+  // prototype chain. The same holds for the single evidenceRefIds element.
+  for (let i = 0; i < expected.length; i += 1) {
     const want = expected[i];
     const path = `$.canonicalRequirements[${i}]`;
+    const actual = Object.prototype.hasOwnProperty.call(canonicalRequirements, i) ? canonicalRequirements[i] : undefined;
     const exact =
       isPlainObject(actual) &&
       Object.keys(actual).length === CANONICAL_REQUIREMENT_KEYS.length &&
@@ -482,9 +489,10 @@ function verifyCanonicalRequirements(canonicalRequirements, evidenceItems) {
       actual.text === want.text &&
       Array.isArray(actual.evidenceRefIds) &&
       actual.evidenceRefIds.length === 1 &&
+      Object.prototype.hasOwnProperty.call(actual.evidenceRefIds, 0) &&
       actual.evidenceRefIds[0] === want.evidenceRefIds[0];
     if (!exact) errors.push(err(path, ERROR_CODES.INVARIANT_VIOLATION, `${path} does not exactly match its canonical projection`));
-  });
+  }
   return errors;
 }
 

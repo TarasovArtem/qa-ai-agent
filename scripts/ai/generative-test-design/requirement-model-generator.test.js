@@ -1191,3 +1191,60 @@ test("TPR-G2-R1 mandatory 9: the accepted model passes the frozen v1 validator a
   assert.ok(validateGapAnalysis(validResponse({ openQuestions: [{ id: "q", type: "OPEN_QUESTION", description: "d" }] })).some((e) => e.path === "$.openQuestions[0].reason"));
   assert.ok(validateGapAnalysis([]).some((e) => e.code === "INVALID_TYPE"));
 });
+
+// TPR-R1-PR270-C2 (F-02): a sparse canonical requirement list must never
+// reach the provider. The single-read snapshot keeps holes as holes (it does
+// not turn them into acceptable elements), and verifyCanonicalRequirements()
+// refuses every missing index before any provider call.
+test("TPR-R1-PR270-C2: fully and partially sparse canonical requirements fail closed before any provider call; the snapshot preserves holes", async () => {
+  const bundle = () => validBundle({ evidenceItems: [item(1, "First."), item(2, "Second."), item(3, "Third.")] });
+  const dense = () => [contentReq(1, "First."), contentReq(2, "Second."), contentReq(3, "Third.")];
+  const holeAt = (...indexes) => { const rs = dense(); for (const i of indexes) delete rs[i]; return rs; };
+  const padded = dense().slice(0, 1);
+  padded.length = 3;
+  const cases = [
+    ["fully sparse", new Array(3), [0, 1, 2]],
+    ["hole at the first index", holeAt(0), [0]],
+    ["hole in the middle", holeAt(1), [1]],
+    ["hole at the last index", holeAt(2), [2]],
+    ["only the first element present", padded, [1, 2]],
+    ["only the last element present", holeAt(0, 1), [0, 1]],
+  ];
+  for (const [label, sparse, missing] of cases) {
+    // Snapshot behavior: same length, holes stay holes, present entries are fresh copies.
+    const snapshot = snapshotCanonicalRequirements(sparse);
+    assert.equal(snapshot.length, 3, label);
+    for (let i = 0; i < 3; i += 1) {
+      assert.equal(Object.prototype.hasOwnProperty.call(snapshot, i), !missing.includes(i), `${label}: snapshot index ${i}`);
+      if (!missing.includes(i)) {
+        assert.notEqual(snapshot[i], sparse[i], `${label}: entry ${i} is copied`);
+        assert.deepEqual(snapshot[i], sparse[i], `${label}: entry ${i} is unchanged`);
+      }
+    }
+
+    const provider = jsonProvider(validResponse());
+    const result = await generateRequirementModel({ evidenceBundle: bundle(), canonicalRequirements: sparse, provider });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.requirementModel, undefined, label);
+    assert.equal(result.providerAttempts, 0, label);
+    assert.equal(provider.calls.length, 0, label);
+    assert.deepEqual(result.errors.map((e) => `${e.code}@${e.path}`), missing.map((i) => `INVARIANT_VIOLATION@$.canonicalRequirements[${i}]`), label);
+    for (const e of result.errors) assert.equal(Object.keys(e).sort().join(","), "code,message,path", label);
+  }
+
+  // A hole in an entry's evidenceRefIds array is refused the same way.
+  const sparseRefIds = dense();
+  sparseRefIds[1].evidenceRefIds = new Array(1);
+  const refProvider = jsonProvider(validResponse());
+  const refResult = await generateRequirementModel({ evidenceBundle: bundle(), canonicalRequirements: sparseRefIds, provider: refProvider });
+  assert.equal(refResult.ok, false);
+  assert.equal(refProvider.calls.length, 0);
+  assert.deepEqual(refResult.errors.map((e) => `${e.code}@${e.path}`), ["INVARIANT_VIOLATION@$.canonicalRequirements[1]"]);
+
+  // The dense equivalent is still accepted with exactly one provider call.
+  const okProvider = jsonProvider(validResponse());
+  const ok = await generateRequirementModel({ evidenceBundle: bundle(), canonicalRequirements: dense(), provider: okProvider });
+  assert.equal(ok.ok, true);
+  assert.equal(okProvider.calls.length, 1);
+  assert.deepEqual(ok.requirementModel.requirements, dense());
+});
