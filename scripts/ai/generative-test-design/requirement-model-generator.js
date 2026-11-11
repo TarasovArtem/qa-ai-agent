@@ -24,13 +24,15 @@
  * closed before any provider call.
  *
  * THE MODEL DOES NOT OWN PROVENANCE. Roadmap #22B's deterministic ingestion
- * (evidence-ingestion.js) is the only owner of canonical EvidenceRefs. This
- * module treats a provider response as a low-trust generation of
- * requirement *content* only: every EvidenceRef the provider echoes back is
- * verified by EXACT field equality against a per-invocation canonical
- * registry built from the input bundle, never merely by id membership -
- * see checkCanonicalProvenance() below. A provider can therefore reference
- * canonical evidence, but can never invent it, alter it, or add to it.
+ * (evidence-ingestion.js) is the only owner of canonical EvidenceRefs. Since
+ * boundary v3 the provider returns no EvidenceRef at all: the model's
+ * `evidenceRefs` is assembled by this module as the full canonical registry
+ * in bundle order, and a provider response carrying `evidenceRefs` is
+ * refused (UNKNOWN_FIELD). The assembled registry is still verified by EXACT
+ * field equality against a per-invocation canonical registry built from the
+ * input bundle, never merely by id membership - see
+ * checkCanonicalProvenance() below - as defense in depth. A provider can
+ * therefore never invent, alter, select or add to canonical evidence.
  *
  * This module also does NOT trust that an object shaped like #22B's output
  * actually came from evidence-ingestion.js in-process (Roadmap #22B review
@@ -94,10 +96,11 @@ const MAX_PROVIDER_ATTEMPTS = 2;
 
 // A well-formed generation call is grounded in at most
 // EVIDENCE_LIMITS.MAX_AGGREGATE_TEXT_LENGTH (20000) chars of #22B-owned
-// source text; even a maximal RequirementModel built from that much
-// material (bounded ids/kind/sourceId echoes plus provider-authored
-// requirement/assumption/openQuestion text) has no legitimate need for
-// anywhere near scripts/ai/generation/limits.js's theoretical v1 ceiling.
+// source text; since boundary v3 the response carries only provider-authored
+// assumption/openQuestion entries (no requirement text, no EvidenceRef
+// echoes), which has no legitimate need for anywhere near
+// scripts/ai/generation/limits.js's theoretical v1 ceiling. The bound is
+// deliberately unchanged from before v3 (never raised).
 // Chosen as a generous, bounded multiple of that input aggregate so a
 // genuine response is never rejected, while a runaway/hostile response is
 // rejected before it is ever handed to JSON.parse.
@@ -351,14 +354,21 @@ function isExactCanonicalMatch(providerRef, canonicalRef) {
   return canonicalKeys.every((key) => providerRef[key] === canonicalRef[key]);
 }
 
-// CRITICAL post-provider gate (Roadmap #22C Phase 18-20): every EvidenceRef
-// the model's own RequirementModel.evidenceRefs carries must both (a) exist
-// in the per-bundle canonical registry by id, and (b) match that canonical
-// entry by EXACT field equality - id, kind, sourceId presence/value alike.
-// A known id with an altered kind/sourceId, an added field (e.g.
-// "location"), or a missing sourceId all fail (b); an id the registry never
-// issued fails (a). The model MAY reference a strict subset of the
-// registry - full coverage is never required (Roadmap #22C Phase 21).
+// CRITICAL provenance gate (Roadmap #22C Phase 18-20): every EvidenceRef a
+// RequirementModel.evidenceRefs carries must both (a) exist in the
+// per-bundle canonical registry by id, and (b) match that canonical entry by
+// EXACT field equality - id, kind, sourceId presence/value alike. A known id
+// with an altered kind/sourceId, an added field (e.g. "location"), or a
+// missing sourceId all fail (b); an id the registry never issued fails (a).
+//
+// This function is a membership + exact-match check only: on its own it
+// accepts a strict subset of the registry (Roadmap #22C Phase 21) and does
+// not require full coverage. Since boundary v3 the subset case no longer
+// arises from generation - this module assembles the full registry itself
+// and the provider supplies no EvidenceRef - and full-registry equality of
+// fresh and persisted designs is enforced separately by the CLI
+// (scripts/ai/cli/run-artifacts.js validateDesign), which also calls this
+// function on models read from disk.
 function checkCanonicalProvenance(modelEvidenceRefs, registry) {
   const errors = [];
   modelEvidenceRefs.forEach((ref, i) => {

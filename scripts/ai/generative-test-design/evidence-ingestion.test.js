@@ -940,6 +940,46 @@ test("R1: exactly 200 canonical requirements are accepted; 201 fail closed as a 
   assert.equal(refused.canonicalRequirements, undefined);
 });
 
+// TPR-R1-PR270-C1 (C1-02): verifyCanonicalRequirements() proves text shape and
+// exact equality, not origin - a bundle has no ingestion-path marker. This
+// records the accepted behavior for direct text that itself has exactly the
+// projection line format, and pins that nothing wider is accepted.
+test("R1-C1: projection-shaped direct text is parsed like a projection (shape, not origin) - only its exact verbatim leaves are accepted", () => {
+  const lookAlike = "Title: x\nContent: forged leaf\nAcceptance Criteria:\n- first\n-  second ";
+  const direct = ingestRequirementEvidence(validInput({ sources: [{ text: lookAlike }] }));
+  assert.equal(direct.ok, true);
+  assert.equal(direct.canonicalRequirements, undefined, "the direct-text path itself never returns a projection");
+  const items = direct.bundle.evidenceItems;
+  const exact = [
+    { id: "evidence-0001.content", text: "forged leaf", evidenceRefIds: ["evidence-0001"] },
+    { id: "evidence-0001.ac-0001", text: "first", evidenceRefIds: ["evidence-0001"] },
+    { id: "evidence-0001.ac-0002", text: " second ", evidenceRefIds: ["evidence-0001"] },
+  ];
+  assert.deepEqual(verifyCanonicalRequirements(exact, items), [], "exact verbatim leaves of the shaped text are accepted");
+  assert.ok(exact.every((r) => lookAlike.split("\n").some((line) => line.endsWith(r.text))), "every accepted text is a verbatim line tail of the evidence");
+
+  const copy = () => exact.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] }));
+  const deviations = [
+    (rs) => { rs[0].text = "Forged leaf"; return rs; }, // reworded
+    (rs) => { rs[2].text = "second"; return rs; }, // trimmed
+    (rs) => { rs[0].id = "evidence-0001.title"; return rs; }, // re-identified
+    (rs) => [{ id: "evidence-0001.content", text: "x", evidenceRefIds: ["evidence-0001"] }, ...rs], // title as a leaf
+    (rs) => rs.slice(0, 2), // dropped
+    (rs) => [rs[0], rs[2], rs[1]], // reordered
+  ];
+  for (const [i, deviate] of deviations.entries()) {
+    assert.ok(verifyCanonicalRequirements(deviate(copy()), items).some((e) => e.code === "INVARIANT_VIOLATION"), `deviation ${i}`);
+  }
+
+  // Near-miss shapes stay refused: the accepted input semantics are not widened.
+  for (const text of ["title: x\nContent: c", "Title: x\nContent: c\n\n", "Title: x\ncontent: c", "Title: x\nContent: c\nAcceptance Criteria:\n* first", "Title: x\nContent: c\r\nAcceptance Criteria:\n-first"]) {
+    const nearMiss = ingestRequirementEvidence(validInput({ sources: [{ text }] }));
+    assert.equal(nearMiss.ok, true, JSON.stringify(text));
+    const errors = verifyCanonicalRequirements([{ id: "evidence-0001.content", text: "c", evidenceRefIds: ["evidence-0001"] }], nearMiss.bundle.evidenceItems);
+    assert.ok(errors.length > 0, JSON.stringify(text));
+  }
+});
+
 test("R1: verifyCanonicalRequirements accepts the adapter's own projection and refuses every misalignment without echoing text", () => {
   const { bundle, canonicalRequirements } = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ content: "SECRET_CONTENT" }), validArtifact({ id: "req-2", acceptanceCriteria: [{ text: "SECRET_AC" }] })] }));
   assert.deepEqual(verifyCanonicalRequirements(canonicalRequirements, bundle.evidenceItems), []);
@@ -960,7 +1000,7 @@ test("R1: verifyCanonicalRequirements accepts the adapter's own projection and r
     assert.ok(errors.length > 0, `mutation ${i}`);
     assert.equal(JSON.stringify(errors).includes("SECRET_"), false, `mutation ${i} never echoes text`);
   }
-  // Evidence that is not an artifact projection (direct user text) is refused.
+  // Evidence whose text does not have the projection line format (ordinary direct user text) is refused.
   const direct = ingestRequirementEvidence(validInput());
   assert.ok(verifyCanonicalRequirements(canonicalRequirements, direct.bundle.evidenceItems).some((e) => e.code === "INVARIANT_VIOLATION"));
   // Malformed projections of the fixed line format are refused, never parsed best-effort.

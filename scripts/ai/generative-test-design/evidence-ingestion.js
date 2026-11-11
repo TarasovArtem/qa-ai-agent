@@ -89,7 +89,11 @@
  * or an optional source criterion id, so the two identity spaces stay
  * separate. `verifyCanonicalRequirements()` re-derives the same leaves from
  * evidence text alone, so a consumer holding only the bundle can prove a
- * supplied requirement list is exactly this projection.
+ * supplied requirement list is exactly the projection of that evidence
+ * text. It proves text shape and exact equality, not origin: a bundle has no
+ * ingestion-path marker, so direct user text that itself has exactly the
+ * projection line format is parsed the same way (see
+ * parseArtifactEvidenceLeaves() and boundary v3).
  *
  * INPUT SAFETY / GETTER SAFETY: `assertValidRequirementArtifact(artifact,
  * ...)` is called FIRST, before the adapter reads a single property of
@@ -379,8 +383,11 @@ function leavesToRequirements(evidenceRefId, leaves) {
 // projectRequirementArtifactToEvidenceText(). RTI-1 rejects every control
 // character in title/content/criterion text, so "\n" only ever separates the
 // fixed lines and the parse is unambiguous. Returns null for any text that is
-// not exactly that shape (for example direct user text from
-// ingestRequirementEvidence()), never a best-effort partial result.
+// not exactly that shape (for example ordinary direct user text from
+// ingestRequirementEvidence()), never a best-effort partial result. The
+// check is on shape only: direct user text that itself has exactly this line
+// format (direct text may contain "\n") is indistinguishable here and yields
+// leaves like any projection - still verbatim lines of that evidence text.
 function parseArtifactEvidenceLeaves(text) {
   if (typeof text !== "string") return null;
   const lines = text.split("\n");
@@ -429,9 +436,10 @@ const CANONICAL_REQUIREMENT_KEYS = Object.freeze(["id", "text", "evidenceRefIds"
  * projection of `evidenceItems` (ids, verbatim text, single evidence
  * reference, order and count), re-derived from the evidence text alone.
  * Returns bounded `{path, code, message}` errors (empty when exact); messages
- * never echo requirement or evidence text. Every evidence item must be an
- * artifact projection with at least one leaf, so every supplied evidence
- * reference is cited.
+ * never echo requirement or evidence text. Every evidence item's text must
+ * have the artifact projection line format with at least one leaf, so every
+ * supplied evidence reference is cited. This is a shape-and-equality proof,
+ * not an origin proof (see parseArtifactEvidenceLeaves()).
  */
 function verifyCanonicalRequirements(canonicalRequirements, evidenceItems) {
   const errors = [];
@@ -654,7 +662,15 @@ function ingestRequirementArtifactsAsEvidence(input, { expectedProjectId } = {})
   collectCanonicalRequirementBoundErrors(projected, "$.artifacts", projectionErrors);
   if (projectionErrors.length === 0) projectionErrors.push(...verifyCanonicalRequirements(projected, bundle.evidenceItems));
   if (projectionErrors.length > 0) {
-    return { ok: false, errors: projectionErrors };
+    // Unreachable by construction (the projection and the bundle come from
+    // the same validated artifacts). If a defect ever reaches it, the refusal
+    // stays artifact-facing (ACG-A3-R02): verifyCanonicalRequirements()'s own
+    // internal $.evidenceItems / $.canonicalRequirements paths are replaced by
+    // this function's $.artifacts input path; the reason codes are unchanged.
+    return {
+      ok: false,
+      errors: projectionErrors.map((e) => err("$.artifacts", e.code, "$.artifacts canonical requirement projection failed its internal consistency check")),
+    };
   }
   const canonicalRequirements = deepFreeze(projected);
 

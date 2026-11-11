@@ -264,9 +264,22 @@ provider-authored requirements.
 - a missing, empty, reordered, re-identified, reworded or otherwise misaligned
   `canonicalRequirements` list handed to the generator — re-proven against the
   bundle's own evidence text by `verifyCanonicalRequirements()`; evidence text
-  that is not an artifact projection (for example direct user text from
-  `ingestRequirementEvidence()`) cannot yield canonical requirements and is
-  refused.
+  that does not have the adapter's fixed projection line format (for example
+  ordinary direct user text from `ingestRequirementEvidence()`) cannot yield
+  canonical requirements and is refused.
+
+`verifyCanonicalRequirements()` is a check of **text shape and exact
+equality**, not of origin: a bundle carries no marker of which ingestion path
+produced it. Direct user text that itself has exactly the projection line
+format (`Title: …` / `Content: …` / `Acceptance Criteria:` / `- …`) is
+therefore parsed the same way, and a requirement list that exactly equals its
+leaves is accepted. This does not weaken verbatim fidelity (every accepted
+requirement text is still an exact line of the supplied evidence, with ids
+from the canonical `EvidenceRef` id) and is not reachable from the CLI, whose
+only evidence source is `ingestRequirementArtifactsAsEvidence()`; it is
+recorded by a regression test in `evidence-ingestion.test.js`. Distinguishing
+the two origins would require a new bundle field and its own versioned
+decision.
 
 **Re-validation of fresh and persisted designs** (CLI,
 [`scripts/ai/cli/run-artifacts.js`](../scripts/ai/cli/run-artifacts.js)
