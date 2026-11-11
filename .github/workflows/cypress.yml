@@ -594,7 +594,7 @@ jobs:
   # evidence and still fails this job.
   playwright-tests:
     name: Playwright Chromium
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # contents: read for checkout only - this job never calls the GitHub
     # Actions API and never needs a provider secret (AI_API_KEY is only
     # ever passed to qa-ai-triage below, never here).
