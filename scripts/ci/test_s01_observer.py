@@ -134,18 +134,25 @@ def state(exe=CH, ns=INIT, args=("chrome",), seccomp=0, nnp=0, eff="000001ffffff
 
 
 def rec(pid, parent, *states, first=0.0, last=10.0, phase="smoke", start=None):
-    """A record as the tracker would have built it from these states."""
+    """A record as the tracker would have built it from these states.
+
+    Each state is seen from its `t` until `t_last` (default: the next
+    state's `t`, or `last` for the final state), in active time."""
     sticky = obs.new_sticky()
     for s in states:
         s.setdefault("t", first)
+    for index, s in enumerate(states):
+        s.setdefault("t_last", states[index + 1]["t"] if index + 1 < len(states) else last)
         obs.fold_state(sticky, s, CH)
+        obs.observe_conditions(sticky, s, CH, INIT, s["t_last"] - first)
     return {"pid": pid, "starttime": pid * 10 if start is None else start, "phase": phase,
             "first_seen": first, "last_seen": last, "samples": 5,
             "birth_ppid": states[0]["ppid"], "parent_key": parent,
             "parent_confirmed": parent is not None, "states": list(states),
             "last_state": states[-1], "sticky": sticky, "overflow": False,
             "untrusted_exec_maps": [], "unresolved_exec_maps": [], "maps_ok": 2,
-            "maps_failed": 0, "maps_insufficient": 0, "maps_identity_changed": 0}
+            "maps_failed": 0, "maps_insufficient": 0, "maps_identity_changed": 0,
+            "maps_truncated": 0}
 
 
 def renderer(pid=60, parent="zyg", ppid=40, **kw):
@@ -195,6 +202,7 @@ class FakeProc:
     def __init__(self):
         self.procs = {}
         self.listed = None
+        self.on_enumerate = None
 
     def add(self, pid, ppid, start, exe=NODE, args=("x",), maps=None, **kw):
         self.procs[pid] = dict(ppid=ppid, start=start, state="S", exe=exe, args=args,
@@ -203,6 +211,12 @@ class FakeProc:
 
     def reader(self, path, limit=None):
         if path.endswith("cgroup.procs"):
+            if self.on_enumerate is not None:
+                self.on_enumerate()
+            if isinstance(self.listed, Exception):
+                raise self.listed
+            if isinstance(self.listed, str):
+                return self.listed
             pids = self.listed if self.listed is not None else sorted(self.procs)
             return "".join("%d\n" % p for p in pids)
         parts = path.split("/")
@@ -239,8 +253,9 @@ class FakeProc:
             "anonymous" if ino == 0 else "trusted"))
         kw.setdefault("classify_exe", lambda exe, path, c, f, n: (
             "chrome" if exe == CH else "node" if exe == NODE else "system"))
+        kw.setdefault("clock", iter(range(10000)).__next__)
         return obs.Tracker("/cg", CH, UID, node_id=NODE, sampler=self.sampler,
-                           reader=self.reader, clock=iter(range(10000)).__next__, **kw)
+                           reader=self.reader, **kw)
 
 
 CHROME_MAP = "7f00-7f01 r-xp 00000000 08:01 100 %s\n" % CHROME_PATH
@@ -252,7 +267,7 @@ def with_tracked(tracker_rec, key="browser"):
     """The reference table with one record's evidence replaced by the tracker's."""
     table = good()
     for field in ("untrusted_exec_maps", "unresolved_exec_maps", "maps_ok", "maps_failed",
-                  "maps_insufficient", "maps_identity_changed"):
+                  "maps_insufficient", "maps_identity_changed", "maps_truncated"):
         table[key][field] = tracker_rec[field]
     return table
 
@@ -409,15 +424,16 @@ class P12StaticConfig(unittest.TestCase):
 class P12BrowserBinding(unittest.TestCase):
     def test_valid_playwright_association_is_accepted_and_recorded(self):
         v, r = run_eval(good())
-        b = r["summary"]["browser_binding"]
+        b = r["summary"]["browser_ancestry"]
         self.assertEqual(v, "PASS")
-        self.assertTrue(b["established"])
+        self.assertTrue(b["ancestry_verified"])
         self.assertEqual(b["ancestry_to_smoke_root"], ["worker", "cmd", "sh", "root"])
         self.assertEqual((b["launcher"], b["approved_command_process"], b["smoke_root"]),
                          ("worker", "cmd", "root"))
-        # what stays PR-controlled is named, not silently asserted
-        self.assertIn("that the test logic actually drove this browser",
-                      b["pr_controlled_and_not_asserted"])
+        # Design B: functional binding is named as unprovable, never asserted
+        self.assertIn("that Playwright test logic drove this browser",
+                      b["not_observed_or_unprovable"])
+        self.assertNotIn("established", b)
 
     def test_browser_launched_by_the_command_process_itself_is_accepted(self):
         t = good()
@@ -428,8 +444,8 @@ class P12BrowserBinding(unittest.TestCase):
     def assert_unbound(self, table, **ctx):
         v, r = run_eval(table, **ctx)
         self.assertEqual(v, "STOP")
-        self.assertIn("BROWSER_NOT_BOUND_TO_SMOKE", codes(r, "stop"))
-        self.assertFalse(r["summary"]["browser_binding"]["established"])
+        self.assertIn("BROWSER_ANCESTRY_UNVERIFIED", codes(r, "stop"))
+        self.assertFalse(r["summary"]["browser_ancestry"]["ancestry_verified"])
         return r
 
     def test_arbitrary_non_driver_parent_is_rejected(self):
@@ -495,9 +511,22 @@ class P12BrowserBinding(unittest.TestCase):
 
     def test_unprovable_part_is_identified_not_asserted(self):
         # A smoke that never uses its (genuine, sandboxed) browser cannot be
-        # told apart by kernel facts. That is recorded as outside the claim.
-        self.assertIn("does NOT assert", obs.SCOPE_STATEMENT)
-        self.assertIn("PR-controlled", obs.SCOPE_STATEMENT)
+        # told apart by kernel facts. Design B: outside the claim, explicitly.
+        self.assertIn("does NOT certify that Playwright test logic drove Chrome",
+                      obs.SCOPE_STATEMENT)
+        claim = obs.SECURITY_CLAIM
+        self.assertEqual(sorted(claim), ["boundary", "not_observed_or_unprovable",
+                                         "pr_controlled_inputs_not_attested",
+                                         "proven_kernel_and_process_facts"])
+        self.assertIn("option B", claim["boundary"])
+        self.assertTrue(any("test logic drove" in s for s in claim["not_observed_or_unprovable"]))
+        self.assertFalse(any("drove" in s or "test logic" in s
+                             for s in claim["proven_kernel_and_process_facts"]))
+        with open(OBSERVER) as fh:
+            src = fh.read()
+        for phrase in ("BROWSER_NOT_BOUND_TO_SMOKE", "browser_binding", "Browser-to-smoke"):
+            self.assertNotIn(phrase, src, phrase)
+        self.assertIn('"functional_browser_to_test_attestation": False', src)
 
     def test_only_a_foreign_browser_never_passes(self):
         t = {k: v for k, v in good().items() if k in ("root", "sh", "cmd", "worker")}
@@ -926,7 +955,7 @@ class P14LineagePreserved(unittest.TestCase):
         events = []
         fp = FakeProc().add(100, 1, 50)
         tr = fp.tracker(freeze=lambda: events.append("freeze") or True,
-                        thaw=lambda: events.append("thaw"))
+                        thaw=lambda: events.append("thaw") or True)
         tr.tick("smoke")
         tr.freeze = lambda: events.append("freeze-failed") and False
         tr.sampler = lambda pid: (_ for _ in ()).throw(RuntimeError("boom"))
@@ -1082,6 +1111,357 @@ class P11FilesystemPreserved(Patched):
             self.assertFalse(obs.probe_writable(exe) or obs.probe_writable(d))
             self.assertEqual(os.listdir(d), ["chrome"])
         os.chmod(d, 0o755)
+
+
+SEALED = dict(ns=RNS, args=("chrome", "--type=renderer"), seccomp=2, nnp=1,
+              eff="0000000000000000", ppid=40, nspid=(60, 7, 1))
+
+
+def renderer_history(unsealed, unsealed_until, sealed_at=None, last=10.0):
+    """r1 seen unsealed (overrides `unsealed`) from t=0 until `unsealed_until`,
+    then sealed from `sealed_at` (default: the same instant) until `last`."""
+    early = state(**dict(SEALED, **unsealed))
+    early.update(t=0.0, t_last=unsealed_until)
+    late = state(**SEALED)
+    late["t"] = unsealed_until if sealed_at is None else sealed_at
+    return rec(60, "zyg", early, late, last=last)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def graft(table, tracked, key="r1"):
+    """Put a tracker-built record's history into the reference table."""
+    for field in ("states", "last_state", "sticky", "first_seen", "last_seen", "overflow",
+                  "maps_ok", "maps_failed", "maps_insufficient", "maps_identity_changed",
+                  "maps_truncated", "untrusted_exec_maps", "unresolved_exec_maps"):
+        table[key][field] = tracked[field]
+    return table
+
+
+class C3RendererHistory(unittest.TestCase):
+    """P1-3: violations after the grace period are sticky."""
+
+    def test_renderer_fail_followed_by_sealed_state_stays_fail(self):
+        t = good()
+        t["r1"] = renderer_history({"seccomp": 0, "nnp": 0}, 5.0)
+        self.assertEqual(t["r1"]["last_state"]["seccomp"], 2)          # looks sealed now
+        v, r = run_eval(t)
+        self.assertEqual(v, "FAIL")
+        self.assertEqual(codes(r, "fail"), ["RENDERER_NO_NEW_PRIVS_UNSET",
+                                            "RENDERER_SECCOMP_FILTER_ABSENT"])
+        self.assertEqual(r["summary"]["renderers"]["qualified"], [])
+
+    def test_each_sticky_condition(self):
+        cases = {
+            "RENDERER_SECCOMP_FILTER_ABSENT": {"seccomp": 1},
+            "RENDERER_NO_NEW_PRIVS_UNSET": {"nnp": 0},
+            "RENDERER_HOLDS_CAPABILITIES": {"eff": "0000000000200000"},
+            "RENDERER_SHARES_INIT_NET_NAMESPACE": {"ns": dict(RNS, net=INIT["net"])},
+            "RENDERER_SHARES_INIT_PID_NAMESPACE": {"ns": dict(RNS, pid=INIT["pid"])},
+            "RENDERER_NOT_NAMESPACED": {"ns": dict(INIT)},
+            "RENDERER_PID_NAMESPACE_INCONSISTENT": {"nspid": (60,)},
+        }
+        for code, unsealed in cases.items():
+            t = good()
+            t["r1"] = renderer_history(unsealed, 3.0)
+            v, r = run_eval(t)
+            self.assertEqual(v, "FAIL", code)
+            self.assertIn(code, codes(r, "fail"))
+            # the stored states are erased: the sticky fact alone still decides
+            t["r1"]["states"] = [t["r1"]["last_state"]]
+            self.assertEqual(run_eval(t)[0], "FAIL", code)
+
+    def test_transition_within_grace_is_not_a_violation(self):
+        for unsealed in ({"seccomp": 0, "nnp": 0}, {"eff": "000001ffffffffff"}):
+            t = good()
+            t["r1"] = renderer_history(unsealed, 1.0)
+            self.assertEqual(run_eval(t), run_eval(t))
+            self.assertEqual(run_eval(t)[0], "PASS", unsealed)
+
+    def test_namespace_condition_within_grace_is_unsupported(self):
+        t = good()
+        t["r1"] = renderer_history({"ns": dict(RNS, net=INIT["net"])}, 0.5)
+        v, r = run_eval(t)
+        self.assertEqual(v, "STOP")
+        self.assertIn("UNSUPPORTED_SANDBOX_INTERPRETATION", codes(r, "stop"))
+
+    def test_missing_facts_anywhere_in_history_prevent_pass(self):
+        t = good()
+        t["r1"] = renderer_history({"nspid": ()}, 0.5)
+        v, r = run_eval(t)
+        self.assertEqual(v, "STOP")
+        self.assertIn("INCOMPLETE_RENDERER_HISTORY", codes(r, "stop"))
+
+    def tracked_renderer(self, frozen_per_tick, active_step, seal_after, ticks, freeze_ok=True):
+        clock = Clock()
+        fp = FakeProc().add(60, 40, 600, exe=CH, maps=CHROME_MAP,
+                            args=("chrome", "--type=renderer"),
+                            **{k: v for k, v in SEALED.items() if k not in ("args", "ppid")})
+        fp.procs[60]["kw"].update(seccomp=0, nnp=0)
+
+        def pause():                      # the cgroup is frozen while sampling
+            clock.now += frozen_per_tick
+        fp.on_enumerate = pause
+        tr = fp.tracker(clock=clock, init_ns=INIT, freeze=lambda: freeze_ok,
+                        thaw=lambda: True)
+        for i in range(ticks):
+            if i == seal_after:
+                fp.procs[60]["kw"].update(seccomp=2, nnp=1)
+            tr.tick("smoke")
+            clock.now += active_step
+        return tr, tr.table["60:600"]
+
+    def test_tracker_records_late_violation_through_later_sealing(self):
+        tr, r = self.tracked_renderer(0.0, 1.0, seal_after=4, ticks=7)
+        self.assertEqual(r["sticky"]["cond_age"]["RENDERER_SECCOMP_FILTER_ABSENT"], 3.0)
+        self.assertEqual(r["last_state"]["seccomp"], 2)
+        v, res = run_eval(graft(good(), r))
+        self.assertEqual(v, "FAIL")
+        self.assertIn("RENDERER_SECCOMP_FILTER_ABSENT", codes(res, "fail"))
+
+    def test_confirmed_freeze_time_is_not_counted_as_renderer_time(self):
+        # 10 s of wall time, but only 0.5 s in which the renderer could run
+        # before it sealed: not a violation, and the evidence is complete.
+        tr, r = self.tracked_renderer(5.0, 0.5, seal_after=2, ticks=6)
+        self.assertGreaterEqual(tr.frozen_total, 25.0)
+        self.assertEqual(r["sticky"]["cond_age"]["RENDERER_SECCOMP_FILTER_ABSENT"], 0.5)
+        self.assertEqual(run_eval(graft(good(), r))[0], "PASS")
+
+    def test_unconfirmed_freeze_time_is_never_deducted(self):
+        # Same run, freeze not confirmed: nothing is deducted, so the long
+        # unsealed period counts in full (FAIL) and the run is never PASS.
+        tr, r = self.tracked_renderer(5.0, 0.5, seal_after=2, ticks=6, freeze_ok=False)
+        self.assertEqual(tr.frozen_total, 0.0)
+        self.assertEqual(tr.ticks_unfrozen, 6)
+        # last unsealed sample at wall 5.5 s, versus 0.5 s active when confirmed
+        self.assertEqual(r["sticky"]["cond_age"]["RENDERER_SECCOMP_FILTER_ABSENT"], 5.5)
+        v, res = run_eval(graft(good(), r), ticks_unfrozen=tr.ticks_unfrozen)
+        self.assertEqual(v, "FAIL")
+        self.assertIn("FREEZE_UNCONFIRMED", codes(res, "stop"))
+
+
+class C3EnumerationAndFreezer(unittest.TestCase):
+    def test_failed_pid_enumeration_stops(self):
+        for failure in (PermissionError("cgroup.procs"), "12\nnot-a-pid\n"):
+            fp = FakeProc().add(100, 1, 50)
+            fp.listed = failure
+            tr = fp.tracker()
+            self.assertIsNone(tr.pids())
+            tr.tick("smoke")
+            self.assertEqual((tr.enumeration_failures, tr.table), (1, {}))
+            v, r = run_eval(good(), enumeration_failures=tr.enumeration_failures)
+            self.assertEqual(v, "STOP")
+            self.assertIn("PROCESS_ENUMERATION_FAILED", codes(r, "stop"))
+        self.assertEqual(FakeProc().tracker().pids(), [])          # readable and empty
+
+    def test_unconfirmed_freeze_stops(self):
+        for freeze in (lambda: False, None):
+            fp = FakeProc().add(100, 1, 50)
+            tr = fp.tracker(freeze=freeze, thaw=lambda: True)
+            tr.tick("smoke")
+            self.assertEqual(tr.ticks_unfrozen, 1)
+            v, r = run_eval(good(), ticks_unfrozen=tr.ticks_unfrozen)
+            self.assertEqual(v, "STOP")
+            self.assertIn("FREEZE_UNCONFIRMED", codes(r, "stop"))
+
+    def test_failed_or_unconfirmed_thaw_stops(self):
+        fp = FakeProc().add(100, 1, 50)
+        tr = fp.tracker(freeze=lambda: True, thaw=lambda: False)
+        with self.assertRaises(obs.Stop) as ctx:
+            tr.tick("smoke")
+        self.assertEqual(ctx.exception.code, "FREEZER_FAILURE")
+        self.assertEqual(tr.thaw_failures, 1)
+        v, r = run_eval(good(), thaw_failures=tr.thaw_failures)
+        self.assertEqual(v, "STOP")
+        self.assertIn("FREEZER_FAILURE", codes(r, "stop"))
+        # a thaw failure is reported even when sampling itself raised
+        tr.sampler = lambda pid: (_ for _ in ()).throw(RuntimeError("boom"))
+        with self.assertRaises(obs.Stop):
+            tr.tick("smoke")
+        self.assertEqual(tr.thaw_failures, 2)
+
+
+class C3CgroupFiles(unittest.TestCase):
+    def setUp(self):
+        self.saved = {k: getattr(obs, k) for k in ("CGROUP_DIR", "FREEZE_WAIT_SECONDS")}
+        self.tmp = tempfile.mkdtemp()
+        obs.CGROUP_DIR = self.tmp
+        obs.FREEZE_WAIT_SECONDS = 0.02
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(obs, k, v)
+
+    def events(self, text):
+        with open(self.tmp + "/cgroup.events", "w") as fh:
+            fh.write(text)
+
+    def test_freeze_and_thaw_require_confirmation(self):
+        self.events("populated 1\nfrozen 1\n")
+        self.assertTrue(obs.Qualification.set_frozen(1))
+        with open(self.tmp + "/cgroup.freeze") as fh:
+            self.assertEqual(fh.read(), "1")
+        self.assertFalse(obs.Qualification.set_frozen(0))       # thaw never confirmed
+        self.events("populated 1\nfrozen 0\n")
+        self.assertTrue(obs.Qualification.set_frozen(0))
+        self.assertFalse(obs.Qualification.set_frozen(1))       # freeze never confirmed
+        self.events("populated 1\nfrozen 10\n")
+        self.assertFalse(obs.Qualification.set_frozen(1))       # exact line only
+        os.remove(self.tmp + "/cgroup.events")
+        self.assertFalse(obs.Qualification.set_frozen(0))       # I/O failure
+        obs.CGROUP_DIR = self.tmp + "/missing"
+        self.assertFalse(obs.Qualification.set_frozen(1))
+
+    def test_unreadable_cgroup_is_never_reported_empty(self):
+        q = make_q(self.tmp)
+        q.tracker = types.SimpleNamespace(pids=lambda: None)
+        self.assertFalse(q.kill_cgroup(wait=0.05))
+        q.tracker = types.SimpleNamespace(pids=lambda: [])
+        self.assertTrue(q.kill_cgroup(wait=0.05))
+
+
+class C3MappingTruncation(unittest.TestCase):
+    PAD = "7f10-7f11 r--p 00000000 08:01 500 /usr/lib/x86_64-linux-gnu/libc.so.6\n"
+    EVIL = "7f20-7f21 r-xp 00000000 08:01 600 /srv/s01/work/evil.so\n"
+
+    def tracked(self, maps, byte_reader=None):
+        fp = FakeProc().add(100, 1, 50, exe=CH, args=BROWSER_ARGS, maps=maps)
+        tr = fp.tracker(byte_reader=byte_reader)
+        tr.tick("smoke")
+        return tr.table["100:50"]
+
+    def test_untrusted_mapping_beyond_8_mib_is_stop_not_pass(self):
+        lines = obs.MAPS_READ_LIMIT // len(self.PAD) + 10
+        maps = CHROME_MAP + LIBC_MAP + self.PAD * lines + self.EVIL
+        self.assertGreater(len(maps.encode()), 8 << 20)
+        for byte_reader in (None, lambda path, limit: maps.encode()[:limit]):
+            r = self.tracked(maps, byte_reader)
+            self.assertEqual((r["maps_ok"], r["maps_truncated"]), (0, 1))
+            self.assertEqual(r["untrusted_exec_maps"], [])           # never seen
+            v, res = run_eval(with_tracked(r))
+            self.assertEqual(v, "STOP")
+            self.assertIn("MAPPING_EVIDENCE_TRUNCATED", codes(res, "stop"))
+
+    def test_truncation_boundary_and_prefix_evidence(self):
+        saved = obs.MAPS_READ_LIMIT
+        try:
+            complete = CHROME_MAP + LIBC_MAP
+            obs.MAPS_READ_LIMIT = len(complete.encode())
+            r = self.tracked(complete)                                # exactly at the bound
+            self.assertEqual((r["maps_ok"], r["maps_truncated"]), (1, 0))
+            self.assertEqual(run_eval(with_tracked(r))[0], "PASS")
+            r = self.tracked(complete + VDSO_MAP)                     # one line over
+            self.assertEqual((r["maps_ok"], r["maps_truncated"]), (0, 1))
+            self.assertEqual(run_eval(with_tracked(r))[0], "STOP")
+            # a confirmed untrusted mapping in the complete prefix is still FAIL
+            obs.MAPS_READ_LIMIT = len((CHROME_MAP + self.EVIL).encode()) + 5
+            r = self.tracked(CHROME_MAP + self.EVIL + LIBC_MAP)
+            v, res = run_eval(with_tracked(r))
+            self.assertEqual(v, "FAIL")
+            self.assertIn("UNTRUSTED_EXECUTABLE_MAPPING", codes(res, "fail"))
+            self.assertIn("MAPPING_EVIDENCE_TRUNCATED", codes(res, "stop"))
+        finally:
+            obs.MAPS_READ_LIMIT = saved
+
+    def test_complete_untrusted_mapping_fails(self):
+        r = self.tracked(CHROME_MAP + LIBC_MAP + self.EVIL)
+        self.assertEqual((r["maps_ok"], r["maps_truncated"]), (1, 0))
+        v, res = run_eval(with_tracked(r))
+        self.assertEqual(v, "FAIL")
+        self.assertIn("UNTRUSTED_EXECUTABLE_MAPPING", codes(res, "fail"))
+
+    def test_read_is_bounded(self):
+        with tempfile.NamedTemporaryFile() as fh:
+            fh.write(b"x" * 100)
+            fh.flush()
+            self.assertEqual(len(obs.read_bytes(fh.name, 11)), 11)
+
+
+class C3StaticConfig(unittest.TestCase):
+    def variant(self, old, new):
+        self.assertEqual(PR270_CONFIG.count(old), 1, old)
+        return PR270_CONFIG.replace(old, new)
+
+    def test_original_pr270_configuration_is_accepted(self):
+        self.assertEqual(obs.check_playwright_config(PR270_CONFIG), [])
+
+    def test_four_reported_invalid_configurations_are_rejected(self):
+        variants = {
+            "quoted duplicate channel": self.variant(
+                'channel: "chrome",\n', 'channel: "chrome",\n        "channel": "msedge",\n'),
+            "quoted duplicate chromiumSandbox": self.variant(
+                "chromiumSandbox: true,\n",
+                'chromiumSandbox: true,\n          "chromiumSandbox": false,\n'),
+            "true-true": self.variant("chromiumSandbox: true,\n", "chromiumSandbox: true-true,\n"),
+            "additional unnamed project": self.variant(
+                "    },\n  ],\n});", "    },\n    { use: { browserName: \"firefox\" } },\n  ],\n});"),
+        }
+        for name, text in variants.items():
+            self.assertTrue(obs.check_playwright_config(text), name)
+
+    def test_further_literal_tricks_are_rejected(self):
+        variants = {
+            "computed key": ('channel: "chrome",\n', 'channel: "chrome", ["channel"]: "msedge",\n'),
+            "shorthand key": ('channel: "chrome",\n', 'channel: "chrome", devices,\n'),
+            "numeric key": ('channel: "chrome",\n', 'channel: "chrome", 1: "x",\n'),
+            "identifier value": ("chromiumSandbox: true,\n", "chromiumSandbox: devices,\n"),
+            "negation": ("chromiumSandbox: true,\n", "chromiumSandbox: !false,\n"),
+            "other device": ('...devices["Desktop Chrome"]', '...devices["Desktop Firefox"]'),
+            "top-level connectOptions": ('    video: "off",\n',
+                                         '    video: "off",\n    connectOptions: { a: 1 },\n'),
+            "unknown top-level key": ("  retries: 0,\n", "  retries: 0,\n  globalSetup: \"x\",\n"),
+            "quoted top-level duplicate": ("  retries: 0,\n", '  retries: 0,\n  "retries": 1,\n'),
+            "project extra key": ('      name: "chromium",\n',
+                                  '      name: "chromium",\n      testDir: "x",\n'),
+        }
+        for name, (old, new) in variants.items():
+            self.assertTrue(obs.check_playwright_config(self.variant(old, new)), name)
+
+    def test_literal_parser(self):
+        skeleton, strings = obs.js_skeleton('{ a: [1, "s", { b: true }], "c": "d" }')
+        members = obs.js_literal_members(skeleton, strings)
+        self.assertIn(("a", ("defineConfig(", "{"), 1, ("[",)), members)
+        self.assertIn(("#", ("defineConfig(", "{", "a["), 4, ("literal", "1")), members)
+        self.assertIn(("#", ("defineConfig(", "{", "a["), 6, ("string", "s")), members)
+        self.assertIn(("b", ("defineConfig(", "{", "a[", "{"), 9, ("literal", "true")),
+                      members)
+        self.assertIn(("c", ("defineConfig(", "{"), 15, ("string", "d")), members)
+        for bad in ("{ a: 1 } x", "{ a: 1, a: 2 }", "{ a: b }", "{ a: 1 - 1 }", "{ a }",
+                    "{ a: f(1) }", "[1]", "{ ...x }"):
+            with self.assertRaises(ValueError, msg=bad):
+                obs.js_literal_members(bad, [])
+
+
+class C3Invariant(unittest.TestCase):
+    def test_new_degradations_never_improve_to_pass_nor_hide_a_fail(self):
+        degradations = {
+            "enumeration failure": lambda t, c: c.update(enumeration_failures=1),
+            "unconfirmed freeze": lambda t, c: c.update(ticks_unfrozen=1),
+            "unconfirmed thaw": lambda t, c: c.update(thaw_failures=1),
+            "truncated maps": lambda t, c: t["browser"].update(maps_truncated=1),
+            "late violation": lambda t, c: t["r1"]["sticky"]["cond_age"].update(
+                RENDERER_HOLDS_CAPABILITIES=3.0),
+            "missing facts": lambda t, c: t["r1"]["sticky"]["cond_age"].update(
+                RENDERER_FACTS_MISSING=0.0),
+            "early namespace": lambda t, c: t["r1"]["sticky"]["cond_age"].update(
+                RENDERER_SHARES_INIT_NET_NAMESPACE=0.1),
+        }
+        for name, mutate in degradations.items():
+            table, ctx = good(), dict(CTX)
+            mutate(table, ctx)
+            result = obs.evaluate(table, ctx)
+            self.assertNotEqual(obs.decide(result["fail"], result["stop"]), "PASS", name)
+            table, ctx = good(), dict(CTX)
+            table["r1"] = renderer_history({"seccomp": 0}, 5.0)
+            mutate(table, ctx)
+            result = obs.evaluate(table, ctx)
+            self.assertEqual(obs.decide(result["fail"], result["stop"]), "FAIL", name)
 
 
 class Misc(unittest.TestCase):

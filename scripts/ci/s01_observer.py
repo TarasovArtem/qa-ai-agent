@@ -78,6 +78,8 @@ SMOKE_TIMEOUT = 300
 MAX_PROCESSES = 4000
 MAX_STATES_PER_PROCESS = 24
 MAX_PARENT_ATTEMPTS = 5
+MAPS_READ_LIMIT = 8 << 20
+WALL_TIMEOUT_FACTOR = 1.5
 MAX_STICKY = 12
 MAX_OUTPUT_BYTES = 256 * 1024
 MAX_REPORT_BYTES = 512 * 1024
@@ -107,18 +109,40 @@ CLONE_NEWUSER = 0x10000000
 CLONE_NEWNET = 0x40000000
 
 SCOPE_STATEMENT = (
-    "Result applies only to this instrumented run, this Chrome build and "
-    "this runner image. Chrome ran as the unprivileged user s01u inside a "
-    "tracking cgroup, with world-writable trees holding trusted executables "
-    "(/opt, /usr/share and any exposed runner PATH directory) bind-mounted "
-    "read-only for the window; stock CI runs it as `runner` without that "
-    "protection. A PASS asserts that the only browser executable that ran "
-    "in the observer-launched smoke process tree was the verified Chrome "
-    "and that its renderers were sandboxed; it does NOT assert that the "
-    "test logic drove that browser (exit code and report are written by "
-    "PR-controlled code). This does not certify any other run, image, "
-    "browser build, or earlier E1/C4 runs."
+    "S-01 (attestation boundary B) certifies process-level sandbox properties "
+    "of the verified Google Chrome renderer processes observed during this one "
+    "instrumented execution, for the PR head/tree, runner image and Chrome "
+    "build recorded here. It does NOT certify that Playwright test logic drove "
+    "Chrome, test correctness, resistance to hostile PR code, equivalence with "
+    "stock CI (here Chrome ran as the unprivileged user s01u in a frozen-per-"
+    "sample tracking cgroup, with /opt, /usr/share and exposed PATH trees "
+    "bind-mounted read-only), unobserved processes, or any other run including "
+    "earlier E1/C4 runs."
 )
+
+SECURITY_CLAIM = {
+    "boundary": "OD-S01-ATTESTATION-BOUNDARY option B",
+    "proven_kernel_and_process_facts": [
+        "executable identity (device+inode) of every process in the tracking cgroup, "
+        "and the hashes of the Chrome files for the whole window",
+        "parent links bound by PID + start time, from the observer-launched smoke "
+        "process to the single top-level verified Chrome and its zygote/renderer tree",
+        "for every renderer, at every sample: namespaces, seccomp mode, NoNewPrivs, "
+        "capabilities and AppArmor label; violations are sticky",
+        "executable mappings of every Chrome process, bound to its identity",
+    ],
+    "pr_controlled_inputs_not_attested": [
+        "command lines and process labels (used only as labels, never as proof)",
+        "the Playwright configuration and test files (statically pre-checked only)",
+        "smoke exit code, output and Playwright report",
+    ],
+    "not_observed_or_unprovable": [
+        "that Playwright test logic drove the observed Chrome, and test correctness",
+        "processes that start and are reaped between two samples",
+        "behaviour of hostile PR code that imitates the expected process tree",
+        "equivalence with stock CI execution",
+    ],
+}
 
 
 class Stop(Exception):
@@ -290,43 +314,113 @@ def js_skeleton(text):
     return "".join(out), strings
 
 
-_JS_TOKEN = re.compile(r"\x01\d+\x01|[A-Za-z_$][\w$]*|\.\.\.|[^\s]")
+_JS_TOKEN = re.compile(r"\x01\d+\x01|[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|\.\.\.|[^\s]")
 _JS_IDENT = re.compile(r"[A-Za-z_$][\w$]*")
-_JS_CLOSE = {"{": "}", "[": "]", "(": ")"}
+_JS_STRING = re.compile("\x01(\\d+)\x01")
+_JS_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
-def js_key_paths(skeleton):
-    """Property keys and spreads with the path of enclosing brackets.
+def js_literal_members(body, strings):
+    """Parse one strict, JSON-like object literal (comments/strings already
+    lexed by js_skeleton) and list its members.
 
-    Returns [(key, path, token_index, value_token)]. `path` labels each
-    enclosing bracket with the property key or callee that introduced it,
-    e.g. ("defineConfig(", "{", "projects[", "{", "use{").
+        value  := object | array | string | number | true | false | null
+        object := "{" [member ("," member)* [","]] "}"
+        member := (identifier | string) ":" value
+                | "..." "devices" "[" string "]"
+        array  := "[" [value ("," value)* [","]] "]"
+
+    Quoted keys are keys like any other; a key may occur only once per
+    object. Anything else (calls, operators, computed or shorthand keys,
+    identifiers as values) raises ValueError.
+
+    Returns [(key, path, token_index, value)] for every member ("..." for a
+    spread, "#" for an array element). `path` labels each enclosing
+    container, e.g. ("defineConfig(", "{", "projects[", "{", "use{");
+    `value` is ("string", s), ("literal", text) or ("{",) / ("[",).
     """
-    tokens = _JS_TOKEN.findall(skeleton)
-    stack, found = [], []
-    for index, tok in enumerate(tokens):
-        prev = tokens[index - 1] if index >= 1 else ""
-        prev2 = tokens[index - 2] if index >= 2 else ""
-        if tok in _JS_CLOSE:
-            if prev == ":" and _JS_IDENT.fullmatch(prev2):
-                stack.append(prev2 + tok)
-            elif tok == "(" and _JS_IDENT.fullmatch(prev):
-                stack.append(prev + tok)
+    tokens = _JS_TOKEN.findall(body)
+    pos = [0]
+    found = []
+
+    def peek():
+        return tokens[pos[0]] if pos[0] < len(tokens) else ""
+
+    def take(expected=None):
+        tok = peek()
+        if tok == "" or (expected is not None and tok != expected):
+            raise ValueError("unexpected token in config literal")
+        pos[0] += 1
+        return tok
+
+    def string_token():
+        m = _JS_STRING.fullmatch(take())
+        if not m:
+            raise ValueError("string literal expected")
+        return strings[int(m.group(1))]
+
+    def value(path, label):
+        tok = peek()
+        if tok == "{":
+            take()
+            parse_object(path + (label + "{",))
+            return ("{",)
+        if tok == "[":
+            take()
+            parse_array(path + (label + "[",))
+            return ("[",)
+        if _JS_STRING.fullmatch(tok):
+            return ("string", string_token())
+        if _JS_NUMBER.fullmatch(tok) or tok in ("true", "false", "null"):
+            return ("literal", take())
+        raise ValueError("unsupported value in config literal")
+
+    def parse_object(path):
+        keys = set()
+        while peek() != "}":
+            index = pos[0]
+            tok = peek()
+            if tok == "...":
+                take()
+                take("devices")
+                take("[")
+                device = string_token()
+                take("]")
+                found.append(("...", path, index, ("string", device)))
             else:
-                stack.append(tok)
-        elif tok in ("}", "]", ")"):
-            if not stack or _JS_CLOSE[stack[-1][-1]] != tok:
-                raise ValueError("unbalanced brackets")
-            stack.pop()
-        elif tok == "...":
-            found.append(("...", tuple(stack), index, ""))
-        elif tok == ":" and _JS_IDENT.fullmatch(prev) and prev2 in ("{", ",") \
-                and stack and stack[-1].endswith("{"):
-            value = tokens[index + 1] if index + 1 < len(tokens) else ""
-            found.append((prev, tuple(stack), index, value))
-    if stack:
-        raise ValueError("unbalanced brackets")
+                if _JS_STRING.fullmatch(tok):
+                    key = string_token()
+                elif _JS_IDENT.fullmatch(tok) and tok not in ("true", "false", "null"):
+                    key = take()
+                else:
+                    raise ValueError("unsupported property key in config literal")
+                if key in keys or key in ("#", "..."):
+                    raise ValueError("duplicate property key %r in config literal" % key[:40])
+                keys.add(key)
+                take(":")
+                found.append((key, path, index, value(path, key)))
+            if peek() != ",":
+                break
+            take(",")
+        take("}")
+
+    def parse_array(path):
+        while peek() != "]":
+            index = pos[0]
+            found.append(("#", path, index, value(path, "")))
+            if peek() != ",":
+                break
+            take(",")
+        take("]")
+
+    if value(("defineConfig(",), "") != ("{",) or pos[0] != len(tokens):
+        raise ValueError("config is not exactly one object literal")
     return found
+
+
+CONFIG_TOP_KEYS = frozenset(("testDir", "outputDir", "fullyParallel", "workers", "retries",
+                             "reporter", "use", "projects", "timeout"))
+CONFIG_TOP_USE_KEYS = frozenset(("baseURL", "screenshot", "trace", "video"))
 
 
 def check_playwright_config(text):
@@ -336,72 +430,69 @@ def check_playwright_config(text):
     never searched for settings. The file must be exactly
 
         const { defineConfig, devices } = require("@playwright/test");
-        module.exports = defineConfig({ ...plain literal... });
+        module.exports = defineConfig({ ...strict literal... });
 
-    with one project named "chromium" whose `use` object sets
-    channel: "chrome" and launchOptions: { chromiumSandbox: true } and
-    nothing else that could change browser selection. The literal may not
-    contain calls, assignments, functions or template strings.
+    with only allow-listed top-level keys and exactly one project, named
+    "chromium", whose `use` is { ...devices["Desktop Chrome"],
+    channel: "chrome", launchOptions: { chromiumSandbox: true } }.
 
-    This is still not proof of the effective runtime configuration (the
-    PR's test files are executable too). That proof is the observed
-    executable identity, flags and kernel facts (see evaluate).
+    This is a pre-check of a PR-controlled input, not proof of the
+    effective runtime configuration (the PR's test files are executable
+    too). Proof of what ran is the observed executable identity and kernel
+    facts (see evaluate).
     """
     try:
         skeleton, strings = js_skeleton(text)
-        keys = js_key_paths(skeleton)
     except ValueError as exc:
         return ["config is not statically analysable: %s" % exc]
-
-    def string_value(token):
-        m = re.fullmatch("\x01(\\d+)\x01", token)
-        return strings[int(m.group(1))] if m else None
-
-    problems = []
     form = re.fullmatch(
         r"\s*const\s*\{\s*defineConfig\s*,\s*devices\s*\}\s*=\s*require\(\x01(\d+)\x01\)\s*;"
         r"\s*module\.exports\s*=\s*defineConfig\((.*)\)\s*;?\s*", skeleton, re.S)
     if not form or strings[int(form.group(1))] != "@playwright/test":
         return ["config is not the single `module.exports = defineConfig({...})` form"]
-    body = form.group(2)
-    if not re.fullmatch(r"[\w$\s{}\[\]:,.\x01-]*", body):
-        problems.append("config object contains code (calls, assignments or operators)")
-    depth = 0
-    for ch in body:
-        depth += ch in "{["
-        depth -= ch in "}]"
-        if depth < 0:
-            problems.append("config object is not a single literal")
-            break
+    try:
+        members = js_literal_members(form.group(2), strings)
+    except ValueError as exc:
+        return ["config is not statically analysable: %s" % exc]
 
     base = ("defineConfig(", "{")
-    project = base + ("projects[", "{")
+    top_use = base + ("use{",)
+    project_list = base + ("projects[",)
+    project = project_list + ("{",)
     use = project + ("use{",)
     launch = use + ("launchOptions{",)
 
-    def entries(name):
-        return [k for k in keys if k[0] == name]
+    def named(name):
+        return [m for m in members if m[0] == name]
 
-    channel = entries("channel")
-    if len(channel) != 1 or channel[0][1] != use or string_value(channel[0][3]) != "chrome":
+    def keys_at(path):
+        return {m[0] for m in members if m[1] == path}
+
+    problems = []
+    channel = named("channel")
+    if len(channel) != 1 or channel[0][1] != use or channel[0][3] != ("string", "chrome"):
         problems.append("the chromium project does not set exactly channel: \"chrome\"")
-    sandbox = entries("chromiumSandbox")
-    if len(sandbox) != 1 or sandbox[0][1] != launch or sandbox[0][3] != "true":
+    sandbox = named("chromiumSandbox")
+    if len(sandbox) != 1 or sandbox[0][1] != launch or sandbox[0][3] != ("literal", "true"):
         problems.append("the chromium project does not set exactly "
                         "launchOptions.chromiumSandbox: true")
-    names = [k for k in keys if k[0] == "name" and k[1] == project]
-    if len(entries("projects")) != 1 or len(names) != 1 \
-            or string_value(names[0][3]) != "chromium":
-        problems.append("config does not define exactly one project named \"chromium\"")
-    if {k[0] for k in keys if k[1] == use} - {"...", "channel", "launchOptions"} \
-            or {k[0] for k in keys if k[1] == launch} != {"chromiumSandbox"} \
-            or len([k for k in keys if k[0] == "launchOptions"]) != 1 \
-            or len([k for k in keys if k[0] == "use" and k[1] == project]) != 1:
-        problems.append("the chromium project carries unexpected browser options")
-    spreads = entries("...")
-    if len(spreads) > 1 or any(
-            s[1] != use or (channel and s[2] > channel[0][2]) for s in spreads):
-        problems.append("a spread could override the browser selection")
+    elements = [m for m in members if m[0] == "#" and m[1] == project_list]
+    names = [m for m in members if m[0] == "name" and m[1] == project]
+    if len(named("projects")) != 1 or len(elements) != 1 or elements[0][3] != ("{",) \
+            or len(names) != 1 or names[0][3] != ("string", "chromium"):
+        problems.append("config does not define exactly one project, named \"chromium\"")
+    if keys_at(project) != {"name", "use"} \
+            or keys_at(use) != {"...", "channel", "launchOptions"} \
+            or keys_at(launch) != {"chromiumSandbox"}:
+        problems.append("the chromium project carries unexpected or missing browser options")
+    spreads = named("...")
+    if len(spreads) != 1 or spreads[0][1] != use \
+            or spreads[0][3] != ("string", "Desktop Chrome") \
+            or (channel and spreads[0][2] > channel[0][2]):
+        problems.append("the device spread is not exactly ...devices[\"Desktop Chrome\"] "
+                        "before channel")
+    if keys_at(base) - CONFIG_TOP_KEYS or keys_at(top_use) - CONFIG_TOP_USE_KEYS:
+        problems.append("config has top-level settings outside the allow-list")
     for token in CONFIG_FORBIDDEN:
         if token in skeleton or any(token in s for s in strings):
             problems.append("config contains forbidden token " + token)
@@ -437,12 +528,62 @@ def classify_executable(exe, path, chrome_id, chrome_files, node_id, stat_fn=os.
     return "system"
 
 
+NAMESPACE_CONDITIONS = ("RENDERER_NOT_NAMESPACED", "RENDERER_SHARES_INIT_PID_NAMESPACE",
+                        "RENDERER_SHARES_INIT_NET_NAMESPACE")
+VIOLATION_CONDITIONS = NAMESPACE_CONDITIONS + (
+    "RENDERER_SECCOMP_FILTER_ABSENT", "RENDERER_NO_NEW_PRIVS_UNSET",
+    "RENDERER_HOLDS_CAPABILITIES", "RENDERER_PID_NAMESPACE_INCONSISTENT")
+FACTS_MISSING = "RENDERER_FACTS_MISSING"
+
+
+def sandbox_conditions(state, init_ns):
+    """Sandbox conditions a Chrome state violates (as renderer criteria)."""
+    ns = state.get("ns") or {}
+    cap = state.get("cap") or {}
+    found = set()
+    if not all(ns.get(n) for n in ("user", "pid", "net")) or state.get("seccomp") is None \
+            or state.get("nnp") is None or cap.get("eff") is None or cap.get("prm") is None \
+            or not state.get("nspid"):
+        found.add(FACTS_MISSING)
+    if ns.get("user") == init_ns["user"]:
+        # init user namespace with other namespaces new = setuid-helper
+        # layout; reported separately (structural STOP), not here.
+        if ns.get("pid") == init_ns["pid"] and ns.get("net") == init_ns["net"]:
+            found.add("RENDERER_NOT_NAMESPACED")
+    else:
+        if ns.get("pid") == init_ns["pid"]:
+            found.add("RENDERER_SHARES_INIT_PID_NAMESPACE")
+        if ns.get("net") == init_ns["net"]:
+            found.add("RENDERER_SHARES_INIT_NET_NAMESPACE")
+    if state.get("seccomp") is not None and state.get("seccomp") != 2:
+        found.add("RENDERER_SECCOMP_FILTER_ABSENT")
+    if state.get("nnp") is not None and state.get("nnp") != 1:
+        found.add("RENDERER_NO_NEW_PRIVS_UNSET")
+    if cap.get("eff") is not None and cap.get("prm") is not None \
+            and not (cap_is_zero(cap.get("eff")) and cap_is_zero(cap.get("prm"))):
+        found.add("RENDERER_HOLDS_CAPABILITIES")
+    if state.get("nspid") and len(state.get("nspid")) < 2:
+        found.add("RENDERER_PID_NAMESPACE_INCONSISTENT")
+    return found
+
+
+def observe_conditions(sticky, state, chrome_id, init_ns, age):
+    """Record, per condition, the greatest process age (active time) at which
+    a Chrome state of this process was observed violating it. Monotonic."""
+    if init_ns is None or state.get("exe") != list(chrome_id):
+        return
+    ages = sticky["cond_age"]
+    for code in sandbox_conditions(state, init_ns):
+        if code not in ages or ages[code] < age:
+            ages[code] = age
+
+
 def new_sticky():
     """Facts about a process that later observations can never remove."""
     return {"chrome": False, "left_chrome": False, "foreign_browser": False,
             "flags": [], "types": [], "exes": [], "ns": [],
             "tracer": False, "uid0": False, "sealed": False, "regressed": False,
-            "overflow": False}
+            "overflow": False, "cond_age": {}}
 
 
 def fold_state(sticky, state, chrome_id):
@@ -483,21 +624,32 @@ def fold_state(sticky, state, chrome_id):
             sticky["foreign_browser"] = True
 
 
-def sticky_of(rec, chrome_id):
+def sticky_of(rec, chrome_id, init_ns=None):
     """Union of the stored sticky facts and those derivable from the stored
     states. Deleting either source can therefore never remove a fact."""
     derived = new_sticky()
     states = list(rec.get("states") or [])
     last = rec.get("last_state")
-    if last is not None and (not states or states[-1] != last):
+    if last is not None and (not states or states[-1] is not last):
         states.append(last)
-    for state in states:
+    first = rec.get("first_seen", 0.0)
+    for index, state in enumerate(states):
         fold_state(derived, state, chrome_id)
+        # A stored state was seen until its `t_last` (active time); the
+        # final state at least until the record's last sighting.
+        seen_until = state.get("t_last", state.get("t", first))
+        if index == len(states) - 1:
+            seen_until = max(seen_until, rec.get("last_seen", seen_until))
+        observe_conditions(derived, state, chrome_id, init_ns, seen_until - first)
     stored = rec.get("sticky") or {}
     for name, value in derived.items():
         other = stored.get(name)
         if isinstance(value, bool):
             derived[name] = value or bool(other)
+        elif isinstance(value, dict):
+            for code, age in (other or {}).items():
+                if code not in value or value[code] < age:
+                    value[code] = age
         else:
             for item in other or []:
                 if item not in value:
@@ -523,14 +675,18 @@ def evaluate(table, ctx):
     takes part in the verdict, and missing evidence is a STOP. Nothing
     that is added to an observation can turn it into a PASS.
 
-    Browser-to-smoke binding (what a PASS asserts and what it does not):
-    exactly one top-level Chrome ran; its parent is a process running the
-    verified Node binary whose PID+start-time lineage reaches the process
-    the observer itself started for the smoke, through the process that
-    carries the approved `playwright test` command; and no executable of
-    unknown identity ran during the smoke. Hence any browser the smoke
-    could have used is this one. Whether the test logic actually drove it
-    is reported by PR-controlled code and is NOT asserted.
+    Renderer conditions are judged over the whole history: a condition
+    observed at a process age (active time, frozen intervals excluded) of
+    at least `grace` is a FAIL even if later samples look sealed; a
+    namespace condition seen earlier is an unsupported topology (STOP).
+
+    Process ancestry (Design B; what a PASS asserts and what it does not):
+    exactly one top-level verified Chrome ran; its parent runs the verified
+    Node binary whose PID+start-time lineage reaches the process the
+    observer itself started for the smoke, through the process carrying
+    the approved `playwright test` command; no executable of unknown
+    identity ran during the smoke. These are process facts. That the test
+    logic drove this Chrome is NOT observed and NOT asserted.
     """
     fails, stops = [], []
     init_ns = ctx["init_ns"]
@@ -545,7 +701,7 @@ def evaluate(table, ctx):
     def stop(code, detail=""):
         stops.append({"code": code, "detail": str(detail)[:300]})
 
-    sticky = {k: sticky_of(r, chrome_id) for k, r in table.items()}
+    sticky = {k: sticky_of(r, chrome_id, init_ns) for k, r in table.items()}
 
     def final(rec):
         return rec.get("last_state") or rec["states"][-1]
@@ -573,6 +729,14 @@ def evaluate(table, ctx):
     if ctx.get("unsampled"):
         stop("UNSAMPLED_PROCESS", "%d enumerated process(es) without a usable sample, e.g. %s"
              % (len(ctx["unsampled"]), ctx["unsampled"][:3]))
+    if ctx.get("enumeration_failures"):
+        stop("PROCESS_ENUMERATION_FAILED", "%d tick(s) could not read cgroup.procs"
+             % ctx["enumeration_failures"])
+    if ctx.get("ticks_unfrozen"):
+        stop("FREEZE_UNCONFIRMED", "%d sample(s) taken without a confirmed cgroup freeze"
+             % ctx["ticks_unfrozen"])
+    if ctx.get("thaw_failures"):
+        stop("FREEZER_FAILURE", "%d unconfirmed thaw(s)" % ctx["thaw_failures"])
     by_pid = {}
     helper_process_seen = False
     foreign_browsers, unexpected_exes = [], []
@@ -661,6 +825,9 @@ def evaluate(table, ctx):
                  key + " " + ",".join(rec["unresolved_exec_maps"][:3]))
         if rec.get("maps_identity_changed"):
             stop("MAPPING_IDENTITY_UNSTABLE", key)
+        if rec.get("maps_truncated"):
+            stop("MAPPING_EVIDENCE_TRUNCATED",
+                 "%s: %d mapping listing(s) exceeded the read bound" % (key, rec["maps_truncated"]))
         if not rec.get("maps_ok") or rec.get("maps_failed") or rec.get("maps_insufficient"):
             stop("INSUFFICIENT_MAPPING_EVIDENCE",
                  "%s complete=%s failed=%s without_own_executable=%s"
@@ -671,7 +838,7 @@ def evaluate(table, ctx):
                 structural_setuid = True
 
     # --- the one browser, and its binding to the observer-launched smoke
-    binding = {"established": False}
+    binding = {"ancestry_verified": False}
     if not browsers:
         stop("NO_BROWSER_OBSERVED")
     elif len(browsers) > 1:
@@ -724,26 +891,30 @@ def evaluate(table, ctx):
                 problem = "the approved `playwright test` command process is not an ancestor"
             elif any(table[k].get("phase") != "smoke" for k in chain):
                 problem = "ancestry leaves the smoke phase"
+        # Process ancestry only (Design B): proves where the observed Chrome
+        # sits in the observer-launched process tree, never that test logic
+        # drove it.
         binding = {
-            "established": problem is None,
+            "ancestry_verified": problem is None,
             "browser": bkey,
             "ancestry_to_smoke_root": chain,
             "launcher": chain[0] if chain else None,
-            "launcher_cmdline": (final(table[chain[0]]).get("cmdline") or [])[:6] if chain else None,
+            "launcher_cmdline_pr_controlled_label":
+                (final(table[chain[0]]).get("cmdline") or [])[:6] if chain else None,
             "approved_command_process": command,
             "smoke_root": ctx.get("smoke_root"),
-            "observed_by_kernel_facts": [
+            "proven_kernel_and_process_facts": [
                 "executable identity (device+inode) of browser and launcher",
-                "parent links bound by PID + start time",
+                "parent links bound by PID + start time up to the observer-launched process",
                 "membership of the tracking cgroup",
                 "identity class of every executable run during the smoke"],
-            "pr_controlled_and_not_asserted": [
-                "command lines (labels only)",
-                "that the test logic actually drove this browser",
-                "smoke exit code and Playwright report"],
+            "pr_controlled_inputs_not_attested": [
+                "command lines (labels only)", "smoke exit code and Playwright report"],
+            "not_observed_or_unprovable": [
+                "that Playwright test logic drove this browser"],
         }
         if problem:
-            stop("BROWSER_NOT_BOUND_TO_SMOKE", problem)
+            stop("BROWSER_ANCESTRY_UNVERIFIED", problem)
 
     def is_zygote(key):
         facts = sticky[key]
@@ -800,6 +971,29 @@ def evaluate(table, ctx):
         problem = lineage_problem(key)
         if problem:
             stop(problem[0], problem[1] + " " + key)
+
+        # Sticky, history-wide judgement: a later sealed sample can never
+        # undo a violation observed after the grace period.
+        conditions = facts["cond_age"]
+        violations = sorted(code for code in VIOLATION_CONDITIONS
+                            if code in conditions and conditions[code] >= grace)
+        if facts["regressed"]:
+            violations.append("RENDERER_SANDBOX_REGRESSED")
+        early_ns = [code for code in NAMESPACE_CONDITIONS
+                    if code in conditions and conditions[code] < grace]
+        if early_ns:
+            # Zygote-forked renderers are born inside their namespaces; one
+            # seen outside them is not the supported mechanism.
+            stop("UNSUPPORTED_SANDBOX_INTERPRETATION",
+                 "renderer observed outside its sandbox namespaces (%s) %s"
+                 % (",".join(early_ns), key))
+        if FACTS_MISSING in conditions:
+            stop("INCOMPLETE_RENDERER_HISTORY", "missing kernel facts in history of " + key)
+        for code in violations:
+            fail(code, key)
+        if violations:
+            renderers["violating"].append(key)
+            continue
         if not complete:
             stop("INCOMPLETE_RENDERER_HISTORY", "missing kernel facts for " + key)
             renderers["indeterminate"].append(key)
@@ -810,35 +1004,14 @@ def evaluate(table, ctx):
                  "(setuid-helper layout) " + key)
             renderers["unsupported"].append(key)
             continue
-
-        violations = ["RENDERER_SANDBOX_REGRESSED"] if facts["regressed"] else []
-        if not sealed and lifetime(rec) < grace and not violations:
+        if not sealed:
             # Never resolve an unfinished observation in either direction.
             stop("INCOMPLETE_RENDERER_HISTORY",
-                 "renderer observed for %.2fs and not sealed: %s" % (lifetime(rec), key))
+                 "renderer observed for %.2fs active time and not sealed: %s"
+                 % (lifetime(rec), key))
             renderers["indeterminate"].append(key)
             continue
-        if not sealed:
-            if not in_user:
-                violations.append("RENDERER_NOT_NAMESPACED")
-            else:
-                if not in_pid:
-                    violations.append("RENDERER_SHARES_INIT_PID_NAMESPACE")
-                if not in_net:
-                    violations.append("RENDERER_SHARES_INIT_NET_NAMESPACE")
-                if st.get("seccomp") != 2:
-                    violations.append("RENDERER_SECCOMP_FILTER_ABSENT")
-                if st.get("nnp") != 1:
-                    violations.append("RENDERER_NO_NEW_PRIVS_UNSET")
-                if not (cap_is_zero(cap.get("eff")) and cap_is_zero(cap.get("prm"))):
-                    violations.append("RENDERER_HOLDS_CAPABILITIES")
-                if len(st.get("nspid")) < 2:
-                    violations.append("RENDERER_PID_NAMESPACE_INCONSISTENT")
-        for code in violations:
-            fail(code, key)
-        if violations:
-            renderers["violating"].append(key)
-        elif problem:
+        if problem or early_ns or FACTS_MISSING in conditions:
             renderers["unsupported"].append(key)
         else:
             renderers["qualified"].append(key)
@@ -884,7 +1057,7 @@ def evaluate(table, ctx):
             "chrome_process_count": len(chrome),
             "browser": browsers,
             "browser_is_verified_chrome_executable": len(browsers) == 1 and not foreign_browsers,
-            "browser_binding": binding,
+            "browser_ancestry": binding,
             "zygotes": sorted(k for k in chrome if is_zygote(k)),
             "renderers": renderers,
             "setuid_helper": setuid_helper,
@@ -913,6 +1086,11 @@ def decide(fails, stops):
 def read_text(path, limit=1 << 20):
     with open(path, "rb") as fh:
         return fh.read(limit).decode("utf-8", "replace")
+
+
+def read_bytes(path, limit):
+    with open(path, "rb") as fh:
+        return fh.read(limit)
 
 
 def read_optional(path, limit=4096):
@@ -1288,7 +1466,8 @@ class Tracker:
     def __init__(self, cgroup_dir, chrome_id, untrusted_uid, chrome_files=frozenset(),
                  node_id=None, clock=time.monotonic, sampler=sample_process,
                  reader=read_text, classify=classify_exec_mapping,
-                 classify_exe=classify_executable, freeze=None, thaw=None):
+                 classify_exe=classify_executable, freeze=None, thaw=None,
+                 init_ns=None, byte_reader=None):
         self.cgroup_dir = cgroup_dir
         self.chrome_id = list(chrome_id)
         self.node_id = list(node_id) if node_id else None
@@ -1297,10 +1476,12 @@ class Tracker:
         self.clock = clock
         self.sampler = sampler
         self.reader = reader
+        self.byte_reader = byte_reader
         self.classify = classify
         self.classify_exe = classify_exe
         self.freeze = freeze
         self.thaw = thaw
+        self.init_ns = init_ns
         self.t0 = clock()
         self.table = {}
         self.table_overflow = False
@@ -1309,14 +1490,30 @@ class Tracker:
         self.root_keys = {}
         self.ticks = 0
         self.ticks_unfrozen = 0
+        self.thaw_failures = 0
+        self.enumeration_failures = 0
+        # Lower bound of the time the cgroup was confirmed frozen. Process
+        # ages and timeouts use "active time" = wall time minus this, so a
+        # freeze never shortens how long a renderer had to seal and never
+        # hides how long it ran unsealed beyond what it actually ran.
+        self.frozen_total = 0.0
         self._map_class = {}
         self._exe_class = {}
 
     def pids(self):
+        """Members of the tracking cgroup, or None when they cannot be read.
+        A failed read is never reported as an empty cgroup."""
         try:
             return [int(x) for x in self.reader(self.cgroup_dir + "/cgroup.procs").split()]
-        except OSError:
-            return []
+        except (OSError, ValueError):
+            return None
+
+    def _read_bytes(self, path, limit):
+        if self.byte_reader is not None:
+            return self.byte_reader(path, limit)
+        if self.reader is read_text:
+            return read_bytes(path, limit)
+        return self.reader(path, limit).encode("utf-8", "surrogateescape")
 
     def identify(self, pid):
         """Key (pid:starttime) of a live process, or None."""
@@ -1353,8 +1550,13 @@ class Tracker:
         """Mapping evidence bound to the PID + start-time identity."""
         try:
             before = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
-            text = self.reader("/proc/%d/maps" % pid, 8 << 20)
+            data = self._read_bytes("/proc/%d/maps" % pid, MAPS_READ_LIMIT + 1)
             after = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+            truncated = len(data) > MAPS_READ_LIMIT
+            text = data[:MAPS_READ_LIMIT].decode("utf-8", "replace")
+            if truncated:
+                # Only complete lines of the prefix are interpreted.
+                text = text[:text.rfind("\n") + 1]
             mappings = parse_exec_mappings(text)
         except (OSError, ValueError, IndexError):
             # A failed read is never a successful verification, and a
@@ -1378,6 +1580,11 @@ class Tracker:
                 label = "%s inode %d dev %s" % (mapping[2][:200], mapping[1], mapping[0])
                 if label not in bucket and len(bucket) < 8:
                     bucket.append(label)
+        if truncated:
+            # Whatever the prefix showed, the listing is incomplete: an
+            # untrusted mapping beyond the bound would be invisible.
+            rec["maps_truncated"] += 1
+            return
         if own_seen:
             rec["maps_ok"] += 1
         else:
@@ -1408,22 +1615,42 @@ class Tracker:
         else:
             rec["parent_outside_cgroup"] = ppid
 
-    def tick(self, phase):
-        frozen = False
-        try:
-            frozen = bool(self.freeze()) if self.freeze else False
-            if not frozen:
-                self.ticks_unfrozen += 1
-            self._tick(phase)
-        finally:
-            if self.thaw:
-                self.thaw()
+    def active_time(self, at=None):
+        """Wall time since start minus confirmed frozen time."""
+        return round((self.clock() if at is None else at) - self.t0 - self.frozen_total, 3)
 
-    def _tick(self, phase):
-        now = round(self.clock() - self.t0, 3)
+    def tick(self, phase):
+        """One sample of the whole cgroup, taken while it is confirmed frozen.
+
+        An unconfirmed freeze is counted (and prevents PASS); a thaw that
+        cannot be confirmed aborts the qualification with STOP. Only the
+        interval from confirmed freeze to the start of the thaw is counted
+        as frozen time, a lower bound of the real pause."""
+        frozen_at = None
+        try:
+            if self.freeze is not None and self.freeze():
+                frozen_at = self.clock()
+            else:
+                self.ticks_unfrozen += 1
+            self._tick(phase, frozen_at)
+        finally:
+            thaw_begin = self.clock()
+            thawed = self.thaw() if self.thaw is not None else True
+            if frozen_at is not None:
+                self.frozen_total += max(0.0, thaw_begin - frozen_at)
+            if not thawed:
+                self.thaw_failures += 1
+                raise Stop("FREEZER_FAILURE", "tracking cgroup thaw could not be confirmed")
+
+    def _tick(self, phase, frozen_at=None):
+        now = self.active_time(frozen_at)
         self.ticks += 1
         alive = []
-        for pid in self.pids():
+        pids = self.pids()
+        if pids is None:
+            self.enumeration_failures += 1
+            return
+        for pid in pids:
             sampled = self.sampler(pid)
             if sampled is None:
                 self._unsampled(pid, now, phase)
@@ -1443,7 +1670,7 @@ class Tracker:
                        "sticky": new_sticky(), "overflow": False,
                        "untrusted_exec_maps": [], "unresolved_exec_maps": [],
                        "maps_ok": 0, "maps_failed": 0, "maps_insufficient": 0,
-                       "maps_identity_changed": 0}
+                       "maps_identity_changed": 0, "maps_truncated": 0}
                 self.table[key] = rec
             alive.append((key, rec))
             exe_key = (state["exe"][0], state["exe"][1], state["exe_path"])
@@ -1455,15 +1682,21 @@ class Tracker:
             rec["last_seen"] = now
             rec["samples"] += 1
             previous = rec["last_state"]
-            changed = previous is None or {k: v for k, v in previous.items() if k != "t"} != state
+            changed = previous is None or {
+                k: v for k, v in previous.items() if k not in ("t", "t_last")} != state
             if changed:
                 # Sticky facts first; the bounded history is never rewritten.
                 fold_state(rec["sticky"], state, self.chrome_id)
-                rec["last_state"] = dict(state, t=now)
+                rec["last_state"] = dict(state, t=now, t_last=now)
                 if len(rec["states"]) < MAX_STATES_PER_PROCESS:
                     rec["states"].append(rec["last_state"])
                 else:
                     rec["overflow"] = True
+            else:
+                rec["last_state"]["t_last"] = now
+            # Every sample, not only changes: how long a condition lasted.
+            observe_conditions(rec["sticky"], state, self.chrome_id, self.init_ns,
+                               now - rec["first_seen"])
             if state["exe"] == self.chrome_id and (
                     changed or not rec["maps_ok"] or rec["samples"] % MAPS_EVERY == 0):
                 self._check_maps(pid, rec, state)
@@ -1515,6 +1748,7 @@ class Qualification:
         self.ev = {
             "observer_version": OBSERVER_VERSION,
             "scope": SCOPE_STATEMENT,
+            "security_claim": SECURITY_CLAIM,
             "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "identity": {
                 "repository": args.repository, "run_id": args.run_id,
@@ -1671,7 +1905,7 @@ class Qualification:
             raise Stop("MISSING_RUNNER_PREREQUISITE", "tracking cgroup already exists")
         os.mkdir(CGROUP_DIR, 0o755)
         self.cgroup_created = True
-        for name in ("cgroup.procs", "cgroup.kill"):
+        for name in ("cgroup.procs", "cgroup.kill", "cgroup.freeze", "cgroup.events"):
             if not os.path.exists(os.path.join(CGROUP_DIR, name)):
                 raise Stop("MISSING_RUNNER_PREREQUISITE", name + " unavailable")
         if os.stat(CGROUP_DIR).st_uid != 0:
@@ -2100,6 +2334,7 @@ class Qualification:
     # -- 9. untrusted execution under observation --------------------------
 
     def kill_cgroup(self, wait=15):
+        """True only when the cgroup was read and found empty."""
         try:
             with open(CGROUP_DIR + "/cgroup.kill", "w") as fh:
                 fh.write("1")
@@ -2107,10 +2342,10 @@ class Qualification:
             pass
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
-            if not self.tracker.pids():
+            if self.tracker.pids() == []:
                 return True
             time.sleep(0.05)
-        return not self.tracker.pids()
+        return self.tracker.pids() == []
 
     def run_untrusted(self, argv, phase, timeout):
         """Run one PR-controlled command as s01u inside the tracking cgroup."""
@@ -2145,7 +2380,7 @@ class Qualification:
         os.set_blocking(out_r, False)
         with open(CGROUP_DIR + "/cgroup.procs", "w") as fh:
             fh.write(str(pid))
-        if pid not in self.tracker.pids():
+        if pid not in (self.tracker.pids() or []):
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
             raise Stop("PRIVILEGE_ISOLATION_FAILED", "child not placed in tracking cgroup")
@@ -2161,10 +2396,24 @@ class Qualification:
         os.close(go_w)
 
         started = time.monotonic()
+        frozen_before = self.tracker.frozen_total
         exit_code, timed_out = None, False
         self.output += ("\n===== %s: %s =====\n" % (phase, " ".join(argv[1:]))).encode()
+
+        def kill_and_reap():
+            self.kill_cgroup()
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+
         while True:
-            self.tracker.tick(phase)
+            try:
+                self.tracker.tick(phase)
+            except Stop:
+                kill_and_reap()
+                os.close(out_r)
+                raise
             try:
                 while True:
                     chunk = os.read(out_r, 65536)
@@ -2179,45 +2428,61 @@ class Qualification:
             if done:
                 exit_code = os.waitstatus_to_exitcode(status)
                 break
-            if time.monotonic() - started > timeout:
+            # The phase budget is active time (confirmed frozen intervals
+            # excluded), capped in wall time so instrumentation cannot
+            # stretch a run without bound.
+            wall = time.monotonic() - started
+            active = wall - (self.tracker.frozen_total - frozen_before)
+            if active > timeout or wall > timeout * WALL_TIMEOUT_FACTOR:
                 timed_out = True
                 self.kill_cgroup()
                 _, status = os.waitpid(pid, 0)
                 exit_code = os.waitstatus_to_exitcode(status)
                 break
             time.sleep(SAMPLE_INTERVAL)
-        self.tracker.tick(phase)
-        os.close(out_r)
-        leftovers = len(self.tracker.pids())
+        try:
+            self.tracker.tick(phase)
+        finally:
+            os.close(out_r)
+        remaining = self.tracker.pids()
         emptied = self.kill_cgroup()
+        wall = time.monotonic() - started
         result = {"argv": [os.path.basename(argv[0])] + argv[1:], "exit_code": exit_code,
-                  "timed_out": timed_out, "seconds": round(time.monotonic() - started, 2),
-                  "processes_left_after_exit": leftovers, "cgroup_emptied": emptied}
+                  "timed_out": timed_out, "wall_seconds": round(wall, 2),
+                  "frozen_seconds": round(self.tracker.frozen_total - frozen_before, 2),
+                  "processes_left_after_exit": None if remaining is None else len(remaining),
+                  "cgroup_emptied": emptied}
         if not emptied:
             raise Stop("TEARDOWN_INCOMPLETE", "tracking cgroup not empty after " + phase)
         return result
 
-    def freeze_cgroup(self):
-        """Freeze the tracking cgroup for one consistent sample. Best effort:
-        an unconfirmed freeze is counted, and sampling then stays strict."""
+    @staticmethod
+    def set_frozen(value):
+        """Write cgroup.freeze and confirm the state in cgroup.events.
+        False on any I/O error or when the state is not confirmed in time."""
+        want = "frozen %d" % value
         try:
             with open(CGROUP_DIR + "/cgroup.freeze", "w") as fh:
-                fh.write("1")
+                fh.write(str(value))
             deadline = time.monotonic() + FREEZE_WAIT_SECONDS
-            while time.monotonic() < deadline:
-                if "frozen 1" in read_text(CGROUP_DIR + "/cgroup.events", 4096):
+            while True:
+                events = read_text(CGROUP_DIR + "/cgroup.events", 4096).splitlines()
+                if want in (line.strip() for line in events):
                     return True
+                if time.monotonic() >= deadline:
+                    return False
                 time.sleep(0.0005)
         except OSError:
-            pass
-        return False
+            return False
+
+    def freeze_cgroup(self):
+        """Freeze the tracking cgroup for one consistent sample. An
+        unconfirmed freeze is counted by the tracker and prevents PASS."""
+        return self.set_frozen(1)
 
     def thaw_cgroup(self):
-        try:
-            with open(CGROUP_DIR + "/cgroup.freeze", "w") as fh:
-                fh.write("0")
-        except OSError:
-            pass
+        """Thaw; an unconfirmed thaw makes the tracker raise STOP."""
+        return self.set_frozen(0)
 
     def execute(self):
         node_stat = os.stat(self.node_real)
@@ -2225,7 +2490,8 @@ class Qualification:
                                [self.pre_chrome["chrome"]["dev"], self.pre_chrome["chrome"]["ino"]],
                                self.uid, self.chrome_files,
                                node_id=[node_stat.st_dev, node_stat.st_ino],
-                               freeze=self.freeze_cgroup, thaw=self.thaw_cgroup)
+                               freeze=self.freeze_cgroup, thaw=self.thaw_cgroup,
+                               init_ns=self.init_ns)
         npm = os.path.join(self.a.node_bin_dir, "npm")
         runs = {}
         self.ev["execution"] = runs
@@ -2352,6 +2618,9 @@ class Qualification:
             "work_dir": WORK_DIR,
             "unsampled": self.tracker.unsampled,
             "table_overflow": self.tracker.table_overflow,
+            "enumeration_failures": self.tracker.enumeration_failures,
+            "ticks_unfrozen": self.tracker.ticks_unfrozen,
+            "thaw_failures": self.tracker.thaw_failures,
             "init_ns": self.init_ns,
             "chrome_id": self.tracker.chrome_id,
             "helper_id": ([self.pre_chrome["helper"]["dev"], self.pre_chrome["helper"]["ino"]]
@@ -2368,10 +2637,17 @@ class Qualification:
             "renderer_grace_seconds": RENDERER_GRACE_SECONDS,
             "process_count": len(self.tracker.table),
             "ticks_without_confirmed_freeze": self.tracker.ticks_unfrozen,
+            "unconfirmed_thaws": self.tracker.thaw_failures,
+            "enumeration_failures": self.tracker.enumeration_failures,
+            "confirmed_frozen_seconds": round(self.tracker.frozen_total, 3),
             "unsampled_count": self.tracker.unsampled_count,
             "unsampled": self.tracker.unsampled,
             "phase_root_processes": self.tracker.root_keys,
-            "instrumentation": "the tracking cgroup is frozen for each sample (timing only)",
+            "time_base": "process timestamps, ages and the renderer grace are active time: "
+                         "wall time minus confirmed frozen intervals (a lower bound of the "
+                         "pause, so ages are never understated)",
+            "instrumentation": "the tracking cgroup is frozen (and confirmed frozen) for "
+                               "each sample and thawed (confirmed) afterwards",
             "limitation": "polling; a process that starts and is reaped between two "
                           "samples is not observed",
         }
@@ -2415,7 +2691,9 @@ class Qualification:
         verdict = decide(self.fails, self.stops)
         files["verdict.json"] = json.dumps({
             "verdict": verdict, "fail_reasons": self.fails, "stop_reasons": self.stops,
-            "scope": SCOPE_STATEMENT, "identity": self.ev["identity"],
+            "scope": SCOPE_STATEMENT, "security_claim": SECURITY_CLAIM,
+            "functional_browser_to_test_attestation": False,
+            "identity": self.ev["identity"],
             "observer_sha256": self.ev.get("observer", {}).get("sha256"),
             "teardown": self.ev.get("teardown"),
             "security_certified": False,
