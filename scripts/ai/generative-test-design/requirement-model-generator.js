@@ -132,11 +132,40 @@ const MAX_CORRECTION_DIAGNOSTIC_CHARS = 8192;
 // all) so a non-object bundle/item can never throw here - that shape
 // mismatch is validateEvidenceBundle()'s job to report, not this
 // function's job to reject.
+//
+// TPR-R1-PR270-C3 (A-01): each key is DEFINED on the snapshot, never
+// assigned. Assigning a literal own "__proto__" key would run the inherited
+// Object.prototype.__proto__ setter instead of creating the key - dropping
+// it before unknown-field detection and, for an object value, replacing the
+// snapshot's prototype.
+function defineOwnValue(target, key, value) {
+  Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 function snapshotOwnProperties(value) {
   if (!isPlainObject(value)) return value;
   const snapshot = {};
   for (const key of Object.keys(value)) {
-    snapshot[key] = value[key];
+    defineOwnValue(snapshot, key, value[key]);
+  }
+  return snapshot;
+}
+
+// TPR-R1-PR270-C3 (A-01): copies a caller-supplied array into a fresh,
+// ordinary array of the same length, index by index, keeping exactly the
+// OWN indices. A hole stays a hole and an index that is only reachable
+// through the prototype chain stays a hole, so downstream own-element checks
+// see the caller's real structure. No method is looked up on `source` (its
+// own or inherited map/forEach/... are never called); each own element is
+// read exactly once.
+function snapshotOwnElements(source, snapshotElement) {
+  const length = source.length;
+  const snapshot = [];
+  snapshot.length = length;
+  for (let i = 0; i < length; i += 1) {
+    if (Object.prototype.hasOwnProperty.call(source, i)) {
+      defineOwnValue(snapshot, i, snapshotElement(source[i]));
+    }
   }
   return snapshot;
 }
@@ -170,13 +199,15 @@ function snapshotEvidenceBundle(evidenceBundle) {
 // every entry, and every evidenceRefIds element, is read exactly once into a
 // fresh plain-data tree before verification; nothing reads the caller's list
 // again. Non-array/non-object shapes are captured untouched for
-// verifyCanonicalRequirements() to refuse.
+// verifyCanonicalRequirements() to refuse. TPR-R1-PR270-C3 (A-01): the copy
+// is structural (snapshotOwnElements()/snapshotOwnProperties()) - holes,
+// inherited indices and own unknown keys are neither filled in nor dropped.
 function snapshotCanonicalRequirements(canonicalRequirements) {
   if (!Array.isArray(canonicalRequirements)) return canonicalRequirements;
-  return canonicalRequirements.map((rawRequirement) => {
+  return snapshotOwnElements(canonicalRequirements, (rawRequirement) => {
     const requirementSnapshot = snapshotOwnProperties(rawRequirement);
-    if (isPlainObject(requirementSnapshot) && Array.isArray(requirementSnapshot.evidenceRefIds)) {
-      requirementSnapshot.evidenceRefIds = requirementSnapshot.evidenceRefIds.map((id) => id);
+    if (requirementSnapshot !== rawRequirement && Array.isArray(requirementSnapshot.evidenceRefIds)) {
+      requirementSnapshot.evidenceRefIds = snapshotOwnElements(requirementSnapshot.evidenceRefIds, (id) => id);
     }
     return requirementSnapshot;
   });
@@ -544,11 +575,19 @@ async function generateRequirementModel({ evidenceBundle, canonicalRequirements,
   // built from, and the deterministic part of the model is validated against
   // the frozen v1 RequirementModel validator and canonical provenance with
   // no provider content in it at all.
-  const requirementsSnapshot = deepFreeze(snapshotCanonicalRequirements(canonicalRequirements));
+  //
+  // TPR-R1-PR270-C3 (A-01): the snapshot is frozen only AFTER it is proven
+  // exact. A refused snapshot can still hold caller-owned values (a non-array
+  // list, a non-plain entry, a nested object under an unknown key), and
+  // freezing those would mutate the caller's input; an exact one is, by the
+  // proof itself, nothing but this module's own fresh arrays/objects and
+  // strings.
+  const requirementsSnapshot = snapshotCanonicalRequirements(canonicalRequirements);
   const projectionErrors = verifyCanonicalRequirements(requirementsSnapshot, snapshot.evidenceItems);
   if (projectionErrors.length > 0) {
     return { ok: false, errors: boundGenerationErrors(projectionErrors), providerAttempts: 0 };
   }
+  deepFreeze(requirementsSnapshot);
   const deterministicModel = assembleRequirementModel({ projectId, canonicalEvidence, canonicalRequirements: requirementsSnapshot, gapAnalysis: { assumptions: [], openQuestions: [] } });
   const deterministicErrors = [
     ...(validateRequirementModel(deterministicModel, { expectedProjectId: projectId }).errors || []),

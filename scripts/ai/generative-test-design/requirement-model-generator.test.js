@@ -1248,3 +1248,223 @@ test("TPR-R1-PR270-C2: fully and partially sparse canonical requirements fail cl
   assert.equal(okProvider.calls.length, 1);
   assert.deepEqual(ok.requirementModel.requirements, dense());
 });
+
+// TPR-R1-PR270-C3 (A-01): the canonical requirement snapshot must preserve the
+// STRUCTURAL meaning of the caller's list - own-index presence, holes, and own
+// unknown keys (a literal "__proto__" included) - so verifyCanonicalRequirements()
+// sees what the caller actually supplied. It never calls a method looked up on
+// the caller's arrays, reads each own element once, and never mutates or
+// freezes anything the caller owns.
+const c3Bundle = () => validBundle({ evidenceItems: [item(1, "First."), item(2, "Second."), item(3, "Third.")] });
+const c3Dense = () => [contentReq(1, "First."), contentReq(2, "Second."), contentReq(3, "Third.")];
+const c3Own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+// An array (Array.isArray() stays true) whose prototype chain carries `elements` as inherited indices.
+function c3WithInheritedIndices(array, elements) {
+  const proto = Object.create(Array.prototype);
+  for (const [index, value] of Object.entries(elements)) proto[index] = value;
+  return Object.setPrototypeOf(array, proto);
+}
+async function c3Refused(canonicalRequirements, expected, label) {
+  const provider = jsonProvider(validResponse());
+  const result = await generateRequirementModel({ evidenceBundle: c3Bundle(), canonicalRequirements, provider });
+  assert.equal(result.ok, false, label);
+  assert.equal(result.requirementModel, undefined, label);
+  assert.equal(result.providerAttempts, 0, label);
+  assert.equal(provider.calls.length, 0, label);
+  assert.deepEqual(result.errors.map((e) => `${e.code}@${e.path}`), expected, label);
+  assert.ok(result.errors.length <= MAX_CORRECTION_ERRORS, label);
+  for (const e of result.errors) {
+    assert.equal(Object.keys(e).sort().join(","), "code,message,path", label);
+    for (const leaked of ["First.", "Second.", "Third.", "FORGED"]) assert.ok(!e.message.includes(leaked), `${label}: message must not echo text`);
+  }
+}
+
+test("TPR-R1-PR270-C3: an inherited canonical requirement index stays a hole in the snapshot and fails closed before any provider call", async () => {
+  const build = () => {
+    const list = c3Dense();
+    delete list[1];
+    return c3WithInheritedIndices(list, { 1: contentReq(2, "Second.") });
+  };
+  const list = build();
+  assert.equal(Array.isArray(list), true);
+  assert.equal(list[1].text, "Second.", "the inherited element is visible through a plain index read");
+  const snapshot = snapshotCanonicalRequirements(list);
+  assert.equal(snapshot.length, 3);
+  assert.equal(Object.getPrototypeOf(snapshot), Array.prototype);
+  assert.deepEqual([0, 1, 2].map((i) => c3Own(snapshot, i)), [true, false, true]);
+  await c3Refused(build(), ["INVARIANT_VIOLATION@$.canonicalRequirements[1]"], "inherited index");
+
+  // Every index inherited: nothing is an own element, so nothing is accepted.
+  const allInherited = () => c3WithInheritedIndices(new Array(3), { ...c3Dense() });
+  assert.deepEqual([0, 1, 2].map((i) => c3Own(snapshotCanonicalRequirements(allInherited()), i)), [false, false, false]);
+  await c3Refused(allInherited(), [0, 1, 2].map((i) => `INVARIANT_VIOLATION@$.canonicalRequirements[${i}]`), "all indices inherited");
+});
+
+test("TPR-R1-PR270-C3: an inherited or missing evidenceRefIds[0] stays a hole in the snapshot and fails closed before any provider call", async () => {
+  const inherited = () => {
+    const list = c3Dense();
+    list[1].evidenceRefIds = c3WithInheritedIndices(new Array(1), { 0: "evidence-0002" });
+    return list;
+  };
+  const list = inherited();
+  assert.equal(list[1].evidenceRefIds[0], "evidence-0002", "the inherited id is visible through a plain index read");
+  const snapshot = snapshotCanonicalRequirements(list);
+  assert.equal(snapshot[1].evidenceRefIds.length, 1);
+  assert.equal(c3Own(snapshot[1].evidenceRefIds, 0), false);
+  assert.equal(Object.getPrototypeOf(snapshot[1].evidenceRefIds), Array.prototype);
+  await c3Refused(inherited(), ["INVARIANT_VIOLATION@$.canonicalRequirements[1]"], "inherited evidenceRefIds[0]");
+
+  const sparse = () => { const l = c3Dense(); l[2].evidenceRefIds = new Array(1); return l; };
+  const sparseSnapshot = snapshotCanonicalRequirements(sparse());
+  assert.equal(sparseSnapshot[2].evidenceRefIds.length, 1);
+  assert.equal(c3Own(sparseSnapshot[2].evidenceRefIds, 0), false);
+  await c3Refused(sparse(), ["INVARIANT_VIOLATION@$.canonicalRequirements[2]"], "sparse evidenceRefIds");
+});
+
+test("TPR-R1-PR270-C3: a sparse canonical requirements array keeps its length and holes in the snapshot and fails closed", async () => {
+  const sparse = () => { const l = c3Dense(); delete l[0]; delete l[2]; return l; };
+  const snapshot = snapshotCanonicalRequirements(sparse());
+  assert.equal(snapshot.length, 3);
+  assert.deepEqual([0, 1, 2].map((i) => c3Own(snapshot, i)), [false, true, false]);
+  assert.deepEqual(snapshot[1], contentReq(2, "Second."));
+  await c3Refused(sparse(), ["INVARIANT_VIOLATION@$.canonicalRequirements[0]", "INVARIANT_VIOLATION@$.canonicalRequirements[2]"], "sparse list");
+});
+
+test("TPR-R1-PR270-C3: a literal own __proto__ key survives the snapshot as an own unknown key and fails closed", async () => {
+  for (const [label, value] of [["string value", "FORGED"], ["object value", { forged: true }], ["null value", null]]) {
+    const build = () => {
+      const list = c3Dense();
+      Object.defineProperty(list[0], "__proto__", { value, enumerable: true, writable: true, configurable: true });
+      return list;
+    };
+    const list = build();
+    assert.deepEqual(Object.keys(list[0]), ["id", "text", "evidenceRefIds", "__proto__"], label);
+    const snapshot = snapshotCanonicalRequirements(list);
+    assert.deepEqual(Object.keys(snapshot[0]), ["id", "text", "evidenceRefIds", "__proto__"], label);
+    assert.equal(c3Own(snapshot[0], "__proto__"), true, label);
+    assert.equal(Object.getOwnPropertyDescriptor(snapshot[0], "__proto__").value, value, label);
+    assert.equal(Object.getPrototypeOf(snapshot[0]), Object.prototype, `${label}: the snapshot's prototype is never replaced`);
+    await c3Refused(build(), ["INVARIANT_VIOLATION@$.canonicalRequirements[0]"], label);
+  }
+  // The same key arriving through JSON.parse (the realistic route) is refused identically.
+  const parsed = JSON.parse(JSON.stringify(c3Dense()).replace('{"id"', '{"__proto__":"FORGED","id"'));
+  assert.equal(c3Own(parsed[0], "__proto__"), true);
+  await c3Refused(parsed, ["INVARIANT_VIOLATION@$.canonicalRequirements[0]"], "JSON.parse __proto__");
+});
+
+test("TPR-R1-PR270-C3: caller-controlled array methods are never invoked and each own element is read exactly once", async () => {
+  let calls = 0;
+  const hostileMethods = (array, replacement) => {
+    for (const name of ["map", "forEach", "slice", "filter", "concat"]) array[name] = replacement;
+    return array;
+  };
+  // A wrong list whose own methods would hand back the right one.
+  const wrongList = () => hostileMethods([contentReq(1, "FORGED"), contentReq(2, "Second."), contentReq(3, "Third.")], () => { calls += 1; return c3Dense(); });
+  await c3Refused(wrongList(), ["INVARIANT_VIOLATION@$.canonicalRequirements[0]"], "own list methods");
+  // A wrong evidenceRefIds whose own methods would hand back the right ids.
+  const wrongIds = () => {
+    const list = c3Dense();
+    list[2].evidenceRefIds = hostileMethods(["evidence-0001"], () => { calls += 1; return ["evidence-0003"]; });
+    return list;
+  };
+  await c3Refused(wrongIds(), ["INVARIANT_VIOLATION@$.canonicalRequirements[2]"], "own evidenceRefIds methods");
+  assert.equal(calls, 0, "no caller-supplied array method was invoked");
+
+  // Single read: an own accessor element and an own accessor id are each read exactly once.
+  let elementReads = 0;
+  let idReads = 0;
+  const list = c3Dense();
+  const second = list[1];
+  Object.defineProperty(list, 1, { enumerable: true, configurable: true, get() { elementReads += 1; return elementReads === 1 ? second : contentReq(2, "FORGED"); } });
+  const ids = [];
+  Object.defineProperty(ids, 0, { enumerable: true, configurable: true, get() { idReads += 1; return idReads === 1 ? "evidence-0003" : "evidence-0001"; } });
+  list[2].evidenceRefIds = ids;
+  const provider = capturingProvider();
+  const result = await generateRequirementModel({ evidenceBundle: c3Bundle(), canonicalRequirements: list, provider });
+  assert.equal(result.ok, true);
+  assert.equal(elementReads, 1, "list element read count");
+  assert.equal(idReads, 1, "evidenceRefIds element read count");
+  assert.deepEqual(result.requirementModel.requirements, c3Dense());
+  assert.ok(!provider.prompt.includes("FORGED"));
+});
+
+test("TPR-R1-PR270-C3: valid dense canonical requirements keep their text, ids, order and evidence bindings, and the caller's input is untouched", async () => {
+  const list = c3Dense();
+  const before = JSON.parse(JSON.stringify(list));
+  const entries = [...list];
+  const refArrays = list.map((r) => r.evidenceRefIds);
+
+  const snapshot = snapshotCanonicalRequirements(list);
+  assert.deepEqual(snapshot, before);
+  assert.notEqual(snapshot, list);
+  snapshot.forEach((entry, i) => {
+    assert.notEqual(entry, entries[i], `entry ${i} is a fresh copy`);
+    assert.notEqual(entry.evidenceRefIds, refArrays[i], `evidenceRefIds ${i} is a fresh copy`);
+    assert.deepEqual(Object.keys(entry), ["id", "text", "evidenceRefIds"]);
+  });
+
+  const provider = capturingProvider();
+  const result = await generateRequirementModel({ evidenceBundle: c3Bundle(), canonicalRequirements: list, provider });
+  assert.equal(result.ok, true);
+  assert.equal(result.providerAttempts, 1);
+  assert.deepEqual(result.requirementModel.requirements, before);
+  assert.deepEqual(result.requirementModel.requirements.map((r) => r.id), ["evidence-0001.content", "evidence-0002.content", "evidence-0003.content"]);
+  assert.deepEqual(result.requirementModel.requirements.map((r) => r.text), ["First.", "Second.", "Third."]);
+  assert.deepEqual(result.requirementModel.requirements.map((r) => r.evidenceRefIds), [["evidence-0001"], ["evidence-0002"], ["evidence-0003"]]);
+  const order = ["First.", "Second.", "Third."].map((text) => provider.prompt.indexOf(text));
+  assert.ok(order.every((at) => at >= 0) && order[0] < order[1] && order[1] < order[2], "prompt keeps requirement order");
+
+  // Caller input: same identities, same content, nothing frozen.
+  assert.deepEqual(list, before);
+  list.forEach((entry, i) => {
+    assert.equal(entry, entries[i]);
+    assert.equal(entry.evidenceRefIds, refArrays[i]);
+    assert.equal(Object.isFrozen(entry), false, `entry ${i} not frozen`);
+    assert.equal(Object.isFrozen(entry.evidenceRefIds), false, `evidenceRefIds ${i} not frozen`);
+  });
+  assert.equal(Object.isFrozen(list), false);
+});
+
+test("TPR-R1-PR270-C3: a refused canonical requirement list is never mutated or frozen, whatever caller-owned values it carries", async () => {
+  const nested = { deep: ["x"] };
+  const foreignEntry = [contentReq(2, "Second.")];
+  const list = c3Dense();
+  list[0].extra = nested;
+  list[1] = foreignEntry;
+  list[2].evidenceRefIds = { 0: "evidence-0003", length: 1 };
+  const refObject = list[2].evidenceRefIds;
+  await c3Refused(list, [0, 1, 2].map((i) => `INVARIANT_VIOLATION@$.canonicalRequirements[${i}]`), "caller-owned nested values");
+  for (const [label, owned] of [["list", list], ["entry", list[0]], ["nested", nested], ["nested.deep", nested.deep], ["array entry", foreignEntry], ["array entry element", foreignEntry[0]], ["evidenceRefIds object", refObject]]) {
+    assert.equal(Object.isFrozen(owned), false, `${label} not frozen`);
+  }
+  assert.deepEqual(nested, { deep: ["x"] });
+
+  const notAList = { 0: contentReq(1, "First."), length: 1 };
+  await c3Refused(notAList, ["MISSING_FIELD@$.canonicalRequirements"], "non-array list");
+  assert.equal(Object.isFrozen(notAList), false);
+  assert.equal(Object.isFrozen(notAList[0]), false);
+});
+
+// snapshotOwnProperties() is shared with the evidence-bundle snapshot, so the
+// same literal own "__proto__" key is no longer dropped there either: it
+// reaches validateEvidenceBundle() as the unknown field it is.
+test("TPR-R1-PR270-C3: a literal own __proto__ key on the evidence bundle, an item or an EvidenceRef is reported as an unknown field before any provider call", async () => {
+  const targets = [
+    ["$.__proto__", (bundle) => bundle],
+    ["$.evidenceItems[0].__proto__", (bundle) => bundle.evidenceItems[0]],
+    ["$.evidenceItems[0].evidenceRef.__proto__", (bundle) => bundle.evidenceItems[0].evidenceRef],
+  ];
+  for (const [path, pick] of targets) {
+    const bundle = validBundle();
+    Object.defineProperty(pick(bundle), "__proto__", { value: "FORGED", enumerable: true, writable: true, configurable: true });
+    const snapshot = snapshotEvidenceBundle(bundle);
+    assert.equal(c3Own(pick(snapshot), "__proto__"), true, path);
+    assert.equal(Object.getPrototypeOf(pick(snapshot)), Object.prototype, path);
+    const provider = jsonProvider(validResponse());
+    const result = await generate({ evidenceBundle: bundle, provider });
+    assert.equal(result.ok, false, path);
+    assert.equal(result.providerAttempts, 0, path);
+    assert.equal(provider.calls.length, 0, path);
+    assert.deepEqual(result.errors.map((e) => `${e.code}@${e.path}`), [`UNKNOWN_FIELD@${path}`], path);
+  }
+});
