@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-OBSERVER_VERSION = "s01-observer/2"
+OBSERVER_VERSION = "s01-observer/3"
 OBSERVER_REPO_PATH = "scripts/ci/s01_observer.py"
 
 UNTRUSTED_USER = "s01u"
@@ -70,13 +70,15 @@ SMOKE_COMMAND = "playwright test --config=playwright.config.js --project=chromiu
 PLAYWRIGHT_CONFIG = "playwright.config.js"
 
 SAMPLE_INTERVAL = 0.05
-MAPS_EVERY = 20
+MAPS_EVERY = 5
+FREEZE_WAIT_SECONDS = 1.0
 RENDERER_GRACE_SECONDS = 2.0
 NPM_CI_TIMEOUT = 600
 SMOKE_TIMEOUT = 300
 MAX_PROCESSES = 4000
 MAX_STATES_PER_PROCESS = 24
 MAX_PARENT_ATTEMPTS = 5
+MAX_STICKY = 12
 MAX_OUTPUT_BYTES = 256 * 1024
 MAX_REPORT_BYTES = 512 * 1024
 MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
@@ -90,6 +92,9 @@ FAIL_FLAGS = ("--no-sandbox", "--disable-seccomp-filter-sandbox",
               "--disable-namespace-sandbox", "--single-process")
 STOP_FLAGS = ("--disable-setuid-sandbox", "--no-zygote")
 DRIVER_FLAG = "--remote-debugging-pipe"
+STICKY_FLAGS = FAIL_FLAGS + STOP_FLAGS + (DRIVER_FLAG, "--no-zygote-sandbox")
+SYSTEM_EXEC_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/lib/git-core",
+                    "/usr/libexec")
 BROWSER_NAMES = frozenset((
     "chrome", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
     "headless_shell", "chrome-headless-shell", "msedge", "microsoft-edge",
@@ -107,8 +112,12 @@ SCOPE_STATEMENT = (
     "tracking cgroup, with world-writable trees holding trusted executables "
     "(/opt, /usr/share and any exposed runner PATH directory) bind-mounted "
     "read-only for the window; stock CI runs it as `runner` without that "
-    "protection. This does not certify any other run, image, browser build, "
-    "or earlier E1/C4 runs."
+    "protection. A PASS asserts that the only browser executable that ran "
+    "in the observer-launched smoke process tree was the verified Chrome "
+    "and that its renderers were sandboxed; it does NOT assert that the "
+    "test logic drove that browser (exit code and report are written by "
+    "PR-controlled code). This does not certify any other run, image, "
+    "browser build, or earlier E1/C4 runs."
 )
 
 
@@ -243,84 +252,291 @@ def valid_tree_path(path):
     return all(p not in ("", ".", "..") and p.lower() != ".git" for p in parts)
 
 
-def strip_js_comments(text):
-    """Remove // and /* */ comments while leaving string literals intact."""
-    out, i, n, quote = [], 0, len(text), None
+def js_skeleton(text):
+    """Comments removed and every string literal replaced by \\x01<n>\\x01.
+
+    Returns (skeleton, strings). Raises ValueError for anything that cannot
+    be analysed without executing the file (template literals, escapes or
+    line breaks inside strings, unterminated constructs).
+    """
+    out, strings, i, n = [], [], 0, len(text)
     while i < n:
         c = text[i]
-        if quote:
-            out.append(c)
-            if c == "\\" and i + 1 < n:
-                out.append(text[i + 1])
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-            i += 1
-        elif c in "\"'`":
-            quote = c
-            out.append(c)
-            i += 1
+        if c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c:
+                if text[j] in "\\\n":
+                    raise ValueError("unsupported string literal")
+                j += 1
+            if j >= n:
+                raise ValueError("unterminated string literal")
+            out.append("\x01%d\x01" % len(strings))
+            strings.append(text[i + 1:j])
+            i = j + 1
+        elif c in "`\x01":
+            raise ValueError("unsupported character or template literal")
         elif text.startswith("//", i):
             j = text.find("\n", i)
             i = n if j < 0 else j
         elif text.startswith("/*", i):
             j = text.find("*/", i + 2)
-            i = n if j < 0 else j + 2
+            if j < 0:
+                raise ValueError("unterminated comment")
+            i = j + 2
             out.append(" ")
         else:
             out.append(c)
             i += 1
-    return "".join(out)
+    return "".join(out), strings
+
+
+_JS_TOKEN = re.compile(r"\x01\d+\x01|[A-Za-z_$][\w$]*|\.\.\.|[^\s]")
+_JS_IDENT = re.compile(r"[A-Za-z_$][\w$]*")
+_JS_CLOSE = {"{": "}", "[": "]", "(": ")"}
+
+
+def js_key_paths(skeleton):
+    """Property keys and spreads with the path of enclosing brackets.
+
+    Returns [(key, path, token_index, value_token)]. `path` labels each
+    enclosing bracket with the property key or callee that introduced it,
+    e.g. ("defineConfig(", "{", "projects[", "{", "use{").
+    """
+    tokens = _JS_TOKEN.findall(skeleton)
+    stack, found = [], []
+    for index, tok in enumerate(tokens):
+        prev = tokens[index - 1] if index >= 1 else ""
+        prev2 = tokens[index - 2] if index >= 2 else ""
+        if tok in _JS_CLOSE:
+            if prev == ":" and _JS_IDENT.fullmatch(prev2):
+                stack.append(prev2 + tok)
+            elif tok == "(" and _JS_IDENT.fullmatch(prev):
+                stack.append(prev + tok)
+            else:
+                stack.append(tok)
+        elif tok in ("}", "]", ")"):
+            if not stack or _JS_CLOSE[stack[-1][-1]] != tok:
+                raise ValueError("unbalanced brackets")
+            stack.pop()
+        elif tok == "...":
+            found.append(("...", tuple(stack), index, ""))
+        elif tok == ":" and _JS_IDENT.fullmatch(prev) and prev2 in ("{", ",") \
+                and stack and stack[-1].endswith("{"):
+            value = tokens[index + 1] if index + 1 < len(tokens) else ""
+            found.append((prev, tuple(stack), index, value))
+    if stack:
+        raise ValueError("unbalanced brackets")
+    return found
 
 
 def check_playwright_config(text):
     """Static NECESSARY conditions for the Chrome Channel smoke.
 
-    The config is executable JavaScript, so this is not proof of the
-    effective runtime selection; that proof is the observed executable
-    identity (see evaluate). It only stops a tree that does not even
-    request Chrome Channel with the Chromium sandbox from being run.
+    Lexical and structural, not textual: string contents and comments are
+    never searched for settings. The file must be exactly
+
+        const { defineConfig, devices } = require("@playwright/test");
+        module.exports = defineConfig({ ...plain literal... });
+
+    with one project named "chromium" whose `use` object sets
+    channel: "chrome" and launchOptions: { chromiumSandbox: true } and
+    nothing else that could change browser selection. The literal may not
+    contain calls, assignments, functions or template strings.
+
+    This is still not proof of the effective runtime configuration (the
+    PR's test files are executable too). That proof is the observed
+    executable identity, flags and kernel facts (see evaluate).
     """
-    code = strip_js_comments(text)
+    try:
+        skeleton, strings = js_skeleton(text)
+        keys = js_key_paths(skeleton)
+    except ValueError as exc:
+        return ["config is not statically analysable: %s" % exc]
+
+    def string_value(token):
+        m = re.fullmatch("\x01(\\d+)\x01", token)
+        return strings[int(m.group(1))] if m else None
+
     problems = []
-    channels = re.findall(r"""\bchannel\s*:\s*([^,}\n]+)""", code)
-    if [c.strip() for c in channels] not in (['"chrome"'], ["'chrome'"]):
-        problems.append("config does not request exactly channel \"chrome\"")
-    sandbox = re.findall(r"\bchromiumSandbox\s*:\s*([^,}\n]+)", code)
-    if [s.strip() for s in sandbox] != ["true"]:
-        problems.append("config does not set exactly chromiumSandbox: true")
+    form = re.fullmatch(
+        r"\s*const\s*\{\s*defineConfig\s*,\s*devices\s*\}\s*=\s*require\(\x01(\d+)\x01\)\s*;"
+        r"\s*module\.exports\s*=\s*defineConfig\((.*)\)\s*;?\s*", skeleton, re.S)
+    if not form or strings[int(form.group(1))] != "@playwright/test":
+        return ["config is not the single `module.exports = defineConfig({...})` form"]
+    body = form.group(2)
+    if not re.fullmatch(r"[\w$\s{}\[\]:,.\x01-]*", body):
+        problems.append("config object contains code (calls, assignments or operators)")
+    depth = 0
+    for ch in body:
+        depth += ch in "{["
+        depth -= ch in "}]"
+        if depth < 0:
+            problems.append("config object is not a single literal")
+            break
+
+    base = ("defineConfig(", "{")
+    project = base + ("projects[", "{")
+    use = project + ("use{",)
+    launch = use + ("launchOptions{",)
+
+    def entries(name):
+        return [k for k in keys if k[0] == name]
+
+    channel = entries("channel")
+    if len(channel) != 1 or channel[0][1] != use or string_value(channel[0][3]) != "chrome":
+        problems.append("the chromium project does not set exactly channel: \"chrome\"")
+    sandbox = entries("chromiumSandbox")
+    if len(sandbox) != 1 or sandbox[0][1] != launch or sandbox[0][3] != "true":
+        problems.append("the chromium project does not set exactly "
+                        "launchOptions.chromiumSandbox: true")
+    names = [k for k in keys if k[0] == "name" and k[1] == project]
+    if len(entries("projects")) != 1 or len(names) != 1 \
+            or string_value(names[0][3]) != "chromium":
+        problems.append("config does not define exactly one project named \"chromium\"")
+    if {k[0] for k in keys if k[1] == use} - {"...", "channel", "launchOptions"} \
+            or {k[0] for k in keys if k[1] == launch} != {"chromiumSandbox"} \
+            or len([k for k in keys if k[0] == "launchOptions"]) != 1 \
+            or len([k for k in keys if k[0] == "use" and k[1] == project]) != 1:
+        problems.append("the chromium project carries unexpected browser options")
+    spreads = entries("...")
+    if len(spreads) > 1 or any(
+            s[1] != use or (channel and s[2] > channel[0][2]) for s in spreads):
+        problems.append("a spread could override the browser selection")
     for token in CONFIG_FORBIDDEN:
-        if token in code:
+        if token in skeleton or any(token in s for s in strings):
             problems.append("config contains forbidden token " + token)
     return problems
+
+
+def classify_executable(exe, path, chrome_id, chrome_files, node_id, stat_fn=os.stat):
+    """Identity class of an executable observed in the tracking cgroup.
+
+    chrome / node    the verified Chrome or Node binary (device+inode)
+    chrome_file      another hashed file of the Chrome directory
+    system           re-identified, root-protected, in a system directory
+                     and not a browser by name
+    unexpected       anything else (PR-supplied, deleted, relocated, ...)
+    """
+    exe = list(exe)
+    if exe == list(chrome_id):
+        return "chrome"
+    if node_id is not None and exe == list(node_id):
+        return "node"
+    if tuple(exe) in chrome_files:
+        return "chrome_file"
+    if not path.startswith("/") or path.endswith(" (deleted)"):
+        return "unexpected"
+    try:
+        st = stat_fn(path)
+    except OSError:
+        return "unexpected"
+    if [st.st_dev, st.st_ino] != exe or not stat.S_ISREG(st.st_mode) \
+            or not is_trusted_file(st) or os.path.dirname(path) not in SYSTEM_EXEC_DIRS \
+            or os.path.basename(path) in BROWSER_NAMES:
+        return "unexpected"
+    return "system"
+
+
+def new_sticky():
+    """Facts about a process that later observations can never remove."""
+    return {"chrome": False, "left_chrome": False, "foreign_browser": False,
+            "flags": [], "types": [], "exes": [], "ns": [],
+            "tracer": False, "uid0": False, "sealed": False, "regressed": False,
+            "overflow": False}
+
+
+def fold_state(sticky, state, chrome_id):
+    """Fold one observed state into the sticky facts. Monotonic."""
+    def add(name, value):
+        if value not in sticky[name]:
+            if len(sticky[name]) >= MAX_STICKY:
+                sticky["overflow"] = True
+            else:
+                sticky[name].append(value)
+
+    args = state.get("cmdline") or []
+    add("exes", [state.get("exe"), state.get("exe_path"), state.get("exe_class")])
+    if 0 in (state.get("uid") or []):
+        sticky["uid0"] = True
+    if state.get("exe") == list(chrome_id):
+        sticky["chrome"] = True
+        for flag in STICKY_FLAGS:
+            if has_flag(args, flag):
+                add("flags", flag)
+        for arg in args:
+            if arg.startswith("--type="):
+                add("types", arg[7:])
+        if state.get("tracer"):
+            sticky["tracer"] = True
+        ns = state.get("ns") or {}
+        add("ns", [ns.get("user"), ns.get("pid"), ns.get("net")])
+        if state.get("seccomp") == 2 and state.get("nnp") == 1:
+            sticky["sealed"] = True
+        elif sticky["sealed"]:
+            sticky["regressed"] = True
+    else:
+        if sticky["chrome"]:
+            sticky["left_chrome"] = True
+        if has_flag(args, DRIVER_FLAG) or any(
+                a.startswith("--type=") and a[7:] in ("renderer", "zygote", "gpu-process")
+                for a in args):
+            sticky["foreign_browser"] = True
+
+
+def sticky_of(rec, chrome_id):
+    """Union of the stored sticky facts and those derivable from the stored
+    states. Deleting either source can therefore never remove a fact."""
+    derived = new_sticky()
+    states = list(rec.get("states") or [])
+    last = rec.get("last_state")
+    if last is not None and (not states or states[-1] != last):
+        states.append(last)
+    for state in states:
+        fold_state(derived, state, chrome_id)
+    stored = rec.get("sticky") or {}
+    for name, value in derived.items():
+        other = stored.get(name)
+        if isinstance(value, bool):
+            derived[name] = value or bool(other)
+        else:
+            for item in other or []:
+                if item not in value:
+                    value.append(item)
+    return derived
 
 
 def evaluate(table, ctx):
     """Interpret the observed process table. Pure function.
 
-    table: {key: {pid, starttime, phase, first_seen, last_seen, parent_key,
-                  parent_confirmed, states: [state...], overflow,
-                  untrusted_exec_maps, unresolved_exec_maps, maps_ok,
-                  maps_fail_alive}}
-    ctx:   {init_ns, chrome_id, helper_id, helper_setuid_capable,
-            untrusted_uid, grace}
+    ctx: {init_ns, chrome_id, helper_id, node_id, smoke_root, work_dir,
+          helper_setuid_capable, untrusted_uid, grace, unsampled,
+          table_overflow}
 
     Supported mechanism (Chromium's Linux namespace sandbox): the browser
     process stays in the init namespaces; it starts a zygote in new
     user+pid+net namespaces; renderers are forked from a zygote, drop all
     capabilities and install seccomp-bpf (Seccomp: 2, NoNewPrivs: 1). The
-    setuid-helper layout and any other topology are reported as STOP
-    (unsupported interpretation), never interpreted into a PASS.
+    setuid-helper layout and any other topology are STOP.
 
-    Classification is historical: a process is a Chrome process if it EVER
-    ran the verified Chrome executable, and every Chrome state it had is
-    evaluated. A `--type=renderer` label is never trusted alone.
+    Evidence is monotonic: sticky facts (Chrome identity, sandbox flags,
+    tracing, overflow, ...) survive any later observation, every record
+    takes part in the verdict, and missing evidence is a STOP. Nothing
+    that is added to an observation can turn it into a PASS.
+
+    Browser-to-smoke binding (what a PASS asserts and what it does not):
+    exactly one top-level Chrome ran; its parent is a process running the
+    verified Node binary whose PID+start-time lineage reaches the process
+    the observer itself started for the smoke, through the process that
+    carries the approved `playwright test` command; and no executable of
+    unknown identity ran during the smoke. Hence any browser the smoke
+    could have used is this one. Whether the test logic actually drove it
+    is reported by PR-controlled code and is NOT asserted.
     """
     fails, stops = [], []
     init_ns = ctx["init_ns"]
     chrome_id = list(ctx["chrome_id"])
     helper_id = list(ctx["helper_id"]) if ctx.get("helper_id") else None
+    node_id = list(ctx["node_id"]) if ctx.get("node_id") else None
     grace = ctx["grace"]
 
     def fail(code, detail=""):
@@ -329,125 +545,141 @@ def evaluate(table, ctx):
     def stop(code, detail=""):
         stops.append({"code": code, "detail": str(detail)[:300]})
 
-    def chrome_states(rec):
-        return [s for s in rec["states"] if s.get("exe") == chrome_id]
+    sticky = {k: sticky_of(r, chrome_id) for k, r in table.items()}
 
-    def labelled(rec, label):
-        return any(label in (s.get("cmdline") or []) for s in chrome_states(rec))
-
-    def ever_flag(rec, flag):
-        return any(has_flag(s.get("cmdline") or [], flag) for s in chrome_states(rec))
+    def final(rec):
+        return rec.get("last_state") or rec["states"][-1]
 
     def lifetime(rec):
         return rec["last_seen"] - rec["first_seen"]
 
-    def user_ns(rec):
-        return (chrome_states(rec)[-1].get("ns") or {}).get("user")
+    def user_ns(key):
+        return (final(table[key]).get("ns") or {}).get("user")
 
-    chrome = {k: r for k, r in table.items() if chrome_states(r)}
+    def link_ok(key):
+        """Parent bound by PID + start time while both were observed alive."""
+        rec = table[key]
+        parent = table.get(rec.get("parent_key"))
+        if parent is None or not rec.get("parent_confirmed"):
+            return None
+        birth = rec.get("birth_ppid", rec["states"][0].get("ppid") if rec.get("states") else None)
+        return (parent.get("pid") == birth
+                and parent.get("starttime", 0) <= rec.get("starttime", 0)
+                and parent["first_seen"] <= rec["last_seen"])
+
+    # --- observation completeness: every record and every enumerated PID
+    if ctx.get("table_overflow"):
+        stop("INCOMPLETE_EVIDENCE", "process table bound exceeded")
+    if ctx.get("unsampled"):
+        stop("UNSAMPLED_PROCESS", "%d enumerated process(es) without a usable sample, e.g. %s"
+             % (len(ctx["unsampled"]), ctx["unsampled"][:3]))
+    by_pid = {}
+    helper_process_seen = False
+    foreign_browsers, unexpected_exes = [], []
+    for key, rec in table.items():
+        facts = sticky[key]
+        if rec.get("overflow") or facts["overflow"]:
+            stop("INCOMPLETE_EVIDENCE", "history overflow for " + key)
+        if facts["uid0"]:
+            # A uid-0 member (e.g. a setuid-root binary started by PR code)
+            # is not a proven sandbox violation, but it voids isolation.
+            stop("ROOT_PROCESS_IN_UNTRUSTED_CGROUP", key)
+        by_pid.setdefault(rec.get("pid"), []).append(rec)
+        for exe, path, exe_class in facts["exes"]:
+            if helper_id and exe == helper_id:
+                helper_process_seen = True
+            if exe == chrome_id or exe == helper_id:
+                continue
+            path = (path or "").replace(" (deleted)", "")
+            if os.path.basename(path) in BROWSER_NAMES or "ms-playwright" in path:
+                foreign_browsers.append(key)
+            if rec.get("phase") == "smoke" and exe != node_id \
+                    and exe_class not in ("system", "chrome_file", "node"):
+                unexpected_exes.append("%s %s" % (key, path[:120]))
+        if facts["foreign_browser"]:
+            foreign_browsers.append(key)
+    for pid, recs in by_pid.items():
+        recs.sort(key=lambda r: r["first_seen"])
+        for earlier, later in zip(recs, recs[1:]):
+            if later["first_seen"] <= earlier["last_seen"]:
+                stop("PID_IDENTITY_AMBIGUOUS", "pid %s observed with two identities" % pid)
+    if foreign_browsers:
+        stop("UNEXPECTED_BROWSER_SELECTION", "browser-like process that is not the verified "
+             "Chrome executable: " + ",".join(sorted(set(foreign_browsers))[:5]))
+    if unexpected_exes:
+        stop("UNEXPECTED_EXECUTABLE_IN_SMOKE", "; ".join(sorted(set(unexpected_exes))[:4]))
+
+    chrome = {k: r for k, r in table.items() if sticky[k]["chrome"]}
     children = {}
     for key, rec in chrome.items():
         children.setdefault(rec.get("parent_key"), []).append(key)
 
-    # --- parent identity: PID + start time, confirmed while both were alive
     browsers, unbound = [], []
     for key, rec in chrome.items():
-        parent = table.get(rec.get("parent_key"))
-        if parent is None or not rec.get("parent_confirmed"):
+        ok = link_ok(key)
+        if ok is None:
             unbound.append(key)
-            continue
-        if parent.get("pid") != rec["states"][0].get("ppid") \
-                or parent.get("starttime", 0) > rec.get("starttime", 0) \
-                or parent["first_seen"] > rec["last_seen"]:
+        elif not ok:
             stop("STALE_PARENT_IDENTITY", key)
             unbound.append(key)
-            continue
-        if not chrome_states(parent):
+        elif not sticky[rec["parent_key"]]["chrome"]:
             browsers.append(key)
     if unbound:
         stop("AMBIGUOUS_PROCESS_LINEAGE", "chrome without a confirmed parent identity: "
              + ",".join(sorted(unbound)[:5]))
 
-    helper_process_seen = False
-    foreign_browsers = []
-    for key, rec in table.items():
-        # A uid-0 member (e.g. a setuid-root binary started by PR code) is
-        # not by itself a proven sandbox violation, but it voids isolation.
-        if any(0 in (st.get("uid") or []) for st in rec["states"]):
-            stop("ROOT_PROCESS_IN_UNTRUSTED_CGROUP", key)
-        for st in rec["states"]:
-            if helper_id and st.get("exe") == helper_id:
-                helper_process_seen = True
-            if st.get("exe") in (chrome_id, helper_id):
-                continue
-            args = st.get("cmdline") or []
-            exe_path = (st.get("exe_path") or "").replace(" (deleted)", "")
-            if os.path.basename(exe_path) in BROWSER_NAMES or "ms-playwright" in exe_path \
-                    or has_flag(args, DRIVER_FLAG) \
-                    or any(a.startswith("--type=") and a[7:] in ("renderer", "zygote", "gpu-process")
-                           for a in args):
-                foreign_browsers.append(key)
-                break
-    if foreign_browsers:
-        stop("UNEXPECTED_BROWSER_SELECTION", "browser-like process that is not the verified "
-             "Chrome executable: " + ",".join(sorted(foreign_browsers)[:5]))
-
     structural_setuid = False
     for key, rec in chrome.items():
-        states = chrome_states(rec)
-        if rec.get("overflow"):
-            stop("INCOMPLETE_EVIDENCE", "state history overflow for " + key)
+        facts = sticky[key]
         if rec.get("phase") != "smoke":
             stop("CHANGED_WORKFLOW_ASSUMPTIONS",
                  "Chrome process outside the smoke phase: " + key)
-        # Historical flags: every Chrome state counts, even if the process
-        # later executed something else.
         for flag in FAIL_FLAGS:
-            if ever_flag(rec, flag):
+            if flag in facts["flags"]:
                 fail("SANDBOX_DISABLING_FLAG", key + " " + flag)
         for flag in STOP_FLAGS:
-            if ever_flag(rec, flag):
+            if flag in facts["flags"]:
                 stop("CHANGED_BROWSER_ASSUMPTIONS", key + " " + flag)
-        if any(st.get("tracer") for st in states):
+        if facts["tracer"]:
             stop("TRACED_CHROME_PROCESS", key)
-        # Chrome -> other executable is only expected for a fork of its
-        # parent that immediately execs a helper; anything else is ambiguous.
-        seen_chrome, left_chrome = False, False
-        for st in rec["states"]:
-            if st.get("exe") == chrome_id:
-                seen_chrome = True
-            elif seen_chrome:
-                left_chrome = True
-        if left_chrome:
+        if facts["left_chrome"]:
+            # Only a fork of a Chrome parent that immediately execs a helper
+            # is expected to run Chrome and then something else.
             parent = chrome.get(rec.get("parent_key"))
-            parent_cmdlines = [s.get("cmdline") for s in chrome_states(parent)] if parent else []
-            if not all(st.get("cmdline") in parent_cmdlines for st in states):
+            parent_cmdlines = [s.get("cmdline") for s in (parent or {}).get("states", [])
+                               if s.get("exe") == chrome_id]
+            own = [s.get("cmdline") for s in rec.get("states", []) if s.get("exe") == chrome_id]
+            if facts["types"] or not own or not all(c in parent_cmdlines for c in own):
                 stop("AMBIGUOUS_PROCESS_IDENTITY",
                      "process ran Chrome and then another executable: " + key)
-        # Executable mapping provenance: fail closed.
+        # Executable mapping provenance: fail closed, identity bound.
         if rec.get("untrusted_exec_maps"):
             fail("UNTRUSTED_EXECUTABLE_MAPPING",
                  key + " " + ",".join(rec["untrusted_exec_maps"][:3]))
         if rec.get("unresolved_exec_maps"):
             stop("UNRESOLVED_EXECUTABLE_MAPPING",
                  key + " " + ",".join(rec["unresolved_exec_maps"][:3]))
-        if not rec.get("maps_ok") or rec.get("maps_fail_alive"):
+        if rec.get("maps_identity_changed"):
+            stop("MAPPING_IDENTITY_UNSTABLE", key)
+        if not rec.get("maps_ok") or rec.get("maps_failed") or rec.get("maps_insufficient"):
             stop("INSUFFICIENT_MAPPING_EVIDENCE",
-                 "%s successful=%s failed_while_alive=%s"
-                 % (key, rec.get("maps_ok", 0), rec.get("maps_fail_alive", 0)))
-        for st in states:
-            ns = st.get("ns") or {}
-            if ns.get("user") == init_ns["user"] and ns.get("pid") \
-                    and ns.get("pid") != init_ns["pid"]:
+                 "%s complete=%s failed=%s without_own_executable=%s"
+                 % (key, rec.get("maps_ok", 0), rec.get("maps_failed", 0),
+                    rec.get("maps_insufficient", 0)))
+        for user, pid_ns, _net in facts["ns"]:
+            if user == init_ns["user"] and pid_ns and pid_ns != init_ns["pid"]:
                 structural_setuid = True
 
+    # --- the one browser, and its binding to the observer-launched smoke
+    binding = {"established": False}
     if not browsers:
         stop("NO_BROWSER_OBSERVED")
     elif len(browsers) > 1:
         stop("AMBIGUOUS_BROWSER_IDENTIFICATION", ",".join(sorted(browsers)[:5]))
     else:
-        brec = chrome[browsers[0]]
-        b = chrome_states(brec)[-1]
+        bkey = browsers[0]
+        brec = chrome[bkey]
+        b = final(brec)
         if (b.get("ns") or {}).get("user") != init_ns["user"]:
             stop("UNSUPPORTED_SANDBOX_INTERPRETATION",
                  "browser process is not in the init user namespace")
@@ -455,21 +687,73 @@ def evaluate(table, ctx):
             stop("CHANGED_WORKFLOW_ASSUMPTIONS", "browser uid is not s01u")
         if b.get("apparmor") is None:
             stop("INCOMPLETE_EVIDENCE", "browser AppArmor label unreadable")
-        if not ever_flag(brec, DRIVER_FLAG) or any(
-                a.startswith("--type=") for s in chrome_states(brec) for a in s.get("cmdline") or []):
+        if DRIVER_FLAG not in sticky[bkey]["flags"] or sticky[bkey]["types"]:
             stop("UNEXPECTED_BROWSER_SELECTION",
                  "browser process is not a Playwright-driven top-level Chrome")
 
+        problem, chain, command = None, [], None
+        expected_script = (ctx.get("work_dir") or "") + "/node_modules/.bin/playwright"
+        expected_args = SMOKE_COMMAND.split()[1:]
+        cur, seen = brec.get("parent_key"), set()
+        while cur in table and cur not in seen:
+            if sticky[cur]["chrome"]:
+                problem = "a Chrome process is among the browser's ancestors"
+                break
+            chain.append(cur)
+            seen.add(cur)
+            args = final(table[cur]).get("cmdline") or []
+            if final(table[cur]).get("exe") == node_id and args[1:2] == [expected_script] \
+                    and args[2:] == expected_args:
+                command = cur
+            if cur == ctx.get("smoke_root"):
+                break
+            if not link_ok(cur):
+                problem = "unconfirmed or stale ancestry link at " + cur
+                break
+            cur = table[cur].get("parent_key")
+        if problem is None:
+            launcher = table[chain[0]] if chain else None
+            if node_id is None or not ctx.get("smoke_root"):
+                problem = "observer did not supply the Node identity or the smoke root process"
+            elif not chain or chain[-1] != ctx["smoke_root"]:
+                problem = "ancestry does not reach the process the observer started for the smoke"
+            elif final(launcher).get("exe") != node_id or sticky[chain[0]]["overflow"] \
+                    or launcher.get("overflow"):
+                problem = "the browser's parent does not run the verified Node executable"
+            elif command is None:
+                problem = "the approved `playwright test` command process is not an ancestor"
+            elif any(table[k].get("phase") != "smoke" for k in chain):
+                problem = "ancestry leaves the smoke phase"
+        binding = {
+            "established": problem is None,
+            "browser": bkey,
+            "ancestry_to_smoke_root": chain,
+            "launcher": chain[0] if chain else None,
+            "launcher_cmdline": (final(table[chain[0]]).get("cmdline") or [])[:6] if chain else None,
+            "approved_command_process": command,
+            "smoke_root": ctx.get("smoke_root"),
+            "observed_by_kernel_facts": [
+                "executable identity (device+inode) of browser and launcher",
+                "parent links bound by PID + start time",
+                "membership of the tracking cgroup",
+                "identity class of every executable run during the smoke"],
+            "pr_controlled_and_not_asserted": [
+                "command lines (labels only)",
+                "that the test logic actually drove this browser",
+                "smoke exit code and Playwright report"],
+        }
+        if problem:
+            stop("BROWSER_NOT_BOUND_TO_SMOKE", problem)
+
     def is_zygote(key):
-        rec = chrome[key]
-        return (labelled(rec, "--type=zygote") and not labelled(rec, "--type=renderer")
-                and not ever_flag(rec, "--no-zygote-sandbox")
-                and user_ns(rec) not in (None, init_ns["user"]))
+        facts = sticky[key]
+        return ("zygote" in facts["types"] and "renderer" not in facts["types"]
+                and "--no-zygote-sandbox" not in facts["flags"]
+                and user_ns(key) not in (None, init_ns["user"]))
 
     def lineage_problem(key):
         """None when the renderer descends browser -> zygote(s) -> renderer."""
-        rec = chrome[key]
-        zygotes, seen, cur = [], set(), rec.get("parent_key")
+        zygotes, seen, cur = [], set(), chrome[key].get("parent_key")
         while cur in chrome and cur not in seen and cur not in browsers:
             if not is_zygote(cur):
                 return "AMBIGUOUS_RENDERER_IDENTIFICATION", "ancestor is not a sandboxed zygote"
@@ -481,21 +765,22 @@ def evaluate(table, ctx):
         if not zygotes:
             return ("UNSUPPORTED_SANDBOX_INTERPRETATION",
                     "renderer is a direct child of the browser (no zygote evidence)")
-        if any(user_ns(chrome[z]) != user_ns(rec) for z in zygotes):
+        if any(user_ns(z) != user_ns(key) for z in zygotes):
             return ("UNSUPPORTED_SANDBOX_INTERPRETATION",
                     "renderer and zygote are in different user namespaces")
         return None
 
     renderers = {"qualified": [], "indeterminate": [], "violating": [], "unsupported": []}
     for key, rec in sorted(chrome.items()):
-        states = chrome_states(rec)
-        st = states[-1]
+        facts = sticky[key]
+        st = final(rec)
         ns = st.get("ns") or {}
         in_user = ns.get("user") != init_ns["user"]
         in_pid = ns.get("pid") != init_ns["pid"]
         in_net = ns.get("net") != init_ns["net"]
         cap = st.get("cap") or {}
-        complete = bool(all(ns.get(n) for n in ("user", "pid", "net"))
+        complete = bool(st.get("exe") == chrome_id
+                        and all(ns.get(n) for n in ("user", "pid", "net"))
                         and st.get("seccomp") is not None and st.get("nnp") is not None
                         and cap.get("eff") is not None and cap.get("prm") is not None
                         and st.get("apparmor") is not None and st.get("nspid"))
@@ -504,7 +789,7 @@ def evaluate(table, ctx):
                       and cap_is_zero(cap.get("eff")) and cap_is_zero(cap.get("prm"))
                       and len(st.get("nspid")) >= 2)
 
-        if not labelled(rec, "--type=renderer"):
+        if "renderer" not in facts["types"]:
             # Anti-decoy / replacement: an unsealed sandbox-namespace Chrome
             # leaf may be a renderer that never announced itself.
             if ns.get("user") and in_user and not sealed and not children.get(key):
@@ -526,14 +811,7 @@ def evaluate(table, ctx):
             renderers["unsupported"].append(key)
             continue
 
-        violations = []
-        seen_sealed = False
-        for s in states:
-            if s.get("seccomp") == 2 and s.get("nnp") == 1:
-                seen_sealed = True
-            elif seen_sealed:
-                violations.append("RENDERER_SANDBOX_REGRESSED")
-                break
+        violations = ["RENDERER_SANDBOX_REGRESSED"] if facts["regressed"] else []
         if not sealed and lifetime(rec) < grace and not violations:
             # Never resolve an unfinished observation in either direction.
             stop("INCOMPLETE_RENDERER_HISTORY",
@@ -584,7 +862,7 @@ def evaluate(table, ctx):
 
     labels = set()
     for key in browsers + renderers["qualified"]:
-        labels.add(chrome_states(chrome[key])[-1].get("apparmor"))
+        labels.add(final(chrome[key]).get("apparmor"))
     parsed = [parse_apparmor_label(x) for x in labels if x is not None]
     confinement = bool(parsed) and len(parsed) == len(labels) and all(
         profile and mode == "enforce" for profile, mode in parsed)
@@ -606,6 +884,7 @@ def evaluate(table, ctx):
             "chrome_process_count": len(chrome),
             "browser": browsers,
             "browser_is_verified_chrome_executable": len(browsers) == 1 and not foreign_browsers,
+            "browser_binding": binding,
             "zygotes": sorted(k for k in chrome if is_zygote(k)),
             "renderers": renderers,
             "setuid_helper": setuid_helper,
@@ -998,27 +1277,40 @@ def sample_process(pid):
 class Tracker:
     """Records every process that is ever a member of the tracking cgroup.
 
-    Identity is always PID + start time. A parent is bound only when it was
-    re-read while the child still named it as parent and it is not younger
-    than the child; a reused PID therefore cannot be mistaken for it.
+    Identity is always PID + start time. Each tick runs with the cgroup
+    frozen when the freezer is available, so that enumeration and sampling
+    describe one consistent instant. An enumerated PID that cannot be
+    sampled is never dropped: it becomes an explicit `unsampled` entry
+    unless it is a known process that verifiably exited. Sticky facts are
+    kept outside the bounded state history, which is never overwritten.
     """
 
     def __init__(self, cgroup_dir, chrome_id, untrusted_uid, chrome_files=frozenset(),
-                 clock=time.monotonic, sampler=sample_process, reader=read_text,
-                 classify=classify_exec_mapping):
+                 node_id=None, clock=time.monotonic, sampler=sample_process,
+                 reader=read_text, classify=classify_exec_mapping,
+                 classify_exe=classify_executable, freeze=None, thaw=None):
         self.cgroup_dir = cgroup_dir
         self.chrome_id = list(chrome_id)
+        self.node_id = list(node_id) if node_id else None
         self.untrusted_uid = untrusted_uid
         self.chrome_files = chrome_files
         self.clock = clock
         self.sampler = sampler
         self.reader = reader
         self.classify = classify
+        self.classify_exe = classify_exe
+        self.freeze = freeze
+        self.thaw = thaw
         self.t0 = clock()
         self.table = {}
         self.table_overflow = False
+        self.unsampled = []
+        self.unsampled_count = 0
+        self.root_keys = {}
         self.ticks = 0
+        self.ticks_unfrozen = 0
         self._map_class = {}
+        self._exe_class = {}
 
     def pids(self):
         try:
@@ -1026,29 +1318,77 @@ class Tracker:
         except OSError:
             return []
 
-    def _check_maps(self, pid, rec):
+    def identify(self, pid):
+        """Key (pid:starttime) of a live process, or None."""
         try:
-            mappings = parse_exec_mappings(self.reader("/proc/%d/maps" % pid, 8 << 20))
-        except (OSError, ValueError):
-            # A failed read is never a successful verification.
+            stat_line = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+        except (OSError, ValueError, IndexError):
+            return None
+        return "%d:%d" % (pid, stat_line["starttime"])
+
+    def _unsampled(self, pid, now, phase):
+        """An enumerated PID gave no usable sample: keep the uncertainty."""
+        try:
+            stat_line = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+        except (OSError, ValueError, IndexError):
+            stat_line = None
+        if stat_line is not None and stat_line["state"] in ("Z", "X"):
+            key = "%d:%d" % (pid, stat_line["starttime"])
+            if key in self.table:
+                # A process whose history is already recorded has exited.
+                self.table[key]["exit_seen"] = True
+                return
+            kind = "exited before its first sample"
+        elif stat_line is None:
+            kind = "vanished after enumeration"
+        else:
+            kind = "alive but unreadable"
+        self.unsampled_count += 1
+        if len(self.unsampled) < 50:
+            self.unsampled.append({
+                "pid": pid, "t": now, "phase": phase, "kind": kind,
+                "starttime": stat_line["starttime"] if stat_line else None})
+
+    def _check_maps(self, pid, rec, state):
+        """Mapping evidence bound to the PID + start-time identity."""
+        try:
+            before = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+            text = self.reader("/proc/%d/maps" % pid, 8 << 20)
+            after = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+            mappings = parse_exec_mappings(text)
+        except (OSError, ValueError, IndexError):
+            # A failed read is never a successful verification, and a
+            # later successful read does not erase it.
             rec["maps_failed"] += 1
-            rec["maps_pending"] = True
             return
-        rec["maps_ok"] += 1
+        if before["starttime"] != rec["starttime"] or after["starttime"] != rec["starttime"] \
+                or "Z" in (before["state"], after["state"]):
+            rec["maps_identity_changed"] += 1
+            return
+        own_dev = "%02x:%02x" % (os.major(state["exe"][0]), os.minor(state["exe"][0]))
+        own_seen = False
         for mapping in sorted(mappings):
             if mapping not in self._map_class:
                 self._map_class[mapping] = self.classify(*mapping, self.chrome_files)
             kind = self._map_class[mapping]
+            if mapping[0] == own_dev and mapping[1] == state["exe"][1] and kind == "trusted":
+                own_seen = True
             if kind in ("untrusted", "unresolved"):
                 bucket = rec[kind + "_exec_maps"]
                 label = "%s inode %d dev %s" % (mapping[2][:200], mapping[1], mapping[0])
                 if label not in bucket and len(bucket) < 8:
                     bucket.append(label)
+        if own_seen:
+            rec["maps_ok"] += 1
+        else:
+            # Empty or partial listing: the process's own executable text is
+            # not among the verified mappings, so nothing was proven.
+            rec["maps_insufficient"] += 1
 
     def _confirm_parent(self, key, rec):
         """Bind the parent by PID + start time while both are alive."""
         rec["parent_attempts"] += 1
-        pid, ppid = rec["pid"], rec["states"][0]["ppid"]
+        pid, ppid = rec["pid"], rec["birth_ppid"]
         try:
             child_before = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
             parent = parse_stat(self.reader("/proc/%d/stat" % ppid, 4096))
@@ -1069,12 +1409,24 @@ class Tracker:
             rec["parent_outside_cgroup"] = ppid
 
     def tick(self, phase):
+        frozen = False
+        try:
+            frozen = bool(self.freeze()) if self.freeze else False
+            if not frozen:
+                self.ticks_unfrozen += 1
+            self._tick(phase)
+        finally:
+            if self.thaw:
+                self.thaw()
+
+    def _tick(self, phase):
         now = round(self.clock() - self.t0, 3)
         self.ticks += 1
         alive = []
         for pid in self.pids():
             sampled = self.sampler(pid)
             if sampled is None:
+                self._unsampled(pid, now, phase)
                 continue
             starttime, state = sampled
             key = "%d:%d" % (pid, starttime)
@@ -1085,49 +1437,58 @@ class Tracker:
                     continue
                 rec = {"pid": pid, "starttime": starttime, "phase": phase,
                        "first_seen": now, "last_seen": now, "samples": 0,
+                       "birth_ppid": state["ppid"],
                        "parent_key": None, "parent_confirmed": False,
-                       "parent_attempts": 0, "states": [], "overflow": False,
+                       "parent_attempts": 0, "states": [], "last_state": None,
+                       "sticky": new_sticky(), "overflow": False,
                        "untrusted_exec_maps": [], "unresolved_exec_maps": [],
-                       "maps_ok": 0, "maps_failed": 0, "maps_fail_alive": 0,
-                       "maps_pending": False}
+                       "maps_ok": 0, "maps_failed": 0, "maps_insufficient": 0,
+                       "maps_identity_changed": 0}
                 self.table[key] = rec
             alive.append((key, rec))
-            if rec["maps_pending"]:
-                # The process outlived a failed mapping read.
-                rec["maps_fail_alive"] += 1
-                rec["maps_pending"] = False
+            exe_key = (state["exe"][0], state["exe"][1], state["exe_path"])
+            if exe_key not in self._exe_class:
+                self._exe_class[exe_key] = self.classify_exe(
+                    state["exe"], state["exe_path"], self.chrome_id,
+                    self.chrome_files, self.node_id)
+            state["exe_class"] = self._exe_class[exe_key]
             rec["last_seen"] = now
             rec["samples"] += 1
-            previous = rec["states"][-1] if rec["states"] else None
+            previous = rec["last_state"]
             changed = previous is None or {k: v for k, v in previous.items() if k != "t"} != state
             if changed:
-                if len(rec["states"]) >= MAX_STATES_PER_PROCESS:
-                    rec["overflow"] = True
-                    rec["states"][-1] = dict(state, t=now)
+                # Sticky facts first; the bounded history is never rewritten.
+                fold_state(rec["sticky"], state, self.chrome_id)
+                rec["last_state"] = dict(state, t=now)
+                if len(rec["states"]) < MAX_STATES_PER_PROCESS:
+                    rec["states"].append(rec["last_state"])
                 else:
-                    rec["states"].append(dict(state, t=now))
+                    rec["overflow"] = True
             if state["exe"] == self.chrome_id and (
                     changed or not rec["maps_ok"] or rec["samples"] % MAPS_EVERY == 0):
-                self._check_maps(pid, rec)
+                self._check_maps(pid, rec, state)
         for key, rec in alive:
             if not rec["parent_confirmed"] and rec["parent_attempts"] < MAX_PARENT_ATTEMPTS:
                 self._confirm_parent(key, rec)
 
     def export(self):
-        """Bounded copy for the evidence file: Chrome in full, others compact."""
+        """Bounded copy for the evidence file. Chrome and every smoke-phase
+        process in full; other install-phase processes compact (their sticky
+        facts and overflow flag are always kept)."""
         out = {}
         for key, rec in self.table.items():
-            if any(s["exe"] == self.chrome_id for s in rec["states"]):
+            if rec["sticky"]["chrome"] or rec["phase"] == "smoke":
                 out[key] = rec
             else:
-                st = rec["states"][-1]
+                st = rec["last_state"]
                 out[key] = {"pid": rec["pid"], "starttime": rec["starttime"],
                             "phase": rec["phase"], "first_seen": rec["first_seen"],
                             "last_seen": rec["last_seen"], "samples": rec["samples"],
                             "parent_key": rec["parent_key"], "ppid": st["ppid"],
                             "exe_path": st["exe_path"], "uid": st["uid"],
                             "argv": [a[:120] for a in st["cmdline"][:6]],
-                            "state_count": len(rec["states"])}
+                            "state_count": len(rec["states"]),
+                            "overflow": rec["overflow"], "sticky": rec["sticky"]}
         return out
 
 
@@ -1788,6 +2149,14 @@ class Qualification:
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
             raise Stop("PRIVILEGE_ISOLATION_FAILED", "child not placed in tracking cgroup")
+        # The exact process the observer started: the root of this phase's
+        # lineage (PID + start time, read before any PR code runs).
+        root_key = self.tracker.identify(pid)
+        if root_key is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            raise Stop("PRIVILEGE_ISOLATION_FAILED", "cannot identify the launched process")
+        self.tracker.root_keys[phase] = root_key
         os.write(go_w, b"1")
         os.close(go_w)
 
@@ -1828,10 +2197,35 @@ class Qualification:
             raise Stop("TEARDOWN_INCOMPLETE", "tracking cgroup not empty after " + phase)
         return result
 
+    def freeze_cgroup(self):
+        """Freeze the tracking cgroup for one consistent sample. Best effort:
+        an unconfirmed freeze is counted, and sampling then stays strict."""
+        try:
+            with open(CGROUP_DIR + "/cgroup.freeze", "w") as fh:
+                fh.write("1")
+            deadline = time.monotonic() + FREEZE_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                if "frozen 1" in read_text(CGROUP_DIR + "/cgroup.events", 4096):
+                    return True
+                time.sleep(0.0005)
+        except OSError:
+            pass
+        return False
+
+    def thaw_cgroup(self):
+        try:
+            with open(CGROUP_DIR + "/cgroup.freeze", "w") as fh:
+                fh.write("0")
+        except OSError:
+            pass
+
     def execute(self):
+        node_stat = os.stat(self.node_real)
         self.tracker = Tracker(CGROUP_DIR,
                                [self.pre_chrome["chrome"]["dev"], self.pre_chrome["chrome"]["ino"]],
-                               self.uid, self.chrome_files)
+                               self.uid, self.chrome_files,
+                               node_id=[node_stat.st_dev, node_stat.st_ino],
+                               freeze=self.freeze_cgroup, thaw=self.thaw_cgroup)
         npm = os.path.join(self.a.node_bin_dir, "npm")
         runs = {}
         self.ev["execution"] = runs
@@ -1952,9 +2346,12 @@ class Qualification:
         smoke = runs.get("smoke")
         if smoke is None or self.tracker is None:
             return
-        if self.tracker.table_overflow:
-            self.add_stop("INCOMPLETE_EVIDENCE", "process table bound exceeded")
         result = evaluate(self.tracker.table, {
+            "node_id": self.tracker.node_id,
+            "smoke_root": self.tracker.root_keys.get("smoke"),
+            "work_dir": WORK_DIR,
+            "unsampled": self.tracker.unsampled,
+            "table_overflow": self.tracker.table_overflow,
             "init_ns": self.init_ns,
             "chrome_id": self.tracker.chrome_id,
             "helper_id": ([self.pre_chrome["helper"]["dev"], self.pre_chrome["helper"]["ino"]]
@@ -1970,7 +2367,13 @@ class Qualification:
             "sample_interval_seconds": SAMPLE_INTERVAL, "ticks": self.tracker.ticks,
             "renderer_grace_seconds": RENDERER_GRACE_SECONDS,
             "process_count": len(self.tracker.table),
-            "limitation": "polling; processes shorter than one interval may be missed",
+            "ticks_without_confirmed_freeze": self.tracker.ticks_unfrozen,
+            "unsampled_count": self.tracker.unsampled_count,
+            "unsampled": self.tracker.unsampled,
+            "phase_root_processes": self.tracker.root_keys,
+            "instrumentation": "the tracking cgroup is frozen for each sample (timing only)",
+            "limitation": "polling; a process that starts and is reaped between two "
+                          "samples is not observed",
         }
         if smoke["timed_out"] or smoke["exit_code"] != 0:
             self.add_stop("SMOKE_FAILED_WITHOUT_PROVEN_VIOLATION",
