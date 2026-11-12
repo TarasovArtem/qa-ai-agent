@@ -44,9 +44,10 @@
  * validated and what was actually canonicalized/prompted). Every
  * caller-owned property this module reads - evidenceBundle.projectId,
  * evidenceBundle.evidenceItems, each item's evidenceRef/text, each ref's
- * id/kind/sourceId - is read EXACTLY ONCE, up front, into a fresh, frozen,
+ * id/kind/sourceId - is read EXACTLY ONCE, up front, into a fresh,
  * #22C-owned snapshot (see snapshotEvidenceBundle() below) before any
- * validation runs at all. Validation, canonical-registry construction,
+ * validation runs at all; the snapshot is frozen as soon as it validates
+ * (never before - a refused one may still hold caller-owned values). Validation, canonical-registry construction,
  * prompt construction, and model-project binding all consume that one
  * snapshot exclusively; evidenceBundle itself is never read again past that
  * point. What is validated is therefore always exactly what is prompted and
@@ -179,12 +180,17 @@ function snapshotOwnElements(source, snapshotElement) {
 // the returned snapshot. isPlainObject()/Array.isArray() here only ever
 // gate whether to recurse further - a malformed shape is captured as-is
 // and left for validateEvidenceBundle() to report structurally.
+//
+// TPR-R1-PR270-C4 (C4-02): evidenceItems is copied structurally with
+// snapshotOwnElements(), never through the caller array's own/inherited
+// map(). A hole or an inherited-only index stays a hole in the snapshot for
+// validateEvidenceBundle() to refuse, instead of being skipped or filled in.
 function snapshotEvidenceBundle(evidenceBundle) {
   const bundleSnapshot = snapshotOwnProperties(evidenceBundle);
   if (!isPlainObject(bundleSnapshot) || !Array.isArray(bundleSnapshot.evidenceItems)) {
     return bundleSnapshot;
   }
-  bundleSnapshot.evidenceItems = bundleSnapshot.evidenceItems.map((rawItem) => {
+  bundleSnapshot.evidenceItems = snapshotOwnElements(bundleSnapshot.evidenceItems, (rawItem) => {
     const itemSnapshot = snapshotOwnProperties(rawItem);
     if (isPlainObject(itemSnapshot) && isPlainObject(itemSnapshot.evidenceRef)) {
       itemSnapshot.evidenceRef = snapshotOwnProperties(itemSnapshot.evidenceRef);
@@ -296,13 +302,20 @@ function validateEvidenceBundle(bundle, { expectedProjectId } = {}) {
   } else if (items.length > EVIDENCE_LIMITS.MAX_SOURCES) {
     errors.push(err("$.evidenceItems", ERROR_CODES.INVALID_VALUE, `$.evidenceItems exceeds the maximum of ${EVIDENCE_LIMITS.MAX_SOURCES}`));
   } else {
-    items.forEach((item, i) => {
+    // TPR-R1-PR270-C4 (C4-02): every position 0..length-1 is checked by
+    // index, never through forEach() (which skips holes and is looked up on
+    // the array). A position with no OWN element - a hole, or an index only
+    // reachable through the prototype chain - is refused like any other
+    // non-object element, so a sparse array can never reach canonical
+    // registry construction.
+    for (let i = 0; i < items.length; i += 1) {
       const path = `$.evidenceItems[${i}]`;
+      const item = Object.prototype.hasOwnProperty.call(items, i) ? items[i] : undefined;
 
       if (!isPlainObject(item)) {
         errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be an object`));
         allItemsWellFormed = false;
-        return;
+        continue;
       }
       collectUnknownKeyErrors(item, EVIDENCE_ITEM_ALLOWED_KEYS, path, errors);
 
@@ -346,7 +359,7 @@ function validateEvidenceBundle(bundle, { expectedProjectId } = {}) {
       } else {
         aggregateLength += item.text.length;
       }
-    });
+    }
 
     // Same "only meaningful once every item is itself well-formed"
     // convention evidence-ingestion.js uses for its own aggregate check -
@@ -529,20 +542,31 @@ async function generateRequirementModel({ evidenceBundle, canonicalRequirements,
   }
 
   // Roadmap #22C-C1: the entire caller-controlled bundle is read exactly
-  // once, right here, into a fresh #22C-owned plain-data snapshot, then
-  // frozen. evidenceBundle is never read again below this line - every
+  // once, right here, into a fresh #22C-owned plain-data snapshot.
+  // evidenceBundle is never read again below this line - every
   // subsequent step (validation, canonical registry, prompt construction,
   // model-project binding) consumes only `snapshot`. See
   // snapshotEvidenceBundle()'s own comment for why this closes the #22C-R
   // review's BUNDLE_SNAPSHOT_BOUNDARY finding for projectId, evidenceItems,
   // and per-item text alike (EvidenceRef id/kind/sourceId were already
   // single-read-safe before this change; that discipline is preserved).
-  const snapshot = deepFreeze(snapshotEvidenceBundle(evidenceBundle));
+  //
+  // TPR-R1-PR270-C4 (C4-01): the snapshot is frozen only AFTER it validates.
+  // A refused snapshot can still hold caller-owned values (an object under an
+  // unknown key, a non-string text/id, an array where an object belongs), and
+  // freezing those would mutate the caller's input. A validated one cannot:
+  // every key at every level is allowlisted, every container is one this
+  // module created in snapshotEvidenceBundle(), and every leaf is a string.
+  // Nothing but this function holds a reference to the snapshot, and no
+  // await separates the copy, the validation and the freeze, so the
+  // single-read guarantee is unchanged.
+  const snapshot = snapshotEvidenceBundle(evidenceBundle);
 
   const bundleErrors = validateEvidenceBundle(snapshot, { expectedProjectId });
   if (bundleErrors.length > 0) {
     return { ok: false, errors: boundGenerationErrors(bundleErrors), providerAttempts: 0 };
   }
+  deepFreeze(snapshot);
 
   const canonicalEvidence = toCanonicalEvidence(snapshot.evidenceItems);
 

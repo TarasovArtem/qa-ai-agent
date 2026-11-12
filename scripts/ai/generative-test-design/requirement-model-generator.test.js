@@ -1468,3 +1468,214 @@ test("TPR-R1-PR270-C3: a literal own __proto__ key on the evidence bundle, an it
     assert.deepEqual(result.errors.map((e) => `${e.code}@${e.path}`), [`UNKNOWN_FIELD@${path}`], path);
   }
 });
+
+// TPR-R1-PR270-C4: the evidence-bundle snapshot gets the same two guarantees
+// C3 gave the canonical requirement snapshot.
+//   C4-01 - the snapshot is validated BEFORE it is frozen, so a refused bundle
+//           never has a caller-owned nested value frozen through it.
+//   C4-02 - evidenceItems is copied and validated structurally: a hole or an
+//           inherited-only index is a refused element, and no method looked up
+//           on the caller's array is ever called.
+const C4_TARGETS = [
+  ["$", (bundle) => bundle],
+  ["$.evidenceItems[0]", (bundle) => bundle.evidenceItems[0]],
+  ["$.evidenceItems[0].evidenceRef", (bundle) => bundle.evidenceItems[0].evidenceRef],
+];
+const c4Nested = () => ({ deep: ["x"], inner: { a: 1 } });
+const c4Codes = (errors) => errors.map((e) => `${e.code}@${e.path}`);
+function c4AssertStillMutable(nested, label) {
+  for (const [name, owned] of [["nested", nested], ["nested.deep", nested.deep], ["nested.inner", nested.inner]]) {
+    assert.equal(Object.isFrozen(owned), false, `${label}: ${name} not frozen`);
+  }
+  nested.deep.push("y");
+  nested.inner.a = 2;
+  nested.added = true;
+  assert.deepEqual(nested, { deep: ["x", "y"], inner: { a: 2 }, added: true }, `${label}: still mutable`);
+}
+async function c4Refused(evidenceBundle, expected, label, canonicalRequirements = validRequirements()) {
+  const provider = jsonProvider(validResponse());
+  const result = await generateRequirementModel({ evidenceBundle, canonicalRequirements, provider });
+  assert.equal(result.ok, false, label);
+  assert.equal(result.requirementModel, undefined, label);
+  assert.equal(result.providerAttempts, 0, label);
+  assert.equal(provider.calls.length, 0, label);
+  assert.deepEqual(c4Codes(result.errors), expected, label);
+  assert.ok(result.errors.length <= MAX_CORRECTION_ERRORS, label);
+  for (const e of result.errors) {
+    assert.equal(Object.keys(e).sort().join(","), "code,message,path", label);
+    for (const leaked of ["First.", "Second.", "Third.", "FORGED", LOGIN]) assert.ok(!e.message.includes(leaked), `${label}: message must not echo text`);
+  }
+}
+
+test("TPR-R1-PR270-C4-01: an unknown nested object on the bundle, an item or an EvidenceRef is refused without freezing the caller's value", async () => {
+  for (const [path, pick] of C4_TARGETS) {
+    const bundle = validBundle();
+    const nested = c4Nested();
+    pick(bundle).extra = nested;
+    await c4Refused(bundle, [`UNKNOWN_FIELD@${path}.extra`], path);
+    assert.equal(pick(bundle).extra, nested, `${path}: caller value left in place`);
+    c4AssertStillMutable(nested, path);
+    for (const owned of [bundle, bundle.evidenceItems, bundle.evidenceItems[0], bundle.evidenceItems[0].evidenceRef]) {
+      assert.equal(Object.isFrozen(owned), false, `${path}: caller bundle not frozen`);
+    }
+  }
+});
+
+test("TPR-R1-PR270-C4-01: an object-valued own __proto__ key on the bundle, an item or an EvidenceRef is refused without freezing it", async () => {
+  for (const [path, pick] of C4_TARGETS) {
+    const bundle = validBundle();
+    const nested = c4Nested();
+    Object.defineProperty(pick(bundle), "__proto__", { value: nested, enumerable: true, writable: true, configurable: true });
+    const snapshot = snapshotEvidenceBundle(bundle);
+    assert.equal(c3Own(pick(snapshot), "__proto__"), true, path);
+    assert.equal(Object.getPrototypeOf(pick(snapshot)), Object.prototype, path);
+    await c4Refused(bundle, [`UNKNOWN_FIELD@${path}.__proto__`], path);
+    c4AssertStillMutable(nested, path);
+  }
+});
+
+test("TPR-R1-PR270-C4-01: malformed caller-owned values in known positions are refused without being frozen", async () => {
+  const cases = [
+    ["projectId object", (b, v) => { b.projectId = v; }, ["INVALID_TYPE@$.projectId"]],
+    ["evidenceItems object", (b, v) => { b.evidenceItems = v; }, ["MISSING_FIELD@$.evidenceItems"]],
+    ["text object", (b, v) => { b.evidenceItems[0].text = v; }, ["INVALID_TYPE@$.evidenceItems[0].text"]],
+    ["ref id object", (b, v) => { b.evidenceItems[0].evidenceRef.id = v; }, ["INVALID_TYPE@$.evidenceItems[0].evidenceRef.id"]],
+  ];
+  for (const [label, plant, expected] of cases) {
+    const bundle = validBundle();
+    const nested = c4Nested();
+    plant(bundle, nested);
+    await c4Refused(bundle, expected, label);
+    c4AssertStillMutable(nested, label);
+  }
+  // Array-valued positions: the caller's own arrays (and what they hold) stay unfrozen too.
+  const heldByItem = c4Nested();
+  const arrayItem = [heldByItem];
+  await c4Refused(validBundle({ evidenceItems: [arrayItem] }), ["INVALID_TYPE@$.evidenceItems[0]"], "array item");
+  assert.equal(Object.isFrozen(arrayItem), false);
+  c4AssertStillMutable(heldByItem, "array item");
+
+  const heldByRef = c4Nested();
+  const arrayRef = [heldByRef];
+  const refBundle = validBundle();
+  refBundle.evidenceItems[0].evidenceRef = arrayRef;
+  await c4Refused(refBundle, ["INVALID_TYPE@$.evidenceItems[0].evidenceRef"], "array ref");
+  assert.equal(Object.isFrozen(arrayRef), false);
+  c4AssertStillMutable(heldByRef, "array ref");
+});
+
+test("TPR-R1-PR270-C4-02: fully sparse evidenceItems keep their holes in the snapshot and fail closed with a bounded error", async () => {
+  for (const length of [1, 3]) {
+    const label = `new Array(${length})`;
+    const expected = Array.from({ length }, (_, i) => `INVALID_TYPE@$.evidenceItems[${i}]`);
+    const snapshot = snapshotEvidenceBundle(validBundle({ evidenceItems: new Array(length) }));
+    assert.equal(snapshot.evidenceItems.length, length, label);
+    assert.deepEqual(Object.keys(snapshot.evidenceItems), [], label);
+    assert.deepEqual(c4Codes(validateEvidenceBundle(validBundle({ evidenceItems: new Array(length) }))), expected, `${label}: direct validation`);
+    await c4Refused(validBundle({ evidenceItems: new Array(length) }), expected, label);
+  }
+});
+
+test("TPR-R1-PR270-C4-02: partially sparse evidenceItems are refused at exactly the missing positions", async () => {
+  const build = () => {
+    const items = [item(1, "First."), item(2, "Second."), item(3, "Third.")];
+    delete items[1];
+    return items;
+  };
+  const snapshot = snapshotEvidenceBundle(validBundle({ evidenceItems: build() }));
+  assert.equal(snapshot.evidenceItems.length, 3);
+  assert.deepEqual(Object.keys(snapshot.evidenceItems), ["0", "2"]);
+  assert.deepEqual(c4Codes(validateEvidenceBundle(validBundle({ evidenceItems: build() }))), ["INVALID_TYPE@$.evidenceItems[1]"]);
+  await c4Refused(validBundle({ evidenceItems: build() }), ["INVALID_TYPE@$.evidenceItems[1]"], "middle hole", c3Dense());
+
+  // A trailing hole (length longer than the own elements).
+  const trailing = [item(1, LOGIN)];
+  trailing.length = 2;
+  await c4Refused(validBundle({ evidenceItems: trailing }), ["INVALID_TYPE@$.evidenceItems[1]"], "trailing hole");
+});
+
+test("TPR-R1-PR270-C4-02: inherited-only evidence-item positions stay holes and fail closed", async () => {
+  // Read by index, this bundle is indistinguishable from the dense c3Bundle().
+  const build = () => {
+    const items = [item(1, "First.")];
+    items.length = 3;
+    return validBundle({ evidenceItems: c3WithInheritedIndices(items, { 1: item(2, "Second."), 2: item(3, "Third.") }) });
+  };
+  assert.equal(Array.isArray(build().evidenceItems), true);
+  assert.equal(build().evidenceItems[1].text, item(2, "Second.").text, "the inherited element is readable by index");
+  const snapshot = snapshotEvidenceBundle(build());
+  assert.equal(snapshot.evidenceItems.length, 3);
+  assert.deepEqual(Object.keys(snapshot.evidenceItems), ["0"]);
+  assert.equal(Object.getPrototypeOf(snapshot.evidenceItems), Array.prototype);
+  const expected = ["INVALID_TYPE@$.evidenceItems[1]", "INVALID_TYPE@$.evidenceItems[2]"];
+  await c4Refused(build(), expected, "inherited indices", c3Dense());
+  // validateEvidenceBundle() is exported: called directly on such an array it reports the same positions.
+  assert.deepEqual(c4Codes(validateEvidenceBundle(build())), expected);
+});
+
+test("TPR-R1-PR270-C4-02: caller-controlled evidenceItems array methods are never invoked and each own element is read exactly once", async () => {
+  let calls = 0;
+  const hostileMethods = (array, replacement) => {
+    for (const name of ["map", "forEach", "slice", "filter", "concat", "every", "some"]) array[name] = replacement;
+    return array;
+  };
+  // A sparse array whose own methods would hand back (or pretend to walk) a dense valid one.
+  const sparse = hostileMethods(new Array(1), () => { calls += 1; return [item(1, LOGIN)]; });
+  await c4Refused(validBundle({ evidenceItems: sparse }), ["INVALID_TYPE@$.evidenceItems[0]"], "own methods on a sparse array");
+  assert.deepEqual(c4Codes(validateEvidenceBundle(validBundle({ evidenceItems: sparse }))), ["INVALID_TYPE@$.evidenceItems[0]"]);
+  // A wrong array whose own methods would hand back the right one.
+  const wrong = hostileMethods([item(1, "FORGED")], () => { calls += 1; return [item(1, LOGIN)]; });
+  await c4Refused(validBundle({ evidenceItems: wrong }), ["INVARIANT_VIOLATION@$.canonicalRequirements[0]"], "own methods on a wrong array");
+  assert.equal(calls, 0, "no caller-supplied array method was invoked");
+
+  // Single read: an own accessor element is read exactly once.
+  let elementReads = 0;
+  const items = [item(1, "First."), item(2, "Second."), item(3, "Third.")];
+  const second = items[1];
+  Object.defineProperty(items, 1, { enumerable: true, configurable: true, get() { elementReads += 1; return elementReads === 1 ? second : item(2, "FORGED"); } });
+  const provider = jsonProvider(validResponse());
+  const result = await generateRequirementModel({ evidenceBundle: validBundle({ evidenceItems: items }), canonicalRequirements: c3Dense(), provider });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(elementReads, 1, "evidence item read count");
+  assert.ok(!provider.calls[0].userPrompt.includes("FORGED"));
+});
+
+test("TPR-R1-PR270-C4: a valid dense evidence bundle keeps its order, EvidenceRef identity and text, and the caller's input is untouched", async () => {
+  const bundle = c3Bundle();
+  const before = JSON.parse(JSON.stringify(bundle));
+  const items = [...bundle.evidenceItems];
+  const refs = items.map((i) => i.evidenceRef);
+
+  const snapshot = snapshotEvidenceBundle(bundle);
+  assert.deepEqual(snapshot, before);
+  assert.notEqual(snapshot, bundle);
+  assert.notEqual(snapshot.evidenceItems, bundle.evidenceItems);
+  assert.equal(Object.getPrototypeOf(snapshot.evidenceItems), Array.prototype);
+  snapshot.evidenceItems.forEach((entry, i) => {
+    assert.notEqual(entry, items[i], `item ${i} is a fresh copy`);
+    assert.notEqual(entry.evidenceRef, refs[i], `evidenceRef ${i} is a fresh copy`);
+  });
+  assert.deepEqual(validateEvidenceBundle(snapshot), []);
+
+  const provider = jsonProvider(validResponse());
+  const result = await generateRequirementModel({ evidenceBundle: bundle, canonicalRequirements: c3Dense(), provider });
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.equal(result.providerAttempts, 1);
+  assert.equal(provider.calls.length, 1);
+  assert.equal(result.requirementModel.projectId, "proj-1");
+  assert.deepEqual(result.requirementModel.evidenceRefs, [ref(1), ref(2), ref(3)]);
+  assert.deepEqual(result.requirementModel.requirements, c3Dense());
+  const order = ["evidence-0001", "evidence-0002", "evidence-0003"].map((id) => provider.calls[0].userPrompt.indexOf(id));
+  assert.ok(order.every((at) => at >= 0) && order[0] < order[1] && order[1] < order[2], "prompt keeps evidence order");
+
+  // Caller input: same identities, same content, nothing frozen.
+  assert.deepEqual(bundle, before);
+  assert.equal(Object.isFrozen(bundle), false);
+  assert.equal(Object.isFrozen(bundle.evidenceItems), false);
+  bundle.evidenceItems.forEach((entry, i) => {
+    assert.equal(entry, items[i]);
+    assert.equal(entry.evidenceRef, refs[i]);
+    assert.equal(Object.isFrozen(entry), false, `item ${i} not frozen`);
+    assert.equal(Object.isFrozen(entry.evidenceRef), false, `evidenceRef ${i} not frozen`);
+  });
+});
