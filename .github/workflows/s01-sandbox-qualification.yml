@@ -116,17 +116,26 @@ jobs:
       # sudo is used here only to become the trusted observer. The observer
       # drops to s01u for every PR-controlled command; the browser is never
       # given privileges and no sandbox setting is changed.
+      #
+      # The runner image makes /opt and /usr/share world-writable, so the
+      # observer bind-mounts the exposed trees that hold trusted executables
+      # (Chrome, Node/npm, directories on this job's PATH) read-only for the
+      # qualification window and removes the mounts again. No chmod/chown.
+      # The runner's PATH is passed so those directories can be protected:
+      # later steps of this job resolve their tools through it.
       - name: Run trusted observer (one actual Playwright smoke)
         id: observe
         shell: bash
         run: |
           set -euo pipefail
           node_bin="$(dirname "$(readlink -f "$(command -v node)")")"
-          sudo -n install -d -m 0700 -o root -g root /opt/s01-trusted
+          # Not under /opt: the runner image makes /opt world-writable.
+          trusted_dir=/usr/local/lib/s01-trusted
+          sudo -n install -d -m 0700 -o root -g root "$trusted_dir"
           sudo -n install -m 0500 -o root -g root \
-            "$GITHUB_WORKSPACE/trusted/scripts/ci/s01_observer.py" /opt/s01-trusted/s01_observer.py
+            "$GITHUB_WORKSPACE/trusted/scripts/ci/s01_observer.py" "$trusted_dir/s01_observer.py"
           set +e
-          sudo -n /usr/bin/python3 -I -B /opt/s01-trusted/s01_observer.py \
+          sudo -n /usr/bin/python3 -I -B "$trusted_dir/s01_observer.py" \
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
@@ -143,6 +152,7 @@ jobs:
             --protected-path "$HOME" \
             --protected-path "$GITHUB_WORKSPACE" \
             --protected-path "$RUNNER_TEMP" \
+            --runner-path "$PATH" \
             --image-os "${ImageOS:-}" \
             --image-version "${ImageVersion:-}"
           rc=$?

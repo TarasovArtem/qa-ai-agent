@@ -16,6 +16,14 @@ by a privileged operation: the PR source is materialized from git
 objects into a fresh root-owned directory and then handed to s01u; every
 later read of PR-writable data happens after dropping to s01u.
 
+The hosted runner image makes /opt and /usr/share world-writable
+(`chmod -R 777`). Trusted executables that live there (Chrome, the
+chrome-sandbox helper, Node/npm, directories on the runner's PATH) are
+therefore protected for the qualification window by read-only bind
+mounts placed on the topmost world-writable ancestor. Owner, mode bits,
+inodes and paths are never changed. This is instrumentation and is
+disclosed in the evidence; stock CI does not have it.
+
 Outcomes (exit code): PASS (0), FAIL (1), STOP (2).
 A PASS is limited to the observed instrumented run, browser build and
 runner image. It certifies nothing else.
@@ -38,7 +46,7 @@ import subprocess
 import sys
 import time
 
-OBSERVER_VERSION = "s01-observer/1"
+OBSERVER_VERSION = "s01-observer/2"
 OBSERVER_REPO_PATH = "scripts/ci/s01_observer.py"
 
 UNTRUSTED_USER = "s01u"
@@ -53,9 +61,13 @@ CHROME_DIR = "/opt/google/chrome"
 CHROME_EXE = CHROME_DIR + "/chrome"
 CHROME_HELPER = CHROME_DIR + "/chrome-sandbox"
 CHROME_PACKAGE = "google-chrome-stable"
+ALWAYS_PROTECT = ("/usr/share",)
+NEVER_READ_ONLY = ("/", "/tmp", "/var", "/run", "/dev", "/proc", "/sys", "/home", "/etc", "/usr")
 
 TRUSTED_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 SMOKE_SCRIPT = "test:e2e:playwright"
+SMOKE_COMMAND = "playwright test --config=playwright.config.js --project=chromium"
+PLAYWRIGHT_CONFIG = "playwright.config.js"
 
 SAMPLE_INTERVAL = 0.05
 MAPS_EVERY = 20
@@ -64,6 +76,7 @@ NPM_CI_TIMEOUT = 600
 SMOKE_TIMEOUT = 300
 MAX_PROCESSES = 4000
 MAX_STATES_PER_PROCESS = 24
+MAX_PARENT_ATTEMPTS = 5
 MAX_OUTPUT_BYTES = 256 * 1024
 MAX_REPORT_BYTES = 512 * 1024
 MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
@@ -76,6 +89,14 @@ NAMESPACES = ("user", "pid", "net", "mnt", "ipc", "uts", "cgroup")
 FAIL_FLAGS = ("--no-sandbox", "--disable-seccomp-filter-sandbox",
               "--disable-namespace-sandbox", "--single-process")
 STOP_FLAGS = ("--disable-setuid-sandbox", "--no-zygote")
+DRIVER_FLAG = "--remote-debugging-pipe"
+BROWSER_NAMES = frozenset((
+    "chrome", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+    "headless_shell", "chrome-headless-shell", "msedge", "microsoft-edge",
+    "firefox", "firefox-bin", "MiniBrowser", "WebKitWebProcess", "pw_run.sh"))
+CONFIG_FORBIDDEN = ("no-sandbox", "disable-setuid-sandbox", "disable-seccomp",
+                    "disable-namespace-sandbox", "single-process", "no-zygote",
+                    "executablePath")
 
 CLONE_NEWUSER = 0x10000000
 CLONE_NEWNET = 0x40000000
@@ -83,9 +104,11 @@ CLONE_NEWNET = 0x40000000
 SCOPE_STATEMENT = (
     "Result applies only to this instrumented run, this Chrome build and "
     "this runner image. Chrome ran as the unprivileged user s01u inside a "
-    "tracking cgroup with /opt/google/chrome bind-mounted read-only; stock "
-    "CI runs it as `runner` without that protection. This does not certify "
-    "any other run, image, browser build, or earlier E1/C4 runs."
+    "tracking cgroup, with world-writable trees holding trusted executables "
+    "(/opt, /usr/share and any exposed runner PATH directory) bind-mounted "
+    "read-only for the window; stock CI runs it as `runner` without that "
+    "protection. This does not certify any other run, image, browser build, "
+    "or earlier E1/C4 runs."
 )
 
 
@@ -171,14 +194,39 @@ def parse_apparmor_label(label):
     return label, None
 
 
-def exec_mapped_paths(maps_text):
-    """File-backed executable mappings from /proc/<pid>/maps."""
-    paths = set()
+def parse_exec_mappings(maps_text):
+    """Executable mappings of /proc/<pid>/maps as {(dev, inode, path)}."""
+    found = set()
     for line in maps_text.splitlines():
         parts = line.split(None, 5)
-        if len(parts) == 6 and "x" in parts[1]:
-            paths.add(parts[5])
-    return paths
+        if len(parts) >= 5 and "x" in parts[1]:
+            found.add((parts[3], int(parts[4]), parts[5] if len(parts) == 6 else ""))
+    return found
+
+
+def classify_exec_mapping(dev, inode, path, chrome_files, stat_fn=os.stat):
+    """Provenance of one executable mapping. Fails closed.
+
+    anonymous   no backing file (vdso, JIT); provenance not applicable
+    trusted     backing file re-identified by device+inode AND either
+                root-protected or one of the hashed Chrome files
+    untrusted   backing file re-identified and writable by a non-root user
+    unresolved  deleted/unlinked or otherwise not re-identifiable
+    """
+    if inode == 0:
+        return "anonymous"
+    if not path.startswith("/") or path.endswith(" (deleted)"):
+        return "unresolved"
+    try:
+        st = stat_fn(path)
+    except OSError:
+        return "unresolved"
+    actual = "%02x:%02x" % (os.major(st.st_dev), os.minor(st.st_dev))
+    if actual != dev or st.st_ino != inode or not stat.S_ISREG(st.st_mode):
+        return "unresolved"
+    if (st.st_dev, st.st_ino) in chrome_files or is_trusted_file(st):
+        return "trusted"
+    return "untrusted"
 
 
 def cap_is_zero(value):
@@ -195,23 +243,79 @@ def valid_tree_path(path):
     return all(p not in ("", ".", "..") and p.lower() != ".git" for p in parts)
 
 
+def strip_js_comments(text):
+    """Remove // and /* */ comments while leaving string literals intact."""
+    out, i, n, quote = [], 0, len(text), None
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+        elif c in "\"'`":
+            quote = c
+            out.append(c)
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def check_playwright_config(text):
+    """Static NECESSARY conditions for the Chrome Channel smoke.
+
+    The config is executable JavaScript, so this is not proof of the
+    effective runtime selection; that proof is the observed executable
+    identity (see evaluate). It only stops a tree that does not even
+    request Chrome Channel with the Chromium sandbox from being run.
+    """
+    code = strip_js_comments(text)
+    problems = []
+    channels = re.findall(r"""\bchannel\s*:\s*([^,}\n]+)""", code)
+    if [c.strip() for c in channels] not in (['"chrome"'], ["'chrome'"]):
+        problems.append("config does not request exactly channel \"chrome\"")
+    sandbox = re.findall(r"\bchromiumSandbox\s*:\s*([^,}\n]+)", code)
+    if [s.strip() for s in sandbox] != ["true"]:
+        problems.append("config does not set exactly chromiumSandbox: true")
+    for token in CONFIG_FORBIDDEN:
+        if token in code:
+            problems.append("config contains forbidden token " + token)
+    return problems
+
+
 def evaluate(table, ctx):
     """Interpret the observed process table. Pure function.
 
-    table: {key: {pid, phase, first_seen, last_seen, parent_key,
-                  states: [state...], overflow, untrusted_exec_maps}}
+    table: {key: {pid, starttime, phase, first_seen, last_seen, parent_key,
+                  parent_confirmed, states: [state...], overflow,
+                  untrusted_exec_maps, unresolved_exec_maps, maps_ok,
+                  maps_fail_alive}}
     ctx:   {init_ns, chrome_id, helper_id, helper_setuid_capable,
             untrusted_uid, grace}
 
-    Chrome's Linux sandbox as relied on here: with the namespace sandbox
-    the browser (init namespaces, unsandboxed by design) starts a zygote
-    in new user+pid+net namespaces; renderers are forked from it, drop all
-    capabilities, then install seccomp-bpf (Seccomp: 2, NoNewPrivs: 1).
-    With the setuid helper instead, sandboxed children share the init user
-    namespace but not the init pid namespace. A `--type=renderer` label is
-    never trusted alone: it must agree with executable identity, lineage
-    and namespace facts, and unlabelled sandbox-namespace leaves that are
-    not seccomp-sealed are treated as ambiguous.
+    Supported mechanism (Chromium's Linux namespace sandbox): the browser
+    process stays in the init namespaces; it starts a zygote in new
+    user+pid+net namespaces; renderers are forked from a zygote, drop all
+    capabilities and install seccomp-bpf (Seccomp: 2, NoNewPrivs: 1). The
+    setuid-helper layout and any other topology are reported as STOP
+    (unsupported interpretation), never interpreted into a PASS.
+
+    Classification is historical: a process is a Chrome process if it EVER
+    ran the verified Chrome executable, and every Chrome state it had is
+    evaluated. A `--type=renderer` label is never trusted alone.
     """
     fails, stops = [], []
     init_ns = ctx["init_ns"]
@@ -225,82 +329,125 @@ def evaluate(table, ctx):
     def stop(code, detail=""):
         stops.append({"code": code, "detail": str(detail)[:300]})
 
-    def last(rec):
-        return rec["states"][-1]
+    def chrome_states(rec):
+        return [s for s in rec["states"] if s.get("exe") == chrome_id]
 
-    def is_chrome(rec):
-        return bool(rec["states"]) and last(rec).get("exe") == chrome_id
+    def labelled(rec, label):
+        return any(label in (s.get("cmdline") or []) for s in chrome_states(rec))
+
+    def ever_flag(rec, flag):
+        return any(has_flag(s.get("cmdline") or [], flag) for s in chrome_states(rec))
 
     def lifetime(rec):
         return rec["last_seen"] - rec["first_seen"]
 
-    chrome = {k: r for k, r in table.items() if is_chrome(r)}
+    def user_ns(rec):
+        return (chrome_states(rec)[-1].get("ns") or {}).get("user")
+
+    chrome = {k: r for k, r in table.items() if chrome_states(r)}
     children = {}
     for key, rec in chrome.items():
         children.setdefault(rec.get("parent_key"), []).append(key)
 
-    browsers, orphans = [], []
+    # --- parent identity: PID + start time, confirmed while both were alive
+    browsers, unbound = [], []
     for key, rec in chrome.items():
         parent = table.get(rec.get("parent_key"))
-        if parent is None:
-            orphans.append(key)
-        elif not is_chrome(parent):
+        if parent is None or not rec.get("parent_confirmed"):
+            unbound.append(key)
+            continue
+        if parent.get("pid") != rec["states"][0].get("ppid") \
+                or parent.get("starttime", 0) > rec.get("starttime", 0) \
+                or parent["first_seen"] > rec["last_seen"]:
+            stop("STALE_PARENT_IDENTITY", key)
+            unbound.append(key)
+            continue
+        if not chrome_states(parent):
             browsers.append(key)
-
-    def reaches_browser(key):
-        seen = set()
-        while key in chrome and key not in seen:
-            if key in browsers:
-                return True
-            seen.add(key)
-            key = chrome[key].get("parent_key")
-        return False
+    if unbound:
+        stop("AMBIGUOUS_PROCESS_LINEAGE", "chrome without a confirmed parent identity: "
+             + ",".join(sorted(unbound)[:5]))
 
     helper_process_seen = False
+    foreign_browsers = []
     for key, rec in table.items():
         # A uid-0 member (e.g. a setuid-root binary started by PR code) is
         # not by itself a proven sandbox violation, but it voids isolation.
         if any(0 in (st.get("uid") or []) for st in rec["states"]):
             stop("ROOT_PROCESS_IN_UNTRUSTED_CGROUP", key)
-        if helper_id and any(st.get("exe") == helper_id for st in rec["states"]):
-            helper_process_seen = True
+        for st in rec["states"]:
+            if helper_id and st.get("exe") == helper_id:
+                helper_process_seen = True
+            if st.get("exe") in (chrome_id, helper_id):
+                continue
+            args = st.get("cmdline") or []
+            exe_path = (st.get("exe_path") or "").replace(" (deleted)", "")
+            if os.path.basename(exe_path) in BROWSER_NAMES or "ms-playwright" in exe_path \
+                    or has_flag(args, DRIVER_FLAG) \
+                    or any(a.startswith("--type=") and a[7:] in ("renderer", "zygote", "gpu-process")
+                           for a in args):
+                foreign_browsers.append(key)
+                break
+    if foreign_browsers:
+        stop("UNEXPECTED_BROWSER_SELECTION", "browser-like process that is not the verified "
+             "Chrome executable: " + ",".join(sorted(foreign_browsers)[:5]))
 
     structural_setuid = False
     for key, rec in chrome.items():
+        states = chrome_states(rec)
         if rec.get("overflow"):
             stop("INCOMPLETE_EVIDENCE", "state history overflow for " + key)
         if rec.get("phase") != "smoke":
             stop("CHANGED_WORKFLOW_ASSUMPTIONS",
                  "Chrome process outside the smoke phase: " + key)
-        if rec.get("untrusted_exec_maps"):
-            stop("UNTRUSTED_CODE_MAPPED_IN_CHROME",
-                 key + " " + ",".join(rec["untrusted_exec_maps"][:3]))
+        # Historical flags: every Chrome state counts, even if the process
+        # later executed something else.
+        for flag in FAIL_FLAGS:
+            if ever_flag(rec, flag):
+                fail("SANDBOX_DISABLING_FLAG", key + " " + flag)
+        for flag in STOP_FLAGS:
+            if ever_flag(rec, flag):
+                stop("CHANGED_BROWSER_ASSUMPTIONS", key + " " + flag)
+        if any(st.get("tracer") for st in states):
+            stop("TRACED_CHROME_PROCESS", key)
+        # Chrome -> other executable is only expected for a fork of its
+        # parent that immediately execs a helper; anything else is ambiguous.
+        seen_chrome, left_chrome = False, False
         for st in rec["states"]:
-            if st.get("exe") != chrome_id:
-                continue
-            args = st.get("cmdline") or []
-            for flag in FAIL_FLAGS:
-                if has_flag(args, flag):
-                    fail("SANDBOX_DISABLING_FLAG", key + " " + flag)
-            for flag in STOP_FLAGS:
-                if has_flag(args, flag):
-                    stop("CHANGED_BROWSER_ASSUMPTIONS", key + " " + flag)
-            if st.get("tracer"):
-                stop("TRACED_CHROME_PROCESS", key)
-        ns = last(rec).get("ns") or {}
-        if (ns.get("user") == init_ns["user"] and ns.get("pid")
-                and ns.get("pid") != init_ns["pid"]):
-            structural_setuid = True
+            if st.get("exe") == chrome_id:
+                seen_chrome = True
+            elif seen_chrome:
+                left_chrome = True
+        if left_chrome:
+            parent = chrome.get(rec.get("parent_key"))
+            parent_cmdlines = [s.get("cmdline") for s in chrome_states(parent)] if parent else []
+            if not all(st.get("cmdline") in parent_cmdlines for st in states):
+                stop("AMBIGUOUS_PROCESS_IDENTITY",
+                     "process ran Chrome and then another executable: " + key)
+        # Executable mapping provenance: fail closed.
+        if rec.get("untrusted_exec_maps"):
+            fail("UNTRUSTED_EXECUTABLE_MAPPING",
+                 key + " " + ",".join(rec["untrusted_exec_maps"][:3]))
+        if rec.get("unresolved_exec_maps"):
+            stop("UNRESOLVED_EXECUTABLE_MAPPING",
+                 key + " " + ",".join(rec["unresolved_exec_maps"][:3]))
+        if not rec.get("maps_ok") or rec.get("maps_fail_alive"):
+            stop("INSUFFICIENT_MAPPING_EVIDENCE",
+                 "%s successful=%s failed_while_alive=%s"
+                 % (key, rec.get("maps_ok", 0), rec.get("maps_fail_alive", 0)))
+        for st in states:
+            ns = st.get("ns") or {}
+            if ns.get("user") == init_ns["user"] and ns.get("pid") \
+                    and ns.get("pid") != init_ns["pid"]:
+                structural_setuid = True
 
-    if orphans:
-        stop("AMBIGUOUS_PROCESS_LINEAGE", "chrome without observed parent: "
-             + ",".join(sorted(orphans)[:5]))
     if not browsers:
         stop("NO_BROWSER_OBSERVED")
     elif len(browsers) > 1:
         stop("AMBIGUOUS_BROWSER_IDENTIFICATION", ",".join(sorted(browsers)[:5]))
     else:
-        b = last(chrome[browsers[0]])
+        brec = chrome[browsers[0]]
+        b = chrome_states(brec)[-1]
         if (b.get("ns") or {}).get("user") != init_ns["user"]:
             stop("UNSUPPORTED_SANDBOX_INTERPRETATION",
                  "browser process is not in the init user namespace")
@@ -308,80 +455,120 @@ def evaluate(table, ctx):
             stop("CHANGED_WORKFLOW_ASSUMPTIONS", "browser uid is not s01u")
         if b.get("apparmor") is None:
             stop("INCOMPLETE_EVIDENCE", "browser AppArmor label unreadable")
+        if not ever_flag(brec, DRIVER_FLAG) or any(
+                a.startswith("--type=") for s in chrome_states(brec) for a in s.get("cmdline") or []):
+            stop("UNEXPECTED_BROWSER_SELECTION",
+                 "browser process is not a Playwright-driven top-level Chrome")
 
-    renderers = {"qualified": [], "indeterminate": [], "violating": [],
-                 "unsupported": []}
+    def is_zygote(key):
+        rec = chrome[key]
+        return (labelled(rec, "--type=zygote") and not labelled(rec, "--type=renderer")
+                and not ever_flag(rec, "--no-zygote-sandbox")
+                and user_ns(rec) not in (None, init_ns["user"]))
+
+    def lineage_problem(key):
+        """None when the renderer descends browser -> zygote(s) -> renderer."""
+        rec = chrome[key]
+        zygotes, seen, cur = [], set(), rec.get("parent_key")
+        while cur in chrome and cur not in seen and cur not in browsers:
+            if not is_zygote(cur):
+                return "AMBIGUOUS_RENDERER_IDENTIFICATION", "ancestor is not a sandboxed zygote"
+            zygotes.append(cur)
+            seen.add(cur)
+            cur = chrome[cur].get("parent_key")
+        if cur not in browsers or key in unbound or any(z in unbound for z in zygotes):
+            return "AMBIGUOUS_RENDERER_IDENTIFICATION", "renderer outside the browser lineage"
+        if not zygotes:
+            return ("UNSUPPORTED_SANDBOX_INTERPRETATION",
+                    "renderer is a direct child of the browser (no zygote evidence)")
+        if any(user_ns(chrome[z]) != user_ns(rec) for z in zygotes):
+            return ("UNSUPPORTED_SANDBOX_INTERPRETATION",
+                    "renderer and zygote are in different user namespaces")
+        return None
+
+    renderers = {"qualified": [], "indeterminate": [], "violating": [], "unsupported": []}
     for key, rec in sorted(chrome.items()):
-        st = last(rec)
+        states = chrome_states(rec)
+        st = states[-1]
         ns = st.get("ns") or {}
-        labelled = "--type=renderer" in (st.get("cmdline") or [])
         in_user = ns.get("user") != init_ns["user"]
         in_pid = ns.get("pid") != init_ns["pid"]
         in_net = ns.get("net") != init_ns["net"]
-        long_lived = lifetime(rec) >= grace
-        sealed = st.get("seccomp") == 2
+        cap = st.get("cap") or {}
+        complete = bool(all(ns.get(n) for n in ("user", "pid", "net"))
+                        and st.get("seccomp") is not None and st.get("nnp") is not None
+                        and cap.get("eff") is not None and cap.get("prm") is not None
+                        and st.get("apparmor") is not None and st.get("nspid"))
+        sealed = bool(complete and in_user and in_pid and in_net
+                      and st.get("seccomp") == 2 and st.get("nnp") == 1
+                      and cap_is_zero(cap.get("eff")) and cap_is_zero(cap.get("prm"))
+                      and len(st.get("nspid")) >= 2)
 
-        if not labelled:
-            # Anti-decoy: a sandbox-namespace Chrome leaf that never sealed
-            # and carries no renderer label cannot be classified.
-            if (in_user and long_lived and not sealed
-                    and not children.get(key) and ns.get("user")):
+        if not labelled(rec, "--type=renderer"):
+            # Anti-decoy / replacement: an unsealed sandbox-namespace Chrome
+            # leaf may be a renderer that never announced itself.
+            if ns.get("user") and in_user and not sealed and not children.get(key):
                 stop("AMBIGUOUS_RENDERER_IDENTIFICATION",
                      "unlabelled unsealed sandbox-namespace leaf " + key)
             continue
 
-        if not reaches_browser(key):
-            stop("AMBIGUOUS_RENDERER_IDENTIFICATION",
-                 "renderer-labelled process outside the browser lineage " + key)
-            renderers["unsupported"].append(key)
-            continue
-        if not long_lived:
+        problem = lineage_problem(key)
+        if problem:
+            stop(problem[0], problem[1] + " " + key)
+        if not complete:
+            stop("INCOMPLETE_RENDERER_HISTORY", "missing kernel facts for " + key)
             renderers["indeterminate"].append(key)
             continue
-        if not all(ns.get(n) for n in ("user", "pid", "net")) or \
-                st.get("seccomp") is None or st.get("nnp") is None:
-            stop("INCOMPLETE_EVIDENCE", "missing kernel facts for " + key)
+        if not in_user and (in_pid or in_net):
+            stop("UNSUPPORTED_SANDBOX_INTERPRETATION",
+                 "renderer in init user namespace with other namespaces "
+                 "(setuid-helper layout) " + key)
             renderers["unsupported"].append(key)
-            continue
-        if st.get("apparmor") is None:
-            stop("INCOMPLETE_EVIDENCE", "renderer AppArmor label unreadable " + key)
-        if not in_user:
-            if not in_pid and not in_net:
-                fail("RENDERER_NOT_NAMESPACED", key)
-                renderers["violating"].append(key)
-            else:
-                stop("UNSUPPORTED_SANDBOX_INTERPRETATION",
-                     "renderer in init user namespace with other namespaces "
-                     "(setuid-helper layout) " + key)
-                renderers["unsupported"].append(key)
             continue
 
         violations = []
-        if not in_pid:
-            violations.append("RENDERER_SHARES_INIT_PID_NAMESPACE")
-        if not in_net:
-            violations.append("RENDERER_SHARES_INIT_NET_NAMESPACE")
-        if not sealed:
-            violations.append("RENDERER_SECCOMP_FILTER_ABSENT")
-        if st.get("nnp") != 1:
-            violations.append("RENDERER_NO_NEW_PRIVS_UNSET")
-        cap = st.get("cap") or {}
-        if not (cap_is_zero(cap.get("eff")) and cap_is_zero(cap.get("prm"))):
-            violations.append("RENDERER_HOLDS_CAPABILITIES")
         seen_sealed = False
-        for s in rec["states"]:
-            if s.get("seccomp") == 2:
+        for s in states:
+            if s.get("seccomp") == 2 and s.get("nnp") == 1:
                 seen_sealed = True
             elif seen_sealed:
-                violations.append("RENDERER_SECCOMP_REGRESSED")
+                violations.append("RENDERER_SANDBOX_REGRESSED")
                 break
+        if not sealed and lifetime(rec) < grace and not violations:
+            # Never resolve an unfinished observation in either direction.
+            stop("INCOMPLETE_RENDERER_HISTORY",
+                 "renderer observed for %.2fs and not sealed: %s" % (lifetime(rec), key))
+            renderers["indeterminate"].append(key)
+            continue
+        if not sealed:
+            if not in_user:
+                violations.append("RENDERER_NOT_NAMESPACED")
+            else:
+                if not in_pid:
+                    violations.append("RENDERER_SHARES_INIT_PID_NAMESPACE")
+                if not in_net:
+                    violations.append("RENDERER_SHARES_INIT_NET_NAMESPACE")
+                if st.get("seccomp") != 2:
+                    violations.append("RENDERER_SECCOMP_FILTER_ABSENT")
+                if st.get("nnp") != 1:
+                    violations.append("RENDERER_NO_NEW_PRIVS_UNSET")
+                if not (cap_is_zero(cap.get("eff")) and cap_is_zero(cap.get("prm"))):
+                    violations.append("RENDERER_HOLDS_CAPABILITIES")
+                if len(st.get("nspid")) < 2:
+                    violations.append("RENDERER_PID_NAMESPACE_INCONSISTENT")
         for code in violations:
             fail(code, key)
-        renderers["violating" if violations else "qualified"].append(key)
+        if violations:
+            renderers["violating"].append(key)
+        elif problem:
+            renderers["unsupported"].append(key)
+        else:
+            renderers["qualified"].append(key)
 
     if not renderers["qualified"] and not renderers["violating"]:
         stop("NO_QUALIFIED_RENDERER_OBSERVED",
-             "indeterminate=%d" % len(renderers["indeterminate"]))
+             "indeterminate=%d unsupported=%d"
+             % (len(renderers["indeterminate"]), len(renderers["unsupported"])))
 
     helper_used = helper_process_seen or structural_setuid
     if helper_used:
@@ -397,7 +584,7 @@ def evaluate(table, ctx):
 
     labels = set()
     for key in browsers + renderers["qualified"]:
-        labels.add(last(chrome[key]).get("apparmor"))
+        labels.add(chrome_states(chrome[key])[-1].get("apparmor"))
     parsed = [parse_apparmor_label(x) for x in labels if x is not None]
     confinement = bool(parsed) and len(parsed) == len(labels) and all(
         profile and mode == "enforce" for profile, mode in parsed)
@@ -418,6 +605,8 @@ def evaluate(table, ctx):
         "summary": {
             "chrome_process_count": len(chrome),
             "browser": browsers,
+            "browser_is_verified_chrome_executable": len(browsers) == 1 and not foreign_browsers,
+            "zygotes": sorted(k for k in chrome if is_zygote(k)),
             "renderers": renderers,
             "setuid_helper": setuid_helper,
             "apparmor": apparmor,
@@ -459,6 +648,46 @@ def is_trusted_file(st):
     if st.st_uid != 0 or st.st_mode & stat.S_IWOTH:
         return False
     return not (st.st_mode & stat.S_IWGRP and st.st_gid != 0)
+
+
+def within(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def mode_writable(st, uid):
+    """Writable by a user with this uid and no supplementary groups (mode bits)."""
+    return st.st_uid == uid or bool(st.st_mode & stat.S_IWOTH)
+
+
+def mount_entries(path, text=None):
+    """Mount options of every mount stacked at `path`, oldest first."""
+    if text is None:
+        text = read_text("/proc/self/mountinfo", 8 << 20)
+    fields = (line.split() for line in text.splitlines())
+    return [f[5].split(",") for f in fields if len(f) > 5 and f[4] == path]
+
+
+def submounts(path, text):
+    fields = (line.split() for line in text.splitlines())
+    return sorted({f[4] for f in fields if len(f) > 5 and f[4].startswith(path.rstrip("/") + "/")})
+
+
+def exposure(path, uid, lstat=os.lstat):
+    """How a user with `uid` (no groups) could tamper with `path` by pathname.
+
+    Returns ("unreachable", None) when an ancestor denies traversal,
+    ("writable", top) with the topmost writable ancestor-or-self, or
+    ("closed", None). Mode-bit based; real access probes confirm later.
+    """
+    parts = [p for p in path.split("/") if p]
+    prefixes = ["/"] + ["/" + "/".join(parts[:i + 1]) for i in range(len(parts))]
+    for index, prefix in enumerate(prefixes):
+        st = lstat(prefix)
+        if mode_writable(st, uid):
+            return "writable", prefix
+        if index < len(prefixes) - 1 and st.st_uid != uid and not st.st_mode & stat.S_IXOTH:
+            return "unreachable", None
+    return "closed", None
 
 
 _TOOLS = {}
@@ -599,6 +828,16 @@ def probe_writable(path):
     return True
 
 
+def probe_readable(path):
+    """Called as s01u. True when the file can actually be opened for reading."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    os.close(fd)
+    return True
+
+
 def scan_reachable_writable(root, uid, limit=MAX_SCAN_ENTRIES, max_findings=20):
     """Entries under `root` that `uid` (no groups) could reach and write.
 
@@ -620,14 +859,11 @@ def scan_reachable_writable(root, uid, limit=MAX_SCAN_ENTRIES, max_findings=20):
             findings.append(parent)
         probe = parent
 
-    def writable(st):
-        return st.st_uid == uid or bool(st.st_mode & stat.S_IWOTH)
-
     try:
         st = os.lstat(path)
     except OSError:
         return findings, count, True
-    if writable(st):
+    if mode_writable(st, uid):
         findings.append(path)
     stack = [path] if stat.S_ISDIR(st.st_mode) and (
         st.st_uid == uid or st.st_mode & stat.S_IXOTH) else []
@@ -648,7 +884,7 @@ def scan_reachable_writable(root, uid, limit=MAX_SCAN_ENTRIES, max_findings=20):
                 continue
             if stat.S_ISLNK(est.st_mode):
                 continue
-            if writable(est) and len(findings) < max_findings:
+            if mode_writable(est, uid) and len(findings) < max_findings:
                 findings.append(entry.path)
             if stat.S_ISDIR(est.st_mode) and (
                     est.st_uid == uid or est.st_mode & stat.S_IXOTH):
@@ -676,8 +912,11 @@ def sha256_file(path):
 
 
 def hash_tree(root, max_files=MAX_CHROME_FILES):
-    """Aggregate digest over names, types, modes, owners and contents."""
-    lines, count = [], 0
+    """Aggregate digest over names, types, modes, owners and contents.
+
+    Also returns the (device, inode) identities of the regular files.
+    """
+    lines, count, identities = [], 0, set()
     for directory, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames.sort()
         for name in sorted(dirnames + filenames):
@@ -691,13 +930,23 @@ def hash_tree(root, max_files=MAX_CHROME_FILES):
                 content = "link:" + os.readlink(full)
             elif stat.S_ISREG(st.st_mode):
                 content = "sha256:" + sha256_file(full)
+                identities.add((st.st_dev, st.st_ino))
             elif stat.S_ISDIR(st.st_mode):
                 content = "dir"
             else:
                 content = "other"
             lines.append("%s\x00%o\x00%d\x00%d\x00%s" % (
                 os.path.relpath(full, root), st.st_mode, st.st_uid, st.st_gid, content))
-    return sha256_bytes("\n".join(sorted(lines)).encode()), count
+    return sha256_bytes("\n".join(sorted(lines)).encode()), count, identities
+
+
+def ensure_root_dir(path, mode):
+    """Create (or accept an existing, empty, root-protected) directory."""
+    if not os.path.lexists(path):
+        os.mkdir(path, mode)
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or not is_trusted_file(st) or os.listdir(path):
+        raise Stop("INCOMPLETE_EVIDENCE", "directory is not an empty root-protected one: " + path)
 
 
 # --------------------------------------------------------------------------
@@ -747,56 +996,84 @@ def sample_process(pid):
 
 
 class Tracker:
-    """Records every process that is ever a member of the tracking cgroup."""
+    """Records every process that is ever a member of the tracking cgroup.
 
-    def __init__(self, cgroup_dir, chrome_id, untrusted_uid, clock=time.monotonic):
+    Identity is always PID + start time. A parent is bound only when it was
+    re-read while the child still named it as parent and it is not younger
+    than the child; a reused PID therefore cannot be mistaken for it.
+    """
+
+    def __init__(self, cgroup_dir, chrome_id, untrusted_uid, chrome_files=frozenset(),
+                 clock=time.monotonic, sampler=sample_process, reader=read_text,
+                 classify=classify_exec_mapping):
         self.cgroup_dir = cgroup_dir
         self.chrome_id = list(chrome_id)
         self.untrusted_uid = untrusted_uid
+        self.chrome_files = chrome_files
         self.clock = clock
+        self.sampler = sampler
+        self.reader = reader
+        self.classify = classify
         self.t0 = clock()
         self.table = {}
-        self.live = {}
         self.table_overflow = False
         self.ticks = 0
-        self._map_trust = {}
+        self._map_class = {}
 
     def pids(self):
         try:
-            return [int(x) for x in read_text(self.cgroup_dir + "/cgroup.procs").split()]
+            return [int(x) for x in self.reader(self.cgroup_dir + "/cgroup.procs").split()]
         except OSError:
             return []
 
-    def _map_untrusted(self, path):
-        if path not in self._map_trust:
-            verdict = False
-            if path.startswith(CHROME_DIR + "/"):
-                verdict = False
-            elif path.startswith("/") and not path.endswith(" (deleted)"):
-                try:
-                    verdict = not is_trusted_file(os.stat(path))
-                except OSError:
-                    verdict = True
-            self._map_trust[path] = verdict
-        return self._map_trust[path]
-
     def _check_maps(self, pid, rec):
         try:
-            paths = exec_mapped_paths(read_text("/proc/%d/maps" % pid, 4 << 20))
-        except OSError:
+            mappings = parse_exec_mappings(self.reader("/proc/%d/maps" % pid, 8 << 20))
+        except (OSError, ValueError):
+            # A failed read is never a successful verification.
+            rec["maps_failed"] += 1
+            rec["maps_pending"] = True
             return
-        rec["maps_checked"] += 1
-        for path in sorted(paths):
-            if self._map_untrusted(path) and path not in rec["untrusted_exec_maps"] \
-                    and len(rec["untrusted_exec_maps"]) < 8:
-                rec["untrusted_exec_maps"].append(path[:300])
+        rec["maps_ok"] += 1
+        for mapping in sorted(mappings):
+            if mapping not in self._map_class:
+                self._map_class[mapping] = self.classify(*mapping, self.chrome_files)
+            kind = self._map_class[mapping]
+            if kind in ("untrusted", "unresolved"):
+                bucket = rec[kind + "_exec_maps"]
+                label = "%s inode %d dev %s" % (mapping[2][:200], mapping[1], mapping[0])
+                if label not in bucket and len(bucket) < 8:
+                    bucket.append(label)
+
+    def _confirm_parent(self, key, rec):
+        """Bind the parent by PID + start time while both are alive."""
+        rec["parent_attempts"] += 1
+        pid, ppid = rec["pid"], rec["states"][0]["ppid"]
+        try:
+            child_before = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+            parent = parse_stat(self.reader("/proc/%d/stat" % ppid, 4096))
+            child_after = parse_stat(self.reader("/proc/%d/stat" % pid, 4096))
+        except (OSError, ValueError, IndexError):
+            return
+        for child in (child_before, child_after):
+            if child["starttime"] != rec["starttime"] or child["ppid"] != ppid:
+                return
+        if parent["starttime"] > rec["starttime"]:
+            rec["parent_stale"] = True
+            return
+        parent_key = "%d:%d" % (ppid, parent["starttime"])
+        if parent_key in self.table and parent_key != key:
+            rec["parent_key"] = parent_key
+            rec["parent_confirmed"] = True
+        else:
+            rec["parent_outside_cgroup"] = ppid
 
     def tick(self, phase):
         now = round(self.clock() - self.t0, 3)
         self.ticks += 1
-        fresh = []
+        alive = []
         for pid in self.pids():
-            sampled = sample_process(pid)
+            sampled = self.sampler(pid)
             if sampled is None:
                 continue
             starttime, state = sampled
@@ -808,27 +1085,33 @@ class Tracker:
                     continue
                 rec = {"pid": pid, "starttime": starttime, "phase": phase,
                        "first_seen": now, "last_seen": now, "samples": 0,
-                       "parent_key": None, "states": [], "overflow": False,
-                       "untrusted_exec_maps": [], "maps_checked": 0}
+                       "parent_key": None, "parent_confirmed": False,
+                       "parent_attempts": 0, "states": [], "overflow": False,
+                       "untrusted_exec_maps": [], "unresolved_exec_maps": [],
+                       "maps_ok": 0, "maps_failed": 0, "maps_fail_alive": 0,
+                       "maps_pending": False}
                 self.table[key] = rec
-                fresh.append((key, state["ppid"]))
-            self.live[pid] = key
+            alive.append((key, rec))
+            if rec["maps_pending"]:
+                # The process outlived a failed mapping read.
+                rec["maps_fail_alive"] += 1
+                rec["maps_pending"] = False
             rec["last_seen"] = now
             rec["samples"] += 1
             previous = rec["states"][-1] if rec["states"] else None
-            if previous is None or {k: v for k, v in previous.items() if k != "t"} != state:
+            changed = previous is None or {k: v for k, v in previous.items() if k != "t"} != state
+            if changed:
                 if len(rec["states"]) >= MAX_STATES_PER_PROCESS:
                     rec["overflow"] = True
                     rec["states"][-1] = dict(state, t=now)
                 else:
                     rec["states"].append(dict(state, t=now))
             if state["exe"] == self.chrome_id and (
-                    rec["samples"] == 1 or rec["samples"] % MAPS_EVERY == 0):
+                    changed or not rec["maps_ok"] or rec["samples"] % MAPS_EVERY == 0):
                 self._check_maps(pid, rec)
-        for key, ppid in fresh:
-            parent = self.live.get(ppid)
-            if parent != key:
-                self.table[key]["parent_key"] = parent
+        for key, rec in alive:
+            if not rec["parent_confirmed"] and rec["parent_attempts"] < MAX_PARENT_ATTEMPTS:
+                self._confirm_parent(key, rec)
 
     def export(self):
         """Bounded copy for the evidence file: Chrome in full, others compact."""
@@ -860,9 +1143,12 @@ class Qualification:
         self.uid = self.gid = None
         self.runner_uid = None
         self.cgroup_created = False
-        self.mounted = False
+        self.mounted = []          # [(mount point, mount count before)]
+        self.ro_roots = []
         self.tracker = None
         self.pre_chrome = None
+        self.chrome_files = frozenset()
+        self.pre_trusted = {}
         self.output = bytearray()
         self.output_dropped = 0
         self.ev = {
@@ -888,6 +1174,9 @@ class Qualification:
     def phase(self, name, fn):
         fn()
         self.ev["phases"].append(name)
+
+    def in_ro(self, path):
+        return any(within(path, root) for root in self.ro_roots)
 
     # -- 1. startup and observer integrity ---------------------------------
 
@@ -1014,7 +1303,7 @@ class Qualification:
         self.ev["untrusted_account"] = {"name": UNTRUSTED_USER, "uid": self.uid,
                                         "gid": self.gid, "groups": groups}
 
-    # -- 4. tracking cgroup ------------------------------------------------
+    # -- 4. tracking cgroup and protected directories ----------------------
 
     def cgroup(self):
         if os.path.exists(CGROUP_DIR):
@@ -1026,102 +1315,15 @@ class Qualification:
                 raise Stop("MISSING_RUNNER_PREREQUISITE", name + " unavailable")
         if os.stat(CGROUP_DIR).st_uid != 0:
             raise Stop("MISSING_RUNNER_PREREQUISITE", "tracking cgroup not root-owned")
+        # Evidence and state directories exist before the isolation preflight,
+        # so that preflight probes the real objects, not their absence.
+        for path, mode in ((EVIDENCE_DIR, 0o700), (self.a.publish_dir, 0o755),
+                           (STATE_ROOT, 0o755)):
+            if os.path.lexists(path):
+                raise Stop("PRIVILEGE_ISOLATION_FAILED", "directory already exists: " + path)
+            ensure_root_dir(path, mode)
 
-    # -- 5. Chrome integrity boundary --------------------------------------
-
-    def chrome_snapshot(self):
-        digest, count = hash_tree(CHROME_DIR)
-        return {
-            "chrome": file_identity(CHROME_EXE),
-            "chrome_sha256": sha256_file(CHROME_EXE),
-            "helper": file_identity(CHROME_HELPER),
-            "helper_sha256": (sha256_file(CHROME_HELPER)
-                              if os.path.isfile(CHROME_HELPER)
-                              and not os.path.islink(CHROME_HELPER) else None),
-            "directory_digest": digest, "directory_entries": count,
-        }
-
-    def chrome_probe(self):
-        targets = [CHROME_DIR, CHROME_EXE, CHROME_HELPER]
-        return as_untrusted(self.uid, self.gid,
-                            lambda: {p: probe_writable(p) for p in targets})
-
-    def chrome_integrity(self):
-        boundary = "CHROME_INTEGRITY_BOUNDARY_UNSATISFIED"
-        ancestors = []
-        path = CHROME_DIR
-        while True:
-            st = os.lstat(path)
-            ancestors.append({"path": path, "mode": oct(stat.S_IMODE(st.st_mode)),
-                              "uid": st.st_uid, "gid": st.st_gid})
-            if not stat.S_ISDIR(st.st_mode) or not is_trusted_file(st):
-                raise Stop(boundary, "ancestor not root-protected: " + path)
-            if path == "/":
-                break
-            path = os.path.dirname(path)
-
-        verify = run([tool("dpkg"), "--verify", CHROME_PACKAGE], timeout=300)
-        verify_lines = verify.stdout.decode("utf-8", "replace").splitlines()[:50]
-        if any(CHROME_DIR + "/" in line for line in verify_lines):
-            raise Stop(boundary, "installed Chrome files differ from package database: "
-                       + "; ".join(verify_lines[:3]))
-
-        before_mount = {"chrome": file_identity(CHROME_EXE),
-                        "helper": file_identity(CHROME_HELPER)}
-        stock = self.chrome_probe()
-
-        # Protection: read-only bind mount of the whole Chrome directory.
-        # Deliberately NOT a chmod/chown: owner, mode bits, inode and path
-        # stay exactly as shipped, so Chrome's own sandbox selection (which
-        # inspects the helper's owner/setuid/execute bits and never needs to
-        # write here) and AppArmor's path-based attachment are unchanged.
-        # This is still instrumentation and is disclosed in the evidence.
-        for argv in ([tool("mount"), "--bind", CHROME_DIR, CHROME_DIR],
-                     [tool("mount"), "-o", "remount,bind,ro", CHROME_DIR]):
-            proc = run(argv)
-            if proc.returncode != 0:
-                raise Stop(boundary, "read-only bind mount failed: %s"
-                           % proc.stderr.decode("utf-8", "replace")[:200])
-            self.mounted = True
-        read_only = False
-        for line in read_text("/proc/self/mountinfo", 4 << 20).splitlines():
-            fields = line.split()
-            if len(fields) > 5 and fields[4] == CHROME_DIR:
-                read_only = "ro" in fields[5].split(",")
-        after_mount = {"chrome": file_identity(CHROME_EXE),
-                       "helper": file_identity(CHROME_HELPER)}
-        if not read_only or after_mount != before_mount:
-            raise Stop(boundary, "read-only mount not effective or file identity changed")
-        protected = self.chrome_probe()
-        if any(protected.values()):
-            raise Stop(boundary, "s01u can still write: "
-                       + ",".join(p for p, w in protected.items() if w))
-
-        self.pre_chrome = self.chrome_snapshot()
-        helper = self.pre_chrome["helper"]
-        self.helper_setuid_capable = bool(
-            helper and helper["uid"] == 0 and int(helper["mode"], 8) & stat.S_ISUID)
-        self.ev["chrome_integrity"] = {
-            "ancestors": ancestors,
-            "dpkg_verify_exit": verify.returncode,
-            "dpkg_verify_output": verify_lines,
-            "stock_exposure_writable_by_unprivileged_user": stock,
-            "protection": {
-                "method": "read-only bind mount of " + CHROME_DIR,
-                "writable_by_s01u_after_protection": protected,
-                "file_metadata_unchanged_by_protection": True,
-                "disclosure": (
-                    "Stock CI does not have this protection. Owner, mode, inode "
-                    "and path of the Chrome executable and chrome-sandbox helper "
-                    "were left untouched; only write access was removed for the "
-                    "qualification window. The stock exposure recorded above is "
-                    "NOT remediated by this qualification."),
-            },
-            "before": self.pre_chrome,
-            "helper_setuid_capable": self.helper_setuid_capable,
-        }
-
-    # -- 6. privilege isolation preflight ----------------------------------
+    # -- 5. filesystem protection (before any untrusted execution) ---------
 
     def agent_paths(self):
         """Directories of runner-owned ancestor executables (the Actions agent)."""
@@ -1140,104 +1342,163 @@ class Qualification:
                 break
         return paths
 
-    def child_env(self):
-        return {
-            "PATH": self.a.node_bin_dir + ":/usr/local/bin:/usr/bin:/bin",
-            "HOME": UNTRUSTED_HOME, "USER": UNTRUSTED_USER, "LOGNAME": UNTRUSTED_USER,
-            "SHELL": "/bin/bash", "LANG": "C.UTF-8",
-            "CI": "true", "GITHUB_ACTIONS": "true", "CYPRESS_INSTALL_BINARY": "0",
-        }
+    def runner_path_dirs(self):
+        """Existing directories on the runner's PATH, plus the nearest existing
+        ancestor of each missing entry (where a directory could be planted)."""
+        existing, anchors = [], []
+        for entry in self.a.runner_path.split(":"):
+            if not entry.startswith("/"):
+                continue
+            path = os.path.normpath(entry)
+            if os.path.isdir(path):
+                existing.append(os.path.realpath(path))
+            else:
+                while not os.path.isdir(path):
+                    path = os.path.dirname(path)
+                anchors.append(os.path.realpath(path))
+        return sorted(set(existing)), sorted(set(anchors))
 
-    def isolation(self):
+    def mount_read_only(self, tree):
+        code = "FILESYSTEM_PROTECTION_UNSATISFIED"
+        if tree in NEVER_READ_ONLY or any(within(p, tree) for p in self.must_stay_writable) \
+                or any(within(tree, p) for p in self.agent_area):
+            raise Stop(code, "cannot make read-only without breaking the runner: " + tree)
+        if os.path.islink(tree) or not os.path.isdir(tree):
+            raise Stop(code, "not a directory: " + tree)
+        text = read_text("/proc/self/mountinfo", 8 << 20)
+        if submounts(tree, text):
+            raise Stop(code, "unsupported layout: mounts below " + tree)
+        before = len(mount_entries(tree, text))
+        for argv in ([tool("mount"), "--bind", tree, tree],
+                     [tool("mount"), "-o", "remount,bind,ro", tree]):
+            proc = run(argv)
+            if proc.returncode != 0:
+                raise Stop(code, "read-only bind mount of %s failed: %s"
+                           % (tree, proc.stderr.decode("utf-8", "replace")[:200]))
+            if (tree, before) not in self.mounted:
+                self.mounted.append((tree, before))
+        entries = mount_entries(tree)
+        if len(entries) != before + 1 or "ro" not in entries[-1]:
+            raise Stop(code, "read-only mount not effective on " + tree)
+        self.ro_roots.append(tree)
+
+    def protect(self):
+        """Close pathname-replacement and write exposure of trusted trees.
+
+        For Chrome, Node/npm, every runner PATH directory and /usr/share:
+        if the user s01u could write the path or any ancestor (mode bits),
+        the topmost such directory is bind-mounted read-only. Nothing is
+        chmod-ed or chown-ed. Unprotectable exposure is a STOP.
+        """
         a = self.a
-        code = "PRIVILEGE_ISOLATION_FAILED"
         node_dir = os.path.realpath(a.node_bin_dir)
         if node_dir != a.node_bin_dir or not all(
-                os.path.isfile(os.path.join(node_dir, n)) or os.path.islink(os.path.join(node_dir, n))
-                for n in ("node", "npm")):
+                os.path.lexists(os.path.join(node_dir, n)) for n in ("node", "npm")):
             raise Stop("MISSING_RUNNER_PREREQUISITE", "node/npm not found in " + a.node_bin_dir)
-        if os.path.exists(a.publish_dir):
-            raise Stop(code, "publish directory already exists")
+        self.node_real = os.path.realpath(os.path.join(node_dir, "node"))
+        self.npm_real = os.path.realpath(os.path.join(node_dir, "npm"))
+        self.agent_dirs = self.agent_paths()
+        self.agent_area = sorted(set(
+            [os.path.realpath(p) for p in a.protected_path] + self.agent_dirs))
+        self.must_stay_writable = self.agent_area + [
+            EVIDENCE_DIR, STATE_ROOT, a.publish_dir, UNTRUSTED_HOME, CGROUP_DIR]
+        self.path_dirs, self.path_anchors = self.runner_path_dirs()
 
-        protected = [os.path.dirname(os.path.realpath(__file__)), EVIDENCE_DIR,
-                     STATE_ROOT, os.path.dirname(a.publish_dir),
-                     os.path.dirname(node_dir)]
-        protected += [os.path.realpath(p) for p in a.protected_path]
-        protected += self.agent_paths()
-        protected = sorted(set(protected))
+        stock_targets = [CHROME_DIR, CHROME_EXE, CHROME_HELPER, self.node_real]
+        stock = as_untrusted(self.uid, self.gid,
+                             lambda: {p: probe_writable(p) for p in stock_targets})
 
-        scans = {}
-        for path in protected:
-            findings, count, reachable = scan_reachable_writable(path, self.uid)
-            scans[path] = {"entries": count, "reachable_by_s01u": reachable,
-                           "writable": findings}
-            if findings:
-                raise Stop(code, "s01u-writable entries under protected path: "
-                           + ", ".join(findings[:3]))
+        targets = [CHROME_DIR, os.path.dirname(self.node_real), os.path.dirname(self.npm_real)]
+        targets += list(ALWAYS_PROTECT) + [
+            d for d in self.path_dirs if not any(within(d, p) for p in self.agent_area)]
+        decisions = {}
+        for target in targets:
+            if self.in_ro(target):
+                decisions[target] = "inside read-only mount"
+                continue
+            kind, top = exposure(target, self.uid)
+            if kind == "closed":
+                findings, _, _ = scan_reachable_writable(target, self.uid)
+                if findings:
+                    kind, top = "writable", target
+            if kind == "writable":
+                self.mount_read_only(top)
+                decisions[target] = "read-only mount at " + top
+            else:
+                decisions[target] = kind
+        self.ev["filesystem_protection"] = {
+            "stock_exposure_writable_by_unprivileged_user": stock,
+            "decisions": decisions,
+            "read_only_mounts": list(self.ro_roots),
+            "disclosure": (
+                "The runner image makes /opt and /usr/share world-writable. For "
+                "the qualification window the listed trees were bind-mounted "
+                "read-only. Owner, mode bits (including the non-setuid 0777 "
+                "chrome-sandbox helper), inodes and paths were not changed, so "
+                "Chrome's sandbox selection and AppArmor path attachment are "
+                "the stock ones. Stock CI does not have this protection and "
+                "the recorded stock exposure is NOT remediated."),
+        }
 
-        sudo, env = tool("sudo"), {"PATH": TRUSTED_PATH}
-        probe_targets = protected + [CGROUP_DIR, CGROUP_DIR + "/cgroup.procs",
-                                     CGROUP_ROOT + "/cgroup.procs",
-                                     os.path.dirname(STATE_ROOT),
-                                     os.path.dirname(EVIDENCE_DIR)]
-        sockets = ["/var/run/docker.sock", "/run/docker.sock",
-                   "/run/containerd/containerd.sock"]
+    # -- 6. Chrome integrity boundary --------------------------------------
 
-        def probes():
-            result = {"resuid": list(os.getresuid()), "resgid": list(os.getresgid()),
-                      "groups": os.getgroups()}
-            proc = subprocess.run([sudo, "-n", "true"], env=env, stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                  timeout=30, check=False)
-            result["sudo_exit"] = proc.returncode
-            result["writable"] = [p for p in probe_targets if probe_writable(p)]
-            connectable = []
-            for path in sockets:
-                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                try:
-                    sock.settimeout(3)
-                    sock.connect(path)
-                    connectable.append(path)
-                except OSError:
-                    pass
-                finally:
-                    sock.close()
-            result["sockets"] = connectable
-            # Informational control: what an unconfined unprivileged process
-            # may do with user namespaces on this image.
-            libc = ctypes.CDLL(None, use_errno=True)
-            control = {}
-            for name, flag in (("unshare_user", CLONE_NEWUSER), ("unshare_net", CLONE_NEWNET)):
-                rc = libc.unshare(flag)
-                control[name] = "ok" if rc == 0 else errno.errorcode.get(
-                    ctypes.get_errno(), str(ctypes.get_errno()))
-            try:
-                with open("/proc/self/attr/current") as fh:
-                    control["label_after"] = fh.read(256).strip()
-            except OSError:
-                control["label_after"] = None
-            result["userns_control"] = control
-            return result
+    def chrome_snapshot(self):
+        digest, count, identities = hash_tree(CHROME_DIR)
+        snapshot = {
+            "chrome": file_identity(CHROME_EXE),
+            "chrome_sha256": sha256_file(CHROME_EXE),
+            "helper": file_identity(CHROME_HELPER),
+            "helper_sha256": (sha256_file(CHROME_HELPER)
+                              if os.path.isfile(CHROME_HELPER)
+                              and not os.path.islink(CHROME_HELPER) else None),
+            "directory_digest": digest, "directory_entries": count,
+        }
+        return snapshot, frozenset(identities)
 
-        result = as_untrusted(self.uid, self.gid, probes, timeout=90)
-        problems = []
-        if result["resuid"] != [self.uid] * 3 or result["resgid"] != [self.gid] * 3 \
-                or result["groups"] not in ([], [self.gid]):
-            problems.append("identity not fully dropped")
-        if result["sudo_exit"] == 0:
-            problems.append("sudo is usable")
-        if result["writable"]:
-            problems.append("writable: " + ",".join(result["writable"][:3]))
-        if result["sockets"]:
-            problems.append("socket reachable: " + ",".join(result["sockets"]))
-        env_keys = sorted(self.child_env())
-        if any(re.search(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY", k) for k in env_keys):
-            problems.append("credential-like variable in child environment")
-        self.ev["isolation"] = {"protected_paths": scans, "probes_as_s01u": result,
-                                "child_environment_keys": env_keys,
-                                "acl_note": "mode bits and real access probes; POSIX ACLs not enumerated"}
-        if problems:
-            raise Stop(code, "; ".join(problems))
+    def chain(self, path):
+        """The path and every ancestor directory; each must be protected."""
+        chain, cursor = [], path
+        while True:
+            st = os.lstat(cursor)
+            kind = "read-only mount" if self.in_ro(cursor) else (
+                "mode" if is_trusted_file(st) else None)
+            chain.append({"path": cursor, "mode": oct(stat.S_IMODE(st.st_mode)),
+                          "uid": st.st_uid, "gid": st.st_gid, "protected_by": kind})
+            if cursor == "/":
+                return chain
+            cursor = os.path.dirname(cursor)
+
+    def chrome_integrity(self):
+        boundary = "CHROME_INTEGRITY_BOUNDARY_UNSATISFIED"
+        chain = self.chain(CHROME_DIR)
+        for item in chain:
+            if item["protected_by"] is None:
+                raise Stop(boundary, "ancestor neither root-protected nor read-only: "
+                           + item["path"])
+        verify = run([tool("dpkg"), "--verify", CHROME_PACKAGE], timeout=300)
+        verify_lines = verify.stdout.decode("utf-8", "replace").splitlines()[:50]
+        if any(CHROME_DIR + "/" in line for line in verify_lines):
+            raise Stop(boundary, "installed Chrome files differ from package database: "
+                       + "; ".join(verify_lines[:3]))
+        # Real access checks as s01u: files, directory and every ancestor.
+        targets = [item["path"] for item in chain] + [CHROME_EXE, CHROME_HELPER]
+        protected = as_untrusted(self.uid, self.gid,
+                                 lambda: {p: probe_writable(p) for p in targets})
+        if any(protected.values()):
+            raise Stop(boundary, "s01u can still write: "
+                       + ",".join(p for p, w in protected.items() if w))
+        self.pre_chrome, self.chrome_files = self.chrome_snapshot()
+        helper = self.pre_chrome["helper"]
+        self.helper_setuid_capable = bool(
+            helper and helper["uid"] == 0 and int(helper["mode"], 8) & stat.S_ISUID)
+        self.ev["chrome_integrity"] = {
+            "ancestors": chain,
+            "dpkg_verify_exit": verify.returncode,
+            "dpkg_verify_output": verify_lines,
+            "writable_by_s01u_after_protection": protected,
+            "before": self.pre_chrome,
+            "helper_setuid_capable": self.helper_setuid_capable,
+        }
 
     # -- 7. exact PR source ------------------------------------------------
 
@@ -1268,7 +1529,7 @@ class Qualification:
             raise Stop("UNSUPPORTED_SOURCE", "tree entry count out of bounds")
 
         # Fresh root-owned staging area; nothing untrusted has run yet.
-        os.mkdir(STATE_ROOT, 0o755)
+        ensure_root_dir(STATE_ROOT, 0o755)
         os.mkdir(WORK_DIR, 0o755)
         env = trusted_env()
         env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -1279,7 +1540,7 @@ class Qualification:
             env=env, cwd="/")
         total = 0
         captured = {}
-        keep = ("package.json", "package-lock.json", "playwright.config.js")
+        keep = ("package.json", "package-lock.json", PLAYWRIGHT_CONFIG)
         try:
             for mode, oid, path in entries:
                 batch.stdin.write(oid.encode() + b"\n")
@@ -1307,7 +1568,7 @@ class Qualification:
                                  0o755 if mode == "100755" else 0o644)
                     with os.fdopen(fd, "wb") as fh:
                         fh.write(data)
-                if path in keep:
+                if path in keep and mode != "120000":
                     captured[path] = data
         finally:
             batch.stdin.close()
@@ -1329,20 +1590,153 @@ class Qualification:
                 name: {"version": lock.get("node_modules/" + name, {}).get("version"),
                        "integrity": lock.get("node_modules/" + name, {}).get("integrity")}
                 for name in ("@playwright/test", "playwright", "playwright-core")}
-            info["playwright_config_sha256"] = sha256_bytes(captured["playwright.config.js"])
+            config = captured[PLAYWRIGHT_CONFIG]
         except (KeyError, ValueError, AttributeError) as exc:
             raise Stop("CHANGED_WORKFLOW_ASSUMPTIONS", "cannot read smoke definition: %s" % exc)
-        if info["smoke_script"] == "None":
-            raise Stop("CHANGED_WORKFLOW_ASSUMPTIONS", "smoke script missing from package.json")
-        node = os.path.join(self.a.node_bin_dir, "node")
-        env_child = self.child_env()
-        info["node_version"] = as_untrusted(self.uid, self.gid, lambda: subprocess.run(
-            [node, "--version"], env=env_child, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30,
-            check=False).stdout.decode("utf-8", "replace").strip()[:40])
+        info["playwright_config_sha256"] = sha256_bytes(config)
         self.ev["source"] = info
+        # Bind the target smoke: exact existing script and a config that at
+        # least requests Chrome Channel with the Chromium sandbox. The config
+        # bytes come from the verified tree and are only read, never executed
+        # by the observer. Effective selection is proven later by the observed
+        # executable identity, not by this text check.
+        if info["smoke_script"] != SMOKE_COMMAND:
+            raise Stop("CHANGED_WORKFLOW_ASSUMPTIONS",
+                       "smoke script is not the approved command")
+        problems = check_playwright_config(config.decode("utf-8", "replace"))
+        info["playwright_config_static_check"] = problems or "channel chrome + chromiumSandbox true"
+        if problems:
+            raise Stop("UNEXPECTED_BROWSER_SELECTION", "; ".join(problems))
 
-    # -- 8. untrusted execution under observation --------------------------
+    # -- 8. privilege isolation preflight (last step before PR code) -------
+
+    def child_env(self):
+        return {
+            "PATH": self.a.node_bin_dir + ":/usr/local/bin:/usr/bin:/bin",
+            "HOME": UNTRUSTED_HOME, "USER": UNTRUSTED_USER, "LOGNAME": UNTRUSTED_USER,
+            "SHELL": "/bin/bash", "LANG": "C.UTF-8",
+            "CI": "true", "GITHUB_ACTIONS": "true", "CYPRESS_INSTALL_BINARY": "0",
+        }
+
+    def isolation(self):
+        a = self.a
+        code = "PRIVILEGE_ISOLATION_FAILED"
+        observer_dir = os.path.dirname(os.path.realpath(__file__))
+        node_tree = os.path.dirname(os.path.dirname(self.node_real))
+        protected = sorted(set(
+            [observer_dir, EVIDENCE_DIR, a.publish_dir, os.path.dirname(a.publish_dir),
+             node_tree, os.path.dirname(self.npm_real)]
+            + self.agent_area + self.path_dirs))
+
+        scans = {}
+        for path in protected:
+            if self.in_ro(path):
+                scans[path] = {"protected_by": "read-only mount"}
+                continue
+            findings, count, reachable = scan_reachable_writable(path, self.uid)
+            scans[path] = {"protected_by": "mode bits", "entries": count,
+                           "reachable_by_s01u": reachable, "writable": findings}
+            if findings:
+                raise Stop(code, "s01u-writable entries under protected path: "
+                           + ", ".join(findings[:3]))
+
+        # Every trusted executable and each of its ancestors must be protected.
+        chains = {}
+        for path in (self.node_real, self.npm_real):
+            chains[path] = self.chain(path)
+            bad = [i["path"] for i in chains[path] if i["protected_by"] is None]
+            if bad:
+                raise Stop("FILESYSTEM_PROTECTION_UNSATISFIED",
+                           "trusted executable path not protected: " + ", ".join(bad[:3]))
+        self.pre_trusted = {p: sha256_file(p) for p in (self.node_real, self.npm_real)}
+
+        sudo, env = tool("sudo"), {"PATH": TRUSTED_PATH}
+        probe_targets = sorted(set(
+            protected + self.path_anchors + list(self.ro_roots)
+            + [i["path"] for c in chains.values() for i in c]
+            + [STATE_ROOT, CGROUP_DIR, CGROUP_DIR + "/cgroup.procs",
+               CGROUP_ROOT + "/cgroup.procs", os.path.dirname(STATE_ROOT),
+               os.path.dirname(EVIDENCE_DIR)]))
+        credential_files = sorted({
+            os.path.join(base, name)
+            for directory in self.agent_dirs
+            for base in (directory, os.path.dirname(directory),
+                         os.path.dirname(os.path.dirname(directory)))
+            for name in (".credentials", ".credentials_rsaparams")})
+        sockets = ["/var/run/docker.sock", "/run/docker.sock",
+                   "/run/containerd/containerd.sock"]
+
+        def probes():
+            result = {"resuid": list(os.getresuid()), "resgid": list(os.getresgid()),
+                      "groups": os.getgroups()}
+            proc = subprocess.run([sudo, "-n", "true"], env=env, stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  timeout=30, check=False)
+            result["sudo_exit"] = proc.returncode
+            result["writable"] = [p for p in probe_targets if probe_writable(p)]
+            result["readable_credentials"] = [p for p in credential_files if probe_readable(p)]
+            connectable = []
+            for path in sockets:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    sock.settimeout(3)
+                    sock.connect(path)
+                    connectable.append(path)
+                except OSError:
+                    pass
+                finally:
+                    sock.close()
+            result["sockets"] = connectable
+            # Informational control: what an unconfined unprivileged process
+            # may do with user namespaces on this image.
+            libc = ctypes.CDLL(None, use_errno=True)
+            control = {}
+            for name, flag in (("unshare_user", CLONE_NEWUSER), ("unshare_net", CLONE_NEWNET)):
+                rc = libc.unshare(flag)
+                control[name] = "ok" if rc == 0 else errno.errorcode.get(
+                    ctypes.get_errno(), str(ctypes.get_errno()))
+            try:
+                with open("/proc/self/attr/current") as fh:
+                    control["label_after"] = fh.read(256).strip()
+            except OSError:
+                control["label_after"] = None
+            result["userns_control"] = control
+            return result
+
+        result = as_untrusted(self.uid, self.gid, probes, timeout=120)
+        problems = []
+        if result["resuid"] != [self.uid] * 3 or result["resgid"] != [self.gid] * 3 \
+                or result["groups"] not in ([], [self.gid]):
+            problems.append("identity not fully dropped")
+        if result["sudo_exit"] == 0:
+            problems.append("sudo is usable")
+        if result["writable"]:
+            problems.append("writable: " + ",".join(result["writable"][:3]))
+        if result["readable_credentials"]:
+            problems.append("agent credentials readable: "
+                            + ",".join(result["readable_credentials"][:3]))
+        if result["sockets"]:
+            problems.append("socket reachable: " + ",".join(result["sockets"]))
+        env_keys = sorted(self.child_env())
+        if any(re.search(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY", k) for k in env_keys):
+            problems.append("credential-like variable in child environment")
+        self.ev["isolation"] = {
+            "protected_paths": scans, "trusted_executables": chains,
+            "trusted_executable_sha256": self.pre_trusted,
+            "probe_targets": len(probe_targets), "probes_as_s01u": result,
+            "child_environment_keys": env_keys,
+            "acl_note": "mode bits and real access probes; POSIX ACLs not enumerated"}
+        if problems:
+            raise Stop(code, "; ".join(problems))
+        env_child = self.child_env()
+        node = self.node_real
+        self.ev["source"]["node_version"] = as_untrusted(
+            self.uid, self.gid, lambda: subprocess.run(
+                [node, "--version"], env=env_child, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30,
+                check=False).stdout.decode("utf-8", "replace").strip()[:40])
+
+    # -- 9. untrusted execution under observation --------------------------
 
     def kill_cgroup(self, wait=15):
         try:
@@ -1437,7 +1831,7 @@ class Qualification:
     def execute(self):
         self.tracker = Tracker(CGROUP_DIR,
                                [self.pre_chrome["chrome"]["dev"], self.pre_chrome["chrome"]["ino"]],
-                               self.uid)
+                               self.uid, self.chrome_files)
         npm = os.path.join(self.a.node_bin_dir, "npm")
         runs = {}
         self.ev["execution"] = runs
@@ -1446,50 +1840,83 @@ class Qualification:
             raise Stop("SMOKE_FAILED_WITHOUT_PROVEN_VIOLATION", "npm ci did not succeed")
         runs["smoke"] = self.run_untrusted([npm, "run", SMOKE_SCRIPT], "smoke", SMOKE_TIMEOUT)
 
-    # -- 9. teardown, interpretation, sealing ------------------------------
+    # -- 10. teardown, interpretation, sealing -----------------------------
 
     def teardown(self):
-        info = {}
-        if self.cgroup_created:
-            if self.tracker is None:
-                self.tracker = Tracker(CGROUP_DIR, [0, 0], self.uid)
-            info["cgroup_emptied"] = self.kill_cgroup()
-            if not info["cgroup_emptied"]:
-                self.add_stop("TEARDOWN_INCOMPLETE", "tracking cgroup still has processes")
-        strays = []
-        if self.uid is not None:
-            for name in os.listdir("/proc"):
-                if not name.isdigit():
-                    continue
-                try:
-                    uids = parse_status(read_text("/proc/%s/status" % name, 16384))["uid"]
-                    if self.uid in uids:
-                        strays.append(int(name))
-                        os.kill(int(name), signal.SIGKILL)
-                except (OSError, ValueError):
-                    continue
-        info["stray_s01u_processes"] = strays
-        if strays:
-            self.add_stop("TEARDOWN_INCOMPLETE",
-                          "s01u processes outside the tracking cgroup: %s" % strays[:5])
-        if self.pre_chrome is not None:
+        """Every cleanup step runs; every failure is TEARDOWN_INCOMPLETE."""
+        info, problems = {}, []
+
+        def step(name, fn):
             try:
-                post = self.chrome_snapshot()
+                fn()
+            except Exception as exc:  # noqa: BLE001 - keep cleaning up
+                problems.append("%s: %s: %s" % (name, type(exc).__name__, exc))
+
+        def stop_processes():
+            if self.cgroup_created:
+                if self.tracker is None:
+                    self.tracker = Tracker(CGROUP_DIR, [0, 0], self.uid)
+                info["cgroup_emptied"] = self.kill_cgroup()
+                if not info["cgroup_emptied"]:
+                    problems.append("tracking cgroup still has processes")
+            strays = []
+            if self.uid is not None:
+                for name in os.listdir("/proc"):
+                    if not name.isdigit():
+                        continue
+                    try:
+                        uids = parse_status(read_text("/proc/%s/status" % name, 16384))["uid"]
+                        if self.uid in uids:
+                            strays.append(int(name))
+                            os.kill(int(name), signal.SIGKILL)
+                    except (OSError, ValueError):
+                        continue
+            info["stray_s01u_processes"] = strays
+            if strays:
+                problems.append("s01u processes outside the tracking cgroup: %s" % strays[:5])
+
+        def verify_files():
+            if self.pre_chrome is not None:
+                post, _ = self.chrome_snapshot()
                 info["chrome_unchanged"] = post == self.pre_chrome
                 self.ev["chrome_integrity"]["after"] = post
                 if post != self.pre_chrome:
                     self.add_stop("CHROME_INTEGRITY_BOUNDARY_UNSATISFIED",
                                   "Chrome files changed during the qualification window")
-            except (OSError, Stop) as exc:
-                self.add_stop("CHROME_INTEGRITY_BOUNDARY_UNSATISFIED",
-                              "post-run Chrome verification failed: %s" % exc)
-        if self.mounted:
-            info["umount_exit"] = run([tool("umount"), CHROME_DIR]).returncode
-        if self.cgroup_created:
-            try:
+            if self.pre_trusted:
+                post = {p: sha256_file(p) for p in self.pre_trusted}
+                info["trusted_executables_unchanged"] = post == self.pre_trusted
+                if post != self.pre_trusted:
+                    self.add_stop("FILESYSTEM_PROTECTION_UNSATISFIED",
+                                  "Node/npm changed during the qualification window")
+
+        def unmount():
+            results = {}
+            for tree, before in reversed(self.mounted):
+                rc = run([tool("umount"), tree]).returncode
+                remaining = len(mount_entries(tree))
+                results[tree] = {"umount_exit": rc, "mounts_before": before,
+                                 "mounts_after": remaining}
+                if rc != 0 or remaining != before:
+                    problems.append("read-only mount not removed: %s (exit %s, %d mounts, "
+                                    "expected %d)" % (tree, rc, remaining, before))
+            info["unmount"] = results
+
+        def remove_cgroup():
+            if self.cgroup_created:
                 os.rmdir(CGROUP_DIR)
-            except OSError:
-                pass
+                if os.path.exists(CGROUP_DIR):
+                    raise OSError("tracking cgroup still exists")
+                info["cgroup_removed"] = True
+
+        step("stop_processes", stop_processes)
+        step("verify_files", verify_files)
+        step("unmount", unmount)
+        step("remove_cgroup", remove_cgroup)
+        info["problems"] = problems
+        info["complete"] = not problems
+        for problem in problems:
+            self.add_stop("TEARDOWN_INCOMPLETE", problem)
         self.ev["teardown"] = info
 
     def read_report(self):
@@ -1574,6 +2001,8 @@ class Qualification:
                         fail_reasons=self.fails, stop_reasons=self.stops)
             return json.dumps(body, indent=1, sort_keys=True).encode()
 
+        for path, mode in ((EVIDENCE_DIR, 0o700), (a.publish_dir, 0o755)):
+            ensure_root_dir(path, mode)
         evidence = render(processes)
         fixed = sum(len(v) for v in files.values())
         if len(evidence) + fixed > MAX_EVIDENCE_BYTES:
@@ -1585,10 +2014,10 @@ class Qualification:
             "verdict": verdict, "fail_reasons": self.fails, "stop_reasons": self.stops,
             "scope": SCOPE_STATEMENT, "identity": self.ev["identity"],
             "observer_sha256": self.ev.get("observer", {}).get("sha256"),
+            "teardown": self.ev.get("teardown"),
             "security_certified": False,
         }, indent=1, sort_keys=True).encode()
 
-        os.makedirs(EVIDENCE_DIR, 0o700, exist_ok=False)
         manifest = "".join("%s  %s\n" % (sha256_bytes(data), name)
                            for name, data in sorted(files.items())).encode()
         files["MANIFEST.sha256"] = manifest
@@ -1601,7 +2030,6 @@ class Qualification:
         # Transfer to the runner-readable publish directory. All s01u
         # processes are gone (teardown) and s01u never had write access to
         # this location (isolation preflight), so the copy stays intact.
-        os.mkdir(a.publish_dir, 0o755)
         for name, data in files.items():
             fd = os.open(os.path.join(a.publish_dir, name),
                          os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
@@ -1620,10 +2048,14 @@ class Qualification:
     # -- driver ------------------------------------------------------------
 
     def main(self):
+        # Order matters: protection and source preparation come first, and
+        # the isolation preflight is the last step before PR code runs, so it
+        # checks the final state of every protected object.
         steps = (("startup", self.startup), ("host", self.host),
                  ("account", self.account), ("cgroup", self.cgroup),
+                 ("protect", self.protect),
                  ("chrome_integrity", self.chrome_integrity),
-                 ("isolation", self.isolation), ("source", self.source),
+                 ("source", self.source), ("isolation", self.isolation),
                  ("execute", self.execute))
         try:
             for name, fn in steps:
@@ -1688,6 +2120,7 @@ def parse_args(argv):
     p.add_argument("--node-bin-dir", required=True, type=abs_path)
     p.add_argument("--publish-dir", required=True, type=abs_path)
     p.add_argument("--protected-path", action="append", default=[], type=abs_path)
+    p.add_argument("--runner-path", required=True, type=pattern(r"[\x20-\x7e]{1,8000}"))
     p.add_argument("--image-os", default="", type=pattern(r"[A-Za-z0-9._-]{0,60}"))
     p.add_argument("--image-version", default="", type=pattern(r"[A-Za-z0-9._-]{0,60}"))
     return p.parse_args(argv)
