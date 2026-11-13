@@ -37,6 +37,28 @@ for *sequence and current gate*; README.md remains authoritative for
 
 ## 3. Certified current baseline
 
+**Current certified repository source baseline — TPR G2 R1 scope only (OD-TPR-PR270-CANONICAL-SYNC-2026-11-13; verified 2026-11-13):**
+
+```text
+  main / PR #270 merge: b2c5df0b6a8107a23713b9e1e541d7afca0f942b
+  TREE:                fefa39e83886e061007f81df436544790c33947b
+  previous main:       a9dda7c182a02abc59362985a7632645fe5a01b1
+  reviewed PR HEAD:    a155c409f89e66717db29059a92ffe6550e32eb6
+  merge topology:      STANDARD_TWO_PARENT (previous main, reviewed PR HEAD)
+  independent review:  Codex / GPT-6 Architecture APPROVED + Security APPROVED
+                       (scoped source + exact-head base-sync delta)
+  exact-HEAD PR CI:    43407414159 / 43407414138 / 43407414255, 9/9 SUCCESS
+  fresh merge push CI: Cypress E2E Tests #43409961637 — SUCCESS 7/7 jobs
+                       Supply-Chain Audit #43409961354 — SUCCESS
+  candidate product:   qa-ai-agent@2.0.0 (NOT published / NOT released)
+  scope result:        TPR G2 R1 verbatim fidelity source remediation
+                       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  non-claims:          frozen TPR 1.0.2 G2 remains FAILED / CONSUMED;
+                       no fresh G2 PASS; TPR NO-GO / NOT RELEASED
+```
+
+The following older TPR 1.0.2 and repository baselines are **historical certification anchors**, not the current HEAD or an approval of a new external G2 attempt.
+
 ```text
 TPR product baseline main (pre-ROADMAP-SYNC-TPR-1; verified 2026-11-04):
   main: efeac7a96a5f79b4f7cd01a38baa1ff5ffff0417
@@ -174,6 +196,26 @@ This delivery overlay supersedes the older Stage-5-before-demo order in §7/§8/
 **for the bounded Technical Preview only** (OD-R1-RECOVERY-1, PO decision
 2026-10-28; [TPR Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199);
 PO-approved TPR Execution Lock, 2026-11-04).
+
+> **Current TPR scope-specific update (OD-TPR-PR270-CANONICAL-SYNC-2026-11-13):** G2 finding **R1
+> (verbatim source requirement / acceptance-criteria fidelity)** is
+> **SOURCE-REMEDIATED / COMPLETE_ON_MAIN / POST-MERGE CERTIFIED** by
+> [PR #270](https://github.com/TarasovArtem/qa-ai-agent/pull/270) on exact
+> merge `b2c5df0b6a8107a23713b9e1e541d7afca0f942b`. Deterministic
+> canonical projection and candidate version `2.0.0` are on `main`; see
+> the exact evidence above. This supersedes **only** the Nov 5 statement
+> that the R1 **source corrective** was unresolved; it does **not** rewrite
+> the original `1.0.2` failed/consumed G2 run or prove the external Design
+> Gate passed. The original NO-GO block immediately below is preserved as
+> historical Nov 5 evidence. **G1 unqualified PASS, G2 R2 ownership STOP,
+> B5 runner mismatch, G3/G4/G5 acceptance and approvals, R3 scope
+> limitation and credential rotation remain unsatisfied/unverified as
+> recorded. S-01/E1 runtime sandbox remains UNQUALIFIED** (qualification
+> run #43395796362 STOP on `/opt`; untrusted execution never started).
+> TPR Issue #199 remains **OPEN / NO-GO / NOT RELEASED**. WIP=1.
+> `qa-agent execute` remains DISABLED. No TPR re-pin to `2.0.0`, provider
+> execution, risk waiver, sandbox qualification, release, or Stage 5
+> authority is granted by this documentary update.
 
 > **TPR 96-hour Execution Lock early NO-GO (PO approved 2026-11-05):**
 > The original 2026-11-08 11:04 CET checkpoint ended in an early
