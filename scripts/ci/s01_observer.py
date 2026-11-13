@@ -1492,6 +1492,7 @@ class Tracker:
         self.ticks_unfrozen = 0
         self.thaw_failures = 0
         self.enumeration_failures = 0
+        self.enumeration_failure_log = []
         # Lower bound of the time the cgroup was confirmed frozen. Process
         # ages and timeouts use "active time" = wall time minus this, so a
         # freeze never shortens how long a renderer had to seal and never
@@ -1500,12 +1501,20 @@ class Tracker:
         self._map_class = {}
         self._exe_class = {}
 
-    def pids(self):
+    def pids(self, context="direct"):
         """Members of the tracking cgroup, or None when they cannot be read.
-        A failed read is never reported as an empty cgroup."""
+
+        A failed read is never reported as an empty cgroup, and it is
+        recorded here, at the single place every caller goes through
+        (sampling, placement check, post-exit check, cleanup): the counter
+        only grows, so a later successful read cannot erase it."""
         try:
             return [int(x) for x in self.reader(self.cgroup_dir + "/cgroup.procs").split()]
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            self.enumeration_failures += 1
+            if len(self.enumeration_failure_log) < 20:
+                self.enumeration_failure_log.append(
+                    {"context": context, "error": type(exc).__name__})
             return None
 
     def _read_bytes(self, path, limit):
@@ -1646,9 +1655,8 @@ class Tracker:
         now = self.active_time(frozen_at)
         self.ticks += 1
         alive = []
-        pids = self.pids()
-        if pids is None:
-            self.enumeration_failures += 1
+        pids = self.pids("sample:" + str(phase))
+        if pids is None:        # counted by pids(); nothing can be sampled
             return
         for pid in pids:
             sampled = self.sampler(pid)
@@ -1740,6 +1748,7 @@ class Qualification:
         self.mounted = []          # [(mount point, mount count before)]
         self.ro_roots = []
         self.tracker = None
+        self.execution_started = False
         self.pre_chrome = None
         self.chrome_files = frozenset()
         self.pre_trusted = {}
@@ -2333,8 +2342,12 @@ class Qualification:
 
     # -- 9. untrusted execution under observation --------------------------
 
-    def kill_cgroup(self, wait=15):
-        """True only when the cgroup was read and found empty."""
+    def kill_cgroup(self, wait=15, context="cleanup"):
+        """True only when the cgroup was read and found empty.
+
+        The return value is the cleanup state alone. Completeness of the
+        observation is separate: every failed read on the way is retained
+        by the tracker and STOPs the verdict even if cleanup then succeeds."""
         try:
             with open(CGROUP_DIR + "/cgroup.kill", "w") as fh:
                 fh.write("1")
@@ -2342,10 +2355,17 @@ class Qualification:
             pass
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
-            if self.tracker.pids() == []:
+            if self.tracker.pids(context) == []:
                 return True
             time.sleep(0.05)
-        return self.tracker.pids() == []
+        return self.tracker.pids(context) == []
+
+    def close_phase(self, phase, wait=15):
+        """After a phase's root process ended: what was left, then cleanup.
+        Returns (processes left or None if unreadable, cgroup verified empty)."""
+        remaining = self.tracker.pids("post-exit:" + phase)
+        emptied = self.kill_cgroup(wait=wait, context="cleanup:" + phase)
+        return (None if remaining is None else len(remaining)), emptied
 
     def run_untrusted(self, argv, phase, timeout):
         """Run one PR-controlled command as s01u inside the tracking cgroup."""
@@ -2380,7 +2400,7 @@ class Qualification:
         os.set_blocking(out_r, False)
         with open(CGROUP_DIR + "/cgroup.procs", "w") as fh:
             fh.write(str(pid))
-        if pid not in (self.tracker.pids() or []):
+        if pid not in (self.tracker.pids("placement:" + phase) or []):
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
             raise Stop("PRIVILEGE_ISOLATION_FAILED", "child not placed in tracking cgroup")
@@ -2401,7 +2421,7 @@ class Qualification:
         self.output += ("\n===== %s: %s =====\n" % (phase, " ".join(argv[1:]))).encode()
 
         def kill_and_reap():
-            self.kill_cgroup()
+            self.kill_cgroup(context="abort:" + phase)
             try:
                 os.waitpid(pid, 0)
             except ChildProcessError:
@@ -2435,7 +2455,7 @@ class Qualification:
             active = wall - (self.tracker.frozen_total - frozen_before)
             if active > timeout or wall > timeout * WALL_TIMEOUT_FACTOR:
                 timed_out = True
-                self.kill_cgroup()
+                self.kill_cgroup(context="timeout:" + phase)
                 _, status = os.waitpid(pid, 0)
                 exit_code = os.waitstatus_to_exitcode(status)
                 break
@@ -2444,13 +2464,12 @@ class Qualification:
             self.tracker.tick(phase)
         finally:
             os.close(out_r)
-        remaining = self.tracker.pids()
-        emptied = self.kill_cgroup()
+        remaining, emptied = self.close_phase(phase)
         wall = time.monotonic() - started
         result = {"argv": [os.path.basename(argv[0])] + argv[1:], "exit_code": exit_code,
                   "timed_out": timed_out, "wall_seconds": round(wall, 2),
                   "frozen_seconds": round(self.tracker.frozen_total - frozen_before, 2),
-                  "processes_left_after_exit": None if remaining is None else len(remaining),
+                  "processes_left_after_exit": remaining,
                   "cgroup_emptied": emptied}
         if not emptied:
             raise Stop("TEARDOWN_INCOMPLETE", "tracking cgroup not empty after " + phase)
@@ -2484,21 +2503,41 @@ class Qualification:
         """Thaw; an unconfirmed thaw makes the tracker raise STOP."""
         return self.set_frozen(0)
 
-    def execute(self):
+    def make_tracker(self):
         node_stat = os.stat(self.node_real)
-        self.tracker = Tracker(CGROUP_DIR,
-                               [self.pre_chrome["chrome"]["dev"], self.pre_chrome["chrome"]["ino"]],
-                               self.uid, self.chrome_files,
-                               node_id=[node_stat.st_dev, node_stat.st_ino],
-                               freeze=self.freeze_cgroup, thaw=self.thaw_cgroup,
-                               init_ns=self.init_ns)
+        return Tracker(CGROUP_DIR,
+                       [self.pre_chrome["chrome"]["dev"], self.pre_chrome["chrome"]["ino"]],
+                       self.uid, self.chrome_files,
+                       node_id=[node_stat.st_dev, node_stat.st_ino],
+                       freeze=self.freeze_cgroup, thaw=self.thaw_cgroup,
+                       init_ns=self.init_ns)
+
+    def execute(self):
+        self.tracker = self.make_tracker()
+        self.execution_started = True
         npm = os.path.join(self.a.node_bin_dir, "npm")
         runs = {}
         self.ev["execution"] = runs
-        runs["npm_ci"] = self.run_untrusted([npm, "ci"], "npm_ci", NPM_CI_TIMEOUT)
+
+        def phase(name, argv, timeout):
+            # An abort is recorded with its phase and reason; whatever the
+            # tracker observed before it is still interpreted afterwards.
+            try:
+                runs[name] = self.run_untrusted(argv, name, timeout)
+            except Stop as exc:
+                runs["aborted"] = {"phase": name, "code": exc.code, "detail": exc.detail}
+                raise
+            except Exception as exc:  # noqa: BLE001
+                runs["aborted"] = {"phase": name, "code": "OBSERVER_INTERNAL_ERROR",
+                                   "detail": "%s: %s" % (type(exc).__name__, exc)}
+                raise
+
+        phase("npm_ci", [npm, "ci"], NPM_CI_TIMEOUT)
         if runs["npm_ci"]["exit_code"] != 0:
+            runs["aborted"] = {"phase": "npm_ci", "code": "SMOKE_FAILED_WITHOUT_PROVEN_VIOLATION",
+                               "detail": "npm ci did not succeed"}
             raise Stop("SMOKE_FAILED_WITHOUT_PROVEN_VIOLATION", "npm ci did not succeed")
-        runs["smoke"] = self.run_untrusted([npm, "run", SMOKE_SCRIPT], "smoke", SMOKE_TIMEOUT)
+        phase("smoke", [npm, "run", SMOKE_SCRIPT], SMOKE_TIMEOUT)
 
     # -- 10. teardown, interpretation, sealing -----------------------------
 
@@ -2516,7 +2555,7 @@ class Qualification:
             if self.cgroup_created:
                 if self.tracker is None:
                     self.tracker = Tracker(CGROUP_DIR, [0, 0], self.uid)
-                info["cgroup_emptied"] = self.kill_cgroup()
+                info["cgroup_emptied"] = self.kill_cgroup(context="teardown")
                 if not info["cgroup_emptied"]:
                     problems.append("tracking cgroup still has processes")
             strays = []
@@ -2608,11 +2647,42 @@ class Qualification:
         return raw[:MAX_REPORT_BYTES], info
 
     def interpret(self):
+        """Turn whatever was observed into findings. Runs after teardown.
+
+        An aborted execution does not discard evidence: the process table
+        recorded up to the abort is evaluated, so a confirmed violation
+        stays a FAIL next to the STOP for the abort. Incomplete execution
+        and absent observation are distinct STOPs; neither can be a PASS.
+        """
+        tracker = self.tracker
         runs = self.ev.get("execution", {})
         smoke = runs.get("smoke")
-        if smoke is None or self.tracker is None:
+        aborted = runs.get("aborted")
+        if not self.execution_started:
+            # No PR code ran. The tracker, if any, only served the cleanup.
+            if tracker is not None and tracker.enumeration_failures:
+                self.add_stop("PROCESS_ENUMERATION_FAILED",
+                              "%d failed cgroup.procs read(s) during cleanup: %s"
+                              % (tracker.enumeration_failures, tracker.enumeration_failure_log[:3]))
+            self.add_stop("EXECUTION_INCOMPLETE", "untrusted execution did not start")
             return
-        result = evaluate(self.tracker.table, {
+        state = "complete" if smoke is not None and not aborted else "aborted"
+        self.ev["execution_state"] = {
+            "state": state, "aborted": aborted,
+            "process_evidence": "present" if tracker.table else "absent",
+            "processes_recorded": len(tracker.table)}
+        if not tracker.table:
+            # Absent observation: nothing to evaluate, nothing to conclude.
+            self.add_stop("NO_PROCESS_EVIDENCE",
+                          "execution %s before any process was observed" % state)
+            if tracker.enumeration_failures:
+                self.add_stop("PROCESS_ENUMERATION_FAILED",
+                              "%d failed cgroup.procs read(s): %s"
+                              % (tracker.enumeration_failures, tracker.enumeration_failure_log[:3]))
+            if state != "complete":
+                self.add_stop("EXECUTION_INCOMPLETE", "aborted: %s" % (aborted,))
+            return
+        result = evaluate(tracker.table, {
             "node_id": self.tracker.node_id,
             "smoke_root": self.tracker.root_keys.get("smoke"),
             "work_dir": WORK_DIR,
@@ -2639,6 +2709,7 @@ class Qualification:
             "ticks_without_confirmed_freeze": self.tracker.ticks_unfrozen,
             "unconfirmed_thaws": self.tracker.thaw_failures,
             "enumeration_failures": self.tracker.enumeration_failures,
+            "enumeration_failure_log": self.tracker.enumeration_failure_log,
             "confirmed_frozen_seconds": round(self.tracker.frozen_total, 3),
             "unsampled_count": self.tracker.unsampled_count,
             "unsampled": self.tracker.unsampled,
@@ -2651,7 +2722,13 @@ class Qualification:
             "limitation": "polling; a process that starts and is reaped between two "
                           "samples is not observed",
         }
-        if smoke["timed_out"] or smoke["exit_code"] != 0:
+        if state != "complete":
+            # Incomplete execution: the findings above cover only what was
+            # recorded before the abort, and the run can never be a PASS.
+            self.add_stop("EXECUTION_INCOMPLETE",
+                          "execution aborted (%s); findings cover only the evidence "
+                          "recorded before the abort" % (aborted,))
+        elif smoke["timed_out"] or smoke["exit_code"] != 0:
             self.add_stop("SMOKE_FAILED_WITHOUT_PROVEN_VIOLATION",
                           "smoke exit=%s timed_out=%s" % (smoke["exit_code"], smoke["timed_out"]))
 
@@ -2696,6 +2773,7 @@ class Qualification:
             "identity": self.ev["identity"],
             "observer_sha256": self.ev.get("observer", {}).get("sha256"),
             "teardown": self.ev.get("teardown"),
+            "execution_state": self.ev.get("execution_state"),
             "security_certified": False,
         }, indent=1, sort_keys=True).encode()
 
@@ -2745,12 +2823,18 @@ class Qualification:
             self.add_stop(exc.code, exc.detail)
         except Exception as exc:  # noqa: BLE001 - any surprise is a STOP
             self.add_stop("OBSERVER_INTERNAL_ERROR", "%s: %s" % (type(exc).__name__, exc))
+        # Teardown and interpretation are independent: a cleanup problem must
+        # not prevent the recorded evidence from being interpreted.
         try:
             self.teardown()
+        except Exception as exc:  # noqa: BLE001
+            self.add_stop("OBSERVER_INTERNAL_ERROR",
+                          "teardown: %s: %s" % (type(exc).__name__, exc))
+        try:
             self.interpret()
         except Exception as exc:  # noqa: BLE001
             self.add_stop("OBSERVER_INTERNAL_ERROR",
-                          "teardown/interpretation: %s: %s" % (type(exc).__name__, exc))
+                          "interpretation: %s: %s" % (type(exc).__name__, exc))
         try:
             verdict, manifest_digest = self.seal()
         except Exception as exc:  # noqa: BLE001

@@ -997,7 +997,7 @@ class P2TeardownPreserved(Patched):
         q.cgroup_created = True
         q.mounted = [("/opt", 0), ("/usr/share", 0)]
         # A temp directory is not cgroupfs, so the kill itself is stubbed.
-        q.kill_cgroup = lambda wait=15: True
+        q.kill_cgroup = lambda wait=15, context="": True
         obs.run = lambda argv, **kw: types.SimpleNamespace(returncode=umount_rc)
         obs.mount_entries = lambda path, text=None: [["ro"]] * mounts_after
         return q
@@ -1020,7 +1020,7 @@ class P2TeardownPreserved(Patched):
         os.mkdir(obs.CGROUP_DIR)
         q = make_q(self.tmp)
         q.cgroup_created, q.mounted = True, [("/opt", 0)]
-        q.kill_cgroup = lambda wait=15: True
+        q.kill_cgroup = lambda wait=15, context="": True
         obs.run = lambda argv, **kw: types.SimpleNamespace(returncode=0)
         obs.mount_entries = lambda path, text=None: [["ro"]]   # exit 0 but still mounted
         q.teardown()
@@ -1036,7 +1036,7 @@ class P2TeardownPreserved(Patched):
         os.mkdir(obs.CGROUP_DIR)
         q = make_q(self.tmp)
         q.cgroup_created = True
-        q.kill_cgroup = lambda wait=15: False
+        q.kill_cgroup = lambda wait=15, context="": False
         q.teardown()
         self.assertIn("tracking cgroup still has processes", q.ev["teardown"]["problems"])
         self.assertEqual(obs.decide(q.fails, q.stops), "STOP")
@@ -1252,9 +1252,9 @@ class C3EnumerationAndFreezer(unittest.TestCase):
             fp = FakeProc().add(100, 1, 50)
             fp.listed = failure
             tr = fp.tracker()
-            self.assertIsNone(tr.pids())
+            self.assertIsNone(tr.pids())                  # counted at the source
             tr.tick("smoke")
-            self.assertEqual((tr.enumeration_failures, tr.table), (1, {}))
+            self.assertEqual((tr.enumeration_failures, tr.table), (2, {}))
             v, r = run_eval(good(), enumeration_failures=tr.enumeration_failures)
             self.assertEqual(v, "STOP")
             self.assertIn("PROCESS_ENUMERATION_FAILED", codes(r, "stop"))
@@ -1320,9 +1320,9 @@ class C3CgroupFiles(unittest.TestCase):
 
     def test_unreadable_cgroup_is_never_reported_empty(self):
         q = make_q(self.tmp)
-        q.tracker = types.SimpleNamespace(pids=lambda: None)
+        q.tracker = types.SimpleNamespace(pids=lambda context="": None)
         self.assertFalse(q.kill_cgroup(wait=0.05))
-        q.tracker = types.SimpleNamespace(pids=lambda: [])
+        q.tracker = types.SimpleNamespace(pids=lambda context="": [])
         self.assertTrue(q.kill_cgroup(wait=0.05))
 
 
@@ -1462,6 +1462,273 @@ class C3Invariant(unittest.TestCase):
             mutate(table, ctx)
             result = obs.evaluate(table, ctx)
             self.assertEqual(obs.decide(result["fail"], result["stop"]), "FAIL", name)
+
+
+OK_RUNS = {"npm_ci": {"exit_code": 0, "timed_out": False},
+           "smoke": {"exit_code": 0, "timed_out": False}}
+
+
+def scripted_tracker(script):
+    """A tracker whose successive cgroup.procs reads follow `script`
+    (a list of PIDs, a raw string, or an exception per read; then empty)."""
+    fp = FakeProc()
+    reads = list(script)
+
+    def reader(path, limit=None):
+        if not path.endswith("cgroup.procs"):
+            return fp.reader(path, limit)
+        item = reads.pop(0) if reads else []
+        if isinstance(item, Exception):
+            raise item
+        return item if isinstance(item, str) else "".join("%d\n" % p for p in item)
+
+    tr = fp.tracker()
+    tr.reader = reader
+    return tr
+
+
+class C4Base(unittest.TestCase):
+    def setUp(self):
+        self.saved = obs.CGROUP_DIR
+        self.tmp = tempfile.mkdtemp()
+        obs.CGROUP_DIR = self.tmp
+
+    def tearDown(self):
+        obs.CGROUP_DIR = self.saved
+
+    def q(self, tracker, runs=None, started=True):
+        """A qualification at the point where execution has ended."""
+        q = make_q(self.tmp)
+        q.tracker = tracker
+        q.execution_started = started
+        q.init_ns = INIT
+        q.pre_chrome = {"helper": None}
+        q.helper_setuid_capable = False
+        q.uid = UID
+        if runs is not None:
+            q.ev["execution"] = dict(runs)
+        return q
+
+    def complete_tracker(self, script=()):
+        tr = scripted_tracker(script)
+        tr.table = good()
+        tr.root_keys = {"smoke": "root"}
+        return tr
+
+    @staticmethod
+    def verdict(q):
+        return obs.decide(q.fails, q.stops)
+
+    @staticmethod
+    def stop_codes(q):
+        return sorted({s["code"] for s in q.stops})
+
+    @staticmethod
+    def run_like_main(q):
+        """The part of main() after the preparation phases."""
+        try:
+            q.execute()
+        except obs.Stop as exc:
+            q.add_stop(exc.code, exc.detail)
+        except Exception as exc:  # noqa: BLE001 - as main() does
+            q.add_stop("OBSERVER_INTERNAL_ERROR", "%s: %s" % (type(exc).__name__, exc))
+        q.interpret()
+
+
+class C4EnumerationFailures(C4Base):
+    """Fix 1: a failed cgroup.procs read anywhere is persistent STOP evidence."""
+
+    def test_valid_complete_observation_still_passes(self):
+        q = self.q(self.complete_tracker(), OK_RUNS)
+        q.interpret()
+        self.assertEqual((q.fails, q.stops, self.verdict(q)), ([], [], "PASS"))
+        self.assertEqual(q.ev["execution_state"]["state"], "complete")
+        self.assertEqual(q.ev["observation"]["enumeration_failures"], 0)
+
+    def test_reviewer_case_post_exit_failure_then_clean_cleanup(self):
+        # placement [5] -> post-exit PermissionError -> cleanup [] : was PASS
+        tr = self.complete_tracker([[5], PermissionError("cgroup.procs"), []])
+        q = self.q(tr, OK_RUNS)
+        self.assertEqual(tr.pids("placement:smoke"), [5])
+        remaining, emptied = q.close_phase("smoke")
+        self.assertEqual((remaining, emptied), (None, True))       # cleanup itself verified
+        self.assertEqual(tr.enumeration_failures, 1)
+        self.assertEqual(tr.enumeration_failure_log,
+                         [{"context": "post-exit:smoke", "error": "PermissionError"}])
+        q.interpret()
+        self.assertEqual(self.verdict(q), "STOP")
+        self.assertEqual(self.stop_codes(q), ["PROCESS_ENUMERATION_FAILED"])
+        self.assertEqual(q.fails, [])
+        self.assertEqual(q.ev["observation"]["enumeration_failure_log"][0]["context"],
+                         "post-exit:smoke")
+
+    def test_transient_cleanup_failures_followed_by_successful_cleanup(self):
+        tr = self.complete_tracker([OSError("io"), "12\nnot-a-pid\n", [7], []])
+        q = self.q(tr, OK_RUNS)
+        self.assertTrue(q.kill_cgroup(wait=2, context="cleanup:smoke"))   # ends verified empty
+        self.assertEqual(tr.enumeration_failures, 2)
+        self.assertEqual([e["error"] for e in tr.enumeration_failure_log],
+                         ["OSError", "ValueError"])
+        for _ in range(3):                                   # later successes erase nothing
+            self.assertEqual(tr.pids(), [])
+        self.assertEqual(tr.enumeration_failures, 2)
+        q.interpret()
+        self.assertEqual(self.verdict(q), "STOP")
+        self.assertIn("PROCESS_ENUMERATION_FAILED", self.stop_codes(q))
+        self.assertNotIn("TEARDOWN_INCOMPLETE", self.stop_codes(q))
+
+    def test_every_call_site_retains_its_failure(self):
+        for context in ("sample:smoke", "placement:smoke", "post-exit:smoke",
+                        "cleanup:smoke", "timeout:smoke", "abort:smoke", "teardown"):
+            tr = self.complete_tracker([PermissionError("x")])
+            self.assertIsNone(tr.pids(context))
+            q = self.q(tr, OK_RUNS)
+            q.interpret()
+            self.assertEqual(self.verdict(q), "STOP", context)
+            self.assertEqual(tr.enumeration_failure_log[0]["context"], context)
+        tr = self.complete_tracker([PermissionError("x")])
+        tr.tick("smoke")                                     # the sampling path itself
+        self.assertEqual((tr.enumeration_failures, tr.enumeration_failure_log[0]["context"]),
+                         (1, "sample:smoke"))
+
+    def test_unreadable_cgroup_is_never_empty_and_never_cleaned(self):
+        tr = scripted_tracker([PermissionError("x")] * 1000)
+        q = self.q(tr, OK_RUNS)
+        self.assertFalse(q.kill_cgroup(wait=0.12))
+        self.assertEqual(q.close_phase("smoke", wait=0.12), (None, False))
+        self.assertGreaterEqual(tr.enumeration_failures, 3)
+        self.assertLessEqual(len(tr.enumeration_failure_log), 20)       # bounded
+
+    def test_cleanup_only_tracker_failure_is_reported_too(self):
+        # execution never started; the tracker only served the teardown
+        tr = scripted_tracker([OSError("io"), []])
+        q = self.q(tr, started=False)
+        self.assertTrue(q.kill_cgroup(wait=2, context="teardown"))
+        q.interpret()
+        self.assertEqual(self.stop_codes(q), ["EXECUTION_INCOMPLETE",
+                                              "PROCESS_ENUMERATION_FAILED"])
+        self.assertEqual(self.verdict(q), "STOP")
+
+
+class C4AbortKeepsEvidence(C4Base):
+    """Fix 2: an execution abort never hides what was already observed."""
+
+    def aborting_q(self, abort, unsealed=True, npm_ci_exit=0, abort_in="smoke"):
+        """execute() with a fake phase runner: a renderer is sampled at active
+        ages 0..3 s, then the phase aborts as `abort` says."""
+        clock = Clock()
+        thaw_ok = [True]
+        fp = FakeProc().add(60, 40, 600, exe=CH, maps=CHROME_MAP,
+                            args=("chrome", "--type=renderer"),
+                            **{k: v for k, v in SEALED.items() if k not in ("args", "ppid")})
+        if unsealed:
+            fp.procs[60]["kw"].update(seccomp=0, nnp=0)
+        tr = fp.tracker(clock=clock, init_ns=INIT, freeze=lambda: True,
+                        thaw=lambda: thaw_ok[0])
+        q = self.q(None, started=False)
+        q.make_tracker = lambda: tr
+
+        def run_untrusted(argv, phase, timeout):
+            if phase != abort_in:
+                return {"exit_code": npm_ci_exit, "timed_out": False}
+            if abort == "before-observation":
+                raise obs.Stop("PRIVILEGE_ISOLATION_FAILED", "child not placed")
+            for _ in range(3):
+                tr.tick(phase)
+                clock.now += 1.0
+            if abort == "thaw":
+                thaw_ok[0] = False
+                tr.tick(phase)                     # sampled at age 3 s, then thaw fails
+            elif abort == "crash":
+                tr.tick(phase)
+                raise RuntimeError("observer bug")
+            return {"exit_code": 0, "timed_out": False}
+        q.run_untrusted = run_untrusted
+        return q, tr
+
+    def test_reviewer_case_violation_then_thaw_failure(self):
+        q, tr = self.aborting_q("thaw")
+        self.run_like_main(q)
+        self.assertEqual(tr.table["60:600"]["sticky"]["cond_age"][
+            "RENDERER_SECCOMP_FILTER_ABSENT"], 3.0)
+        fail_codes = sorted({f["code"] for f in q.fails})
+        self.assertEqual(fail_codes, ["RENDERER_NO_NEW_PRIVS_UNSET",
+                                      "RENDERER_SECCOMP_FILTER_ABSENT"])   # was: no findings
+        self.assertIn("FREEZER_FAILURE", self.stop_codes(q))               # the abort reason
+        self.assertIn("EXECUTION_INCOMPLETE", self.stop_codes(q))
+        self.assertEqual(self.verdict(q), "FAIL")
+        self.assertEqual(q.ev["execution"]["aborted"]["phase"], "smoke")
+        self.assertEqual(q.ev["execution"]["aborted"]["code"], "FREEZER_FAILURE")
+        self.assertNotIn("smoke", q.ev["execution"])
+        self.assertEqual(q.ev["execution_state"], {
+            "state": "aborted", "aborted": q.ev["execution"]["aborted"],
+            "process_evidence": "present", "processes_recorded": 1})
+        self.assertEqual(q.ev["assessment"]["renderers"]["violating"], ["60:600"])
+        self.assertEqual(q.ev["observation"]["unconfirmed_thaws"], 1)
+
+    def test_confirmed_fail_followed_by_other_execution_aborts(self):
+        q, _ = self.aborting_q("crash")
+        self.run_like_main(q)
+        self.assertEqual(self.verdict(q), "FAIL")
+        self.assertIn("OBSERVER_INTERNAL_ERROR", self.stop_codes(q))
+        self.assertIn("EXECUTION_INCOMPLETE", self.stop_codes(q))
+        self.assertEqual(q.ev["execution"]["aborted"]["code"], "OBSERVER_INTERNAL_ERROR")
+        self.assertTrue(any(f["code"] == "RENDERER_SECCOMP_FILTER_ABSENT" for f in q.fails))
+
+    def test_abort_without_violation_is_stop_never_pass(self):
+        q, _ = self.aborting_q("thaw", unsealed=False)
+        self.run_like_main(q)
+        self.assertEqual((q.fails, self.verdict(q)), ([], "STOP"))
+        self.assertIn("EXECUTION_INCOMPLETE", self.stop_codes(q))
+        # even a fully valid recorded process table cannot pass once aborted
+        q = self.q(self.complete_tracker(), {"npm_ci": OK_RUNS["npm_ci"], "aborted": {
+            "phase": "smoke", "code": "FREEZER_FAILURE", "detail": "x"}})
+        q.interpret()
+        self.assertEqual((q.fails, self.stop_codes(q), self.verdict(q)),
+                         ([], ["EXECUTION_INCOMPLETE"], "STOP"))
+        q = self.q(self.complete_tracker(), {"npm_ci": OK_RUNS["npm_ci"]})   # smoke missing
+        q.interpret()
+        self.assertEqual(self.verdict(q), "STOP")
+
+    def test_abort_before_process_observation_is_stop(self):
+        for abort_in in ("npm_ci", "smoke"):
+            q, tr = self.aborting_q("before-observation", abort_in=abort_in)
+            self.run_like_main(q)
+            self.assertEqual((tr.table, q.fails, self.verdict(q)), ({}, [], "STOP"))
+            self.assertEqual(self.stop_codes(q), ["EXECUTION_INCOMPLETE", "NO_PROCESS_EVIDENCE",
+                                                  "PRIVILEGE_ISOLATION_FAILED"])
+            self.assertEqual(q.ev["execution_state"]["process_evidence"], "absent")
+            self.assertEqual(q.ev["execution"]["aborted"]["phase"], abort_in)
+            self.assertNotIn("assessment", q.ev)
+
+    def test_failed_install_phase_is_recorded_as_abort(self):
+        q, _ = self.aborting_q("none", npm_ci_exit=1)
+        self.run_like_main(q)
+        self.assertEqual(self.verdict(q), "STOP")
+        self.assertEqual(q.ev["execution"]["aborted"]["phase"], "npm_ci")
+        self.assertIn("SMOKE_FAILED_WITHOUT_PROVEN_VIOLATION", self.stop_codes(q))
+
+    def test_execution_that_never_started_is_stop(self):
+        q = self.q(None, started=False)
+        q.interpret()
+        self.assertEqual((q.fails, self.stop_codes(q), self.verdict(q)),
+                         ([], ["EXECUTION_INCOMPLETE"], "STOP"))
+
+    def test_completed_execution_is_unaffected(self):
+        q, _ = self.aborting_q("none", unsealed=False)
+        self.run_like_main(q)
+        self.assertEqual(q.ev["execution_state"]["state"], "complete")
+        self.assertNotIn("aborted", q.ev["execution"])
+        self.assertNotIn("EXECUTION_INCOMPLETE", self.stop_codes(q))
+
+    def test_main_interprets_even_when_teardown_raises(self):
+        with open(OBSERVER) as fh:
+            src = fh.read()
+        body = src[src.index("    def main(self):"):]
+        self.assertLess(body.index("self.teardown()"), body.index("self.interpret()"))
+        self.assertLess(body.index("self.interpret()"), body.index("self.seal()"))
+        between = body[body.index("self.teardown()"):body.index("self.interpret()")]
+        self.assertIn("except Exception", between)      # separate try blocks
 
 
 class Misc(unittest.TestCase):
