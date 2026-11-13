@@ -1,0 +1,203 @@
+name: S-01 Sandbox Qualification
+
+# S-01 trusted actual-smoke qualification.
+#
+# Measures the Chrome renderer sandbox while the real Playwright smoke of
+# ONE exact PR head/tree executes, with the measurement protected from the
+# code under test. Three identities on one GitHub-hosted job:
+#
+#   root    scripts/ci/s01_observer.py, taken from THIS workflow's commit
+#   runner  the Actions agent, the pinned actions below, artifact upload
+#   s01u    every PR-controlled process (npm ci, Playwright, Chrome)
+#
+# PR-controlled code never runs as root or runner: nothing from the PR is
+# executed by this file at all - the observer runs it, as s01u only.
+#
+# Manual dispatch only, from refs/heads/main only, first attempt only.
+# A run started from any other ref, or re-run, stops before doing anything.
+# A result is valid only for the run, runner image and Chrome build it
+# records; it certifies no other run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number under qualification"
+        required: true
+        type: string
+      expected_head_sha:
+        description: "Exact 40-hex PR head commit SHA"
+        required: true
+        type: string
+      expected_tree_sha:
+        description: "Exact 40-hex tree SHA of that commit"
+        required: true
+        type: string
+
+# Nothing by default; the single job grants itself read-only access.
+permissions: {}
+
+concurrency:
+  group: s01-sandbox-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: S-01 trusted actual-smoke qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    # Inputs reach shell only through these variables, never through
+    # expression interpolation inside a script, and only after validation.
+    env:
+      S01_PR_NUMBER: ${{ inputs.pr_number }}
+      S01_EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+      S01_EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
+    steps:
+      - name: Guard trigger and validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          stop() { echo "::error::S01 STOP - $1"; exit 1; }
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || stop "event is not workflow_dispatch"
+          [ "$GITHUB_REF" = "refs/heads/main" ] || stop "not dispatched from refs/heads/main"
+          [ "$GITHUB_RUN_ATTEMPT" = "1" ] || stop "run attempt is not 1 (no re-runs)"
+          [ "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA" ] || stop "workflow commit differs from dispatched commit"
+          [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/s01-sandbox-qualification.yml@refs/heads/main" ] \
+            || stop "unexpected workflow ref"
+          [[ "$S01_PR_NUMBER" =~ ^[1-9][0-9]{0,6}$ ]] || stop "pr_number is not a positive integer"
+          [[ "$S01_EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || stop "expected_head_sha is not 40 lowercase hex"
+          [[ "$S01_EXPECTED_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] || stop "expected_tree_sha is not 40 lowercase hex"
+
+      # Read-only token, used by this trusted step only. It is never placed
+      # in the observer's or the untrusted user's environment.
+      - name: Verify remote PR and main identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          stop() { echo "::error::S01 STOP - $1"; exit 1; }
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${S01_PR_NUMBER}")"
+          [ "$(jq -r '.head.sha' <<<"$pr_json")" = "$S01_EXPECTED_HEAD_SHA" ] || stop "PR head differs from expected_head_sha"
+          [ "$(jq -r '.base.ref' <<<"$pr_json")" = "main" ] || stop "PR base is not main"
+          [ "$(jq -r '.state' <<<"$pr_json")" = "open" ] || stop "PR is not open"
+          tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${S01_EXPECTED_HEAD_SHA}" --jq '.tree.sha')"
+          [ "$tree_sha" = "$S01_EXPECTED_TREE_SHA" ] || stop "PR head tree differs from expected_tree_sha"
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [ "$main_sha" = "$GITHUB_WORKFLOW_SHA" ] || stop "workflow commit is not the current main head"
+
+      # The observer comes from this workflow's own commit on main.
+      - name: Checkout trusted observer (workflow commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      # Fetches git objects only; no PR-controlled code is executed here.
+      # The observer re-verifies head/tree and materializes the source from
+      # these objects for the unprivileged user.
+      - name: Fetch exact PR source objects
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_head_sha }}
+          path: pr-src
+          persist-credentials: false
+
+      # No `cache:` - nothing is shared across the trust boundary or runs.
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      # sudo is used here only to become the trusted observer. The observer
+      # drops to s01u for every PR-controlled command; the browser is never
+      # given privileges and no sandbox setting is changed.
+      #
+      # The runner image makes /opt and /usr/share world-writable, so the
+      # observer bind-mounts the exposed trees that hold trusted executables
+      # (Chrome, Node/npm, directories on this job's PATH) read-only for the
+      # qualification window and removes the mounts again. No chmod/chown.
+      # The runner's PATH is passed so those directories can be protected:
+      # later steps of this job resolve their tools through it.
+      - name: Run trusted observer (one actual Playwright smoke)
+        id: observe
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_bin="$(dirname "$(readlink -f "$(command -v node)")")"
+          # Not under /opt: the runner image makes /opt world-writable.
+          trusted_dir=/usr/local/lib/s01-trusted
+          sudo -n install -d -m 0700 -o root -g root "$trusted_dir"
+          sudo -n install -m 0500 -o root -g root \
+            "$GITHUB_WORKSPACE/trusted/scripts/ci/s01_observer.py" "$trusted_dir/s01_observer.py"
+          set +e
+          sudo -n /usr/bin/python3 -I -B "$trusted_dir/s01_observer.py" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --job "$GITHUB_JOB" \
+            --workflow-ref "$GITHUB_REF" \
+            --workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --pr-number "$S01_PR_NUMBER" \
+            --expected-head-sha "$S01_EXPECTED_HEAD_SHA" \
+            --expected-tree-sha "$S01_EXPECTED_TREE_SHA" \
+            --trusted-checkout "$GITHUB_WORKSPACE/trusted" \
+            --pr-checkout "$GITHUB_WORKSPACE/pr-src" \
+            --node-bin-dir "$node_bin" \
+            --publish-dir "$RUNNER_TEMP/s01-evidence" \
+            --protected-path "$HOME" \
+            --protected-path "$GITHUB_WORKSPACE" \
+            --protected-path "$RUNNER_TEMP" \
+            --runner-path "$PATH" \
+            --image-os "${ImageOS:-}" \
+            --image-version "${ImageVersion:-}"
+          rc=$?
+          set -e
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sealed evidence
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s01-qualification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/s01-evidence
+          if-no-files-found: error
+          retention-days: 90
+
+      # The job succeeds only on PASS. FAIL and STOP both fail the job; the
+      # summary carries identities and digests only, never untrusted text.
+      - name: Qualification verdict
+        if: always()
+        shell: bash
+        env:
+          S01_EXIT: ${{ steps.observe.outputs.exit_code }}
+          S01_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          S01_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          case "${S01_EXIT:-}" in
+            0) verdict=PASS ;;
+            1) verdict=FAIL ;;
+            *) verdict=STOP ;;
+          esac
+          manifest="$RUNNER_TEMP/s01-evidence/MANIFEST.sha256"
+          manifest_sha="<absent>"
+          if [ -f "$manifest" ]; then manifest_sha="$(sha256sum "$manifest" | cut -d' ' -f1)"; fi
+          {
+            echo "## S-01 qualification: $verdict"
+            echo
+            echo "- run: $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT job $GITHUB_JOB"
+            echo "- workflow commit (main): $GITHUB_WORKFLOW_SHA"
+            echo "- PR: #$S01_PR_NUMBER head $S01_EXPECTED_HEAD_SHA tree $S01_EXPECTED_TREE_SHA"
+            echo "- evidence manifest sha256: $manifest_sha"
+            echo "- artifact id: ${S01_ARTIFACT_ID:-<none>} digest: ${S01_ARTIFACT_DIGEST:-<none>}"
+            echo
+            echo "Valid only for this run, runner image and Chrome build. Not a certification of any other run."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "S01 verdict: $verdict"
+          [ "$verdict" = "PASS" ]
