@@ -46,7 +46,19 @@ module.exports = defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      // CI-PLAYWRIGHT Chrome Channel experiment E1: run on the Google Chrome
+      // already installed on the runner (channel "chrome") instead of a
+      // runtime-downloaded Playwright Chromium. chromiumSandbox: true only
+      // REQUESTS the Chromium sandbox - it is not, by itself, evidence that
+      // the renderer sandbox is effective. Never set it to false and never
+      // add --no-sandbox here.
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        launchOptions: {
+          chromiumSandbox: true,
+        },
+      },
     },
   ],
 });

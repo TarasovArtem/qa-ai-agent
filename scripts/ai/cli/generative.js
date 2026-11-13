@@ -119,13 +119,24 @@ async function runDesign(ctx) {
   const runDirRel = store.runDirectoryRel(config, runId);
   store.createRunDirectory(root, runDirRel, protectedPaths);
 
+  // TPR G2 finding R1 (boundary v3): the child receives the canonical
+  // requirement projection and only adds assumptions/open questions; the
+  // parent then requires the returned RequirementModel to carry exactly that
+  // projection (validateDesign), so a child or provider can never substitute
+  // requirement wording.
   const out = await runGenerativeChild(
     "design",
-    { evidenceBundle: evidence.evidenceBundle, projectId, projectProfile: config.projectProfile, frameworkCapability: artifacts.frameworkCapability(config) },
+    {
+      evidenceBundle: evidence.evidenceBundle,
+      canonicalRequirements: evidence.canonicalRequirements,
+      projectId,
+      projectProfile: config.projectProfile,
+      frameworkCapability: artifacts.frameworkCapability(config),
+    },
     ctx
   );
   const design = { requirementModel: out.requirementModel, testCaseModel: out.testCaseModel, automationCandidates: out.automationCandidates };
-  const codes = artifacts.validateDesign(design, { evidenceBundle: evidence.evidenceBundle, projectId, framework: config.framework });
+  const codes = artifacts.validateDesign(design, { evidenceBundle: evidence.evidenceBundle, canonicalRequirements: evidence.canonicalRequirements, projectId, framework: config.framework });
   if (codes.length > 0) throw providerOutputRefused("design", codes);
 
   const files = [

@@ -19,7 +19,9 @@ the `#22`/`#23` generative pipeline (`scripts/ai/generation/`,
 `scripts/ai/generative-test-design/`, `scripts/ai/test-automation/`,
 described by `SECURITY.md` §21-29). Also in scope: the package/public-API
 boundary (`docs/package-surface-v2.md`), the `RequirementArtifact`/
-`RequirementModel` bounded-context boundary (`docs/architecture-model-boundary-v2.md`),
+`RequirementModel` bounded-context boundary (`docs/architecture-model-boundary-v3.md`;
+since TPR-G2-R1 the RequirementModel's requirements are a deterministic
+verbatim projection and its provider authors only assumptions/open questions),
 and the Git-based human-approval precedent this repository already uses
 for its own governance (independent exact-head review, two-parent merge).
 

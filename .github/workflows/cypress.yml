@@ -594,7 +594,7 @@ jobs:
   # evidence and still fails this job.
   playwright-tests:
     name: Playwright Chromium
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # contents: read for checkout only - this job never calls the GitHub
     # Actions API and never needs a provider secret (AI_API_KEY is only
     # ever passed to qa-ai-triage below, never here).
@@ -610,17 +610,44 @@ jobs:
           node-version: 22
           cache: "npm"
 
+      # CYPRESS_INSTALL_BINARY=0 (experiment E1) only suppresses the
+      # unrelated Cypress binary download in THIS job - Cypress is never
+      # run here. npm ci itself is unchanged.
       - name: Install dependencies
+        env:
+          CYPRESS_INSTALL_BINARY: "0"
         run: npm ci
 
-      # Chromium only (Roadmap #21G invariant: no Firefox/WebKit, no
-      # browser matrix) - --with-deps installs the Linux system libraries
-      # Chromium needs on a bare ubuntu-latest runner, mirroring
-      # firefox-tests' own explicit-browser-install pattern (there is no
-      # existing Playwright container image already in use here, unlike
-      # cypress-tests' cypress/included).
-      - name: Install Playwright Chromium browser
-        run: npx playwright install --with-deps chromium
+      # CI-PLAYWRIGHT Chrome Channel experiment E1: no browser download and
+      # no apt/sudo here - playwright.config.js's chromium project uses the
+      # Google Chrome preinstalled on the runner image (channel "chrome").
+      # This step records bounded, non-sensitive runtime evidence and fails
+      # visibly if the Chrome executable Playwright's "chrome" channel
+      # resolves to on Linux is missing. The sandbox-related lines are
+      # informational context only - they are NOT a sandbox attestation.
+      - name: Chrome Channel runtime diagnostics
+        shell: bash
+        run: |
+          echo "ImageOS=${ImageOS:-<unset>} ImageVersion=${ImageVersion:-<unset>}"
+          echo "node=$(node --version)"
+          echo "playwright=$(npx --no-install playwright --version)"
+          CHROME_CHANNEL_EXE=/opt/google/chrome/chrome
+          if [ ! -x "$CHROME_CHANNEL_EXE" ]; then
+            echo "::error::Google Chrome not found at $CHROME_CHANNEL_EXE (Playwright channel 'chrome' on Linux)"
+            exit 1
+          fi
+          echo "chrome_channel_executable=$CHROME_CHANNEL_EXE"
+          echo "chrome_version=$("$CHROME_CHANNEL_EXE" --version)"
+          GC_PATH="$(command -v google-chrome || true)"
+          echo "google-chrome on PATH=${GC_PATH:-<absent>} resolves to $( [ -n "$GC_PATH" ] && readlink -f "$GC_PATH" || echo '<n/a>')"
+          ls -l /opt/google/chrome/chrome-sandbox 2>/dev/null || echo "chrome-sandbox helper=<absent>"
+          echo "apparmor_restrict_unprivileged_userns=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo '<unreadable>')"
+          echo "apparmor chrome profiles=$(ls -1 /etc/apparmor.d 2>/dev/null | grep -i -E 'chrome|chromium' | tr '\n' ' ' || true)"
+          if [ -d "$HOME/.cache/ms-playwright" ]; then
+            echo "playwright browser cache=$(ls -1 "$HOME/.cache/ms-playwright" | tr '\n' ' ')"
+          else
+            echo "playwright browser cache=<absent>"
+          fi
 
       # G21G-1 (mandatory): explicit --config=playwright.config.js, never
       # implicit discovery - Playwright's own config discovery is

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { ingestRequirementEvidence, ingestRequirementArtifactsAsEvidence, LIMITS, ARTIFACT_EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
+const { ingestRequirementEvidence, ingestRequirementArtifactsAsEvidence, verifyCanonicalRequirements, LIMITS, ARTIFACT_EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
 const { validateEvidenceRef, EVIDENCE_REF_KINDS } = require("../generation/primitives");
 const { validateRequirementArtifact } = require("../requirement-artifact");
 
@@ -339,7 +339,7 @@ test("the returned bundle is deeply frozen", () => {
 // =========================================================================
 // ACG-A3: ingestRequirementArtifactsAsEvidence() - the RequirementArtifact
 // evidence adapter (Architecture Conformance Gate finding A-3). See
-// docs/architecture-model-boundary-v2.md for the normative contract this
+// docs/architecture-model-boundary-v3.md for the normative contract this
 // adapter implements.
 // =========================================================================
 
@@ -858,5 +858,210 @@ test("A3-R02: processing a large artifact (valid or oversized) does not mutate t
     const snapshot = structuredClone(artifact);
     ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [artifact] }));
     assert.deepEqual(artifact, snapshot);
+  }
+});
+
+// =========================================================================
+// TPR G2 finding R1 (docs/architecture-model-boundary-v3.md): the canonical
+// requirement projection returned by ingestRequirementArtifactsAsEvidence()
+// and its independent verifier verifyCanonicalRequirements().
+// =========================================================================
+
+function criteria(n, prefix = "c") {
+  return Array.from({ length: n }, (_, i) => ({ text: `${prefix}${i + 1}` }));
+}
+
+test("R1: the adapter returns {ok, bundle, mapping, canonicalRequirements}; bundle and mapping are unchanged by the projection", () => {
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput());
+  assert.deepEqual(Object.keys(result).sort(), ["bundle", "canonicalRequirements", "mapping", "ok"]);
+  assert.deepEqual(result.mapping, [{ requirementArtifactId: "req-1", evidenceRefId: "evidence-0001" }]);
+  assert.equal(result.bundle.evidenceItems[0].text, "Title: Login error handling\nContent: The login page must show an error on invalid credentials.\nAcceptance Criteria:\n- Given invalid credentials, an error message is shown.");
+  assert.deepEqual(result.canonicalRequirements, [
+    { id: "evidence-0001.content", text: "The login page must show an error on invalid credentials.", evidenceRefIds: ["evidence-0001"] },
+    { id: "evidence-0001.ac-0001", text: "Given invalid credentials, an error message is shown.", evidenceRefIds: ["evidence-0001"] },
+  ]);
+});
+
+test("R1: canonicalRequirements are deeply frozen, deterministic, and in artifact -> content -> criteria order", () => {
+  const input = validArtifactsInput({
+    artifacts: [
+      validArtifact({ id: "b", content: undefined, acceptanceCriteria: [{ text: "B1" }, { text: "B2" }] }),
+      validArtifact({ id: "a", content: "A content", acceptanceCriteria: undefined }),
+    ],
+  });
+  const first = ingestRequirementArtifactsAsEvidence(input);
+  const second = ingestRequirementArtifactsAsEvidence(input);
+  assert.deepEqual(first.canonicalRequirements, second.canonicalRequirements);
+  assert.deepEqual(first.canonicalRequirements.map((r) => [r.id, r.text]), [
+    ["evidence-0001.ac-0001", "B1"],
+    ["evidence-0001.ac-0002", "B2"],
+    ["evidence-0002.content", "A content"],
+  ]);
+  assert.ok(Object.isFrozen(first.canonicalRequirements));
+  assert.ok(Object.isFrozen(first.canonicalRequirements[0]));
+  assert.ok(Object.isFrozen(first.canonicalRequirements[0].evidenceRefIds));
+});
+
+test("R1: requirement text is the exact source string (whitespace, punctuation, Unicode); title is never a requirement", () => {
+  const content = "  spaced  “quoted” — ünïcödé 🚀\u00a0end  ";
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ title: "TITLE-NOT-A-REQUIREMENT", content, acceptanceCriteria: [{ text: "  ac  " }] })] }));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.canonicalRequirements.map((r) => r.text), [content, "  ac  "]);
+  assert.equal(JSON.stringify(result.canonicalRequirements).includes("TITLE-NOT-A-REQUIREMENT"), false);
+});
+
+test("R1: requirement ids come only from canonical evidence ids - artifact ids and optional/duplicate/missing criterion ids never enter them", () => {
+  const result = ingestRequirementArtifactsAsEvidence(validArtifactsInput({
+    artifacts: [
+      validArtifact({ id: "REQ.1", acceptanceCriteria: [{ id: "AC-1", text: "x" }, { id: "AC-1", text: "y" }, { text: "z" }] }),
+      validArtifact({ id: "a".repeat(200), acceptanceCriteria: [{ id: "b".repeat(200), text: "w" }] }),
+    ],
+  }));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.canonicalRequirements.map((r) => r.id), [
+    "evidence-0001.content",
+    "evidence-0001.ac-0001",
+    "evidence-0001.ac-0002",
+    "evidence-0001.ac-0003",
+    "evidence-0002.content",
+    "evidence-0002.ac-0001",
+  ]);
+  for (const forbidden of ["REQ.1", "AC-1", "aaaa", "bbbb"]) assert.equal(JSON.stringify(result.canonicalRequirements).includes(forbidden), false, forbidden);
+});
+
+test("R1: exactly 200 canonical requirements are accepted; 201 fail closed as a $.artifacts INVALID_VALUE refusal (never truncated)", () => {
+  const ok = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ id: "a", content: "c", acceptanceCriteria: criteria(150) }), validArtifact({ id: "b", content: undefined, acceptanceCriteria: criteria(49) })] })); // 1 + 150 + 49 = 200
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+  assert.equal(ok.canonicalRequirements.length, 200);
+  const refused = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ id: "a", content: "c", acceptanceCriteria: criteria(150) }), validArtifact({ id: "b", content: "d", acceptanceCriteria: criteria(49) })] })); // 1 + 150 + 1 + 49 = 201
+  assert.equal(refused.ok, false);
+  assert.deepEqual(refused.errors.map((e) => [e.path, e.code]), [["$.artifacts", "INVALID_VALUE"]]);
+  assert.equal(refused.bundle, undefined);
+  assert.equal(refused.canonicalRequirements, undefined);
+});
+
+// TPR-R1-PR270-C1 (C1-02): verifyCanonicalRequirements() proves text shape and
+// exact equality, not origin - a bundle has no ingestion-path marker. This
+// records the accepted behavior for direct text that itself has exactly the
+// projection line format, and pins that nothing wider is accepted.
+test("R1-C1: projection-shaped direct text is parsed like a projection (shape, not origin) - only its exact verbatim leaves are accepted", () => {
+  const lookAlike = "Title: x\nContent: forged leaf\nAcceptance Criteria:\n- first\n-  second ";
+  const direct = ingestRequirementEvidence(validInput({ sources: [{ text: lookAlike }] }));
+  assert.equal(direct.ok, true);
+  assert.equal(direct.canonicalRequirements, undefined, "the direct-text path itself never returns a projection");
+  const items = direct.bundle.evidenceItems;
+  const exact = [
+    { id: "evidence-0001.content", text: "forged leaf", evidenceRefIds: ["evidence-0001"] },
+    { id: "evidence-0001.ac-0001", text: "first", evidenceRefIds: ["evidence-0001"] },
+    { id: "evidence-0001.ac-0002", text: " second ", evidenceRefIds: ["evidence-0001"] },
+  ];
+  assert.deepEqual(verifyCanonicalRequirements(exact, items), [], "exact verbatim leaves of the shaped text are accepted");
+  assert.ok(exact.every((r) => lookAlike.split("\n").some((line) => line.endsWith(r.text))), "every accepted text is a verbatim line tail of the evidence");
+
+  const copy = () => exact.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] }));
+  const deviations = [
+    (rs) => { rs[0].text = "Forged leaf"; return rs; }, // reworded
+    (rs) => { rs[2].text = "second"; return rs; }, // trimmed
+    (rs) => { rs[0].id = "evidence-0001.title"; return rs; }, // re-identified
+    (rs) => [{ id: "evidence-0001.content", text: "x", evidenceRefIds: ["evidence-0001"] }, ...rs], // title as a leaf
+    (rs) => rs.slice(0, 2), // dropped
+    (rs) => [rs[0], rs[2], rs[1]], // reordered
+  ];
+  for (const [i, deviate] of deviations.entries()) {
+    assert.ok(verifyCanonicalRequirements(deviate(copy()), items).some((e) => e.code === "INVARIANT_VIOLATION"), `deviation ${i}`);
+  }
+
+  // Near-miss shapes stay refused: the accepted input semantics are not widened.
+  for (const text of ["title: x\nContent: c", "Title: x\nContent: c\n\n", "Title: x\ncontent: c", "Title: x\nContent: c\nAcceptance Criteria:\n* first", "Title: x\nContent: c\r\nAcceptance Criteria:\n-first"]) {
+    const nearMiss = ingestRequirementEvidence(validInput({ sources: [{ text }] }));
+    assert.equal(nearMiss.ok, true, JSON.stringify(text));
+    const errors = verifyCanonicalRequirements([{ id: "evidence-0001.content", text: "c", evidenceRefIds: ["evidence-0001"] }], nearMiss.bundle.evidenceItems);
+    assert.ok(errors.length > 0, JSON.stringify(text));
+  }
+});
+
+test("R1: verifyCanonicalRequirements accepts the adapter's own projection and refuses every misalignment without echoing text", () => {
+  const { bundle, canonicalRequirements } = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ content: "SECRET_CONTENT" }), validArtifact({ id: "req-2", acceptanceCriteria: [{ text: "SECRET_AC" }] })] }));
+  assert.deepEqual(verifyCanonicalRequirements(canonicalRequirements, bundle.evidenceItems), []);
+  const copy = () => canonicalRequirements.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] }));
+  const mutations = [
+    (rs) => rs.slice(1),
+    (rs) => [...rs, rs[0]],
+    (rs) => [rs[1], rs[0], ...rs.slice(2)],
+    (rs) => { rs[0].text += "."; return rs; },
+    (rs) => { rs[0].id = "req-1"; return rs; },
+    (rs) => { rs[0].evidenceRefIds = ["evidence-0002"]; return rs; },
+    (rs) => { rs[0].extra = true; return rs; },
+    () => [],
+    () => undefined,
+  ];
+  for (const [i, mutate] of mutations.entries()) {
+    const errors = verifyCanonicalRequirements(mutate(copy()), bundle.evidenceItems);
+    assert.ok(errors.length > 0, `mutation ${i}`);
+    assert.equal(JSON.stringify(errors).includes("SECRET_"), false, `mutation ${i} never echoes text`);
+  }
+  // Evidence whose text does not have the projection line format (ordinary direct user text) is refused.
+  const direct = ingestRequirementEvidence(validInput());
+  assert.ok(verifyCanonicalRequirements(canonicalRequirements, direct.bundle.evidenceItems).some((e) => e.code === "INVARIANT_VIOLATION"));
+  // Malformed projections of the fixed line format are refused, never parsed best-effort.
+  for (const text of ["Title: t", "Title: t\nAcceptance Criteria:", "Title: t\nContent: c\nNot a criterion", "No title\nContent: c"]) {
+    assert.ok(verifyCanonicalRequirements([{ id: "evidence-0001.content", text: "c", evidenceRefIds: ["evidence-0001"] }], [{ evidenceRef: { id: "evidence-0001", kind: "user_input", sourceId: "user-input-0001" }, text }]).length > 0, text);
+  }
+});
+
+// TPR-R1-PR270-C2 (F-02): Array.prototype.forEach() skips holes, so a sparse
+// list of the right length used to be accepted with those positions never
+// compared. Every expected index must be an own, exactly matching element.
+test("R1-C2: fully and partially sparse canonicalRequirements arrays are refused at every missing index, dense arrays are unaffected", () => {
+  const { bundle, canonicalRequirements } = ingestRequirementArtifactsAsEvidence(validArtifactsInput({ artifacts: [validArtifact({ content: "SECRET_CONTENT" }), validArtifact({ id: "req-2", acceptanceCriteria: [{ text: "SECRET_AC" }] })] }));
+  const n = canonicalRequirements.length;
+  assert.ok(n >= 3, "fixture has at least three leaves");
+  const dense = () => canonicalRequirements.map((r) => ({ ...r, evidenceRefIds: [...r.evidenceRefIds] }));
+  assert.deepEqual(verifyCanonicalRequirements(dense(), bundle.evidenceItems), [], "dense exact copy is still accepted");
+
+  const holeAt = (...indexes) => { const rs = dense(); for (const i of indexes) delete rs[i]; return rs; };
+  const truncatedThenPadded = dense().slice(0, 1);
+  truncatedThenPadded.length = n;
+  const allIndexes = Array.from({ length: n }, (_, i) => i);
+  const cases = [
+    ["fully sparse (new Array(n))", new Array(n), allIndexes],
+    ["fully sparse (every element deleted)", holeAt(...allIndexes), allIndexes],
+    ["hole at the first index", holeAt(0), [0]],
+    ["hole in the middle", holeAt(1), [1]],
+    ["hole at the last index", holeAt(n - 1), [n - 1]],
+    ["only the first element present", truncatedThenPadded, allIndexes.slice(1)],
+    ["only the last element present", holeAt(...allIndexes.slice(0, -1)), allIndexes.slice(0, -1)],
+  ];
+  for (const [label, sparse, missing] of cases) {
+    assert.equal(sparse.length, n, `${label}: length equals the expected projection length`);
+    const errors = verifyCanonicalRequirements(sparse, bundle.evidenceItems);
+    assert.deepEqual(errors.map((e) => e.path), missing.map((i) => `$.canonicalRequirements[${i}]`), `${label}: one error per missing index, none for present ones`);
+    assert.ok(errors.every((e) => e.code === "INVARIANT_VIOLATION"), `${label}: existing reason code`);
+    assert.equal(JSON.stringify(errors).includes("SECRET_"), false, `${label}: never echoes text`);
+  }
+
+  // A sparse list of the wrong length keeps its existing whole-list refusal.
+  assert.deepEqual(verifyCanonicalRequirements(new Array(n + 1), bundle.evidenceItems).map((e) => `${e.code}@${e.path}`), ["INVARIANT_VIOLATION@$.canonicalRequirements"]);
+
+  // A hole in the single-element evidenceRefIds array is refused as well.
+  const sparseRefIds = dense();
+  sparseRefIds[0].evidenceRefIds = new Array(1);
+  assert.deepEqual(verifyCanonicalRequirements(sparseRefIds, bundle.evidenceItems).map((e) => e.path), ["$.canonicalRequirements[0]"]);
+
+  // A hole is never satisfied through the prototype chain.
+  const inherited = dense()[1];
+  Object.defineProperty(Array.prototype, 1, { value: inherited, configurable: true, writable: true });
+  try {
+    assert.deepEqual(verifyCanonicalRequirements(holeAt(1), bundle.evidenceItems).map((e) => e.path), ["$.canonicalRequirements[1]"]);
+  } finally {
+    delete Array.prototype[1];
+  }
+  const inheritedRefId = dense();
+  inheritedRefId[0].evidenceRefIds = new Array(1);
+  Object.defineProperty(Array.prototype, 0, { value: canonicalRequirements[0].evidenceRefIds[0], configurable: true, writable: true });
+  try {
+    assert.deepEqual(verifyCanonicalRequirements(inheritedRefId, bundle.evidenceItems).map((e) => e.path), ["$.canonicalRequirements[0]"]);
+  } finally {
+    delete Array.prototype[0];
   }
 });

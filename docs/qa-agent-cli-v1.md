@@ -232,7 +232,7 @@ to one run:
 
 | Command | Consumes | Produces (in `<output.dir>/runs/<runId>/`) |
 |---|---|---|
-| `design` | `requirements.path` → canonical evidence (#22B) | `design/requirement-model.json`, `design/test-case-model.json`, `design/automation-candidate-NNNN.json` (one per test case) |
+| `design` | `requirements.path` → canonical evidence (#22B) + canonical requirement projection (boundary v3) | `design/requirement-model.json`, `design/test-case-model.json`, `design/automation-candidate-NNNN.json` (one per test case) |
 | `plan` | design artifacts; live repository context (framework config + `package.json` scripts) | `plan/automation-repository-context.json`, `plan/automation-plan-NNNN.json` (one per `AUTOMATE` candidate; none → exit 4 `NO_AUTOMATE_CANDIDATE`) |
 | `generate` | design + plan artifacts; context must still equal the live repository | `generate/generated-change-set-NNNN.json`, `generate/review-package-NNNN.json` |
 | `review show` | the whole run | stdout only |
@@ -247,6 +247,35 @@ baseline, `AI_PROVIDER`, `AI_MODEL` and `AI_API_KEY` — no `QA_FRAMEWORK`,
 invocation, GitHub or `npm_*` key. The parent never loads `config.js` or a
 provider; it validates the child's output with the existing validators before
 writing anything.
+
+**Canonical requirements (TPR G2 finding R1, since 2.0.0).** The
+RequirementModel's requirements are no longer written by the provider. Per
+[`architecture-model-boundary-v3.md`](architecture-model-boundary-v3.md),
+`design` projects each requirement's `content` and each acceptance criterion
+verbatim — exact text, no trimming or rewording — into
+`design/requirement-model.json`, in file order (content first, then criteria
+in array order), with ids `evidence-NNNN.content` / `evidence-NNNN.ac-NNNN`
+built from the canonical evidence ids (never from the requirement or
+criterion ids in the requirements file) and model id
+`requirement-model-0001`. The provider sees these requirements as data and
+returns only assumptions and open questions; a response that tries to supply,
+change or restate requirements is refused within the existing bound of two
+provider attempts. Refusals reuse existing codes:
+
+- a requirements file that projects more than 200 requirements → exit 4
+  `REQUIREMENTS_EVIDENCE_REFUSED` before any child exists (never truncated
+  or summarized);
+- a missing or misaligned projection inside the child → exit 4
+  `GENERATION_INPUT_REFUSED` before any provider call;
+- fresh design output whose RequirementModel id, evidence references or
+  requirements differ from the projection → exit 6 `PROVIDER_OUTPUT_REFUSED`,
+  nothing written;
+- a persisted design that differs from the projection recomputed from the
+  requirements file → exit 4 `RUN_ARTIFACT_INVALID`, on every later command,
+  before any provider call.
+
+Test cases, automation candidates, plans and generated changes are produced
+as before; they now cite the canonical requirement ids.
 
 **Run-wide plan target identity (OD-265-A1, since 1.0.1).** Besides the
 per-plan checks, `plan` refuses a set of AutomationPlans in which two planned
@@ -308,7 +337,9 @@ of the whole stage. A refused `plan` command writes no plan artifact and no
 manifest update, so no accepted partial plan-stage output remains and the
 run stays at "design complete". Under `1.0.2`, runs created by `1.0.0` or
 `1.0.1` fail the existing product-version binding (`RUN_BINDING_MISMATCH`,
-exit 4).
+exit 4). Under candidate `2.0.0` (canonical requirements, above), runs
+created by `1.0.0`, `1.0.1` or `1.0.2` fail the same binding the same way;
+start a new run with `design`.
 
 **Run manifest and binding** (`manifest.json`, `QaAgentRunManifest` v1):
 run id, product name/version, `RunSemanticProjection` v1 version + SHA-256

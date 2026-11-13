@@ -176,7 +176,7 @@ test("OD-265-A1: apply refuses an approved run whose persisted plan set now coll
   assert.equal(openStage4Run(f.ctx).state.state, "APPROVED");
 });
 test("OD-265-A1: Stage 4 refuses a run bound to product 1.0.0 with RUN_BINDING_MISMATCH before reading artifacts", async () => {
-  assert.equal(pkg.version, "1.0.2");
+  assert.equal(pkg.version, "2.0.0");
   const f = collidingRun({ version: "1.0.0" });
   fs.writeFileSync(path.join(f.runDirReal, "plan", "automation-plan-0001.json"), "{ not json");
   await assert.rejects(runReviewRecord(f.ctx), { code: "RUN_BINDING_MISMATCH", exitCode: 4 });
@@ -185,7 +185,7 @@ test("OD-265-A1: Stage 4 refuses a run bound to product 1.0.0 with RUN_BINDING_M
   assert.equal(fs.existsSync(path.join(f.root, s3.GENERATED_SPEC)), false);
 });
 test("OD-265-B1: Stage 4 refuses a run bound to product 1.0.1 with RUN_BINDING_MISMATCH before reading artifacts", async () => {
-  assert.equal(pkg.version, "1.0.2");
+  assert.equal(pkg.version, "2.0.0");
   const f = collidingRun({ version: "1.0.1" });
   fs.writeFileSync(path.join(f.runDirReal, "plan", "automation-plan-0001.json"), "{ not json");
   await assert.rejects(runReviewRecord(f.ctx), { code: "RUN_BINDING_MISMATCH", exitCode: 4 });

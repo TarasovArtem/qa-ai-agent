@@ -1,24 +1,38 @@
 /**
- * Provider-backed RequirementModel generation (Roadmap #22C).
+ * Provider-backed RequirementModel generation (Roadmap #22C; TPR G2 finding
+ * R1, docs/architecture-model-boundary-v3.md).
  *
- * accepted #22B evidence bundle
- *   -> single-read snapshot into a fresh #22C-owned plain-data tree
+ * accepted #22B evidence bundle + canonical requirement projection
+ *   -> single-read snapshot of both into fresh #22C-owned plain-data trees
  *   -> independently re-validated bundle/canonical-evidence trust boundary
+ *   -> canonical requirements proven to be exactly the projection of that
+ *      bundle (evidence-ingestion.js verifyCanonicalRequirements)
  *   -> bounded provider prompt (test-design-prompt.js)
- *   -> provider response
- *   -> strict JSON parsing
- *   -> frozen RequirementModel v1 validation
- *   -> canonical provenance verification
+ *   -> provider response: ONLY {assumptions, openQuestions}
+ *   -> strict JSON parsing + closed-shape gap-analysis validation
+ *   -> deterministic assembly: schemaVersion/kind/REQUIREMENT_MODEL_ID/
+ *      projectId/canonical evidenceRefs/canonical requirements + the
+ *      provider's assumptions/openQuestions
+ *   -> frozen RequirementModel v1 validation + canonical provenance
  *   -> accepted RequirementModel v1.
  *
+ * THE MODEL DOES NOT OWN REQUIREMENT WORDING (boundary v3). Requirement ids
+ * and text come only from the deterministic projection; a provider response
+ * carrying `requirements`, `evidenceRefs` or any other RequirementModel field
+ * is rejected (UNKNOWN_FIELD), never merged, and there is no fallback to
+ * provider-authored requirements: a missing or misaligned projection fails
+ * closed before any provider call.
+ *
  * THE MODEL DOES NOT OWN PROVENANCE. Roadmap #22B's deterministic ingestion
- * (evidence-ingestion.js) is the only owner of canonical EvidenceRefs. This
- * module treats a provider response as a low-trust generation of
- * requirement *content* only: every EvidenceRef the provider echoes back is
- * verified by EXACT field equality against a per-invocation canonical
- * registry built from the input bundle, never merely by id membership -
- * see checkCanonicalProvenance() below. A provider can therefore reference
- * canonical evidence, but can never invent it, alter it, or add to it.
+ * (evidence-ingestion.js) is the only owner of canonical EvidenceRefs. Since
+ * boundary v3 the provider returns no EvidenceRef at all: the model's
+ * `evidenceRefs` is assembled by this module as the full canonical registry
+ * in bundle order, and a provider response carrying `evidenceRefs` is
+ * refused (UNKNOWN_FIELD). The assembled registry is still verified by EXACT
+ * field equality against a per-invocation canonical registry built from the
+ * input bundle, never merely by id membership - see
+ * checkCanonicalProvenance() below - as defense in depth. A provider can
+ * therefore never invent, alter, select or add to canonical evidence.
  *
  * This module also does NOT trust that an object shaped like #22B's output
  * actually came from evidence-ingestion.js in-process (Roadmap #22B review
@@ -30,9 +44,10 @@
  * validated and what was actually canonicalized/prompted). Every
  * caller-owned property this module reads - evidenceBundle.projectId,
  * evidenceBundle.evidenceItems, each item's evidenceRef/text, each ref's
- * id/kind/sourceId - is read EXACTLY ONCE, up front, into a fresh, frozen,
+ * id/kind/sourceId - is read EXACTLY ONCE, up front, into a fresh,
  * #22C-owned snapshot (see snapshotEvidenceBundle() below) before any
- * validation runs at all. Validation, canonical-registry construction,
+ * validation runs at all; the snapshot is frozen as soon as it validates
+ * (never before - a refused one may still hold caller-owned values). Validation, canonical-registry construction,
  * prompt construction, and model-project binding all consume that one
  * snapshot exclusively; evidenceBundle itself is never read again past that
  * point. What is validated is therefore always exactly what is prompted and
@@ -49,12 +64,30 @@
 "use strict";
 
 const { ERROR_CODES, err } = require("../generation/errors");
-const { isPlainObject, isBoundedText, collectUnknownKeyErrors, validateProjectId, validateEvidenceRef } = require("../generation/primitives");
-const { validateRequirementModel } = require("../generation/requirement-model");
+const { LIMITS: GENERATION_LIMITS } = require("../generation/limits");
+const {
+  SCHEMA_VERSION,
+  isPlainObject,
+  isBoundedText,
+  collectUnknownKeyErrors,
+  collectDuplicateIdErrors,
+  validateProjectId,
+  validateEvidenceRef,
+  validateAssumption,
+  validateOpenQuestion,
+} = require("../generation/primitives");
+const { KIND, validateRequirementModel } = require("../generation/requirement-model");
 const { validateProvider, validateProviderResponse } = require("../providers/provider-contract");
 const { normalizeProviderError, PROVIDER_ERROR_CODES } = require("../providers/provider-error");
-const { LIMITS: EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT } = require("./evidence-ingestion");
+const { LIMITS: EVIDENCE_LIMITS, EVIDENCE_KIND_USER_INPUT, verifyCanonicalRequirements } = require("./evidence-ingestion");
 const { buildRequirementModelSystemPrompt, buildRequirementModelUserPrompt } = require("./test-design-prompt");
+
+// TPR G2 finding R1 (boundary v3): the RequirementModel id is fixed, never
+// provider-chosen. One design run produces exactly one RequirementModel.
+const REQUIREMENT_MODEL_ID = "requirement-model-0001";
+
+// The provider's only output (boundary v3): a closed two-key object.
+const GAP_ANALYSIS_ALLOWED_KEYS = Object.freeze(["assumptions", "openQuestions"]);
 
 // Roadmap #22C: initial attempt + at most one bounded correction retry -
 // never unbounded, never recursive. A caller-supplied maxAttempts is only
@@ -64,10 +97,11 @@ const MAX_PROVIDER_ATTEMPTS = 2;
 
 // A well-formed generation call is grounded in at most
 // EVIDENCE_LIMITS.MAX_AGGREGATE_TEXT_LENGTH (20000) chars of #22B-owned
-// source text; even a maximal RequirementModel built from that much
-// material (bounded ids/kind/sourceId echoes plus provider-authored
-// requirement/assumption/openQuestion text) has no legitimate need for
-// anywhere near scripts/ai/generation/limits.js's theoretical v1 ceiling.
+// source text; since boundary v3 the response carries only provider-authored
+// assumption/openQuestion entries (no requirement text, no EvidenceRef
+// echoes), which has no legitimate need for anywhere near
+// scripts/ai/generation/limits.js's theoretical v1 ceiling. The bound is
+// deliberately unchanged from before v3 (never raised).
 // Chosen as a generous, bounded multiple of that input aggregate so a
 // genuine response is never rejected, while a runaway/hostile response is
 // rejected before it is ever handed to JSON.parse.
@@ -99,11 +133,40 @@ const MAX_CORRECTION_DIAGNOSTIC_CHARS = 8192;
 // all) so a non-object bundle/item can never throw here - that shape
 // mismatch is validateEvidenceBundle()'s job to report, not this
 // function's job to reject.
+//
+// TPR-R1-PR270-C3 (A-01): each key is DEFINED on the snapshot, never
+// assigned. Assigning a literal own "__proto__" key would run the inherited
+// Object.prototype.__proto__ setter instead of creating the key - dropping
+// it before unknown-field detection and, for an object value, replacing the
+// snapshot's prototype.
+function defineOwnValue(target, key, value) {
+  Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 function snapshotOwnProperties(value) {
   if (!isPlainObject(value)) return value;
   const snapshot = {};
   for (const key of Object.keys(value)) {
-    snapshot[key] = value[key];
+    defineOwnValue(snapshot, key, value[key]);
+  }
+  return snapshot;
+}
+
+// TPR-R1-PR270-C3 (A-01): copies a caller-supplied array into a fresh,
+// ordinary array of the same length, index by index, keeping exactly the
+// OWN indices. A hole stays a hole and an index that is only reachable
+// through the prototype chain stays a hole, so downstream own-element checks
+// see the caller's real structure. No method is looked up on `source` (its
+// own or inherited map/forEach/... are never called); each own element is
+// read exactly once.
+function snapshotOwnElements(source, snapshotElement) {
+  const length = source.length;
+  const snapshot = [];
+  snapshot.length = length;
+  for (let i = 0; i < length; i += 1) {
+    if (Object.prototype.hasOwnProperty.call(source, i)) {
+      defineOwnValue(snapshot, i, snapshotElement(source[i]));
+    }
   }
   return snapshot;
 }
@@ -117,12 +180,17 @@ function snapshotOwnProperties(value) {
 // the returned snapshot. isPlainObject()/Array.isArray() here only ever
 // gate whether to recurse further - a malformed shape is captured as-is
 // and left for validateEvidenceBundle() to report structurally.
+//
+// TPR-R1-PR270-C4 (C4-02): evidenceItems is copied structurally with
+// snapshotOwnElements(), never through the caller array's own/inherited
+// map(). A hole or an inherited-only index stays a hole in the snapshot for
+// validateEvidenceBundle() to refuse, instead of being skipped or filled in.
 function snapshotEvidenceBundle(evidenceBundle) {
   const bundleSnapshot = snapshotOwnProperties(evidenceBundle);
   if (!isPlainObject(bundleSnapshot) || !Array.isArray(bundleSnapshot.evidenceItems)) {
     return bundleSnapshot;
   }
-  bundleSnapshot.evidenceItems = bundleSnapshot.evidenceItems.map((rawItem) => {
+  bundleSnapshot.evidenceItems = snapshotOwnElements(bundleSnapshot.evidenceItems, (rawItem) => {
     const itemSnapshot = snapshotOwnProperties(rawItem);
     if (isPlainObject(itemSnapshot) && isPlainObject(itemSnapshot.evidenceRef)) {
       itemSnapshot.evidenceRef = snapshotOwnProperties(itemSnapshot.evidenceRef);
@@ -130,6 +198,25 @@ function snapshotEvidenceBundle(evidenceBundle) {
     return itemSnapshot;
   });
   return bundleSnapshot;
+}
+
+// TPR G2 finding R1: the caller-supplied canonical requirement list gets the
+// same single-read discipline as the bundle - every own enumerable key of
+// every entry, and every evidenceRefIds element, is read exactly once into a
+// fresh plain-data tree before verification; nothing reads the caller's list
+// again. Non-array/non-object shapes are captured untouched for
+// verifyCanonicalRequirements() to refuse. TPR-R1-PR270-C3 (A-01): the copy
+// is structural (snapshotOwnElements()/snapshotOwnProperties()) - holes,
+// inherited indices and own unknown keys are neither filled in nor dropped.
+function snapshotCanonicalRequirements(canonicalRequirements) {
+  if (!Array.isArray(canonicalRequirements)) return canonicalRequirements;
+  return snapshotOwnElements(canonicalRequirements, (rawRequirement) => {
+    const requirementSnapshot = snapshotOwnProperties(rawRequirement);
+    if (requirementSnapshot !== rawRequirement && Array.isArray(requirementSnapshot.evidenceRefIds)) {
+      requirementSnapshot.evidenceRefIds = snapshotOwnElements(requirementSnapshot.evidenceRefIds, (id) => id);
+    }
+    return requirementSnapshot;
+  });
 }
 
 // Deep-freezes a plain-data tree (the only shapes this module ever
@@ -215,13 +302,20 @@ function validateEvidenceBundle(bundle, { expectedProjectId } = {}) {
   } else if (items.length > EVIDENCE_LIMITS.MAX_SOURCES) {
     errors.push(err("$.evidenceItems", ERROR_CODES.INVALID_VALUE, `$.evidenceItems exceeds the maximum of ${EVIDENCE_LIMITS.MAX_SOURCES}`));
   } else {
-    items.forEach((item, i) => {
+    // TPR-R1-PR270-C4 (C4-02): every position 0..length-1 is checked by
+    // index, never through forEach() (which skips holes and is looked up on
+    // the array). A position with no OWN element - a hole, or an index only
+    // reachable through the prototype chain - is refused like any other
+    // non-object element, so a sparse array can never reach canonical
+    // registry construction.
+    for (let i = 0; i < items.length; i += 1) {
       const path = `$.evidenceItems[${i}]`;
+      const item = Object.prototype.hasOwnProperty.call(items, i) ? items[i] : undefined;
 
       if (!isPlainObject(item)) {
         errors.push(err(path, ERROR_CODES.INVALID_TYPE, `${path} must be an object`));
         allItemsWellFormed = false;
-        return;
+        continue;
       }
       collectUnknownKeyErrors(item, EVIDENCE_ITEM_ALLOWED_KEYS, path, errors);
 
@@ -265,7 +359,7 @@ function validateEvidenceBundle(bundle, { expectedProjectId } = {}) {
       } else {
         aggregateLength += item.text.length;
       }
-    });
+    }
 
     // Same "only meaningful once every item is itself well-formed"
     // convention evidence-ingestion.js uses for its own aggregate check -
@@ -304,14 +398,21 @@ function isExactCanonicalMatch(providerRef, canonicalRef) {
   return canonicalKeys.every((key) => providerRef[key] === canonicalRef[key]);
 }
 
-// CRITICAL post-provider gate (Roadmap #22C Phase 18-20): every EvidenceRef
-// the model's own RequirementModel.evidenceRefs carries must both (a) exist
-// in the per-bundle canonical registry by id, and (b) match that canonical
-// entry by EXACT field equality - id, kind, sourceId presence/value alike.
-// A known id with an altered kind/sourceId, an added field (e.g.
-// "location"), or a missing sourceId all fail (b); an id the registry never
-// issued fails (a). The model MAY reference a strict subset of the
-// registry - full coverage is never required (Roadmap #22C Phase 21).
+// CRITICAL provenance gate (Roadmap #22C Phase 18-20): every EvidenceRef a
+// RequirementModel.evidenceRefs carries must both (a) exist in the
+// per-bundle canonical registry by id, and (b) match that canonical entry by
+// EXACT field equality - id, kind, sourceId presence/value alike. A known id
+// with an altered kind/sourceId, an added field (e.g. "location"), or a
+// missing sourceId all fail (b); an id the registry never issued fails (a).
+//
+// This function is a membership + exact-match check only: on its own it
+// accepts a strict subset of the registry (Roadmap #22C Phase 21) and does
+// not require full coverage. Since boundary v3 the subset case no longer
+// arises from generation - this module assembles the full registry itself
+// and the provider supplies no EvidenceRef - and full-registry equality of
+// fresh and persisted designs is enforced separately by the CLI
+// (scripts/ai/cli/run-artifacts.js validateDesign), which also calls this
+// function on models read from disk.
 function checkCanonicalProvenance(modelEvidenceRefs, registry) {
   const errors = [];
   modelEvidenceRefs.forEach((ref, i) => {
@@ -326,6 +427,59 @@ function checkCanonicalProvenance(modelEvidenceRefs, registry) {
     }
   });
   return errors;
+}
+
+// --- provider output: gap analysis only (TPR G2 finding R1, boundary v3) ----
+//
+// The provider's response must be exactly {assumptions, openQuestions}; each
+// entry is checked with the frozen v1 primitives (read-only reuse) and the
+// same per-array bounds/duplicate-id rules RequirementModel v1 applies. Any
+// other key - `requirements`, `evidenceRefs`, `schemaVersion`, `id`, ... - is
+// UNKNOWN_FIELD: the provider cannot override, extend or restate canonical
+// requirements.
+function validateGapAnalysis(value) {
+  if (!isPlainObject(value)) {
+    return [err("$", ERROR_CODES.INVALID_TYPE, "provider response must be a JSON object with exactly assumptions and openQuestions")];
+  }
+  const errors = [];
+  collectUnknownKeyErrors(value, GAP_ANALYSIS_ALLOWED_KEYS, "$", errors);
+
+  if (!Array.isArray(value.assumptions)) {
+    errors.push(err("$.assumptions", ERROR_CODES.MISSING_FIELD, "$.assumptions must be an array (use an empty array when there are none)"));
+  } else if (value.assumptions.length > GENERATION_LIMITS.MAX_ASSUMPTIONS) {
+    errors.push(err("$.assumptions", ERROR_CODES.INVALID_VALUE, `$.assumptions exceeds the maximum of ${GENERATION_LIMITS.MAX_ASSUMPTIONS}`));
+  } else {
+    value.assumptions.forEach((a, i) => validateAssumption(a, `$.assumptions[${i}]`, errors));
+    collectDuplicateIdErrors(value.assumptions, "id", "$.assumptions", errors);
+  }
+
+  if (!Array.isArray(value.openQuestions)) {
+    errors.push(err("$.openQuestions", ERROR_CODES.MISSING_FIELD, "$.openQuestions must be an array (use an empty array when there are none)"));
+  } else if (value.openQuestions.length > GENERATION_LIMITS.MAX_OPEN_QUESTIONS) {
+    errors.push(err("$.openQuestions", ERROR_CODES.INVALID_VALUE, `$.openQuestions exceeds the maximum of ${GENERATION_LIMITS.MAX_OPEN_QUESTIONS}`));
+  } else {
+    value.openQuestions.forEach((q, i) => validateOpenQuestion(q, `$.openQuestions[${i}]`, errors));
+    collectDuplicateIdErrors(value.openQuestions, "id", "$.openQuestions", errors);
+  }
+  return errors;
+}
+
+// Deterministic RequirementModel assembly (boundary v3): everything except
+// assumptions/openQuestions is fixed by the canonical inputs. evidenceRefs is
+// the full canonical registry in bundle order - every evidence item yields at
+// least one canonical requirement, so every reference is cited. Fresh copies
+// only; nothing the caller or provider owns is aliased into the result.
+function assembleRequirementModel({ projectId, canonicalEvidence, canonicalRequirements, gapAnalysis }) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    kind: KIND,
+    id: REQUIREMENT_MODEL_ID,
+    projectId,
+    evidenceRefs: canonicalEvidence.map((item) => ({ id: item.evidenceRef.id, kind: item.evidenceRef.kind, sourceId: item.evidenceRef.sourceId })),
+    requirements: canonicalRequirements.map((r) => ({ id: r.id, text: r.text, evidenceRefIds: [...r.evidenceRefIds] })),
+    assumptions: gapAnalysis.assumptions.map((a) => ({ id: a.id, text: a.text, rationale: a.rationale })),
+    openQuestions: gapAnalysis.openQuestions.map((q) => ({ id: q.id, type: q.type, description: q.description, reason: q.reason })),
+  };
 }
 
 // --- provider error privacy (Roadmap #22C Phase 29) -------------------------
@@ -359,7 +513,16 @@ function resolveMaxAttempts(maxAttempts) {
 
 /**
  * Generates a grounded RequirementModel v1 from an accepted #22B evidence
- * bundle via a dependency-injected provider.
+ * bundle and its canonical requirement projection (boundary v3) via a
+ * dependency-injected provider that contributes only assumptions and open
+ * questions.
+ *
+ * `canonicalRequirements` is REQUIRED: the exact `canonicalRequirements`
+ * list ingestRequirementArtifactsAsEvidence() returned with that bundle. It
+ * is re-proven against the bundle's own evidence text before any provider
+ * call; a missing, reordered, reworded, re-identified or otherwise
+ * misaligned list fails closed (providerAttempts 0) - there is no fallback
+ * to provider-authored requirements.
  *
  * Returns `{ ok: true, requirementModel, providerAttempts }` or
  * `{ ok: false, errors, providerAttempts }` - `errors` is always the
@@ -368,9 +531,10 @@ function resolveMaxAttempts(maxAttempts) {
  * never a raw provider response, rejected value, or stack trace.
  * `providerAttempts` is 0 whenever a local, deterministic pre-provider gate
  * failed (invalid provider object, invalid evidence bundle, invalid
- * canonical EvidenceRef) - those never consume a provider call.
+ * canonical EvidenceRef, missing/misaligned canonical requirements) - those
+ * never consume a provider call.
  */
-async function generateRequirementModel({ evidenceBundle, provider, maxAttempts, expectedProjectId } = {}) {
+async function generateRequirementModel({ evidenceBundle, canonicalRequirements, provider, maxAttempts, expectedProjectId } = {}) {
   try {
     validateProvider(provider);
   } catch (rawErr) {
@@ -378,20 +542,31 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
   }
 
   // Roadmap #22C-C1: the entire caller-controlled bundle is read exactly
-  // once, right here, into a fresh #22C-owned plain-data snapshot, then
-  // frozen. evidenceBundle is never read again below this line - every
+  // once, right here, into a fresh #22C-owned plain-data snapshot.
+  // evidenceBundle is never read again below this line - every
   // subsequent step (validation, canonical registry, prompt construction,
   // model-project binding) consumes only `snapshot`. See
   // snapshotEvidenceBundle()'s own comment for why this closes the #22C-R
   // review's BUNDLE_SNAPSHOT_BOUNDARY finding for projectId, evidenceItems,
   // and per-item text alike (EvidenceRef id/kind/sourceId were already
   // single-read-safe before this change; that discipline is preserved).
-  const snapshot = deepFreeze(snapshotEvidenceBundle(evidenceBundle));
+  //
+  // TPR-R1-PR270-C4 (C4-01): the snapshot is frozen only AFTER it validates.
+  // A refused snapshot can still hold caller-owned values (an object under an
+  // unknown key, a non-string text/id, an array where an object belongs), and
+  // freezing those would mutate the caller's input. A validated one cannot:
+  // every key at every level is allowlisted, every container is one this
+  // module created in snapshotEvidenceBundle(), and every leaf is a string.
+  // Nothing but this function holds a reference to the snapshot, and no
+  // await separates the copy, the validation and the freeze, so the
+  // single-read guarantee is unchanged.
+  const snapshot = snapshotEvidenceBundle(evidenceBundle);
 
   const bundleErrors = validateEvidenceBundle(snapshot, { expectedProjectId });
   if (bundleErrors.length > 0) {
     return { ok: false, errors: boundGenerationErrors(bundleErrors), providerAttempts: 0 };
   }
+  deepFreeze(snapshot);
 
   const canonicalEvidence = toCanonicalEvidence(snapshot.evidenceItems);
 
@@ -417,6 +592,35 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
   const registry = new Map(canonicalEvidence.map((item) => [item.evidenceRef.id, item.evidenceRef]));
 
   const projectId = snapshot.projectId;
+
+  // TPR G2 finding R1 (boundary v3), MANDATORY before any provider call: the
+  // canonical requirement list is read once, then proven to be exactly the
+  // projection of the very evidence snapshot the prompt and the model are
+  // built from, and the deterministic part of the model is validated against
+  // the frozen v1 RequirementModel validator and canonical provenance with
+  // no provider content in it at all.
+  //
+  // TPR-R1-PR270-C3 (A-01): the snapshot is frozen only AFTER it is proven
+  // exact. A refused snapshot can still hold caller-owned values (a non-array
+  // list, a non-plain entry, a nested object under an unknown key), and
+  // freezing those would mutate the caller's input; an exact one is, by the
+  // proof itself, nothing but this module's own fresh arrays/objects and
+  // strings.
+  const requirementsSnapshot = snapshotCanonicalRequirements(canonicalRequirements);
+  const projectionErrors = verifyCanonicalRequirements(requirementsSnapshot, snapshot.evidenceItems);
+  if (projectionErrors.length > 0) {
+    return { ok: false, errors: boundGenerationErrors(projectionErrors), providerAttempts: 0 };
+  }
+  deepFreeze(requirementsSnapshot);
+  const deterministicModel = assembleRequirementModel({ projectId, canonicalEvidence, canonicalRequirements: requirementsSnapshot, gapAnalysis: { assumptions: [], openQuestions: [] } });
+  const deterministicErrors = [
+    ...(validateRequirementModel(deterministicModel, { expectedProjectId: projectId }).errors || []),
+    ...checkCanonicalProvenance(deterministicModel.evidenceRefs, registry),
+  ];
+  if (deterministicErrors.length > 0) {
+    return { ok: false, errors: boundGenerationErrors(deterministicErrors), providerAttempts: 0 };
+  }
+
   const systemPrompt = buildRequirementModelSystemPrompt();
   const attempts = resolveMaxAttempts(maxAttempts);
 
@@ -426,7 +630,7 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     providerAttempts = attempt;
-    const userPrompt = buildRequirementModelUserPrompt({ projectId, canonicalEvidence }, { correctionErrors });
+    const userPrompt = buildRequirementModelUserPrompt({ projectId, canonicalEvidence, canonicalRequirements: requirementsSnapshot }, { correctionErrors });
 
     let response;
     try {
@@ -465,26 +669,32 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
       continue;
     }
 
-    const modelResult = validateRequirementModel(parsed, { expectedProjectId: projectId });
-    if (!modelResult.ok) {
+    const gapErrors = validateGapAnalysis(parsed);
+    if (gapErrors.length > 0) {
       // Roadmap #22C-C1: bounded here, not forwarded wholesale - see
       // boundGenerationErrors()'s own comment. Applies to both the
       // correction prompt (below) and a terminal failure result.
-      lastErrors = boundGenerationErrors(modelResult.errors);
+      lastErrors = boundGenerationErrors(gapErrors);
       correctionErrors = lastErrors;
       if (attempt === attempts) return { ok: false, errors: lastErrors, providerAttempts };
       continue;
     }
 
-    const provenanceErrors = checkCanonicalProvenance(parsed.evidenceRefs, registry);
-    if (provenanceErrors.length > 0) {
-      lastErrors = boundGenerationErrors(provenanceErrors);
-      correctionErrors = lastErrors;
-      if (attempt === attempts) return { ok: false, errors: lastErrors, providerAttempts };
-      continue;
+    // Defense in depth: the assembled model is re-validated in full against
+    // the frozen v1 validator and canonical provenance. Its deterministic
+    // part already passed above and its provider part passed the same
+    // primitives, so a failure here is a defect, never something a retry
+    // could correct - it ends the call without another attempt.
+    const requirementModel = assembleRequirementModel({ projectId, canonicalEvidence, canonicalRequirements: requirementsSnapshot, gapAnalysis: parsed });
+    const assembledErrors = [
+      ...(validateRequirementModel(requirementModel, { expectedProjectId: projectId }).errors || []),
+      ...checkCanonicalProvenance(requirementModel.evidenceRefs, registry),
+    ];
+    if (assembledErrors.length > 0) {
+      return { ok: false, errors: boundGenerationErrors(assembledErrors), providerAttempts };
     }
 
-    return { ok: true, requirementModel: deepFreeze(parsed), providerAttempts };
+    return { ok: true, requirementModel: deepFreeze(requirementModel), providerAttempts };
   }
 
   return { ok: false, errors: lastErrors, providerAttempts };
@@ -493,9 +703,12 @@ async function generateRequirementModel({ evidenceBundle, provider, maxAttempts,
 module.exports = {
   generateRequirementModel,
   validateEvidenceBundle,
+  validateGapAnalysis,
   checkCanonicalProvenance,
   snapshotEvidenceBundle,
+  snapshotCanonicalRequirements,
   boundGenerationErrors,
+  REQUIREMENT_MODEL_ID,
   MAX_PROVIDER_ATTEMPTS,
   MAX_REQUIREMENT_MODEL_RESPONSE_CHARS,
   MAX_CORRECTION_ERRORS,

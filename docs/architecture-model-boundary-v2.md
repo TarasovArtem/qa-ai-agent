@@ -3,7 +3,9 @@
 CRW2-ACG-A3, addressing Architecture Conformance Gate finding A-3; path
 transition ACG-D2, addressing finding D-2.
 
-Status: **CURRENT**.
+Status: **SUPERSEDED**.
+
+Superseded by: [`architecture-model-boundary-v3.md`](architecture-model-boundary-v3.md) (TPR-G2-R1).
 
 Supersedes: [`architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md).
 

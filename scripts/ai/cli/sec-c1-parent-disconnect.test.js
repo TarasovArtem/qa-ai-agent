@@ -56,7 +56,16 @@ const { GeminiProvider } = require("../providers/gemini-provider");
 const { ProviderError, PROVIDER_ERROR_CODES } = require("../providers/provider-error");
 const { runProviderAnalysis, summarizeProviderError } = require("../analyze-failure");
 const { generateRequirementModel } = require("../generative-test-design/requirement-model-generator");
-const { ingestRequirementEvidence } = require("../generative-test-design/evidence-ingestion");
+const { ingestRequirementArtifactsAsEvidence } = require("../generative-test-design/evidence-ingestion");
+
+// TPR-G2-R1 (architecture-model-boundary-v3): the RequirementModel generator
+// needs an artifact-derived bundle plus its canonical requirement projection
+// to reach a provider call; a direct-text bundle is refused before any call.
+function ingestOneRequirement(content) {
+  const ingested = ingestRequirementArtifactsAsEvidence({ projectId: PROFILE.id, artifacts: [{ id: "REQ-1", type: "requirement", title: "Requirement", content, source: { type: "inline" } }] });
+  assert.equal(ingested.ok, true);
+  return ingested;
+}
 const { buildFailureReferences } = require("../triage-boundary-contract");
 const stageRunner = require("./stage-runner");
 const generativeRunner = require("./generative-runner");
@@ -131,14 +140,13 @@ function triageCase(t) {
 // the real requirement-model generator reaches the provider call.
 function generativeCase(t) {
   const dir = scratchDir(t);
-  const ingested = ingestRequirementEvidence({ projectId: PROFILE.id, sources: [{ text: "Invalid credentials show an error on the login page." }] });
-  assert.equal(ingested.ok, true);
+  const ingested = ingestOneRequirement("Invalid credentials show an error on the login page.");
   return {
     dir,
     runner: "generative",
     stage: "design",
     env: { AI_PROVIDER: "gemini" },
-    payload: { evidenceBundle: ingested.bundle, projectId: PROFILE.id, projectProfile: PROFILE, frameworkCapability: null },
+    payload: { evidenceBundle: ingested.bundle, canonicalRequirements: ingested.canonicalRequirements, projectId: PROFILE.id, projectProfile: PROFILE, frameworkCapability: null },
   };
 }
 
@@ -300,8 +308,8 @@ test("T02 [regression] generator retry policy unchanged without disconnect: 2 im
       throw new ProviderError("rate", { code: PROVIDER_ERROR_CODES.RATE_LIMIT, retryable: true });
     },
   };
-  const ingested = ingestRequirementEvidence({ projectId: PROFILE.id, sources: [{ text: "A requirement." }] });
-  const r = await generateRequirementModel({ evidenceBundle: ingested.bundle, provider, expectedProjectId: PROFILE.id });
+  const ingested = ingestOneRequirement("A requirement.");
+  const r = await generateRequirementModel({ evidenceBundle: ingested.bundle, canonicalRequirements: ingested.canonicalRequirements, provider, expectedProjectId: PROFILE.id });
   assert.equal(r.ok, false);
   assert.equal(r.providerAttempts, 2);
   assert.equal(calls, 2);

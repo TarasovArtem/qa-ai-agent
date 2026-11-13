@@ -46,7 +46,8 @@ If a future GitHub Wiki is introduced, it **must not** be authoritative for arch
 
 ### Architecture and contracts
 
-- [`architecture-model-boundary-v2.md`](architecture-model-boundary-v2.md) — current versioned architecture/model-boundary documentation.
+- [`architecture-model-boundary-v3.md`](architecture-model-boundary-v3.md) — current versioned architecture/model-boundary documentation (canonical requirement projection, TPR-G2-R1).
+- [`architecture-model-boundary-v2.md`](architecture-model-boundary-v2.md) — superseded by v3; retained for historical evidence.
 - [`architecture-model-boundary-v1.md`](architecture-model-boundary-v1.md) — earlier version retained for historical evidence.
 - [`qa-generation-contracts-v1.md`](qa-generation-contracts-v1.md) — QA generation contract definitions.
 - [`package-surface-v2.md`](package-surface-v2.md) — current versioned package/public-surface documentation.
