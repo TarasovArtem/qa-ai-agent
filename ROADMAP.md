@@ -37,7 +37,38 @@ for *sequence and current gate*; README.md remains authoritative for
 
 ## 3. Certified current baseline
 
-**Current certified repository source baseline — TPR G2 R1 scope only (OD-TPR-PR270-CANONICAL-SYNC-2026-11-13; verified 2026-11-13):**
+**Current repository source baseline — TPR G1 PD-1 only (`OD-TPR-G1-PD1-PR274-MERGE`, PO-authorized; verified 2026-11-14):**
+
+```text
+  main / PR #274 merge: f8050c3dca41fa5f39ed1e2398e52f61bc5f6670
+  TREE:                370cf219d14121df78ece40a3756923d1b761f8a
+  previous main:       460d25cc864ad41577727c00aa60009e3fcb4b24
+  reviewed PR HEAD:    821f6a2216c57cc5e528bfdccafa56fbca05cf18
+  merge topology:      STANDARD_TWO_PARENT (previous main, reviewed PR HEAD)
+  technical review:    Codex exact-HEAD APPROVED, 0 confirmed findings;
+                       16/16 focused PD-1 tests PASS on exact HEAD
+                       (scoped technical review; NOT formal Security certification)
+  exact-HEAD PR CI:    Cypress E2E Tests #43598683655 — SUCCESS 7/7
+                       Supply-Chain Audit #43598683609 — SUCCESS
+                       Dependency Review #43598683619 — SUCCESS
+                       9/9 required checks SUCCESS
+  fresh merge push CI: Cypress E2E Tests #43599799032 — SUCCESS 7/7,
+                       push event, attempt 1, exact merge SHA
+                       Supply-Chain Audit #43599799045 — SUCCESS 1/1,
+                       push event, attempt 1, exact merge SHA
+  candidate product:   qa-ai-agent@2.0.1 (NOT published / NOT released)
+  scope result:        TPR G1 PD-1 Gemini output-token control
+                       COMPLETE_ON_MAIN / POST-MERGE CERTIFIED
+  non-claims:          token usage validation is retrospective, not a hard
+                       monetary cap or verified live-provider enforcement;
+                       G1 remains PARTIAL; no new external G2 PASS;
+                       TPR Issue #199 OPEN / NO-GO / NOT RELEASED;
+                       qa-agent execute DISABLED; WIP = 1 (TPR only)
+```
+
+[PD-1 source PR #274](https://github.com/TarasovArtem/qa-ai-agent/pull/274) and exact-merge [Cypress CI #43599799032](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/43599799032) / [Supply-Chain Audit #43599799045](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/43599799045) certify **only the PD-1 source corrective**, not G1 operational qualification, G2/G3/G4/G5 acceptance, security-finding closure, external demo re-pin, credential rotation, or any release. Existing TPR G2 R1 source-fidelity certification remains valid as historical scope evidence; the candidate product version is now 2.0.1. No live Gemini invocation or operational execution is authorized by this documentary sync.
+
+**Prior certified repository source baseline — TPR G2 R1 scope only (historical product version 2.0.0; OD-TPR-PR270-CANONICAL-SYNC-2026-11-13):**
 
 ```text
   main / PR #270 merge: b2c5df0b6a8107a23713b9e1e541d7afca0f942b
@@ -191,6 +222,24 @@ the historical commit the RTI Integrated Audit's targeted re-verification
 and README's own RTI section for the full RTI evidence chain.
 
 ### Current PO-approved delivery priority — Technical Preview before Controlled R1
+
+> **Current TPR G1 PD-1 update (2026-11-14):** Gemini output-token
+> control in product `2.0.1` is **COMPLETE_ON_MAIN / POST-MERGE
+> CERTIFIED for the PD-1 source corrective only**, via
+> [PR #274](https://github.com/TarasovArtem/qa-ai-agent/pull/274),
+> exact merge `f8050c3dca41fa5f39ed1e2398e52f61bc5f6670`, and
+> fresh automatic exact-merge `push` CI
+> [#43599799032](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/43599799032)
+> (Cypress 7/7 PASS) and
+> [#43599799045](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/43599799045)
+> (Supply-Chain 1/1 PASS). The preceding G2 R1 source-fidelity
+> `2.0.0` certification remains valid **historical** scope evidence;
+> it is not the current product baseline. **G1 operational qualification
+> remains PARTIAL; TPR Issue #199 OPEN / NO-GO / NOT RELEASED;
+> `qa-agent execute` DISABLED; WIP = 1.** This sync does not authorize
+> demo repin, provider calls, operational G1/G2, security-finding
+> waiver/closure, TPR acceptance or release. The older G2 R1 and
+> 2026-11-05 NO-GO notes below remain historical evidence.
 
 This delivery overlay supersedes the older Stage-5-before-demo order in §7/§8/§15
 **for the bounded Technical Preview only** (OD-R1-RECOVERY-1, PO decision
