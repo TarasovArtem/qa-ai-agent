@@ -14,8 +14,25 @@ function fakeResponse({ status = 200, body }) {
   return new Response(body === undefined ? null : JSON.stringify(body), { status });
 }
 
-function generateContentBody(text) {
-  return { candidates: [{ content: { parts: [{ text }] } }] };
+// TPR-G1-PD1: a normally finished response carries finishReason "STOP" and
+// valid usageMetadata (output 100 + 20 thought tokens, well under the cap).
+const OK_USAGE = Object.freeze({ promptTokenCount: 50, candidatesTokenCount: 100, thoughtsTokenCount: 20, totalTokenCount: 170 });
+
+// An option passed explicitly as `undefined` means "omit the field" - it must
+// never fall back to the normal value, or a missing-field test would pass
+// for the wrong reason.
+function partsBody(parts, options = {}) {
+  const finishReason = Object.hasOwn(options, "finishReason") ? options.finishReason : "STOP";
+  const usageMetadata = Object.hasOwn(options, "usageMetadata") ? options.usageMetadata : OK_USAGE;
+  const candidate = { content: { parts } };
+  if (finishReason !== undefined) candidate.finishReason = finishReason;
+  const body = { candidates: [candidate] };
+  if (usageMetadata !== undefined) body.usageMetadata = usageMetadata;
+  return body;
+}
+
+function generateContentBody(text, options) {
+  return partsBody([{ text }], options);
 }
 
 function provider(overrides = {}) {
@@ -77,7 +94,7 @@ test("GeminiProvider.analyze: concatenates multiple text parts deterministically
   const p = provider({
     fetchImpl: async () =>
       fakeResponse({
-        body: { candidates: [{ content: { parts: [{ text: "hello " }, { text: "world" }] } }] },
+        body: partsBody([{ text: "hello " }, { text: "world" }]),
       }),
   });
   const result = await p.analyze({ systemPrompt: "sys", userPrompt: "user" });
@@ -88,7 +105,7 @@ test("GeminiProvider.analyze: a non-text part (e.g. a future function-call-shape
   const p = provider({
     fetchImpl: async () =>
       fakeResponse({
-        body: { candidates: [{ content: { parts: [{ functionCall: { name: "x" } }, { text: "the actual text" }] } }] },
+        body: partsBody([{ functionCall: { name: "x" } }, { text: "the actual text" }]),
       }),
   });
   const result = await p.analyze({ systemPrompt: "sys", userPrompt: "user" });
@@ -280,7 +297,7 @@ test("GeminiProvider: a candidate with missing content throws INVALID_RESPONSE, 
 });
 
 test("GeminiProvider: a candidate with empty parts throws INVALID_RESPONSE, non-retryable", async () => {
-  const p = provider({ fetchImpl: async () => fakeResponse({ body: { candidates: [{ content: { parts: [] } }] } }) });
+  const p = provider({ fetchImpl: async () => fakeResponse({ body: partsBody([]) }) });
   await assert.rejects(() => p.analyze({ systemPrompt: "sys", userPrompt: "user" }), (err) => {
     assert.equal(err.code, PROVIDER_ERROR_CODES.INVALID_RESPONSE);
     return true;
@@ -289,7 +306,7 @@ test("GeminiProvider: a candidate with empty parts throws INVALID_RESPONSE, non-
 
 test("GeminiProvider: a candidate whose parts contain no usable text (non-text parts only) throws INVALID_RESPONSE, non-retryable", async () => {
   const p = provider({
-    fetchImpl: async () => fakeResponse({ body: { candidates: [{ content: { parts: [{ functionCall: { name: "x" } }] } } ] } }),
+    fetchImpl: async () => fakeResponse({ body: partsBody([{ functionCall: { name: "x" } }]) }),
   });
   await assert.rejects(() => p.analyze({ systemPrompt: "sys", userPrompt: "user" }), (err) => {
     assert.equal(err.code, PROVIDER_ERROR_CODES.INVALID_RESPONSE);
@@ -492,6 +509,267 @@ test("GeminiProvider: a huge hostile error body is never read - the HTTP status 
 test("GeminiProvider: malformed UTF-8 in a 200 body is INVALID_RESPONSE (fail closed)", async () => {
   const p = provider({ fetchImpl: async () => new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 }) });
   await expectProviderError(p, PROVIDER_ERROR_CODES.INVALID_RESPONSE, false);
+});
+
+// --- TPR-G1-PD1: output control ------------------------------------------
+
+const { MAX_OUTPUT_TOKENS, MODEL_OUTPUT_TOKEN_LIMIT, THINKING_LEVEL } = require("./gemini-provider");
+const { runProviderAnalysis } = require("../analyze-failure");
+
+function countingProvider(body, overrides = {}) {
+  const state = { calls: 0, init: null };
+  const p = provider({
+    fetchImpl: async (url, init) => {
+      state.calls += 1;
+      state.init = init;
+      return fakeResponse({ body });
+    },
+    ...overrides,
+  });
+  return { p, state };
+}
+
+async function expectStop(body, overrides = {}) {
+  const { p, state } = countingProvider(body, overrides);
+  let caught;
+  await assert.rejects(
+    () => p.analyze({ systemPrompt: "sys", userPrompt: "user" }),
+    (err) => {
+      assert.ok(err instanceof ProviderError);
+      assert.equal(err.code, PROVIDER_ERROR_CODES.INVALID_RESPONSE);
+      assert.equal(err.retryable, false);
+      caught = err;
+      return true;
+    }
+  );
+  assert.equal(state.calls, 1);
+  return caught;
+}
+
+test("PD-1: approved limits are 8192 output tokens, a 65536 model limit and thinking level MINIMAL", () => {
+  assert.equal(MAX_OUTPUT_TOKENS, 8192);
+  assert.equal(MODEL_OUTPUT_TOKEN_LIMIT, 65536);
+  assert.equal(THINKING_LEVEL, "MINIMAL");
+});
+
+test("PD-1: every request carries exactly the approved generationConfig, with prompts and endpoint unchanged", async () => {
+  const { p, state } = countingProvider(generateContentBody("ok"));
+  await p.analyze({ systemPrompt: "SYSTEM", userPrompt: "USER" });
+  const body = JSON.parse(state.init.body);
+  assert.deepEqual(Object.keys(body), ["systemInstruction", "contents", "generationConfig"]);
+  assert.deepEqual(body.systemInstruction, { parts: [{ text: "SYSTEM" }] });
+  assert.deepEqual(body.contents, [{ role: "user", parts: [{ text: "USER" }] }]);
+  assert.deepEqual(body.generationConfig, { maxOutputTokens: 8192, thinkingConfig: { thinkingLevel: "MINIMAL" } });
+  assert.ok(!state.init.body.includes("thinkingBudget"));
+  assert.ok(!state.init.body.includes("includeThoughts"));
+});
+
+test("PD-1: a valid constructor override (1 and 65536) is the limit that is sent", async () => {
+  for (const limit of [1, 65536]) {
+    const { p, state } = countingProvider(generateContentBody("ok", { usageMetadata: { promptTokenCount: 5, totalTokenCount: 6 } }), {
+      maxOutputTokens: limit,
+    });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u" });
+    assert.equal(JSON.parse(state.init.body).generationConfig.maxOutputTokens, limit);
+  }
+});
+
+test("PD-1: an invalid maxOutputTokens is CONFIGURATION, non-retryable, before any fetch", () => {
+  for (const bad of [0, -1, 1.5, "8192", NaN, Infinity, 65537, 2 ** 53, null, true, {}]) {
+    let calls = 0;
+    assert.throws(
+      () =>
+        new GeminiProvider({
+          apiKey: "k",
+          model: "m",
+          maxOutputTokens: bad,
+          fetchImpl: async () => {
+            calls += 1;
+          },
+        }),
+      (err) => {
+        assert.ok(err instanceof ProviderError, String(bad));
+        assert.equal(err.code, PROVIDER_ERROR_CODES.CONFIGURATION);
+        assert.equal(err.retryable, false);
+        return true;
+      }
+    );
+    assert.equal(calls, 0);
+  }
+});
+
+test("PD-1: finishReason MAX_TOKENS, CONTINUATION, SAFETY or missing is a non-retryable STOP, even with valid text", async () => {
+  const maxTokens = await expectStop(generateContentBody('{"partial":', { finishReason: "MAX_TOKENS" }));
+  assert.match(maxTokens.message, /cut off at the output token limit \(maxOutputTokens 8192\)/);
+  for (const reason of ["CONTINUATION", "SAFETY"]) {
+    const err = await expectStop(generateContentBody("{}", { finishReason: reason }));
+    assert.match(err.message, new RegExp(`finishReason: ${reason}\\)`));
+  }
+  const missing = await expectStop(generateContentBody("{}", { finishReason: undefined }));
+  assert.match(missing.message, /finishReason: missing or unrecognized/);
+});
+
+test("PD-1: an unknown or non-canonical finishReason is a STOP whose message never echoes provider text", async () => {
+  for (const reason of ["stop", "SECRET-UPSTREAM-TEXT", 1, null]) {
+    const err = await expectStop(generateContentBody("{}", { finishReason: reason }));
+    assert.match(err.message, /finishReason: missing or unrecognized/);
+    assert.ok(!err.message.includes("SECRET"));
+  }
+});
+
+test("PD-1: missing or invalid usageMetadata is a non-retryable STOP", async () => {
+  const cases = [
+    undefined,
+    null,
+    [],
+    "170",
+    {},
+    { totalTokenCount: 170 },
+    { promptTokenCount: 50 },
+    { promptTokenCount: -1, totalTokenCount: 170 },
+    { promptTokenCount: 1.5, totalTokenCount: 170 },
+    { promptTokenCount: "50", totalTokenCount: 170 },
+    { promptTokenCount: 50, totalTokenCount: Number.MAX_SAFE_INTEGER + 1 },
+    { promptTokenCount: 50, totalTokenCount: 170, toolUsePromptTokenCount: -1 },
+    { promptTokenCount: 50, totalTokenCount: 170, candidatesTokenCount: "100" },
+    { promptTokenCount: 50, totalTokenCount: 170, thoughtsTokenCount: null },
+  ];
+  for (const usageMetadata of cases) {
+    const body = generateContentBody("{}");
+    if (usageMetadata === undefined) delete body.usageMetadata;
+    else body.usageMetadata = usageMetadata;
+    const err = await expectStop(body);
+    assert.match(err.message, /usage metadata/, JSON.stringify(usageMetadata));
+  }
+});
+
+test("PD-1: output exactly at the cap passes; one token over is a STOP", async () => {
+  const at = [
+    { promptTokenCount: 50, totalTokenCount: 150 },
+    { promptTokenCount: 50, toolUsePromptTokenCount: 10, totalTokenCount: 160 },
+    { promptTokenCount: 50, candidatesTokenCount: 80, thoughtsTokenCount: 20, totalTokenCount: 150 },
+  ];
+  for (const usageMetadata of at) {
+    const { p } = countingProvider(generateContentBody("ok", { usageMetadata }), { maxOutputTokens: 100 });
+    assert.equal(await p.analyze({ systemPrompt: "s", userPrompt: "u" }), "ok");
+  }
+  const over = [
+    { promptTokenCount: 50, totalTokenCount: 151 },
+    { promptTokenCount: 50, toolUsePromptTokenCount: 10, totalTokenCount: 161 },
+    // thought tokens are counted through totalTokenCount even when thoughtsTokenCount is absent
+    { promptTokenCount: 50, candidatesTokenCount: 40, totalTokenCount: 151 },
+    // the separately reported counters are checked too
+    { promptTokenCount: 50, candidatesTokenCount: 90, thoughtsTokenCount: 11, totalTokenCount: 150 },
+  ];
+  for (const usageMetadata of over) {
+    const err = await expectStop(generateContentBody("ok", { usageMetadata }), { maxOutputTokens: 100 });
+    assert.match(err.message, /more output tokens than the limit \(maxOutputTokens 100\)/);
+  }
+});
+
+test("PD-1: a negative derived output token count is a STOP", async () => {
+  for (const usageMetadata of [
+    { promptTokenCount: 50, totalTokenCount: 49 },
+    { promptTokenCount: 50, toolUsePromptTokenCount: 10, totalTokenCount: 59 },
+  ]) {
+    const err = await expectStop(generateContentBody("ok", { usageMetadata }));
+    assert.match(err.message, /negative output token count/);
+  }
+});
+
+test("PD-1: thought parts are excluded from the returned text", async () => {
+  const { p } = countingProvider(partsBody([{ text: "REASONING-TEXT", thought: true }, { text: "answer" }, { text: "MORE-REASONING", thought: true }]));
+  const result = await p.analyze({ systemPrompt: "s", userPrompt: "u" });
+  assert.equal(result, "answer");
+});
+
+test("PD-1: a response with only thought parts has no usable content - non-retryable STOP", async () => {
+  const err = await expectStop(partsBody([{ text: "REASONING-TEXT", thought: true }]));
+  assert.match(err.message, /did not include any model content/);
+  assert.ok(!err.message.includes("REASONING"));
+});
+
+test("PD-1: HTTP 400 (e.g. an unsupported thinking configuration) stays UNKNOWN, non-retryable, one call", async () => {
+  let calls = 0;
+  const p = provider({
+    fetchImpl: async () => {
+      calls += 1;
+      return fakeResponse({ status: 400, body: { error: { message: "thinking level not supported" } } });
+    },
+  });
+  await expectProviderError(p, PROVIDER_ERROR_CODES.UNKNOWN, false);
+  assert.equal(calls, 1);
+});
+
+// Triage shares GeminiProvider: its retry loop (analyze-failure.js
+// runProviderAnalysis) must stop after one call on a PD-1 rejection.
+const TRIAGE_PROFILE = Object.freeze({ id: "synthetic-project", displayName: "PD-1", knownProjectConstraints: Object.freeze(["PD1_CONSTRAINT"]) });
+const TRIAGE_CONTEXT = Object.freeze({
+  schemaVersion: 1,
+  generatedAt: "2026-10-09T00:00:00.000Z",
+  metadata: {
+    projectId: "synthetic-project",
+    framework: "cypress",
+    invocationMode: "local-v1",
+    repository: "o/r",
+    commit: "abc123",
+    branch: "main",
+    runId: null,
+    runAttempt: null,
+    localInvocationId: "0123456789abcdef0123456789abcdef",
+    event: null,
+    browser: "chrome",
+    ci: false,
+  },
+  testResults: { found: true, totals: { tests: 1, passed: 0, failed: 1, pending: 0, duration: 100 }, specs: [] },
+  failedTests: [
+    {
+      title: "fails",
+      fullTitle: "Suite fails",
+      specFile: "cypress/e2e/tests/example.cy.js",
+      suite: "Suite",
+      status: "failed",
+      duration: 10,
+      error: { message: "AssertionError: ...", stack: "AssertionError: ...\n  at ..." },
+      screenshot: null,
+    },
+  ],
+  relevantFiles: {},
+  knownProjectConstraints: [],
+  warnings: [],
+});
+
+test("PD-1 triage regression: a MAX_TOKENS or missing-usage Gemini response ends triage after one call, no backoff", async () => {
+  for (const body of [
+    generateContentBody('{"results":[', { finishReason: "MAX_TOKENS" }),
+    generateContentBody('{"results":[]}', { usageMetadata: undefined }),
+  ]) {
+    const { p, state } = countingProvider(body);
+    const delays = [];
+    await assert.rejects(
+      runProviderAnalysis(p, TRIAGE_CONTEXT, { projectProfile: TRIAGE_PROFILE, sleep: async (ms) => delays.push(ms) }),
+      /AI provider request failed \(INVALID_RESPONSE\)/
+    );
+    assert.equal(state.calls, 1, "no second paid call");
+    assert.deepEqual(delays, []);
+  }
+});
+
+test("PD-1 triage regression: a retryable Gemini failure still uses the unchanged triage retry loop", async () => {
+  let calls = 0;
+  const p = provider({
+    fetchImpl: async () => {
+      calls += 1;
+      return fakeResponse({ status: 503 });
+    },
+  });
+  const delays = [];
+  await assert.rejects(
+    runProviderAnalysis(p, TRIAGE_CONTEXT, { projectProfile: TRIAGE_PROFILE, sleep: async (ms) => delays.push(ms) }),
+    /AI provider request failed \(UNKNOWN\)/
+  );
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [500, 1500]);
 });
 
 test("GeminiProvider: an invalid-JSON body error message never echoes body content", async () => {

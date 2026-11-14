@@ -1137,13 +1137,13 @@ test("OD-265-A1 A16: earlier digest and stage-order refusals keep precedence ove
   assert.equal(show.json.errors[0].code, "RUN_STAGE_ORDER");
 });
 
-test("OD-265-A1 A17/A18: runs bound to product 1.0.0 are refused with RUN_BINDING_MISMATCH before any artifact is read (current version: 2.0.0)", async () => {
-  assert.equal(pkg.version, "2.0.0");
+test("OD-265-A1 A17/A18: runs bound to product 1.0.0 are refused with RUN_BINDING_MISMATCH before any artifact is read (current version: 2.0.1)", async () => {
+  assert.equal(pkg.version, "2.0.1");
   for (const corrupt of [false, true]) {
     const r = await persistedCollidingRun();
     const manifestFile = path.join(r.dir, "manifest.json");
     const manifest = readJson(manifestFile);
-    assert.deepEqual(manifest.product, { name: pkg.name, version: "2.0.0" });
+    assert.deepEqual(manifest.product, { name: pkg.name, version: "2.0.1" });
     manifest.product.version = "1.0.0";
     fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
     if (corrupt) fs.writeFileSync(path.join(r.dir, "plan", "automation-plan-0001.json"), "{ not json");
@@ -1496,15 +1496,15 @@ test("OD-265-B1 mandatory 1/9: an ambiguous persisted design is refused by plan 
   assert.equal(fs.existsSync(path.join(dir, "plan")), false);
 });
 
-test("OD-265-B1 mandatory 12: runs bound to product 1.0.1 are refused with RUN_BINDING_MISMATCH by the current product version (2.0.0) before any artifact is read", async () => {
-  assert.equal(pkg.version, "2.0.0");
+test("OD-265-B1 mandatory 12: runs bound to product 1.0.1 are refused with RUN_BINDING_MISMATCH by the current product version (2.0.1) before any artifact is read", async () => {
+  assert.equal(pkg.version, "2.0.1");
   const designed = fx.makeStage3Root();
   const d = await stage(["design"], designed, fx.RESPONSES.design());
   const planned = await persistedCollidingRun({ generate: false });
   for (const [root, runId, commands] of [[designed, d.json.runId, [["plan"]]], [planned.root, planned.runId, [["plan"], ["generate"]]]]) {
     const manifestFile = path.join(runDir(root, runId), "manifest.json");
     const manifest = readJson(manifestFile);
-    assert.deepEqual(manifest.product, { name: pkg.name, version: "2.0.0" });
+    assert.deepEqual(manifest.product, { name: pkg.name, version: "2.0.1" });
     manifest.product.version = "1.0.1";
     fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
     for (const command of commands) {
@@ -1854,15 +1854,15 @@ test("TPR-G2-R1: a misaligned projection reaching the child is refused there bef
   assert.equal(provider.prompts.length, 0, "no provider call");
 });
 
-test("TPR-G2-R1 mandatory 12: runs bound to product 1.0.2 (the frozen TPR identity) or 1.0.0 are refused with RUN_BINDING_MISMATCH by 2.0.0 before any artifact is read", async () => {
-  assert.equal(pkg.version, "2.0.0");
+test("TPR-G2-R1 mandatory 12: runs bound to product 1.0.2 (the frozen TPR identity) or 1.0.0 are refused with RUN_BINDING_MISMATCH by 2.0.1 before any artifact is read", async () => {
+  assert.equal(pkg.version, "2.0.1");
   for (const old of ["1.0.2", "1.0.0"]) {
     const root = fx.makeStage3Root();
     const d = await stage(["design"], root, fx.RESPONSES.design());
     const runId = d.json.runId;
     const manifestFile = path.join(runDir(root, runId), "manifest.json");
     const manifest = readJson(manifestFile);
-    assert.deepEqual(manifest.product, { name: pkg.name, version: "2.0.0" });
+    assert.deepEqual(manifest.product, { name: pkg.name, version: "2.0.1" });
     manifest.product.version = old;
     fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
     for (const command of [["plan"], ["generate"]]) {

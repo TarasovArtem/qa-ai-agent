@@ -93,12 +93,12 @@ test("CLI --version prints exactly the package version", async () => {
   assert.equal(r.stderr, "");
 });
 
-test("CLI version is 2.0.0 (TPR-G2-R1): canonical requirements bind new runs to a version distinct from 1.0.2, 1.0.1 and 1.0.0 runs", async () => {
+test("CLI version is 2.0.1 (TPR-G1-PD1): new runs bind to a version distinct from 2.0.0, 1.0.2, 1.0.1 and 1.0.0 runs", async () => {
   const lock = require("../../../package-lock.json");
-  assert.equal(pkg.version, "2.0.0");
-  assert.equal(lock.version, "2.0.0");
-  assert.equal(lock.packages[""].version, "2.0.0");
-  assert.equal((await runCli(["--version"])).stdout, "2.0.0\n");
+  assert.equal(pkg.version, "2.0.1");
+  assert.equal(lock.version, "2.0.1");
+  assert.equal(lock.packages[""].version, "2.0.1");
+  assert.equal((await runCli(["--version"])).stdout, "2.0.1\n");
 });
 
 test("CLI --help lists supported commands, marks reserved ones, and offers no --provider flag", async () => {

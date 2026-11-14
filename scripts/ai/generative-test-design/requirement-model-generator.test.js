@@ -1679,3 +1679,47 @@ test("TPR-R1-PR270-C4: a valid dense evidence bundle keeps its order, EvidenceRe
     assert.equal(Object.isFrozen(entry.evidenceRef), false, `evidenceRef ${i} not frozen`);
   });
 });
+
+// --- TPR-G1-PD1: no correction retry after a non-retryable Gemini rejection --
+//
+// The real GeminiProvider over a fake transport. A truncated JSON answer
+// that the provider itself accepts (finishReason STOP, valid usage) is a
+// validation failure and earns the ordinary correction retry; the SAME text
+// cut off at maxOutputTokens (finishReason MAX_TOKENS) is a non-retryable
+// INVALID_RESPONSE from the provider, so the generator stops after one paid
+// call.
+
+const { GeminiProvider } = require("../providers/gemini-provider");
+
+function geminiOverFakeTransport(finishReason) {
+  const transport = { calls: 0 };
+  const body = {
+    candidates: [{ finishReason, content: { parts: [{ text: '{"assumptions": [' }] } }],
+    usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 10, totalTokenCount: 60 },
+  };
+  const provider = new GeminiProvider({
+    apiKey: "test-key",
+    model: "gemini-3.5-flash-lite",
+    fetchImpl: async () => {
+      transport.calls += 1;
+      return new Response(JSON.stringify(body), { status: 200 });
+    },
+  });
+  return { provider, transport };
+}
+
+test("PD-1: a MAX_TOKENS Gemini response stops the generator after one provider call - no correction retry", async () => {
+  const { provider, transport } = geminiOverFakeTransport("MAX_TOKENS");
+  const result = await generate({ provider });
+  assert.equal(result.ok, false);
+  assert.equal(result.providerAttempts, 1);
+  assert.equal(transport.calls, 1);
+});
+
+test("PD-1 control: the same truncated text with finishReason STOP still gets the ordinary correction retry", async () => {
+  const { provider, transport } = geminiOverFakeTransport("STOP");
+  const result = await generate({ provider });
+  assert.equal(result.ok, false);
+  assert.equal(result.providerAttempts, MAX_PROVIDER_ATTEMPTS);
+  assert.equal(transport.calls, MAX_PROVIDER_ATTEMPTS);
+});
