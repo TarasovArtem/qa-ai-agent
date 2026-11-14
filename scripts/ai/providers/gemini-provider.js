@@ -32,6 +32,30 @@ const DEFAULT_TIMEOUT_MS = 30000;
 // JSON escaping per UTF-16 code unit, can be falsely rejected).
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
+// TPR-G1-PD1: output control, sent on every request. MAX_OUTPUT_TOKENS is a
+// fixed constant, NOT configuration - no environment variable exists for it,
+// so the closed stage-child environment (cli/child-env.js) is unchanged. The
+// constructor accepts an override for tests only, validated against
+// MODEL_OUTPUT_TOKEN_LIMIT (Gemini 3.5 Flash-Lite's documented output token
+// limit). THINKING_LEVEL is the documented default level for that model,
+// sent explicitly so a changed provider default cannot widen it silently.
+// thinkingBudget/includeThoughts are deliberately never sent.
+//
+// What this does NOT guarantee: Google documents maxOutputTokens as
+// including thought tokens only for its Interactions API, not for
+// generateContent. The usage check in checkUsage() below is therefore
+// retrospective - it detects an over-cap call after the provider has
+// produced (and billed) it, and stops the run there. It is not a hard
+// monetary cap.
+const MAX_OUTPUT_TOKENS = 8192;
+const MODEL_OUTPUT_TOKEN_LIMIT = 65536;
+const THINKING_LEVEL = "MINIMAL";
+
+// finishReason values named verbatim in an error message. Anything else is
+// reported as "missing or unrecognized", so no free-form provider text ever
+// reaches an error message.
+const NAMED_FINISH_REASONS = new Set(["MAX_TOKENS", "CONTINUATION", "SAFETY"]);
+
 // HTTP status -> generic ProviderError code/retryable. Deliberately no
 // Gemini-specific codes - only the shared, provider-neutral
 // PROVIDER_ERROR_CODES vocabulary analyze-failure.js already understands,
@@ -123,13 +147,80 @@ function cancelledError() {
 // function call) is simply skipped, never coerced into a string. Returns
 // null (not "") when there is no usable text at all, so the caller can
 // distinguish "no text" from "empty text" without extra bookkeeping.
+//
+// TPR-G1-PD1: a part marked `thought: true` is the model's reasoning, never
+// its answer, and is skipped exactly like a non-text part (includeThoughts is
+// never requested, so none is expected - this is defense in depth).
 function extractText(body) {
-  const candidate = body && Array.isArray(body.candidates) && body.candidates[0];
+  const candidate = firstCandidate(body);
   const parts = candidate && candidate.content && Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
-  const textParts = parts.filter((p) => p && typeof p.text === "string").map((p) => p.text);
+  const textParts = parts.filter((p) => p && typeof p.text === "string" && p.thought !== true).map((p) => p.text);
   if (textParts.length === 0) return null;
   const joined = textParts.join("");
   return joined.trim().length > 0 ? joined : null;
+}
+
+function firstCandidate(body) {
+  return body && Array.isArray(body.candidates) ? body.candidates[0] : undefined;
+}
+
+function invalidResponse(message) {
+  return new ProviderError(message, { code: PROVIDER_ERROR_CODES.INVALID_RESPONSE, retryable: false });
+}
+
+// TPR-G1-PD1: only a candidate that finished normally is usable. A response
+// cut off at maxOutputTokens (MAX_TOKENS), an incomplete one (CONTINUATION),
+// a blocked one (SAFETY) or one with no/an unknown finishReason is rejected
+// as non-retryable: a retry would repeat the same cost, and a truncated JSON
+// answer must never reach a generator's validation-correction retry.
+// Returns a ProviderError, or null when the candidate finished with STOP.
+function checkFinishReason(body, maxOutputTokens) {
+  const candidate = firstCandidate(body);
+  const reason = candidate && typeof candidate === "object" ? candidate.finishReason : undefined;
+  if (reason === "STOP") return null;
+  if (reason === "MAX_TOKENS") {
+    return invalidResponse(`Gemini API response was cut off at the output token limit (maxOutputTokens ${maxOutputTokens})`);
+  }
+  const named = typeof reason === "string" && NAMED_FINISH_REASONS.has(reason) ? reason : "missing or unrecognized";
+  return invalidResponse(`Gemini API response did not finish normally (finishReason: ${named})`);
+}
+
+function isTokenCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+// TPR-G1-PD1: retrospective output-consumption check from usageMetadata.
+// Output = totalTokenCount - promptTokenCount - toolUsePromptTokenCount
+// (Google documents totalTokenCount as prompt + tool-use prompt + thoughts +
+// response candidates), so thought tokens are counted even if the separate
+// thoughtsTokenCount field is absent. When candidatesTokenCount or
+// thoughtsTokenCount is present it must be a valid count too, and their sum
+// is checked against the cap as well. Missing or invalid counters, a negative
+// derived output, or output above maxOutputTokens are all non-retryable.
+// Returns a ProviderError, or null.
+function checkUsage(body, maxOutputTokens) {
+  const usage = body ? body.usageMetadata : undefined;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return invalidResponse("Gemini API response did not include valid usage metadata");
+  }
+  const { promptTokenCount, totalTokenCount, toolUsePromptTokenCount, candidatesTokenCount, thoughtsTokenCount } = usage;
+  if (!isTokenCount(promptTokenCount) || !isTokenCount(totalTokenCount)) {
+    return invalidResponse("Gemini API response did not include valid usage metadata");
+  }
+  for (const optional of [toolUsePromptTokenCount, candidatesTokenCount, thoughtsTokenCount]) {
+    if (optional !== undefined && !isTokenCount(optional)) {
+      return invalidResponse("Gemini API response did not include valid usage metadata");
+    }
+  }
+  const output = totalTokenCount - promptTokenCount - (toolUsePromptTokenCount ?? 0);
+  if (output < 0) {
+    return invalidResponse("Gemini API response usage metadata is inconsistent (negative output token count)");
+  }
+  const reportedOutput = (candidatesTokenCount ?? 0) + (thoughtsTokenCount ?? 0);
+  if (output > maxOutputTokens || reportedOutput > maxOutputTokens) {
+    return invalidResponse(`Gemini API response used more output tokens than the limit (maxOutputTokens ${maxOutputTokens})`);
+  }
+  return null;
 }
 
 class GeminiProvider {
@@ -144,7 +235,19 @@ class GeminiProvider {
   // this project's existing generic config (AI_API_KEY, AI_MODEL) -
   // GeminiProvider never introduces a GEMINI_-prefixed env var of its own.
   // `cancelSignal` (SEC-C1) is identical to GroqProvider's.
-  constructor({ apiKey = API_KEY, model = MODEL, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, cancelSignal = null } = {}) {
+  //
+  // `maxOutputTokens` (TPR-G1-PD1) is a test-only override of
+  // MAX_OUTPUT_TOKENS - production never passes it. It must be an integer in
+  // 1..MODEL_OUTPUT_TOKEN_LIMIT; anything else is CONFIGURATION, thrown here,
+  // so no request is ever sent with an invalid or missing limit.
+  constructor({
+    apiKey = API_KEY,
+    model = MODEL,
+    fetchImpl = fetch,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    cancelSignal = null,
+    maxOutputTokens = MAX_OUTPUT_TOKENS,
+  } = {}) {
     if (!apiKey) {
       throw new ProviderError('AI_API_KEY is required for provider "gemini"', {
         code: PROVIDER_ERROR_CODES.CONFIGURATION,
@@ -157,12 +260,19 @@ class GeminiProvider {
         retryable: false,
       });
     }
+    if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > MODEL_OUTPUT_TOKEN_LIMIT) {
+      throw new ProviderError(`maxOutputTokens for provider "gemini" must be an integer from 1 to ${MODEL_OUTPUT_TOKEN_LIMIT}`, {
+        code: PROVIDER_ERROR_CODES.CONFIGURATION,
+        retryable: false,
+      });
+    }
 
     this.apiKey = apiKey;
     this.model = model;
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
     this.cancelSignal = cancelSignal;
+    this.maxOutputTokens = maxOutputTokens;
   }
 
   // SEC-C1: identical to GroqProvider.analyze() - no request after parent
@@ -205,6 +315,11 @@ class GeminiProvider {
           // dedicated field for this, not a message role.
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          // TPR-G1-PD1: output and thinking control (see MAX_OUTPUT_TOKENS).
+          generationConfig: {
+            maxOutputTokens: this.maxOutputTokens,
+            thinkingConfig: { thinkingLevel: THINKING_LEVEL },
+          },
         }),
         signal: controller.signal,
       });
@@ -250,6 +365,14 @@ class GeminiProvider {
     // text field - e.g. a safety block or any other non-text-only
     // response) - the caller does not need to know *why* there is no text,
     // only that there isn't any.
+    //
+    // TPR-G1-PD1: finishReason, then usage, then text - every failure is a
+    // non-retryable INVALID_RESPONSE.
+    const finishError = checkFinishReason(body, this.maxOutputTokens);
+    if (finishError) throw finishError;
+    const usageError = checkUsage(body, this.maxOutputTokens);
+    if (usageError) throw usageError;
+
     const content = extractText(body);
     if (content === null) {
       throw new ProviderError("Gemini API response did not include any model content", {
@@ -262,4 +385,4 @@ class GeminiProvider {
   }
 }
 
-module.exports = { GeminiProvider, MAX_RESPONSE_BYTES };
+module.exports = { GeminiProvider, MAX_RESPONSE_BYTES, MAX_OUTPUT_TOKENS, MODEL_OUTPUT_TOKEN_LIMIT, THINKING_LEVEL };
