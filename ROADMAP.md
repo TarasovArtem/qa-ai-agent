@@ -221,7 +221,51 @@ the historical commit the RTI Integrated Audit's targeted re-verification
 (`RTIA-B01`/`RTIA-I01` closure) certified. See [§15](#15-final-target-state)
 and README's own RTI section for the full RTI evidence chain.
 
-### Current PO-approved delivery priority — Technical Preview before Controlled R1
+### Current PO-approved delivery priority — Controlled Agent R1 (TPR suspended)
+
+**PO authority:** `OD-R1-ACCELERATION-1`, `OD-R1-RC-RECOVERY-1` and `OD-GOV-R1-CANON`, all APPROVED 2026-11-24. This is a documentation sync made against `main` `96ebc4f6e741885dc3491b176fb23e7f82b9f32e` / TREE `f2396954d87e0ce7739c6abfc64aff4787a4b5d9`. It supersedes the [historical TPR-first delivery priority](#historical-delivery-priority--technical-preview-before-controlled-r1-superseded-2026-11-24) below as the **current** order. The historical order and every earlier note are preserved unchanged as evidence.
+
+```text
+Technical Preview Release (TPR):          SUSPENDED / NOT RELEASED
+                                          (Issue #199 OPEN; G1 PARTIAL / NOT QUALIFIED)
+QA AI Agent v1.0 Controlled Agent (R1):   PRIMARY PRIORITY / NOT RELEASE READY / NOT APPROVED
+Release Contract v1.0 (RC-01..RC-12):     RECOVERED WORKING NORMATIVE BASELINE, PO-CONFIRMED
+                                          2026-11-24 (docs/controlled-v1-release-contract-v1.md;
+                                          not byte-identical to the 2026-10-01 original)
+Controlled-v1 Stage 5 — execute:          READY / IMPLEMENTATION NOT AUTHORIZED
+qa-agent execute:                         DISABLED
+WIP:                                      1
+```
+
+1. **TPR is suspended, not released, not closed and not accepted.**
+   - Issue [#199](https://github.com/TarasovArtem/qa-ai-agent/issues/199) remains OPEN.
+   - The existing `qa-agent-demo` and all TPR evidence, including sealed operator-local evidence, are preserved unchanged.
+   - TPR G1 remains PARTIAL / NOT QUALIFIED. B3 remains OPEN. The TPIPE and adversarial HTTP-parser residuals remain NOT ACCEPTED. No G2..G5 acceptance is claimed.
+   - The operator-run GW-1 live-design attempts of 2026-11-24 (three attempts, each FAILED / CONSUMED, with provider-side unavailability recorded for attempts 2 and 3) produced no TPR PASS. Their evidence is operator-local and is not part of this repository.
+   - Resuming TPR needs a separate PO decision.
+2. **R1 is the primary delivery priority.** All `RC-01`..`RC-12` criteria and the general release conditions of the [Release Contract](docs/controlled-v1-release-contract-v1.md) apply. So do the mandatory prerequisites 1–11 and the AISEC-6 / SADR-11 dossier of the [release-model decision](docs/controlled-v1-release-model-owner-decision-v1.md) §3 / §3.1.
+3. **Compatible TPR / R1 qualification is consolidated.**
+   - Checks common to the TPR acceptance checklist and the R1 release conditions are run **once**, on the exact R1 release-candidate identity, rather than in two separate chains: installation, requirements, design / plan / generate, review / approval / apply, reporting, repeatability, negative scenarios and security screening.
+   - Consolidation removes no requirement. It does not reduce the three consecutive successful runs or the two negative scenarios.
+   - Evidence from earlier candidates, including TPR `2.0.1`, stays historical and is not R1 qualification.
+   - A human-triggered external Playwright run is not `RC-08` / Stage 5 evidence.
+4. **Mandatory security and governance gates are preserved:**
+   - independent review;
+   - exact-head CI;
+   - standard two-parent merge;
+   - fresh exact-merge post-merge certification;
+   - the separate PO release grant;
+   - the applicable finding dispositions;
+   - fail-closed controls.
+
+   No risk is accepted, no finding is waived or closed, and no security requirement is removed.
+5. **Stage 5 implementation is NOT AUTHORIZED.** `qa-agent execute` remains DISABLED. The Stage 5 architecture direction still needs a separate PO decision.
+
+This sync grants no implementation, provider call, release, tag, publication, Issue closure or merge authority.
+
+### Historical delivery priority — Technical Preview before Controlled R1 (superseded 2026-11-24)
+
+> **Superseded as the current order on 2026-11-24** by the [current R1 priority](#current-po-approved-delivery-priority--controlled-agent-r1-tpr-suspended) above. The text below is preserved verbatim as historical evidence. Its present-tense statements describe the state before 2026-11-24.
 
 > **Current TPR G1 PD-1 update (2026-11-14):** Gemini output-token
 > control in product `2.0.1` is **COMPLETE_ON_MAIN / POST-MERGE
@@ -1381,7 +1425,11 @@ order `MEM-1..MEM-6 → RAG-1..RAG-12 → MEM-7..MEM-9 → LEARN-1..LEARN-9` is
 unchanged. The normative prerequisites, the capability-specific `AISEC-6` /
 `SADR-11` Controlled Release dossier, the Release Contract (`RC-01`..`RC-12`)
 boundary and its provenance are recorded in the decision artifact; this entry
-does not restate or reinterpret them.
+does not restate or reinterpret them. *(Present-day: since 2026-11-24 the
+recovered, PO-confirmed working normative text of `RC-01`..`RC-12` and of the
+general release conditions is recorded in
+[`docs/controlled-v1-release-contract-v1.md`](docs/controlled-v1-release-contract-v1.md);
+it is not a byte-identical copy of the 2026-10-01 original.)*
 
 This is a sequencing/product-boundary decision, **not risk acceptance**:
 
@@ -1505,9 +1553,16 @@ and Stage 4 design is `APPROVED / MERGED / POST-MERGE CERTIFIED`.
 
 ## 8. Current critical path
 
-**Scope:** The diagram below preserves the historical Controlled-v1/R1 path;
-it is not the current TPR execution order. Under the PO-approved §3 delivery
-overlay, the bounded TPR precedes Stage 5 and the R1 release gates.
+**Scope:** The diagram below shows the Controlled-v1/R1 path. Since
+2026-11-24 (`OD-R1-ACCELERATION-1`), R1 is the primary delivery priority and
+TPR is SUSPENDED / NOT RELEASED; see the
+[current §3 delivery priority](#current-po-approved-delivery-priority--controlled-agent-r1-tpr-suspended).
+The Release Contract acceptance criteria are recorded in
+[`docs/controlled-v1-release-contract-v1.md`](docs/controlled-v1-release-contract-v1.md).
+That document is the recovered working normative baseline, PO-confirmed on
+2026-11-24. Stage 5 implementation remains NOT AUTHORIZED, and
+`qa-agent execute` remains DISABLED. Before 2026-11-24, the historical §3 TPR
+overlay placed the bounded TPR before Stage 5 and the R1 release gates.
 
 ```text
 CRW1-A (COMPLETE_ON_MAIN)  →  CRW1-B (COMPLETE_ON_MAIN)  →  CRW1-C (COMPLETE_ON_MAIN)
@@ -5672,11 +5727,15 @@ Recording this scope now does not start the audit; it remains
 
 ## 12. Productization
 
-**TPR exception to the R1 productization order:** The PO-approved Technical
-Preview precedes R1 and does not activate or require Stage 5
-(`qa-agent execute` remains disabled). All Stage 5 and full Controlled-v1
-release requirements remain prerequisites of **R1**, not the bounded TPR; see
-[§3](#current-po-approved-delivery-priority--technical-preview-before-controlled-r1)
+**TPR and the R1 productization order:** Since 2026-11-24 TPR is
+SUSPENDED / NOT RELEASED, and R1 is the primary delivery priority. Compatible
+TPR/R1 qualification is consolidated on the exact R1 candidate; see the
+[current §3 priority](#current-po-approved-delivery-priority--controlled-agent-r1-tpr-suspended).
+All Stage 5 and full Controlled-v1 release requirements remain prerequisites
+of **R1**. Stage 5 implementation is NOT AUTHORIZED, and `qa-agent execute`
+remains disabled. Historically, the PO-approved Technical Preview preceded R1
+and did not activate or require Stage 5; see the
+[historical §3 priority](#historical-delivery-priority--technical-preview-before-controlled-r1-superseded-2026-11-24)
 and [TPR Issue #199](https://github.com/TarasovArtem/qa-ai-agent/issues/199).
 
 ```text

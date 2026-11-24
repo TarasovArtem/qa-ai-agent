@@ -144,6 +144,8 @@ A demo that stops at Test Design does not satisfy the intended Controlled v1.0 p
 
 Release Contract provenance: RC-01..RC-12 are the Product Owner-approved working release baseline (Release Contract v1.0, approved by the Product Owner on 2026-10-01; governance provenance Issues #198 and #199). The complete normative acceptance text of the Release Contract is not currently a tracked canonical repository artifact. Before RC-01..RC-12 can be used as final release-certification evidence, the normative acceptance contract must be placed under governed, canonical, versioned evidence and independently reviewed. This does not reopen or invalidate RC-01..RC-12 and adds no acceptance criteria.
 
+> **Lifecycle overlay (2026-11-24; `OD-R1-RC-RECOVERY-1`, `OD-GOV-R1-CANON`).** The recovered RC-01..RC-12 acceptance criteria and general release conditions, which the Product Owner confirmed as the working normative baseline, are now recorded in [`controlled-v1-release-contract-v1.md`](controlled-v1-release-contract-v1.md). That record consists of recovered extracts. It is **not** a byte-identical copy of the 2026-10-01 original, and its independent review is pending. This overlay does not change the decision above, the RC titles, the prerequisites in §3 / §3.1 or any finding disposition.
+
 ## 5. Product architecture principles
 
 Controlled v1.0 and all later releases preserve the following product principles:
