@@ -63,6 +63,7 @@ If a future GitHub Wiki is introduced, it **must not** be authoritative for arch
 - [`governance-process-v1.md`](governance-process-v1.md) — initial governance-process version.
 - [`gov-auto-1-design-reconciliation-v1.md`](gov-auto-1-design-reconciliation-v1.md) — GOV-AUTO-1 design/reconciliation record.
 - [`controlled-v1-release-model-owner-decision-v1.md`](controlled-v1-release-model-owner-decision-v1.md) — controlled-v1 release-model owner decision.
+- [`controlled-v1-release-contract-v1.md`](controlled-v1-release-contract-v1.md) — Release Contract v1.0 (RC-01..RC-12 and general release conditions); recovered working normative baseline, PO-confirmed 2026-11-24.
 - [`branch-inventory-v1.md`](branch-inventory-v1.md) — branch inventory evidence for its recorded scope/time.
 
 ### Evaluation and quality evidence
@@ -92,6 +93,7 @@ If a future GitHub Wiki is introduced, it **must not** be authoritative for arch
 | What governance process is used? | [`governance-process-v3.md`](governance-process-v3.md) |
 | What policy governs branch/evidence retention? | [`repository-evidence-retention-policy-v1.md`](repository-evidence-retention-policy-v1.md) |
 | What is the controlled-v1 release model? | [`controlled-v1-release-model-owner-decision-v1.md`](controlled-v1-release-model-owner-decision-v1.md) |
+| What are the Controlled v1 release acceptance criteria (RC-01..RC-12)? | [`controlled-v1-release-contract-v1.md`](controlled-v1-release-contract-v1.md) |
 
 ## Versioned-document policy
 

@@ -1328,6 +1328,14 @@ working baseline (`OD-CONTROLLED-V1-RELEASE-MODEL` §4); their normative
 acceptance text is not yet a canonical repository artifact. This mapping adds
 no acceptance criteria.
 
+> **Lifecycle overlay (2026-11-24):** the recovered, PO-confirmed working
+> normative text of RC-01..RC-12 and of the general release conditions is now
+> recorded in [`controlled-v1-release-contract-v1.md`](controlled-v1-release-contract-v1.md).
+> The classifications below are design-time implementation and exposure
+> statuses. They are **not** release qualification against those criteria. The
+> current RC-by-RC coverage, which separates implementation from qualification,
+> is maintained in Issue #199.
+
 | RC | Capability | Classification | Evidence / reason |
 |---|---|---|---|
 | RC-01 | External installation | **PROVEN WITH LOCAL PACKED TARBALL / PRODUCT DISTRIBUTION CHANNEL PENDING OD-01** | package installability is proven (ID-2 real `npm pack` + `npm install` into an external directory); a released, consumer-facing distribution is **not** yet established (no channel, no release, no CLI). Public/external distribution is not called supported before OD-01 and productization are complete |
