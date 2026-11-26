@@ -1,14 +1,14 @@
 # Controlled-v1 OD-06 execution contract — R1 amendment v1 (STAGE5-DESIGN-AMENDMENT-1)
 
-Status: **PROPOSED AMENDMENT — PO DISPOSITIONS APPROVED FOR REVIEW; NOT NORMATIVE.**
+Status: **WP1 DESIGN MERGED / POST-MERGE CERTIFIED — documentation only.**
 
 Review state:
 - The HEAVY Architecture + Security review of the WP1 head returned three MAJOR findings (C1-F1..C1-F3).
 - Corrective C1 is applied (§11).
 - The Architecture delta review of C1 returned CHANGES_REQUIRED (ARCH-C1-N1, ARCH-C1-N2, plus the minor items S2 and S3).
-- Corrective C2 is applied (§12). It is pending delta review.
+- Corrective C2 is applied (§12); Architecture and Security delta reviews APPROVED on exact HEAD `4af2617d048a85b55dfce7bd18fa28e8fb985495`.
 
-Until this amendment passes independent HEAVY Architecture and HEAVY Security review, is merged under separate PO authority and is post-merge certified, OD-06 sections 3–18 stay the governing design, unchanged. Here OD-06 means [`controlled-v1-execution-contract-v1.md`](controlled-v1-execution-contract-v1.md).
+WP1 passed its design review, separate PO merge and post-merge certification gates (see §13). The amendment is the approved R1 design overlay to OD-06 sections 3–18; it establishes no runtime qualification or implementation authority. Here OD-06 means [`controlled-v1-execution-contract-v1.md`](controlled-v1-execution-contract-v1.md).
 
 This document:
 - implements nothing;
@@ -24,6 +24,8 @@ OD-R1-STAGE5-DESIGN-DISPOSITIONS-1       — APPROVED FOR REVIEW  2026-11-26
 OD-R1-STAGE5-WP1                         — APPROVED             2026-11-26
 OD-R1-STAGE5-WP1-C1                      — APPROVED             2026-11-26
 OD-R1-STAGE5-WP1-C2                      — APPROVED             2026-11-26
+OD-R1-STAGE5-WP1-MERGE                   — APPROVED             2026-11-26
+OD-R1-STAGE5-WP1-CLOSURE                 — APPROVED             2026-11-26
 ```
 
 | Item | Value |
@@ -816,3 +818,16 @@ Unchanged by C2:
 - §5, the §6 dispositions, §7 and §10.
 
 Delta review covers §12 and the listed sections only (review rule of §9).
+
+---
+
+## 13. WP1 post-merge lifecycle record (2026-11-26)
+
+- PR [#278](https://github.com/TarasovArtem/qa-ai-agent/pull/278): merged under OD-R1-STAGE5-WP1-MERGE.
+- Reviewed HEAD: `4af2617d048a85b55dfce7bd18fa28e8fb985495`; TREE: `65cf758f228b3c57b2d29b9d3c09a376e34e099e`.
+- Exact-head [CI #777](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/45836879271): SUCCESS 7/7. Architecture and Security delta reviews APPROVED; no new material findings reported.
+- Merge: `130f09af702625388ab3e25bb44787f9b2b972a8`, STANDARD_TWO_PARENT; parents `8ffbf39aa5eb9d3e59dee7a02fc32b52267b410d` and reviewed HEAD. GitHub comparison from reviewed HEAD to merge showed no changed files.
+- Fresh automatic [push CI #778](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/45842252904) on exact merge SHA, main: 7/7 jobs SUCCESS.
+- WP1 design delivery: MERGED / POST-MERGE CERTIFIED. Earlier review chronology is historical. No independent certification beyond the supplied review verdicts is asserted.
+- Outstanding: Q1–Q7 and I5 remain OPEN; RQ-7 is non-blocking for design review but must be disposed before the affected Q4 qualification acceptance. Other open decisions/questions retain their recorded dispositions; no risk or finding closure is asserted by this lifecycle record.
+- WP2 requires separate PO authorization. Stage 5 implementation NOT AUTHORIZED; execute DISABLED; R1 NOT RELEASE READY / NOT APPROVED; TPR SUSPENDED / NOT RELEASED, Issue #199 remains OPEN. WIP = 1.

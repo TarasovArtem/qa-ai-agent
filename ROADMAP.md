@@ -259,7 +259,7 @@ WIP:                                      1
    - fail-closed controls.
 
    No risk is accepted, no finding is waived or closed, and no security requirement is removed.
-5. **Stage 5 implementation is NOT AUTHORIZED.** `qa-agent execute` remains DISABLED. The Stage 5 architecture direction still needs a separate PO decision.
+5. **Stage 5 implementation is NOT AUTHORIZED.** `qa-agent execute` remains DISABLED. WP1 design amendment is MERGED / POST-MERGE CERTIFIED under `OD-R1-STAGE5-WP1-MERGE` (PR #278); see [WP1 lifecycle evidence](docs/controlled-v1-execution-amendment-r1-v1.md#13-wp1-post-merge-lifecycle-record-2026-11-26). WP2 requires separate PO authorization. Q1–Q7, I5 and RQ-7 remain open; RQ-7 must be disposed before affected Q4 qualification acceptance. No runtime qualification or release approval is claimed.
 
 This sync grants no implementation, provider call, release, tag, publication, Issue closure or merge authority.
 
