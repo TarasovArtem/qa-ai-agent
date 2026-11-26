@@ -1,0 +1,7 @@
+# Amendment A8: build only from vendored, pinned sources, with
+# `cargo build --locked --offline`. crates.io is replaced by ./vendor.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
