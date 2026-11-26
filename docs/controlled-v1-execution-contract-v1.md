@@ -21,13 +21,12 @@ Stage 5 **READY / NOT AUTHORIZED**; execute **DISABLED**; Controlled Release
 paragraphs below are the historical PR #254 review chronology; sections 3–18
 remain the approved normative design, unchanged.
 
-> **Proposed amendment (2026-11-26; `OD-R1-STAGE5-WP1`):** a consolidated R1
-> amendment to this contract is proposed in
-> [`controlled-v1-execution-amendment-r1-v1.md`](controlled-v1-execution-amendment-r1-v1.md)
-> (STAGE5-DESIGN-AMENDMENT-1; PO dispositions approved for review). It is
-> **not normative** until independent HEAVY Architecture and Security review,
-> separate PO merge authority and post-merge certification. Until then sections
-> 3–18 govern unchanged; Stage 5 stays NOT AUTHORIZED and execute DISABLED.
+> **R1 design amendment (2026-11-26; `OD-R1-STAGE5-WP1`):** the
+> [R1 amendment](controlled-v1-execution-amendment-r1-v1.md) is merged and
+> post-merge certified (PR #278; see amendment §13 for evidence).
+> It overlays OD-06 for the approved R1 design scope only. Sections 3–18
+> remain unchanged in this file. Qualification remains open; Stage 5 stays
+> NOT AUTHORIZED and execute DISABLED.
 
 Historical authoring result: **DESIGN COMPLETE — READY FOR DELIVERY / EXACT-HEAD CI /
 INDEPENDENT HEAVY ARCHITECTURE REVIEW**. Author completion is not independent

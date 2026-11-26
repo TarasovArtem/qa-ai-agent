@@ -64,7 +64,7 @@ If a future GitHub Wiki is introduced, it **must not** be authoritative for arch
 - [`gov-auto-1-design-reconciliation-v1.md`](gov-auto-1-design-reconciliation-v1.md) — GOV-AUTO-1 design/reconciliation record.
 - [`controlled-v1-release-model-owner-decision-v1.md`](controlled-v1-release-model-owner-decision-v1.md) — controlled-v1 release-model owner decision.
 - [`controlled-v1-release-contract-v1.md`](controlled-v1-release-contract-v1.md) — Release Contract v1.0 (RC-01..RC-12 and general release conditions); recovered working normative baseline, PO-confirmed 2026-11-24.
-- [`controlled-v1-execution-amendment-r1-v1.md`](controlled-v1-execution-amendment-r1-v1.md) — proposed R1 amendment to the OD-06 execution contract (STAGE5-DESIGN-AMENDMENT-1, RC-08 scope); PO dispositions approved for review; not normative until independent HEAVY Architecture + Security review and merge.
+- [`controlled-v1-execution-amendment-r1-v1.md`](controlled-v1-execution-amendment-r1-v1.md) — R1 design amendment to the OD-06 execution contract (STAGE5-DESIGN-AMENDMENT-1, RC-08 scope); PR #278 MERGED / POST-MERGE CERTIFIED; qualification OPEN; Stage 5 implementation NOT AUTHORIZED (see §13).
 - [`branch-inventory-v1.md`](branch-inventory-v1.md) — branch inventory evidence for its recorded scope/time.
 
 ### Evaluation and quality evidence
