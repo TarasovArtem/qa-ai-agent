@@ -259,7 +259,9 @@ WIP:                                      1
    - fail-closed controls.
 
    No risk is accepted, no finding is waived or closed, and no security requirement is removed.
-5. **Stage 5 implementation is NOT AUTHORIZED.** `qa-agent execute` remains DISABLED. WP1 design amendment is MERGED / POST-MERGE CERTIFIED under `OD-R1-STAGE5-WP1-MERGE` (PR #278); see [WP1 lifecycle evidence](docs/controlled-v1-execution-amendment-r1-v1.md#13-wp1-post-merge-lifecycle-record-2026-11-26). WP2 requires separate PO authorization. Q1–Q7, I5 and RQ-7 remain open; RQ-7 must be disposed before affected Q4 qualification acceptance. No runtime qualification or release approval is claimed.
+5. **Stage 5 implementation is NOT AUTHORIZED.** `qa-agent execute` remains DISABLED. WP1 design amendment is MERGED / POST-MERGE CERTIFIED under `OD-R1-STAGE5-WP1-MERGE` (PR #278); see [WP1 lifecycle evidence](docs/controlled-v1-execution-amendment-r1-v1.md#13-wp1-post-merge-lifecycle-record-2026-11-26). WP2 was authorized and is now SUSPENDED (B-1 storage OPEN); resumption requires a separate PO decision. Q1–Q7, I5 and RQ-7 remain open; RQ-7 must be disposed before affected Q4 qualification acceptance. No runtime qualification or release approval is claimed.
+
+   **WP3-A portable components:** MERGED / POST-MERGE CERTIFIED (PR #280; merge `608463d2eb1d07e38e429f4b8b3e56895fbf9678`; automatic push CI #784, 7/7 SUCCESS). Under `OD-R1-STAGE5-WSL-FIRST-1`, portable development preceded WP2 completion. See [WP3-A evidence](native/qa-agent-controller-v1/WP3A-EVIDENCE.md#10-post-merge-lifecycle-record-2026-11-27). Stage 5 runtime implementation and activation remain unauthorized; WP3 as a whole is not complete. WP3-B and WP4–WP9 remain NOT AUTHORIZED.
 
 This sync grants no implementation, provider call, release, tag, publication, Issue closure or merge authority.
 
