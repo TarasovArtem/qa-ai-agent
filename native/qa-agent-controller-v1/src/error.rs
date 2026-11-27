@@ -29,6 +29,11 @@ pub enum ErrorKind {
     Enrollment,
     /// Closed compatibility record and its agreements (OD-06 §5.4).
     Compatibility,
+    /// Stage 4 `root-identity-v1` digest consistency (OD-06 §4.2).
+    RootIdentity,
+    /// Closed execution binding, `bindingDigest` and its data agreements
+    /// (OD-06 §11.1, §4.3 items 2–3, §8.1).
+    Binding,
 }
 
 /// A fixed-code error. `code` is a static identifier, never derived from input.

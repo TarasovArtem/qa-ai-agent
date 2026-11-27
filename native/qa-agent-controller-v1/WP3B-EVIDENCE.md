@@ -225,3 +225,119 @@ Baseline: PR #284 head b4c1ef31da6b025641e8f47fee314b691d13be2d, tree e62209206c
 - Exact-head [PR CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46022234985) 7/7 SUCCESS. Merge `2df4dfdeaa745a6c7b0b1696ca4278d36d4969eb`, STANDARD_TWO_PARENT; parents `f93c76d6dcff7c56a963b4e1835faa604604901e` and reviewed HEAD; merge TREE equals reviewed TREE. Fresh automatic [push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46026550328) on exact merge SHA/main, attempt 1, 7/7 SUCCESS. GitHub identities and CI verified by PM.
 - Accepted reported WSL and Debian builds and 88/88 tests (65 regression + 23 new); no Rust job in repository CI, no independent rerun. All AC-B1-01..13 accepted for B1 scope, including F-B1-01 disposition.
 - All deferred requirements retain their existing OPEN dispositions, including runtime D-03, OQ-1/OQ-2/RQ-7, L5/L6/K-1, carried Security I5, Q1–Q7. OQ-3 and RV-1 remain NOT_A_FINDING. Full WP3 INCOMPLETE; no runtime qualification, execution activation, or release approval. Further WP3-B implementation and WP4–WP9 require separate authority. Execute DISABLED; TPR SUSPENDED / NOT RELEASED; Issue #199 OPEN; WIP = 1.
+
+## 12. Slice B2: portable execution binding (OD-R1-STAGE5-WP3-B-NEXT-2)
+
+| Item | Value |
+|---|---|
+| Authority | OD-R1-STAGE5-WP3-B-NEXT-2 (APPROVED) |
+| Base | `main` 3f846729a40d9676021cc37f2f7b7953d4364865, tree 098416df940677a1662f2c12db1de153b45c93e1 (B1 merged and closed, §11) |
+| Branch | `feature/r1-stage5-wp3-b-next-2` (local candidate; delivery needs separate PO authorization) |
+| Objective | The portable, inert data-model subset of D-04 ("Stage 4 root-identity-v1 digest, `bindingDigest` reconstruction from Stage 4 evidence", `WP3A-EVIDENCE.md`) |
+| Design inputs | OD-06 §4.2, §4.3 items 2–3, §8.1, §11.1; amendment A2.2; Stage 4 approval/apply contract §17.2 (`root-identity-v1`) and its implementation `scripts/ai/cli/stage4-principal.js`; Stage 4 `review-record-v2` principal envelope (`scripts/ai/cli/review-record-v2.js`) |
+| Status | Development evidence only. **No runtime qualification is claimed.** No validation result is execution authority. Execute stays DISABLED |
+
+### 12.1 Components and owner decisions
+
+Components (mission text): B2-01 root identity data model conforming to Stage 4; B2-02 closed execution binding data model; B2-03 reuse existing CRS-1 canonical infrastructure; B2-04 data consistency and integrity validation only; B2-05 synthetic unit tests and canonical parity evidence; B2-06 update evidence and readiness matrix.
+
+| ID | Decision (2026-11-27) |
+|---|---|
+| PO-B2-1 | `binding.root` is the OD-06 §4.2 root record `{platform:"linux", path, dev, ino, digest}` (the existing crate `parse_root`, the same record as the CREATE request root and the B1 enrollment root), not the Stage 4 `repositoryRoot {method, digest}` object |
+| PO-B2-2 | The Stage 4 `root-identity-v1` digest check is standalone (`root_identity::verify`), used by the B2 binding and agreement checks. The existing request and enrollment validators, fixtures and tests are unchanged; wiring the check into them is an open integration item |
+
+### 12.2 Acceptance criteria (immutable, as issued)
+
+```text
+AC-B2-01: Exact baseline verified.
+AC-B2-02: Models conform to unambiguous OD-06 requirements.
+AC-B2-03: Existing Stage 4 formats unchanged.
+AC-B2-04: Existing canonical infrastructure reused.
+AC-B2-05: A8 dependency budget preserved.
+AC-B2-06: Existing 88 regression tests pass.
+AC-B2-07: New applicable synthetic tests pass.
+AC-B2-08: WSL and Debian builds pass.
+AC-B2-09: No runtime capabilities or new execution authority.
+AC-B2-10: Evidence and readiness matrix updated.
+AC-B2-11: Product, npm package and demo unchanged.
+AC-B2-12: Execute DISABLED.
+```
+
+Status is reported only in the §12.7 crosswalk.
+
+### 12.3 Normative mapping
+
+| Rule | Source | Implementation | Tests (`tests/binding.rs`) |
+|---|---|---|---|
+| `rootIdentity` = `{identityVersion:1, platform, rootPath, dev, ino}`; digest = `H("qa-ai-agent:repository-root-binding:v1:", E(rootIdentity))`; POSIX `rootPath` is the native path as returned | Stage 4 §17.2 step 1.3 and step 3; OD-06 §4.2 "digest=H matching Stage 4 root-identity-v1"; §11.1 "Existing Stage 4 domains/bytes unchanged" | `root_identity::{identity_value, digest, verify}`, `digest::domains::REPOSITORY_ROOT_BINDING` | `stage4_root_identity_golden_parity`, `root_identity_covers_every_field` |
+| `binding` exactly the 21 keys, every key required, no other key | §11.1 | `binding::BINDING_KEYS`, `validate_binding` | `closed_schema_at_every_level` |
+| `projectId` existing generation ID grammar; `runId`, `packageOrdinal` §4.2; `product` `{name:"qa-ai-agent", version}`; review/apply IDs ID; digests `H`; targets §4; framework literal; `timeoutMs` 1000..600000 | §11.1, §4.2 | existing `grammar::*`, request `parse_root` and `parse_targets` (shared, behaviour unchanged), `request::limits::TIMEOUT_MS` | `field_grammars_reuse_existing_rules` |
+| `principal` is the exact Stage 4 OS-local envelope `{method:"os-local-account-v1", principal ("os-account-v1:" + valid ID), uid, profileDigest, platform, assurance:"LOCAL_ACCOUNT_ATTRIBUTION"}`; win32: uid null and profileDigest `H`; otherwise uid safe integer ≥1 and profileDigest null | §11.1 "principal exact Stage 4 OS-local envelope"; Stage 4 `review-record-v2` reviewer rules | `binding::parse_principal` | `principal_is_the_exact_stage4_envelope_for_the_linux_root` |
+| `root.digest` matches Stage 4 `root-identity-v1` | §4.2 | `root_identity::verify` in `validate_binding` | `root_must_be_root_identity_v1_consistent` |
+| `bindingDigest` = `H("qa-ai-agent:execution-binding:v1:", E(binding without bindingDigest))` | §11.1 | existing `digest::h_value_excluding` via `compute_binding_digest` | `golden_binding_validates_with_js_digest`, `digest_is_canonical_and_covers_every_field` |
+| Request carries the binding's `bindingDigest`; shared request fields equal | §4.2 subject, §4.3 item 3, §8.1 item 7 | `check_request_agreement` | `request_agreement` |
+| Binding `profileDigest` is the §5.4 record's | §11.1 | `check_record_agreement` | `compatibility_record_agreement` |
+| Binding root is an enrolled root; enrolled `framework` and `fingerprint.digest` agree | §4.3 item 2, §4.2 framework agreement, amendment A2.2 | `check_enrollment_agreement` | `enrollment_agreement` |
+
+### 12.4 Interpretations for review
+
+| ID | Interpretation | Why |
+|---|---|---|
+| I-B2-1 | `binding.root` is the §4.2 root record | PO-B2-1 |
+| I-B2-2 | The `root-identity-v1` check is standalone; `validate_request` and enrollment parsing still check only the digest format | PO-B2-2; avoids changing existing behaviour, fixtures and the 88 tests |
+| I-B2-3 | `binding.product.version` uses the exact SemVer grammar of the request and §5.4, not the looser Stage 4 `review-record-v2` product regex | §4.2 requires the "exact enrolled version", and a binding must agree with the request (§4.3 item 3); the looser grammar could never yield an agreeing binding |
+| I-B2-4 | The principal envelope is validated exactly as Stage 4 does for every Stage 4 platform; a valid envelope whose platform is not `linux` is then refused (`BINDING_PRINCIPAL_PLATFORM`) | §4.2 root platform is the literal `linux`; §8.1 item 4 rechecks "caller principal/root" together |
+| I-B2-5 | Request agreement compares `bindingDigest` and every field the request shares with the binding (subject, root, framework, targets, timeout); `environment` is request-only and not bound | §4.3 item 3, §8.1 item 7; §11.1 key list has no environment |
+| I-B2-6 | Enrollment agreement also requires the enrolled `projectId` to equal the binding's | Derived: an enrolled root belongs to one project (§5.2). Stricter, fail-closed |
+| I-B2-7 | Binding intake bound: the §4.2 frame limits (262144 bytes, depth 12) | Implementation limit; OD-06 sets no binding size |
+| I-B2-8 | `bindingDigest` is computed over the parsed, validated value (CRS-1), so key order and formatting do not matter | As I-9 for B1 |
+| I-B2-9 | Stage 4 `rootPath` for a §4.2 record is its `path` unchanged | Stage 4 §17.2 step 1.3 (POSIX path used as returned); the record platform is `linux` |
+
+### 12.5 Test and parity evidence
+
+| Run | Toolchain | Result |
+|---|---|---|
+| WSL Ubuntu (development) | rustc/cargo 1.93.1 | `cargo build`, `cargo build --release`, `cargo test` with `--locked --offline`: 0 warnings; **99 passed, 0 failed** (88 existing + 11 new) |
+| Accepted WP2 VM (instance `wp2-r1-b2-1`; only `lo`; F-WZ disk flags; no reconfiguration) | Debian rustc/cargo 1.85.1+dfsg1-1+deb13u1 | Same commands as the runner: 0 warnings; **99 passed, 0 failed**; VM disk still 0 unwritten blocks afterwards |
+
+Canonical parity: the vectors `tests/vectors/b2-*` were written by the repository's own JavaScript.
+- The generator first reproduced the published Stage 4 golden `sha256:23082e5b…` with `stage4-principal.rootDigest`.
+- It derived the binding root digest with the same function and the principal with `resolvePrincipal`.
+- It computed `bindingDigest` with CRS-1 `encodeValue`/`digest`.
+- The Rust tests reproduce the Stage 4 golden serialization byte for byte and match the JS root and binding digests.
+- The existing B1 vectors were read, not rewritten.
+
+### 12.6 Invariants
+
+- `Cargo.toml`, `Cargo.lock`, `vendor/` and `.cargo/` unchanged: `hmac-sha256` 1.1.15 is the only dependency (A8).
+- No `unsafe`, FFI, OS-specific API, process, file, network or environment access; no binary; portability guard passes unchanged.
+- `request.rs`: the targets validation moved into `parse_targets` (crate-private, shared with the binding); request behaviour is unchanged (14/14 request tests).
+- No existing test, fixture or vector changed. The new error kinds (`RootIdentity`, `Binding`) and codes are internal; mapping them to public reasons stays D-12.
+- OD-04, OD-06, the Stage 4 formats and domains, the wire contract, product, demo, npm package (its `files` allowlist covers only `scripts/ai/**`) and CI are unchanged.
+
+### 12.7 Engineering-check crosswalk (B2)
+
+| AC | Engineering checks | Status |
+|---|---|---|
+| AC-B2-01 Exact baseline verified | `origin/main` = 3f846729…, tree 098416df…, checked before branching; the branch starts at that commit | MET |
+| AC-B2-02 Models conform to unambiguous OD-06 requirements | §12.3 mapping. The one material ambiguity (`binding.root` shape) was decided by PO-B2-1 before implementation; the other readings are recorded as I-B2-1..9 | MET; I-B2-1..9 for review |
+| AC-B2-03 Existing Stage 4 formats unchanged | No Stage 4 file changed; the Stage 4 domain and `rootIdentity` bytes are reproduced, not redefined (golden parity) | MET |
+| AC-B2-04 Existing canonical infrastructure reused | `canonical::encode`, `digest::h_value` and `h_value_excluding`, request `parse_root` and `parse_targets` and the existing grammars | MET |
+| AC-B2-05 A8 dependency budget preserved | Dependency inputs unchanged | MET |
+| AC-B2-06 Existing 88 regression tests pass | 88/88 pass unchanged (WSL; Debian §12.5) | MET |
+| AC-B2-07 New applicable synthetic tests pass | 11/11 in `tests/binding.rs` | MET |
+| AC-B2-08 WSL and Debian builds pass | §12.5: WSL rustc 1.93.1 and Debian rustc 1.85.1, dev and release, `--locked --offline`, 0 warnings | MET |
+| AC-B2-09 No runtime capabilities or new execution authority | Library only; functions return data or a refusal; module docs state that no result is execution authority | MET |
+| AC-B2-10 Evidence and readiness matrix updated | This section and §12.8 | MET |
+| AC-B2-11 Product, npm package and demo unchanged | All changes are under `native/qa-agent-controller-v1/` | MET |
+| AC-B2-12 Execute DISABLED | No execution capability; product state untouched | MET |
+
+### 12.8 Updated WP3 readiness (after B2)
+
+| WP3 / deferred item | Status after B2 |
+|---|---|
+| D-04 Stage 4 root-identity-v1 and `bindingDigest` | **Portable subset done (B2)**: data-only `root-identity-v1` digest, closed binding, `bindingDigest`, request/record/enrollment agreements. **OPEN**: reconstruction from fixed Stage 4 evidence (§8.1 items 1–7, §4.3 item 3); live realpath/lstat of the root (Stage 4 §17.2 steps 1–2); wiring `root_identity::verify` into request and enrollment validation (PO-B2-2) |
+| #4 C1a integrity gate, #5–#6 A3, #8 live §5.5/§5.6 (D-06), #9 live walk (D-01), #3 L1 fuzzing (D-10), #12 reproducible build (D-11), D-12 reason mapping | OPEN, unchanged |
+| Runtime D-03, OQ-1, OQ-2, RQ-7, L5, L6, K-1, carried Security I5, Q1–Q7 | OPEN, unchanged; OQ-3 and RV-1 NOT_A_FINDING |
+
+Full WP3 is INCOMPLETE. No runtime qualification, execution activation or release approval is claimed.

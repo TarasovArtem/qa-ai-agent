@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "qa-agent-controller-v1",
+  "operation": "create",
+  "executionId": "00112233445566778899aabbccddeeff",
+  "root": {
+    "platform": "linux",
+    "path": "/srv/qa-workspace/qa-agent-demo",
+    "dev": "65025",
+    "ino": "262145",
+    "digest": "sha256:b6aaf1898a7b339232d349409e48c51f63acbce91c1e0f6f389403fbb1872745"
+  },
+  "subject": {
+    "runId": "20261127T120000Z-0123456789abcdef",
+    "packageOrdinal": "0001",
+    "applyRecordId": "fedcba9876543210fedcba9876543210",
+    "packageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "appliedRecordSha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "bindingDigest": "sha256:95d847c732e0c8229a31a5b82e80b863be323956b7f69b048893a946be59b23a",
+    "product": {
+      "name": "qa-ai-agent",
+      "version": "1.2.3"
+    }
+  },
+  "framework": "playwright",
+  "targets": [
+    {
+      "path": "playwright/checkout.spec.js",
+      "operation": "CREATE",
+      "afterDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "playwright/login.spec.js",
+      "operation": "MODIFY",
+      "afterDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "timeoutMs": 600000,
+  "environment": []
+}

@@ -1,0 +1,50 @@
+{
+  "projectId": "qa-agent-demo",
+  "runId": "20261127T120000Z-0123456789abcdef",
+  "packageOrdinal": "0001",
+  "product": {
+    "name": "qa-ai-agent",
+    "version": "1.2.3"
+  },
+  "root": {
+    "platform": "linux",
+    "path": "/srv/qa-workspace/qa-agent-demo",
+    "dev": "65025",
+    "ino": "262145",
+    "digest": "sha256:b6aaf1898a7b339232d349409e48c51f63acbce91c1e0f6f389403fbb1872745"
+  },
+  "principal": {
+    "method": "os-local-account-v1",
+    "principal": "os-account-v1:qarunner",
+    "uid": 1001,
+    "profileDigest": null,
+    "platform": "linux",
+    "assurance": "LOCAL_ACCOUNT_ATTRIBUTION"
+  },
+  "reviewRecordId": "0123456789abcdef0123456789abcdef",
+  "applyRecordId": "fedcba9876543210fedcba9876543210",
+  "reviewRecordDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "packageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "changeSetDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "automationPlanDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "repositoryContextDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "projectionDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "appliedRecordSha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "targets": [
+    {
+      "path": "playwright/checkout.spec.js",
+      "operation": "CREATE",
+      "afterDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "playwright/login.spec.js",
+      "operation": "MODIFY",
+      "afterDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "framework": "playwright",
+  "timeoutMs": 600000,
+  "fingerprintDigest": "sha256:eb07c7da1db8b887eb5cfc50a126fe2b336e71ee8f73a685b111d68a42febebb",
+  "profileDigest": "sha256:997906193a40ca91bbd1f8db961a320c9814272a8dab1ec4742ccf4e1d00c746",
+  "bindingDigest": "sha256:95d847c732e0c8229a31a5b82e80b863be323956b7f69b048893a946be59b23a"
+}

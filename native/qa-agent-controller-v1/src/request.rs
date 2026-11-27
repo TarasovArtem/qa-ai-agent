@@ -160,6 +160,38 @@ pub(crate) fn parse_root(v: &Value, kind: ErrorKind) -> Result<Root> {
     })
 }
 
+/// Validates a `targets` array (OD-06 §4.2): 1..=100 closed
+/// `{path, operation, afterDigest}` entries, PPI-1 executable spec paths of
+/// `framework`, strictly ascending and unique under the PPI-1 ASCII case-fold
+/// identity key. Shared by the CREATE request and the execution binding
+/// (OD-06 §11.1 "targets §4").
+pub(crate) fn parse_targets(raw_targets: &[Value], framework: &str, kind: ErrorKind) -> Result<Vec<Target>> {
+    if raw_targets.is_empty() || raw_targets.len() > limits::MAX_TARGETS {
+        return Err(Error::new(kind, "SCHEMA_TARGET_COUNT"));
+    }
+    let mut targets = Vec::with_capacity(raw_targets.len());
+    for t in raw_targets {
+        let t = Closed::new(t, &["path", "operation", "afterDigest"], kind)?;
+        targets.push(Target {
+            path: t.grammar("path", |p| grammar::is_ppi1_target_path(p, framework))?.to_owned(),
+            operation: t.grammar("operation", |x| x == "CREATE" || x == "MODIFY")?.to_owned(),
+            after_digest: t.grammar("afterDigest", is_h)?.to_owned(),
+        });
+    }
+    if !strictly_ascending(targets.iter().map(|t| t.path.as_str())) {
+        return Err(Error::new(kind, "SCHEMA_TARGET_ORDER"));
+    }
+    // PPI-1 identity key is the ASCII case-fold of the whole path; two targets
+    // with equal keys are refused (OD-04 §13.3, adopted by OD-06 §4.2
+    // "canonical PPI-1"). Paths are ASCII after the grammar check.
+    let mut folded: Vec<String> = targets.iter().map(|t| t.path.to_ascii_lowercase()).collect();
+    folded.sort();
+    if folded.windows(2).any(|w| w[0] == w[1]) {
+        return Err(Error::new(kind, "SCHEMA_TARGET_CASE_FOLD_DUPLICATE"));
+    }
+    Ok(targets)
+}
+
 /// Parses and validates one request payload (the bytes inside a client frame).
 pub fn parse_request(payload: &[u8]) -> Result<Request> {
     let v = json::parse_strict(payload, json::FRAME_LIMITS)?;
@@ -211,30 +243,7 @@ pub fn validate_request(v: &Value) -> Result<Request> {
 
     let framework = o.grammar("framework", |f| grammar::FRAMEWORKS.contains(&f))?.to_owned();
 
-    let raw_targets = o.array("targets")?;
-    if raw_targets.is_empty() || raw_targets.len() > limits::MAX_TARGETS {
-        return Err(Error::new(K, "SCHEMA_TARGET_COUNT"));
-    }
-    let mut targets = Vec::with_capacity(raw_targets.len());
-    for t in raw_targets {
-        let t = Closed::new(t, &["path", "operation", "afterDigest"], K)?;
-        targets.push(Target {
-            path: t.grammar("path", |p| grammar::is_ppi1_target_path(p, &framework))?.to_owned(),
-            operation: t.grammar("operation", |x| x == "CREATE" || x == "MODIFY")?.to_owned(),
-            after_digest: t.grammar("afterDigest", is_h)?.to_owned(),
-        });
-    }
-    if !strictly_ascending(targets.iter().map(|t| t.path.as_str())) {
-        return Err(Error::new(K, "SCHEMA_TARGET_ORDER"));
-    }
-    // PPI-1 identity key is the ASCII case-fold of the whole path; two targets
-    // with equal keys are refused (OD-04 §13.3, adopted by OD-06 §4.2
-    // "canonical PPI-1"). Paths are ASCII after the grammar check.
-    let mut folded: Vec<String> = targets.iter().map(|t| t.path.to_ascii_lowercase()).collect();
-    folded.sort();
-    if folded.windows(2).any(|w| w[0] == w[1]) {
-        return Err(Error::new(K, "SCHEMA_TARGET_CASE_FOLD_DUPLICATE"));
-    }
+    let targets = parse_targets(o.array("targets")?, &framework, K)?;
 
     let (lo, hi) = limits::TIMEOUT_MS;
     let timeout_ms = o.int("timeoutMs", lo, hi)? as u32;

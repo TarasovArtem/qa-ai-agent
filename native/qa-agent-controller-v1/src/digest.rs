@@ -35,6 +35,9 @@ pub mod domains {
     pub const INCIDENT: &str = "qa-ai-agent:execution-incident:v1:";
     /// `recordDigest` of AutomationExecutionRecord v2
     pub const RECORD_V2: &str = "qa-ai-agent:automation-execution-record:v2:";
+    /// Existing Stage 4 `root-identity-v1` domain (approval/apply contract
+    /// §17.2; OD-06 §4.2, §11.1 "Existing Stage 4 domains/bytes unchanged").
+    pub const REPOSITORY_ROOT_BINDING: &str = "qa-ai-agent:repository-root-binding:v1:";
 }
 
 const fn err(code: &'static str) -> Error {
