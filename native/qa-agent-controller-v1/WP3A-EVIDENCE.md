@@ -141,3 +141,7 @@ Unchanged by C2: the dependency budget (`hmac-sha256` 1.1.15 only, same `Cargo.l
 - WP3-A portable scope MERGED / POST-MERGE CERTIFIED. Prior candidate records are historical; no runtime qualification or release is established.
 - OQ-1, OQ-2, RQ-7 and D-01–D-15 remain OPEN; OQ-3 and RV-1 NOT_A_FINDING. Debian build of record and Q1–Q7 remain unverified/open.
 - WP2 SUSPENDED (B-1 OPEN); WP3-B and WP4–WP9 NOT AUTHORIZED; execute DISABLED; WIP = 1. No new risk acceptance or waiver.
+
+## 11. WP2 development-environment acceptance (2026-11-27)
+
+Supersedes the historical WP2 suspension and D-14 compilation gap above. Under OD-R1-STAGE5-WP2-ACCEPTANCE-1 and OD-R1-STAGE5-WP2-CLOSURE, the PO accepted reported Debian 13 Rust 1.85.1 build and 65/65 offline tests as D-14 evidence for WP3-A. Security spot-check corroborated recorded logs without independently rerunning tests. WP2 development readiness ACCEPTED; B-1 CLOSED. See [WP2 record](../../docs/controlled-v1-execution-amendment-r1-v1.md#15-wp2-development-readiness-record-2026-11-27). Other D-items, OQ-1, OQ-2, RQ-7 and qualification obligations remain OPEN; WP3-B and WP4–WP9 NOT AUTHORIZED; execute DISABLED.

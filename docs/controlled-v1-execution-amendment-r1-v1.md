@@ -835,3 +835,13 @@ Delta review covers §12 and the listed sections only (review rule of §9).
 ## 14. WP3-A lifecycle overlay (2026-11-27)
 
 Under PO decision `OD-R1-STAGE5-WSL-FIRST-1`, WP3 was organizationally split into WP3-A portable development in WSL and WP3-B remaining target-environment work/acceptance. This changes sequencing only; the original WP3 acceptance criteria and target VM requirements remain mandatory. WP1 is closed. WP2 is SUSPENDED / B-1 storage OPEN. WP3-A is MERGED / POST-MERGE CERTIFIED (PR #280, merge `608463d2eb1d07e38e429f4b8b3e56895fbf9678`); see [WP3-A lifecycle evidence](../native/qa-agent-controller-v1/WP3A-EVIDENCE.md#10-post-merge-lifecycle-record-2026-11-27). WP2 resumption and WP3-B require separate authority; WP4–WP9 remain NOT AUTHORIZED. No runtime implementation or activation grant is made by this record; execute remains DISABLED. All unresolved questions and qualification obligations are preserved. WIP = 1.
+
+## 15. WP2 development readiness record (2026-11-27)
+
+Lifecycle overlay superseding the historical WP2 suspension in §14. PO decisions: `OD-R1-STAGE5-WP2-STORAGE-RECOVERY-1`, `OD-R1-STAGE5-WP2-RESUME-1`, `OD-R1-STAGE5-WP2-ACCEPTANCE-1`, `OD-R1-STAGE5-WP2-CLOSURE` APPROVED. WP2 development readiness ACCEPTED; B-1 CLOSED; Security spot-check APPROVED. WP3-B remains NOT AUTHORIZED.
+
+- Operator-reported evidence: provisioned Debian 13.8 VM, 8 GiB disk, 2 GiB RAM, 2 vCPU; 24/24 configuration checks and Debian Rust 1.85.1 build / 65/65 tests PASS. R-1–R-4 accepted for development scope only. F-WZ corrective record accepted at spot-check. VM powered off at reporting.
+- Security spot-check reviewed 17 selected non-secret manifest entries and recorded outputs; no fresh boot or test rerun, no full disk rehash. No material development-blocking findings reported.
+- Resume record SHA-256: `d46d98a6fef56fdc4b550fb15afff61d683dfb7b3693526bc1910e046af45ff1`; manifest SHA-256: `9f8ffbfd17c1f68b0b7fc898d3beaa700a24ce9a4544247e2cfb7217f4f217a8`; launcher SHA-256: `f24c293036421a7fef9c5185799ddec3c7509f0888adcf001acffcfe4e80c6a5`. Evidence retained operator-local. No secrets included.
+- D-14 compilation/test evidence accepted for the existing WP3-A scope. No runtime qualification, reproducible binary certification or risk waiver is claimed. L5, L6, K-1, Q1–Q7, OQ-1, OQ-2, RQ-7 remain OPEN; archive snapshot pinning and update management remain outstanding. Other deferred obligations unchanged.
+- WP1 and WP3-A closed; WP4–WP9 NOT AUTHORIZED; execute DISABLED; release NOT APPROVED. WIP = 1.
