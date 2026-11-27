@@ -179,3 +179,80 @@ fn enrolled_fingerprint_verification() {
     assert_eq!(verify_enrolled(TreeProfile::PlaywrightRoot, &wrong_algo).unwrap_err().code, "SCHEMA_LITERAL");
     assert_eq!(digest(TreeProfile::PlaywrightRoot, &entries).unwrap(), d);
 }
+
+// SEC-WP3A-01: contractual resource limits hold before any content is hashed.
+// One 16 MiB buffer is referenced many times, so these inputs cost no extra
+// memory; without pre-hash admission they would hash 64 GiB (root) or 256 GiB
+// (browser) before being refused.
+
+#[test]
+fn total_limit_is_enforced_before_hashing() {
+    let chunk = vec![0u8; 16_777_216];
+    let names: Vec<String> = (0..4089).map(|i| format!("node_modules/playwright/f{i:05}")).collect();
+    let mut files: Vec<(&str, &[u8])> = synthetic_root();
+    files.extend(names.iter().map(|n| (n.as_str(), &chunk[..])));
+    assert_eq!(files.len(), 4096);
+    assert_eq!(compute(TreeProfile::PlaywrightRoot, &files).unwrap_err().code, "FINGERPRINT_TOTAL_TOO_LARGE");
+    files.push(("node_modules/playwright/zz", &chunk[..1]));
+    assert_eq!(compute(TreeProfile::PlaywrightRoot, &files).unwrap_err().code, "FINGERPRINT_FILE_COUNT");
+
+    let browser_names: Vec<String> = (0..16_384).map(|i| format!("f{i:05}")).collect();
+    let mut browser: Vec<(&str, &[u8])> = browser_names.iter().map(|n| (n.as_str(), &chunk[..])).collect();
+    assert_eq!(compute(TreeProfile::BrowserTree, &browser).unwrap_err().code, "FINGERPRINT_TOTAL_TOO_LARGE");
+    browser.push(("g", &chunk[..1]));
+    assert_eq!(compute(TreeProfile::BrowserTree, &browser).unwrap_err().code, "FINGERPRINT_FILE_COUNT");
+}
+
+#[test]
+fn total_limit_exact_boundary() {
+    // synthetic_root() holds 194 bytes; 3 x 16 MiB + 16777022 brings the total
+    // to exactly 64 MiB (67108864).
+    let root_bytes: usize = synthetic_root().iter().map(|(_, c)| c.len()).sum();
+    assert_eq!(root_bytes, 194);
+    let mut at: Vec<FileEntry> = (0..3).map(|i| fake(format!("node_modules/playwright/f{i}"), 16_777_216)).collect();
+    at.push(fake("node_modules/playwright/f3".into(), 16_777_022));
+    for (p, c) in synthetic_root().into_iter().filter(|(p, _)| !p.starts_with("node_modules/")) {
+        at.push(fake(p.into(), c.len() as u64));
+    }
+    at.push(fake("node_modules/playwright/g".into(), 194 - 105)); // remaining root bytes as one entry
+    at.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(at.iter().map(|e| e.size).sum::<u64>(), 67_108_864);
+    assert!(validate_entries(TreeProfile::PlaywrightRoot, &at).is_ok());
+    let idx = at.iter().position(|e| e.path == "node_modules/playwright/g").unwrap();
+    at[idx].size += 1;
+    assert_eq!(validate_entries(TreeProfile::PlaywrightRoot, &at).unwrap_err().code, "FINGERPRINT_TOTAL_TOO_LARGE");
+
+    // The same +1 overflow through compute() is refused before hashing.
+    let big = vec![0u8; 16_777_216];
+    let mut files: Vec<(&str, &[u8])> = synthetic_root();
+    for name in ["node_modules/playwright/f0", "node_modules/playwright/f1", "node_modules/playwright/f2"] {
+        files.push((name, &big[..]));
+    }
+    files.push(("node_modules/playwright/f3", &big[..16_777_023]));
+    assert_eq!(compute(TreeProfile::PlaywrightRoot, &files).unwrap_err().code, "FINGERPRINT_TOTAL_TOO_LARGE");
+}
+
+#[test]
+fn enrolled_file_count_is_checked_before_materializing_entries() {
+    let zero = format!("sha256:{}", "0".repeat(64));
+    let file = obj(vec![("path", s("package.json")), ("sha256", s(&zero)), ("size", Value::Int(1))]);
+    for files in [vec![], vec![file; 4097]] {
+        let enrolled = obj(vec![("algorithm", s("od06-files-v1")), ("files", Value::Array(files)), ("digest", s(&zero))]);
+        assert_eq!(verify_enrolled(TreeProfile::PlaywrightRoot, &enrolled).unwrap_err().code, "FINGERPRINT_FILE_COUNT");
+    }
+    let oversize = obj(vec![("path", s("package.json")), ("sha256", s(&zero)), ("size", Value::Int(16_777_217))]);
+    let enrolled = obj(vec![("algorithm", s("od06-files-v1")), ("files", Value::Array(vec![oversize])), ("digest", s(&zero))]);
+    assert_eq!(verify_enrolled(TreeProfile::PlaywrightRoot, &enrolled).unwrap_err().code, "SCHEMA_RANGE");
+}
+
+#[test]
+fn per_file_and_path_checks_precede_hashing() {
+    let big = vec![0u8; 16_777_217];
+    assert_eq!(
+        compute(TreeProfile::PlaywrightRoot, &[("node_modules/playwright/x", &big[..])]).unwrap_err().code,
+        "FINGERPRINT_FILE_TOO_LARGE"
+    );
+    assert_eq!(compute(TreeProfile::PlaywrightRoot, &[("src/x.js", &big[..16])]).unwrap_err().code, "FINGERPRINT_PATH");
+    let sizes = vec![fake("package.json".into(), u64::MAX)];
+    assert_eq!(validate_entries(TreeProfile::PlaywrightRoot, &sizes).unwrap_err().code, "FINGERPRINT_FILE_TOO_LARGE");
+}

@@ -2,10 +2,11 @@
 
 | Item | Value |
 |---|---|
-| Work package | R1 Stage 5 WP3-A — portable data components (OD-R1-STAGE5-WP3-A, -PREFLIGHT-1, -SHA256-1, -DELIVERY-1; corrective OD-R1-STAGE5-WP3-A-C1) |
+| Work package | R1 Stage 5 WP3-A — portable data components (OD-R1-STAGE5-WP3-A, -PREFLIGHT-1, -SHA256-1, -DELIVERY-1; correctives OD-R1-STAGE5-WP3-A-C1 and -C2) |
 | Base | `main` a5a14cfea286df6c487a26ef0f15bff70068a185 |
 | Reviewed candidate | PR #280, branch `feature/r1-stage5-wp3-a`, HEAD 3b0e7e1d45b45123fa169469af567292d33b4a06, tree 04e92ee9c904d398b0fc1a80e1c4d0044df74baf, parent a5a14cfe (38 files, +5189) |
-| Current revision | Corrective C1: one commit on top of 3b0e7e1d (§8). It changes only `src/frame.rs`, `tests/frame.rs` and this file. A commit cannot name its own hash; the PR head identifies it |
+| Corrective C1 | 57d94e7255c4392c94e3fb72e60dbe6cedcf4a18, tree a5422dd21acb81c75c61bf9d47055e2e77a3e57f, parent 3b0e7e1d (§8); `src/frame.rs`, `tests/frame.rs` and this file; ARCH-WP3A-01/02 ACCEPTED |
+| Current revision | Corrective C2: one commit on top of 57d94e72 (§9). It changes only `src/fingerprint.rs`, `src/request.rs`, `tests/fingerprint.rs`, `tests/request.rs` and this file. A commit cannot name its own hash; the PR head identifies it |
 | Design inputs | `docs/controlled-v1-execution-contract-v1.md` (OD-06), `docs/controlled-v1-execution-amendment-r1-v1.md` (A1–A9), OD-04 §11 (CRS-1) and §13 (PPI-1) |
 | Status | Development evidence only. **No runtime qualification is claimed.** Execute stays DISABLED: this crate is a library with no binary and no execution capability |
 
@@ -18,10 +19,10 @@ A Rust library implementing only the portable, deterministic data contracts the 
 | `json` | OD-06 §4.2 strict intake | UTF-8 only; no BOM, NUL (raw or escaped), invalid Unicode or duplicate keys; no trailing content; ≤262144 bytes; depth ≤12; safe integers only, never `-0` |
 | `canonical`, `digest` | OD-06 §11.1, OD-04 §11.2 | CRS-1 `E(v)` byte rules; `H` = `sha256:`+hex; `H(domain, E(v))`, excluding the object's own digest field; all OD-06 domains |
 | `wire` | OD-06 §4.2, §7.2, §9.2 | Sans-IO client frames (u32 BE + JSON ≤262144) and broker frames (kind 1/2/3; structural ≤262144, raw ≤65536). The length is checked before any payload byte |
-| `request` | OD-06 §4.2, §5.4, §9.1, OD-04 §13 | Closed CREATE/RECONCILE schema and grammars: ID, runId, ordinal, `H`, root path/dev/ino, exact SemVer product version, PPI-1 targets (1..100, sorted, unique), timeout, SUT environment |
+| `request` | OD-06 §4.2, §5.4, §9.1, OD-04 §13 | Closed CREATE/RECONCILE schema and grammars: ID, runId, ordinal, `H`, root path/dev/ino, exact SemVer product version, PPI-1 targets (1..100, sorted, unique, no case-fold duplicates; C2), timeout, SUT environment (no NUL, enforced in the schema layer as well as the parser; C2) |
 | `frame` | OD-06 §7.1, §7.2, §11.1, §11.3 | Closed broker frame; disposition, refusal, record and status enums; EXITED observation; unambiguous per-disposition field rules; transition table; frame sequence; identity constancy; raw-frame window. `frameSequence` is an `N` (`0..=2^53-1`) in both serialization and deserialization (C1) |
 | `proposal` | OD-06 §11.2, §9.3, §9.4 | Closed result proposal; report limits (≤100, 1..4194304 each, aggregate ≤16777216, sorted); normalized result; checks against bound identities, resultExpected, framework report grammar/count, adapter and exact target paths |
-| `fingerprint` | OD-06 §8.2, amendment A2.1–A2.3 | `od06-files-v1`; A2.1 membership; PPI-1 segment grammar for walked names; limits; byte ordering; required root files; fingerprint and browser-tree domains; enrolled `{algorithm, files, digest}` verification |
+| `fingerprint` | OD-06 §8.2, amendment A2.1–A2.3 | `od06-files-v1`; A2.1 membership; PPI-1 segment grammar for walked names; limits; byte ordering; required root files; fingerprint and browser-tree domains; enrolled `{algorithm, files, digest}` verification. Count, path, per-file and checked total-bytes limits, ordering and required files are admitted before any content is hashed (C2) |
 
 The library contains no `unsafe` (`#![forbid(unsafe_code)]`) and makes no process, filesystem, network, environment, thread, FFI, systemd, D-Bus or sudo call. `tests/portability.rs` enforces this.
 
@@ -41,17 +42,17 @@ The library contains no `unsafe` (`#![forbid(unsafe_code)]`) and makes no proces
 
 ## 3. Test evidence (development toolchain, WSL Ubuntu, rustc/cargo 1.93.1)
 
-`cargo build --locked --offline`, `cargo build --release --locked --offline` and `cargo test --locked --offline`: 0 warnings (`deny(missing_docs, rust_2018_idioms)`); **58 passed, 0 failed** after C1 (54 on the reviewed candidate 3b0e7e1d, plus 4 C1 frame tests).
+`cargo build --locked --offline`, `cargo build --release --locked --offline` and `cargo test --locked --offline`: 0 warnings (`deny(missing_docs, rust_2018_idioms)`); **65 passed, 0 failed** after C2: 54 on the reviewed candidate 3b0e7e1d, plus 4 C1 frame tests (58 at 57d94e72), plus 4 C2 fingerprint and 3 C2 request tests.
 
 | Suite | Tests | Covers |
 |---|---:|---|
 | `json_strict` | 10 | BOM, NUL, UTF-8, surrogates, duplicates, trailing content, exact size/depth limits, integer domain, syntax, no input echo |
 | `canonical_digest` | 8 | **Byte-for-byte parity with the repository's JS `encodeValue`/`digest`** (vector files under `tests/vectors/` written by that JS code), round trip, CRS-1 domain refusals, own-digest exclusion, domain separation, SHA-256 known-answer vectors (FIPS 180-2 examples, including one million `a`) |
 | `wire` | 3 | Round trip, partial input, oversize length refused before payload, kinds, raw limit |
-| `request` | 11 | Closed keys at every level; every grammar and limit, positive and negative |
+| `request` | 14 | Closed keys at every level; every grammar and limit, positive and negative. C2: case-fold duplicate targets (adjacent and non-adjacent); `validate_request` enforces the field rules (NUL, grammar, range, no deeper structure) without the parser and agrees with `parse_request`; exact boundaries (value 4096 bytes, total 65536, 32 entries, 64-byte name, 4096-byte root, 20-digit dev) |
 | `frame` | 13 | Round trip of every disposition; closed keys; field rules; observation rule; status/reason pairs; happy path; every transition, sequence and identity violation; reconcile and malformed intake. C1: `frameSequence` round trip across the valid range (0 to 2^53-1); out-of-range values refused, never wrapped; deserialization admits only `N`; a refused frame leaves the sequence checker unchanged |
 | `proposal` | 4 | Structure, counts and totals, report limits and order, identity binding, resultExpected, Cypress/Playwright report grammar and count, adapter, exact spec paths |
-| `fingerprint` | 7 | JS-produced golden digest, order independence, membership, required files, all limits (exact boundaries), browser profile, enrolled verification and tamper detection |
+| `fingerprint` | 11 | JS-produced golden digest, order independence, membership, required files, all limits (exact boundaries), browser profile, enrolled verification and tamper detection. C2: total limit refused before hashing (inputs of 64 GiB root / 256 GiB browser, built from one shared 16 MiB buffer, are refused in about 1 s of suite time); total exactly 64 MiB accepted and +1 refused; enrolled file count checked before entries are built; per-file and path checks before hashing |
 | `portability` | 2 | No OS, process, FS, network, FFI or unsafe tokens in `src/`; no binary target; lockfile has exactly one dependency |
 
 All fixtures are synthetic.
@@ -107,9 +108,9 @@ cargo test --locked --offline
 cargo tree --locked --offline -e normal,build
 ```
 
-## 8. Corrective C1 record (OD-R1-STAGE5-WP3-A-C1, 2026-11-27)
+## 8. Corrective C1 record (OD-R1-STAGE5-WP3-A-C1, 2026-11-27) — ACCEPTED
 
-Delta on the reviewed candidate 3b0e7e1d (tree 04e92ee9). Files: `src/frame.rs`, `tests/frame.rs`, `WP3A-EVIDENCE.md`. No contract, dependency, CI, product or demo change.
+Delta on the reviewed candidate 3b0e7e1d (tree 04e92ee9), committed as 57d94e72 (tree a5422dd2). Files: `src/frame.rs`, `tests/frame.rs`, `WP3A-EVIDENCE.md`. No contract, dependency, CI, product or demo change.
 
 | Finding | Defect | Correction | Evidence |
 |---|---|---|---|
@@ -117,3 +118,14 @@ Delta on the reviewed candidate 3b0e7e1d (tree 04e92ee9). Files: `src/frame.rs`,
 | ARCH-WP3A-02 | Stale evidence metadata (the base row said "local, not committed"; no reviewed-candidate identity; no corrective record) | Header rows for the reviewed candidate and the current revision; test counts; design-question dispositions; this record | This file |
 
 Unchanged by C1: the dependency budget (`hmac-sha256` 1.1.15 only, same `Cargo.lock`); every other module; the wire format of every in-range frame (the encoding of `frameSequence` values in `0..=2^53-1` is byte-identical); OQ-1, OQ-2 and RQ-7 OPEN; D-01..D-15 OPEN; execute DISABLED; no runtime qualification claim.
+
+## 9. Corrective C2 record (OD-R1-STAGE5-WP3-A-C2, 2026-11-27)
+
+Delta on 57d94e72 (tree a5422dd2). Files: `src/fingerprint.rs`, `src/request.rs`, `tests/fingerprint.rs`, `tests/request.rs`, `WP3A-EVIDENCE.md`. No contract, dependency, CI, product or demo change. `src/frame.rs` and `tests/frame.rs` are untouched, so the C1 corrections stand as accepted.
+
+| Finding | Defect | Correction | Evidence |
+|---|---|---|---|
+| SEC-WP3A-01 | Fingerprint resource limits were not enforced in contract order. `compute` checked count and per-file size but hashed every file before the OD-06 §8.2 total-hashed-bytes limit (≤67108864; A2.3 browser ≤1 GiB) was checked, so up to 4096 × 16 MiB (root) or 16384 × 16 MiB (browser) could be hashed before a refusal. Paths, ordering and required files were also checked only after hashing. `verify_enrolled` built every entry before the count check. Totals used unchecked addition | `compute` admits count, path rule, per-file limit, a checked fail-fast running total, ordering/uniqueness and required root files before any content byte is hashed; at most `max_total_bytes` are ever hashed. `validate_entries` uses the same checked fail-fast total (`add_within_limits`). `verify_enrolled` checks the file count before materializing entries | 4 tests in `tests/fingerprint.rs`: over-total inputs refused before hashing for both profiles, and count +1 refused; exact 64 MiB boundary accepted, +1 refused, including through `compute`; enrolled count 0 and 4097 refused before materializing entries, oversize size refused; per-file, path and `u64::MAX` size refused before hashing |
+| SEC-WP3A-02 | Request validation was inconsistent across entry points. The public `validate_request` relied on the strict parser for the OD-06 §9.1 "no NUL" rule on environment values, so a value not produced by `parse_request` was not checked. Targets did not enforce the PPI-1 identity key (ASCII case-fold of the whole path; OD-04 §13.3, adopted by OD-06 §4.2 "canonical PPI-1"), so two case-fold-equal targets were accepted | Environment values containing NUL are refused in the schema layer (`SCHEMA_ENVIRONMENT_VALUE`), in addition to the parser. Case-fold-equal targets are refused (`SCHEMA_TARGET_CASE_FOLD_DUPLICATE`). The environment total uses saturating addition. The `validate_request` documentation states which rules are field rules (enforced there) and which are wire intake limits (`parse_request`: ≤262144 bytes, depth ≤12; a value accepted by the closed schema is at most 3 levels deep) | 3 tests in `tests/request.rs`: case-fold duplicates refused (adjacent, non-adjacent, extension case) and distinct targets accepted; `validate_request` agrees with `parse_request` and refuses NUL, control characters, out-of-range values and deeper structure on its own; exact input boundaries accepted |
+
+Unchanged by C2: the dependency budget (`hmac-sha256` 1.1.15 only, same `Cargo.lock`); every digest of an in-limit input (golden vectors unchanged); every request the contract admits is still admitted (the PPI-1 case-fold rule rejects only requests that cannot equal an accepted package); internal error codes stay internal (D-12); OQ-1, OQ-2, RQ-7 and D-01..D-15 OPEN; OQ-3 and RV-1 NOT_A_FINDING; RC-07/RC-08, OD-04/OD-06 and A8 unchanged; execute DISABLED; no runtime qualification claim.

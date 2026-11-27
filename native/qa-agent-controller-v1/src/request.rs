@@ -153,6 +153,12 @@ pub fn parse_request(payload: &[u8]) -> Result<Request> {
 }
 
 /// Validates an already parsed request value.
+///
+/// Every field rule of OD-06 §4.2/§9.1 is enforced here, independently of how
+/// `v` was produced. The byte-size (<=262144) and nesting (<=12) bounds are
+/// intake limits on the wire bytes, enforced by `parse_request`. A value
+/// accepted here is at most 3 levels deep, because every closed key has a
+/// fixed scalar, record or array-of-record type.
 pub fn validate_request(v: &Value) -> Result<Request> {
     let op = match v.get("operation") {
         Some(Value::Str(s)) => Operation::parse(s).ok_or(Error::new(K, "SCHEMA_OPERATION"))?,
@@ -214,6 +220,14 @@ pub fn validate_request(v: &Value) -> Result<Request> {
     if !strictly_ascending(targets.iter().map(|t| t.path.as_str())) {
         return Err(Error::new(K, "SCHEMA_TARGET_ORDER"));
     }
+    // PPI-1 identity key is the ASCII case-fold of the whole path; two targets
+    // with equal keys are refused (OD-04 §13.3, adopted by OD-06 §4.2
+    // "canonical PPI-1"). Paths are ASCII after the grammar check.
+    let mut folded: Vec<String> = targets.iter().map(|t| t.path.to_ascii_lowercase()).collect();
+    folded.sort();
+    if folded.windows(2).any(|w| w[0] == w[1]) {
+        return Err(Error::new(K, "SCHEMA_TARGET_CASE_FOLD_DUPLICATE"));
+    }
 
     let (lo, hi) = limits::TIMEOUT_MS;
     let timeout_ms = o.int("timeoutMs", lo, hi)? as u32;
@@ -227,15 +241,17 @@ pub fn validate_request(v: &Value) -> Result<Request> {
     for e in raw_env {
         let e = Closed::new(e, &["name", "value"], K)?;
         let name = e.grammar("name", grammar::is_sut_name)?;
-        // NUL is already refused by the strict parser (raw and escaped).
         let value = e.str("value")?;
-        if value.len() > limits::MAX_ENV_VALUE_BYTES {
+        // OD-06 §9.1: value <= 4096 UTF-8 bytes, no NUL. NUL is enforced here
+        // as well as in the strict parser, so `validate_request` applies the
+        // same rule to a value that did not come through `parse_request`.
+        if value.len() > limits::MAX_ENV_VALUE_BYTES || value.contains('\0') {
             return Err(Error::new(K, "SCHEMA_ENVIRONMENT_VALUE"));
         }
         if environment.iter().any(|x| x.name == name) {
             return Err(Error::new(K, "SCHEMA_ENVIRONMENT_DUPLICATE"));
         }
-        total += name.len() + value.len();
+        total = total.saturating_add(name.len() + value.len());
         environment.push(EnvEntry { name: name.to_owned(), value: value.to_owned() });
     }
     if total > limits::MAX_ENV_TOTAL_BYTES {

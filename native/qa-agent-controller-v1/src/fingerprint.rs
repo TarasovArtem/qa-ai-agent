@@ -152,17 +152,25 @@ pub fn validate_entries(profile: TreeProfile, entries: &[FileEntry]) -> Result<(
         if !is_h(&e.sha256) {
             return Err(err("FINGERPRINT_SHA256"));
         }
-        if e.size > l.max_file_bytes {
-            return Err(err("FINGERPRINT_FILE_TOO_LARGE"));
-        }
-        total += e.size;
+        total = add_within_limits(total, e.size, l)?;
     }
-    if total > l.max_total_bytes {
-        return Err(err("FINGERPRINT_TOTAL_TOO_LARGE"));
+    require_root_files(profile, entries.iter().map(|e| e.path.as_str()))
+}
+
+/// Adds one file size to a running total under the per-file and total limits.
+/// Checked and fail-fast: the total never exceeds `max_total_bytes`.
+fn add_within_limits(total: u64, size: u64, l: TreeLimits) -> Result<u64> {
+    if size > l.max_file_bytes {
+        return Err(err("FINGERPRINT_FILE_TOO_LARGE"));
     }
-    if profile == TreeProfile::PlaywrightRoot
-        && !ROOT_FILES.iter().all(|f| entries.iter().any(|e| e.path == *f))
-    {
+    total
+        .checked_add(size)
+        .filter(|t| *t <= l.max_total_bytes)
+        .ok_or(err("FINGERPRINT_TOTAL_TOO_LARGE"))
+}
+
+fn require_root_files<'a>(profile: TreeProfile, paths: impl Iterator<Item = &'a str> + Clone) -> Result<()> {
+    if profile == TreeProfile::PlaywrightRoot && !ROOT_FILES.iter().all(|f| paths.clone().any(|p| p == *f)) {
         return Err(err("FINGERPRINT_REQUIRED_FILE_MISSING"));
     }
     Ok(())
@@ -185,18 +193,32 @@ pub fn digest(profile: TreeProfile, entries: &[FileEntry]) -> Result<String> {
 /// Builds entries from in-memory `(path, content)` pairs (synthetic fixtures
 /// or bytes already read by a qualified walker), sorts them by path bytes,
 /// validates them and returns the entries with their digest.
+///
+/// Every check that needs only paths and sizes (count, path rule, per-file
+/// limit, total hashed bytes, ordering and uniqueness, required root files)
+/// runs BEFORE any content byte is hashed, so a refused input costs no
+/// hashing and at most `max_total_bytes` are ever hashed (OD-06 §8.2, A2.3).
 pub fn compute(profile: TreeProfile, files: &[(&str, &[u8])]) -> Result<(Vec<FileEntry>, String)> {
     let l = profile.limits();
-    if files.len() > l.max_files {
+    if files.is_empty() || files.len() > l.max_files {
         return Err(err("FINGERPRINT_FILE_COUNT"));
     }
-    for (_, content) in files {
-        if content.len() as u64 > l.max_file_bytes {
-            return Err(err("FINGERPRINT_FILE_TOO_LARGE"));
+    let mut total: u64 = 0;
+    for (path, content) in files {
+        let size = u64::try_from(content.len()).map_err(|_| err("FINGERPRINT_FILE_TOO_LARGE"))?;
+        total = add_within_limits(total, size, l)?;
+        if !profile.path_allowed(path) {
+            return Err(err("FINGERPRINT_PATH"));
         }
     }
-    let mut entries: Vec<FileEntry> = files.iter().map(|(p, c)| FileEntry::from_bytes(p, c)).collect();
-    entries.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+    let mut sorted: Vec<&(&str, &[u8])> = files.iter().collect();
+    sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    if !strictly_ascending(sorted.iter().map(|(p, _)| *p)) {
+        return Err(err("FINGERPRINT_ORDER"));
+    }
+    require_root_files(profile, sorted.iter().map(|(p, _)| *p))?;
+    // Admitted: hash now.
+    let entries: Vec<FileEntry> = sorted.iter().map(|(p, c)| FileEntry::from_bytes(p, c)).collect();
     let d = digest(profile, &entries)?;
     Ok((entries, d))
 }
@@ -207,8 +229,13 @@ pub fn verify_enrolled(profile: TreeProfile, v: &Value) -> Result<Vec<FileEntry>
     let o = Closed::new(v, &["algorithm", "files", "digest"], K)?;
     o.literal("algorithm", ALGORITHM)?;
     let claimed = o.grammar("digest", is_h)?;
-    let mut entries = Vec::new();
-    for f in o.array("files")? {
+    let files = o.array("files")?;
+    // Count limit before materializing any entry.
+    if files.is_empty() || files.len() > profile.limits().max_files {
+        return Err(err("FINGERPRINT_FILE_COUNT"));
+    }
+    let mut entries = Vec::with_capacity(files.len());
+    for f in files {
         let f = Closed::new(f, &["path", "sha256", "size"], K)?;
         entries.push(FileEntry {
             path: f.str("path")?.to_owned(),

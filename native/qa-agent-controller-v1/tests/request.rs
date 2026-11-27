@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use qa_agent_controller_v1::json::Value;
-use qa_agent_controller_v1::request::{parse_request, Request};
+use qa_agent_controller_v1::request::{parse_request, validate_request, Request};
 
 fn refuse(v: &Value) -> &'static str {
     parse_request(&bytes(v)).expect_err("must refuse").code
@@ -169,4 +169,66 @@ fn oversize_and_malformed_payloads_are_refused_without_partial_acceptance() {
     let mut raw = bytes(&valid_create());
     raw.extend_from_slice(b"{}");
     assert_eq!(parse_request(&raw).unwrap_err().code, "JSON_TRAILING_CONTENT");
+}
+
+// SEC-WP3A-02: OD-06 §4.2/§9.1 input requirements are enforced consistently,
+// whatever entry point produced the value.
+
+#[test]
+fn case_fold_duplicate_targets_are_refused() {
+    let v = valid_create();
+    for pair in [
+        ["playwright/A.spec.js", "playwright/a.spec.js"],
+        ["playwright/Dir/x.spec.js", "playwright/dir/x.spec.js"],
+        ["playwright/a.SPEC.js", "playwright/a.spec.js"],
+    ] {
+        let t = Value::Array(pair.iter().map(|p| target(p, "CREATE")).collect());
+        assert_eq!(refuse(&with(&v, &["targets"], t)), "SCHEMA_TARGET_CASE_FOLD_DUPLICATE", "{pair:?}");
+    }
+    // Non-adjacent in byte order, equal after folding.
+    let spread = Value::Array(vec![
+        target("playwright/A.spec.js", "CREATE"),
+        target("playwright/B.spec.js", "CREATE"),
+        target("playwright/a.spec.js", "MODIFY"),
+    ]);
+    assert_eq!(refuse(&with(&v, &["targets"], spread)), "SCHEMA_TARGET_CASE_FOLD_DUPLICATE");
+    let distinct = Value::Array(vec![target("playwright/A.spec.js", "CREATE"), target("playwright/b.spec.js", "CREATE")]);
+    assert!(parse_request(&bytes(&with(&v, &["targets"], distinct))).is_ok());
+}
+
+#[test]
+fn validate_request_enforces_field_rules_without_the_parser() {
+    let v = valid_create();
+    assert_eq!(validate_request(&v).unwrap(), parse_request(&bytes(&v)).unwrap());
+    for value in ["a\0b", "\0", "trailing\0"] {
+        let nul = with(&v, &["environment"], Value::Array(vec![env("SUT_A", value)]));
+        assert_eq!(validate_request(&nul).unwrap_err().code, "SCHEMA_ENVIRONMENT_VALUE", "{value:?}");
+    }
+    assert_eq!(validate_request(&with(&v, &["root", "path"], s("/srv/a\0b"))).unwrap_err().code, "SCHEMA_GRAMMAR");
+    assert_eq!(validate_request(&with(&v, &["timeoutMs"], Value::Int(i64::MAX))).unwrap_err().code, "SCHEMA_RANGE");
+    assert_eq!(validate_request(&with(&v, &["schemaVersion"], Value::Int(-1))).unwrap_err().code, "SCHEMA_RANGE");
+    // No closed slot admits deeper structure.
+    let nested = with(&v, &["subject", "product", "version"], obj(vec![("x", s("1.2.3"))]));
+    assert_eq!(validate_request(&nested).unwrap_err().code, "SCHEMA_TYPE");
+    let nested_target = with(&v, &["targets"], Value::Array(vec![Value::Array(vec![])]));
+    assert_eq!(validate_request(&nested_target).unwrap_err().code, "SCHEMA_NOT_OBJECT");
+}
+
+#[test]
+fn input_limits_exact_boundaries() {
+    let v = valid_create();
+    let env_ok = |e: Vec<Value>| validate_request(&with(&v, &["environment"], Value::Array(e)));
+    assert!(env_ok(vec![env("SUT_A", &"x".repeat(4096))]).is_ok());
+    assert!(env_ok(vec![env("SUT_A", &"\u{e9}".repeat(2048))]).is_ok()); // 4096 UTF-8 bytes
+    let at_total: Vec<Value> = (0..16).map(|i| env(&format!("SUT_V{i:02}"), &"x".repeat(4089))).collect();
+    assert!(env_ok(at_total.clone()).is_ok()); // 16 x (7 + 4089) = 65536
+    let mut over_total = at_total;
+    over_total.push(env("SUT_Z", ""));
+    assert_eq!(env_ok(over_total).unwrap_err().code, "SCHEMA_ENVIRONMENT_TOTAL");
+    let max_count: Vec<Value> = (0..32).map(|i| env(&format!("SUT_V{i:02}"), "")).collect();
+    assert!(env_ok(max_count).is_ok());
+    assert!(env_ok(vec![env(&format!("SUT_{}", "A".repeat(60)), "x")]).is_ok()); // 64-byte name
+    let root_at = format!("/{}", "a".repeat(4095));
+    assert!(validate_request(&with(&v, &["root", "path"], s(&root_at))).is_ok());
+    assert!(validate_request(&with(&v, &["root", "dev"], s(&"9".repeat(20)))).is_ok());
 }
