@@ -845,3 +845,13 @@ Lifecycle overlay superseding the historical WP2 suspension in §14. PO decision
 - Resume record SHA-256: `d46d98a6fef56fdc4b550fb15afff61d683dfb7b3693526bc1910e046af45ff1`; manifest SHA-256: `9f8ffbfd17c1f68b0b7fc898d3beaa700a24ce9a4544247e2cfb7217f4f217a8`; launcher SHA-256: `f24c293036421a7fef9c5185799ddec3c7509f0888adcf001acffcfe4e80c6a5`. Evidence retained operator-local. No secrets included.
 - D-14 compilation/test evidence accepted for the existing WP3-A scope. No runtime qualification, reproducible binary certification or risk waiver is claimed. L5, L6, K-1, Q1–Q7, OQ-1, OQ-2, RQ-7 remain OPEN; archive snapshot pinning and update management remain outstanding. Other deferred obligations unchanged.
 - WP1 and WP3-A closed; WP4–WP9 NOT AUTHORIZED; execute DISABLED; release NOT APPROVED. WIP = 1.
+
+## 16. WP3-B limited readiness acceptance (2026-11-27)
+
+Lifecycle overlay superseding the historical WP3-B authorization status in §§14–15. PO decisions `OD-R1-STAGE5-WP3-B` and `OD-R1-STAGE5-WP3-B-ACCEPTANCE-1` APPROVED for the limited development-readiness mission only. Result: NO_CHANGES_REQUIRED; AC-3B-01..10 ACCEPTED on reported evidence. Full normative WP3 remains INCOMPLETE.
+
+- Assessment baseline: `d602aaaf5673c580c50c67b0f63dc03d2d47b724`; WP2 closure PR #282 merged and [automatic push CI #788](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/45981421419) SUCCESS 7/7.
+- Engineering report: crate code, tests and dependency inputs identical across WP3-A reviewed head `256057093525781056d18c1c7bfac1edd3484f25`, merge `608463d2eb1d07e38e429f4b8b3e56895fbf9678`, Debian test base `6e388d9b6f94718a1733502e0b6581aa18b7aa2c` and assessment baseline. Accepted Debian Rust 1.85.1 build and 65/65 tests reused, not rerun. No additional technical review required for the unchanged implementation.
+- Accepted readiness matrix: portable framing, strict JSON, fingerprint and existing unit tests covered; remaining normative WP3 requirements and integration evidence remain outstanding. O-1–O-4 are planning observations, not new confirmed findings; O-5 is this lifecycle metadata sync.
+- D-14 compilation/test evidence accepted only. D-01–D-13 and D-15 retain existing dispositions; OQ-1, OQ-2, RQ-7, L5, L6, K-1, I5 and Q1–Q7 remain OPEN. OQ-3 and RV-1 remain NOT_A_FINDING. No qualification, risk waiver or finding closure is asserted.
+- Further WP3-B implementation requires separate PO authority; WP4–WP9 NOT AUTHORIZED; execute DISABLED; release NOT APPROVED; WIP = 1.
