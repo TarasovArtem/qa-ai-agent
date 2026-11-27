@@ -57,8 +57,11 @@ pub mod limits {
     pub const MAX_FRAMEWORK_PROFILES: usize = 2;
     /// Caller uid/gid range.
     pub const ID_RANGE: (i64, i64) = (1, 4_294_967_294);
-    /// Qualification build and version strings.
+    /// Qualification build strings ("builds<=256 ASCII/no controls").
     pub const MAX_BUILD_BYTES: usize = 256;
+    /// Framework profile version strings ("versions<=256"; UTF-8 bytes, no
+    /// character-set restriction).
+    pub const MAX_VERSION_BYTES: usize = 256;
     /// `workloadStorage.maxBytes` range.
     pub const MAX_BYTES_RANGE: (i64, i64) = (1_073_741_824, 1_099_511_627_776);
     /// `workloadStorage.minFreeBytes` lower bound (upper bound: `maxBytes`).
@@ -293,7 +296,7 @@ fn parse_roots(items: &[Value], w: &Workspace) -> Result<Vec<EnrolledRoot>> {
         let output_dir = r.grammar("outputDir", grammar::is_enrolled_output_dir)?.to_owned();
         let framework = r.grammar("framework", |f| grammar::FRAMEWORKS.contains(&f))?.to_owned();
         let sut_names = parse_sut_names(r.array("sutNames")?)?;
-        let profile = if framework == "playwright" { TreeProfile::PlaywrightRoot } else { TreeProfile::GenericRoot };
+        let profile = if framework == "playwright" { TreeProfile::PlaywrightRoot } else { TreeProfile::CypressRoot };
         let fp = r.raw("fingerprint");
         let fingerprint_files = fingerprint::verify_enrolled(profile, fp)?;
         let fingerprint_digest = match fp.get("digest") {
@@ -333,8 +336,15 @@ fn parse_roots(items: &[Value], w: &Workspace) -> Result<Vec<EnrolledRoot>> {
     Ok(roots)
 }
 
+/// Build strings: "builds<=256 ASCII/no controls" (OD-06 §5.2).
 fn printable(s: &str) -> bool {
     grammar::is_printable_ascii_max(s, limits::MAX_BUILD_BYTES)
+}
+
+/// Framework profile versions: "versions<=256" (OD-06 §5.2) only. The
+/// build-specific ASCII/no-controls rule does not apply (ARCH-B1-02).
+fn version_within_limit(s: &str) -> bool {
+    s.len() <= limits::MAX_VERSION_BYTES
 }
 
 fn parse_profile(v: &Value) -> Result<FrameworkProfile> {
@@ -345,7 +355,7 @@ fn parse_profile(v: &Value) -> Result<FrameworkProfile> {
         return Err(err("ENROLLMENT_ADAPTER_MISMATCH"));
     }
     let path = |k: &str| p.grammar(k, grammar::is_canonical_absolute_path).map(str::to_owned);
-    let version = |k: &str| p.grammar(k, printable).map(str::to_owned);
+    let version = |k: &str| p.grammar(k, version_within_limit).map(str::to_owned);
     let hash = |k: &str| p.grammar(k, is_h).map(str::to_owned);
     Ok(FrameworkProfile {
         package_version: version("packageVersion")?,

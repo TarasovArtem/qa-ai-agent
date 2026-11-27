@@ -31,6 +31,11 @@
         "algorithm": "od06-files-v1",
         "files": [
           {
+            "path": "node_modules/@playwright/test/cli.js",
+            "sha256": "sha256:c4f6649923b483f03d8991f8e63422324807eb91080bbe78b96970539a5c3973",
+            "size": 52
+          },
+          {
             "path": "node_modules/@playwright/test/index.js",
             "sha256": "sha256:04b5f4362303d6d0fd49c63c721cbeaa54e11a3be8c2c5313df2d5cc2128de35",
             "size": 45
@@ -66,7 +71,7 @@
             "size": 44
           }
         ],
-        "digest": "sha256:1c1aa7dc3cf32781fa6dd5ee3d8b428cc888c7fb7a35fd199358664caec6b612"
+        "digest": "sha256:eb07c7da1db8b887eb5cfc50a126fe2b336e71ee8f73a685b111d68a42febebb"
       }
     }
   ],

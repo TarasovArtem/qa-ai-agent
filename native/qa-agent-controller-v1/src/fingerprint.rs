@@ -24,6 +24,32 @@ pub const ALGORITHM: &str = "od06-files-v1";
 /// A2.1 required root files.
 pub const ROOT_FILES: [&str; 3] = ["package-lock.json", "package.json", "playwright.config.js"];
 
+/// OD-06 §8.2 required literal members of a Playwright root (byte-sorted):
+/// the A2.1 root files (fixed config, root `package.json`,
+/// `package-lock.json`), the local framework metadata and the entrypoint
+/// named by the §8.2 Playwright adapter. The executable JS/reporter closure,
+/// Playwright/core files and static config imports are profile-enumerated
+/// and are checked by the broker at runtime, not here.
+pub const PLAYWRIGHT_REQUIRED: [&str; 5] = [
+    "node_modules/@playwright/test/cli.js",
+    "node_modules/@playwright/test/package.json",
+    "package-lock.json",
+    "package.json",
+    "playwright.config.js",
+];
+
+/// OD-06 §8.2 required literal members of a Cypress root (byte-sorted): the
+/// fixed conventional config `cypress.config.js` (§2.1), root `package.json`,
+/// `package-lock.json`, and the local framework metadata and entrypoint named
+/// by the §8.2 Cypress adapter. The closure is profile-enumerated (runtime).
+pub const CYPRESS_REQUIRED: [&str; 5] = [
+    "cypress.config.js",
+    "node_modules/cypress/bin/cypress",
+    "node_modules/cypress/package.json",
+    "package-lock.json",
+    "package.json",
+];
+
 /// A2.1 walked package trees (literal prefixes; the names reached by the walk
 /// below them must satisfy the PPI-1 segment grammar).
 pub const PACKAGE_TREES: [&str; 3] =
@@ -53,20 +79,20 @@ pub enum TreeProfile {
     /// is kept at the unchanged 16 MiB, fail-closed. Whether a real Chromium
     /// tree fits it is open question OQ-2 (see `WP3A-EVIDENCE.md`).
     BrowserTree,
-    /// An enrolled root whose framework has no amendment A2 membership rule
-    /// (`cypress`; amendment A1 keeps the literal while R1 defers Cypress).
-    /// Only the OD-06 §8.2 envelope is checked: root limits, canonical
-    /// root-relative paths of at most 300 bytes (the existing safe relative
-    /// path rule), byte order, `H` and the fingerprint domain. Which files
-    /// must be present is not defined for R1 and is not checked.
-    GenericRoot,
+    /// An enrolled `cypress` root (amendment A1 keeps the literal while R1
+    /// defers Cypress). Amendment A2 defines no Cypress file set, so paths
+    /// follow the OD-06 §8.2 envelope (root limits, canonical root-relative
+    /// paths of at most 300 bytes under the existing safe relative path rule,
+    /// byte order, `H`, fingerprint domain), and the §8.2 required literal
+    /// members [`CYPRESS_REQUIRED`] must be present.
+    CypressRoot,
 }
 
 impl TreeProfile {
     /// Limits for this profile.
     pub fn limits(self) -> TreeLimits {
         match self {
-            TreeProfile::PlaywrightRoot | TreeProfile::GenericRoot => TreeLimits {
+            TreeProfile::PlaywrightRoot | TreeProfile::CypressRoot => TreeLimits {
                 max_files: 4096,
                 max_file_bytes: 16_777_216,
                 max_total_bytes: 67_108_864,
@@ -84,8 +110,18 @@ impl TreeProfile {
     /// Digest domain for this profile.
     pub fn domain(self) -> &'static str {
         match self {
-            TreeProfile::PlaywrightRoot | TreeProfile::GenericRoot => domains::FINGERPRINT,
+            TreeProfile::PlaywrightRoot | TreeProfile::CypressRoot => domains::FINGERPRINT,
             TreeProfile::BrowserTree => domains::BROWSER_TREE,
+        }
+    }
+
+    /// Members that must be present (OD-06 §8.2 "Broker checks exact required
+    /// membership"). The browser tree has no required member.
+    pub fn required_files(self) -> &'static [&'static str] {
+        match self {
+            TreeProfile::PlaywrightRoot => &PLAYWRIGHT_REQUIRED,
+            TreeProfile::CypressRoot => &CYPRESS_REQUIRED,
+            TreeProfile::BrowserTree => &[],
         }
     }
 
@@ -97,7 +133,7 @@ impl TreeProfile {
         match self {
             TreeProfile::PlaywrightRoot => is_playwright_root_member(path),
             TreeProfile::BrowserTree => path.split('/').all(is_ppi1_segment),
-            TreeProfile::GenericRoot => crate::grammar::is_safe_relative_path(path),
+            TreeProfile::CypressRoot => crate::grammar::is_safe_relative_path(path),
         }
     }
 }
@@ -142,8 +178,8 @@ impl FileEntry {
 }
 
 /// Validates a canonical entry list: count, byte-sorted unique paths, path
-/// rule, `H` format, per-file and total limits, and (root profile) the three
-/// required root files.
+/// rule, `H` format, per-file and total limits, and (root profiles) the
+/// required members of [`TreeProfile::required_files`].
 pub fn validate_entries(profile: TreeProfile, entries: &[FileEntry]) -> Result<()> {
     let l = profile.limits();
     if entries.is_empty() || entries.len() > l.max_files {
@@ -178,7 +214,7 @@ fn add_within_limits(total: u64, size: u64, l: TreeLimits) -> Result<u64> {
 }
 
 fn require_root_files<'a>(profile: TreeProfile, paths: impl Iterator<Item = &'a str> + Clone) -> Result<()> {
-    if profile == TreeProfile::PlaywrightRoot && !ROOT_FILES.iter().all(|f| paths.clone().any(|p| p == *f)) {
+    if !profile.required_files().iter().all(|f| paths.clone().any(|p| p == *f)) {
         return Err(err("FINGERPRINT_REQUIRED_FILE_MISSING"));
     }
     Ok(())
@@ -203,7 +239,7 @@ pub fn digest(profile: TreeProfile, entries: &[FileEntry]) -> Result<String> {
 /// validates them and returns the entries with their digest.
 ///
 /// Every check that needs only paths and sizes (count, path rule, per-file
-/// limit, total hashed bytes, ordering and uniqueness, required root files)
+/// limit, total hashed bytes, ordering and uniqueness, required members)
 /// runs BEFORE any content byte is hashed, so a refused input costs no
 /// hashing and at most `max_total_bytes` are ever hashed (OD-06 §8.2, A2.3).
 pub fn compute(profile: TreeProfile, files: &[(&str, &[u8])]) -> Result<(Vec<FileEntry>, String)> {

@@ -12,8 +12,11 @@ pub const ENROLLMENT: &[u8] = include_bytes!("../vectors/b1-enrollment.json");
 pub const RECORD: &[u8] = include_bytes!("../vectors/b1-compatibility-record.json");
 pub const PROFILE_H: &str = include_str!("../vectors/b1-profile.h");
 pub const COMPATIBILITY_H: &str = include_str!("../vectors/b1-compatibility.h");
-/// The WP3-A synthetic Playwright root digest (re-derived by the generator).
-pub const FINGERPRINT_H: &str = "sha256:1c1aa7dc3cf32781fa6dd5ee3d8b428cc888c7fb7a35fd199358664caec6b612";
+/// The synthetic Playwright root digest, shared with `tests/fingerprint.rs`
+/// (C1: the root carries the OD-06 §8.2 required entrypoint).
+pub const FINGERPRINT_H: &str = include_str!("../vectors/fp-playwright-root.h");
+/// The synthetic Cypress root digest (C1, OD-06 §8.2 required members).
+pub const CYPRESS_FINGERPRINT_H: &str = include_str!("../vectors/fp-cypress-root.h");
 
 pub fn enrollment() -> Value {
     parse_strict(ENROLLMENT, ENROLLMENT_LIMITS).expect("enrollment fixture")

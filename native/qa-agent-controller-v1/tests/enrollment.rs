@@ -9,7 +9,7 @@ use qa_agent_controller_v1::enrollment::{
     check_r1_profile, parse_enrollment, validate_enrollment, validate_qualification, ENROLLMENT_LIMITS,
 };
 use qa_agent_controller_v1::error::ErrorKind;
-use qa_agent_controller_v1::fingerprint::{compute, FileEntry, TreeProfile};
+use qa_agent_controller_v1::fingerprint::{compute, FileEntry, TreeProfile, CYPRESS_REQUIRED};
 use qa_agent_controller_v1::json::Value;
 
 fn code(v: &Value) -> &'static str {
@@ -47,7 +47,7 @@ fn golden_enrollment_validates_with_js_profile_digest() {
     assert_eq!(e.roots.len(), 1);
     assert_eq!(e.roots[0].root.path, "/srv/qa-workspace/qa-agent-demo");
     assert_eq!(e.roots[0].fingerprint_digest, FINGERPRINT_H);
-    assert_eq!(e.roots[0].fingerprint_files.len(), 7);
+    assert_eq!(e.roots[0].fingerprint_files.len(), 8);
     assert_eq!(e.qualification.framework_profiles.len(), 1);
     check_r1_profile(&e.qualification).unwrap();
 }
@@ -286,27 +286,56 @@ fn fingerprint_value(entries: &[FileEntry], digest: &str) -> Value {
     Value::object(vec![("algorithm", s("od06-files-v1")), ("files", Value::Array(files)), ("digest", s(digest))])
 }
 
-#[test]
-fn cypress_roots_keep_the_schema_literal_with_envelope_only_fingerprints() {
-    // Amendment A1 keeps the `cypress` literal; A2 defines no Cypress file set,
-    // so only the OD-06 §8.2 envelope is checked (TreeProfile::GenericRoot).
-    let v = enrollment();
-    let files: Vec<(&str, &[u8])> = vec![
+/// Synthetic Cypress root: the OD-06 §8.2 required members plus one extra
+/// file (same bytes as the JS generator's Cypress fixture).
+fn cypress_root() -> Vec<(&'static str, &'static [u8])> {
+    vec![
         ("cypress.config.js", &b"module.exports = {};\n"[..]),
-        ("node_modules/cypress/package.json", &b"{}"[..]),
+        ("package.json", &b"{\"name\":\"synthetic\",\"version\":\"0.0.0\"}\n"[..]),
+        ("package-lock.json", &b"{\"lockfileVersion\":3}\n"[..]),
+        ("node_modules/cypress/package.json", &b"{\"name\":\"cypress\"}\n"[..]),
+        ("node_modules/cypress/bin/cypress", &b"require('../index.js');\n"[..]),
         ("spaces and @ + signs.txt", &b"x"[..]),
-    ];
-    let (entries, digest) = compute(TreeProfile::GenericRoot, &files).unwrap();
-    let cy = with(&with(&v, &r0(&[P::K("framework")]), s("cypress")), &r0(&[P::K("fingerprint")]), fingerprint_value(&entries, &digest));
+    ]
+}
+
+#[test]
+fn cypress_roots_require_the_od06_8_2_members() {
+    // Amendment A1 keeps the `cypress` literal. A2 defines no Cypress file set,
+    // so paths follow the §8.2 envelope, and the §8.2 required members
+    // (ARCH-B1-01) must be present (TreeProfile::CypressRoot).
+    let v = enrollment();
+    let (entries, digest) = compute(TreeProfile::CypressRoot, &cypress_root()).unwrap();
+    assert_eq!(digest, CYPRESS_FINGERPRINT_H);
+    let cy_framework = with(&v, &r0(&[P::K("framework")]), s("cypress"));
+    let cy = with(&cy_framework, &r0(&[P::K("fingerprint")]), fingerprint_value(&entries, &digest));
     assert_eq!(validate_enrollment(&cy).unwrap().roots[0].framework, "cypress");
-    for bad in ["../x", "/abs", "a//b", "a/./b"] {
-        let entry = vec![FileEntry { path: bad.to_owned(), sha256: h('0'), size: 1 }];
-        let doc = with(&cy, &r0(&[P::K("fingerprint")]), fingerprint_value(&entry, &h('0')));
-        assert_eq!(kind_code(&doc), (ErrorKind::Fingerprint, "FINGERPRINT_PATH"), "{bad}");
+    // Each required member is mandatory, at compute time and in an enrolled
+    // fingerprint whose digest is otherwise consistent.
+    for required in CYPRESS_REQUIRED {
+        let mut files = cypress_root();
+        files.retain(|(p, _)| *p != required);
+        assert_eq!(compute(TreeProfile::CypressRoot, &files).unwrap_err().code, "FINGERPRINT_REQUIRED_FILE_MISSING");
+        let rest: Vec<FileEntry> = entries.iter().filter(|e| e.path != required).cloned().collect();
+        let doc = with(&cy, &r0(&[P::K("fingerprint")]), fingerprint_value(&rest, &digest));
+        assert_eq!(kind_code(&doc), (ErrorKind::Fingerprint, "FINGERPRINT_REQUIRED_FILE_MISSING"), "{required}");
     }
-    // A Playwright root still needs the A2.1 membership rule.
+    // Only root `cypress.config.js` is the fixed config; other variants do
+    // not satisfy the requirement.
+    let mut ts = cypress_root();
+    ts[0].0 = "cypress.config.ts";
+    assert_eq!(compute(TreeProfile::CypressRoot, &ts).unwrap_err().code, "FINGERPRINT_REQUIRED_FILE_MISSING");
+    // The envelope path rule still applies.
+    for bad in ["../x", "/abs", "a//b", "a/./b"] {
+        let mut files = cypress_root();
+        files.push((bad, &b"x"[..]));
+        assert_eq!(compute(TreeProfile::CypressRoot, &files).unwrap_err().code, "FINGERPRINT_PATH", "{bad}");
+    }
+    // A Cypress fingerprint does not satisfy a Playwright root (A2.1 membership).
     let pw = with(&v, &r0(&[P::K("fingerprint")]), fingerprint_value(&entries, &digest));
     assert_eq!(kind_code(&pw), (ErrorKind::Fingerprint, "FINGERPRINT_PATH"));
+    // The Playwright fixture does not satisfy a Cypress root (required members).
+    assert_eq!(kind_code(&cy_framework), (ErrorKind::Fingerprint, "FINGERPRINT_REQUIRED_FILE_MISSING"));
 }
 
 #[test]
@@ -361,9 +390,15 @@ fn framework_profile_rules() {
     for k in ["packageSha256", "nativeSha256", "browserSha256"] {
         assert_eq!(code(&field(k, s("sha256:x"))), "SCHEMA_GRAMMAR", "{k}");
     }
+    // ARCH-B1-02: "versions<=256" only, counted in UTF-8 bytes; the
+    // build-specific ASCII/no-controls rule does not apply to versions.
     for k in ["packageVersion", "nativeVersion", "browserVersion"] {
         ok(&field(k, s(&"9".repeat(256))));
+        ok(&field(k, s("")));
+        ok(&field(k, s("1.0.0-\u{3b2} (tab\there)")));
+        ok(&field(k, s(&"\u{e9}".repeat(128))));
         assert_eq!(code(&field(k, s(&"9".repeat(257)))), "SCHEMA_GRAMMAR", "{k}");
+        assert_eq!(code(&field(k, s(&format!("{}9", "\u{e9}".repeat(128))))), "SCHEMA_GRAMMAR", "{k}");
     }
 }
 
