@@ -1,0 +1,18 @@
+[package]
+name = "qa-agent-controller-v1"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+description = "OD-06 controller broker: portable data components only (WP3-A). No execution capability."
+
+[lib]
+name = "qa_agent_controller_v1"
+path = "src/lib.rs"
+
+[dependencies]
+# A8 dependency budget: libc plus exactly one vendored, pinned SHA-256
+# implementation (OD-R1-STAGE5-WP3-A-SHA256-1: hmac-sha256 1.1.15).
+# Default features stay off, so the optional digest/traits dependencies are
+# never enabled and the dependency closure is this single crate.
+hmac-sha256 = { version = "=1.1.15", default-features = false }
