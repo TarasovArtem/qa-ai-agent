@@ -341,3 +341,12 @@ Canonical parity: the vectors `tests/vectors/b2-*` were written by the repositor
 | Runtime D-03, OQ-1, OQ-2, RQ-7, L5, L6, K-1, carried Security I5, Q1–Q7 | OPEN, unchanged; OQ-3 and RV-1 NOT_A_FINDING |
 
 Full WP3 is INCOMPLETE. No runtime qualification, execution activation or release approval is claimed.
+
+## 13. B2 post-merge lifecycle record (2026-11-27)
+
+- PO authority: `OD-R1-STAGE5-WP3-B-NEXT-2-MERGE` and `OD-R1-STAGE5-WP3-B-NEXT-2-CLOSURE` APPROVED.
+- [PR #286](https://github.com/TarasovArtem/qa-ai-agent/pull/286): B2 portable scope MERGED / POST-MERGE CERTIFIED. Reviewed HEAD `d43faeed2aaf8627afe4927dcbae1fc08d32617c`, TREE `d7b404665cc3a1ec8763ee63556fc986d4dd5bbf`.
+- Supplied exact-head Architecture and HEAVY defensive Security verdicts APPROVED; B2-01..06 and AC-B2-01..12 accepted; PO-B2-1/2 conformant; I-B2-1..9 ACCEPTED; no confirmed findings. This supersedes pending B2 review statements in §12. No waiver.
+- Exact-head [PR CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46034350062) 7/7 SUCCESS. Merge `f88a63aeed01a095b8f72806c82d6ac45596292f`, STANDARD_TWO_PARENT; parents `3f846729a40d9676021cc37f2f7b7953d4364865` and reviewed HEAD; merge TREE equals reviewed TREE. Fresh automatic [push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46036908786) on exact merge SHA/main, 7/7 SUCCESS. GitHub identities and CI verified by PM.
+- Accepted reported WSL and Debian builds and 99/99 tests (88 existing + 11 new), canonical parity; no Rust job in repository CI, no independent rerun.
+- D-04 runtime and all other deferred requirements retain their existing OPEN dispositions (§12.8). Full WP3 INCOMPLETE. No runtime qualification, execution activation or release approval. Further WP3-B implementation and WP4–WP9 require separate authority. Execute DISABLED; TPR SUSPENDED / NOT RELEASED; Issue #199 OPEN; WIP = 1 during closure.
