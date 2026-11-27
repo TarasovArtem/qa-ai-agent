@@ -216,3 +216,12 @@ Baseline: PR #284 head b4c1ef31da6b025641e8f47fee314b691d13be2d, tree e62209206c
 - R-C1-1 is recorded as resolved by Architecture. I-1, I-4 and I-5 are ACCEPTED, and ARCH-B1-01 and ARCH-B1-02 are RESOLVED. The affected status statements in §3, §6 row 11, §7 and §9 are corrected.
 - Evidence reuse: source, tests, vectors and dependency inputs are byte-identical to C1 (b4c1ef31), so the C1 WSL and Debian 88/88 runs (§4) apply unchanged. Rust builds and tests were not rerun.
 - Unchanged and still OPEN: F-B1-01 Security review, I-2, I-3, I-6..I-9, every deferred item in §6. Execute DISABLED.
+
+## 11. Post-merge lifecycle record (2026-11-27)
+
+- PO authority: `OD-R1-STAGE5-WP3-B-NEXT-1-MERGE` and `OD-R1-STAGE5-WP3-B-NEXT-1-CLOSURE` APPROVED.
+- [PR #284](https://github.com/TarasovArtem/qa-ai-agent/pull/284): B1 portable scope MERGED / POST-MERGE CERTIFIED. Reviewed HEAD `a9f1bb11a7e5af4b52c6fd88ffabf0c230b5e10a`, TREE `37422e538af88f961049f2b504d41622cbc241e2`.
+- Supplied exact-head Architecture and HEAVY Security verdicts APPROVED; ARCH-B1-01..03, R-C1-1 and F-B1-01 RESOLVED; I-1..I-9 ACCEPTED. This supersedes pending review statements in earlier sections for this exact implementation only. No waiver.
+- Exact-head [PR CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46022234985) 7/7 SUCCESS. Merge `2df4dfdeaa745a6c7b0b1696ca4278d36d4969eb`, STANDARD_TWO_PARENT; parents `f93c76d6dcff7c56a963b4e1835faa604604901e` and reviewed HEAD; merge TREE equals reviewed TREE. Fresh automatic [push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46026550328) on exact merge SHA/main, attempt 1, 7/7 SUCCESS. GitHub identities and CI verified by PM.
+- Accepted reported WSL and Debian builds and 88/88 tests (65 regression + 23 new); no Rust job in repository CI, no independent rerun. All AC-B1-01..13 accepted for B1 scope, including F-B1-01 disposition.
+- All deferred requirements retain their existing OPEN dispositions, including runtime D-03, OQ-1/OQ-2/RQ-7, L5/L6/K-1, carried Security I5, Q1–Q7. OQ-3 and RV-1 remain NOT_A_FINDING. Full WP3 INCOMPLETE; no runtime qualification, execution activation, or release approval. Further WP3-B implementation and WP4–WP9 require separate authority. Execute DISABLED; TPR SUSPENDED / NOT RELEASED; Issue #199 OPEN; WIP = 1.
