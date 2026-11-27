@@ -24,6 +24,17 @@ const FORBIDDEN: [&str; 16] = [
     "sudo",
 ];
 
+/// OD-06 §5.2 qualification key names, and the fields that hold them, contain
+/// a guarded word as data, not as a capability. Only these exact tokens are
+/// removed before the scan, and only in the named file; every other use of
+/// the guarded words still fails.
+const DATA_NAME_EXEMPTIONS: [(&str, &str); 4] = [
+    ("enrollment.rs", "\"systemdBuild\""),
+    ("enrollment.rs", "\"sudoBuild\""),
+    ("enrollment.rs", "systemd_build"),
+    ("enrollment.rs", "sudo_build"),
+];
+
 #[test]
 fn library_source_is_portable_and_capability_free() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -35,7 +46,7 @@ fn library_source_is_portable_and_capability_free() {
         }
         let text = fs::read_to_string(&path).unwrap();
         // Doc comments may name excluded facilities; check code lines only.
-        let code: String = text
+        let mut code: String = text
             .lines()
             .filter(|l| {
                 let t = l.trim_start();
@@ -43,6 +54,12 @@ fn library_source_is_portable_and_capability_free() {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        for (exempt_file, token) in DATA_NAME_EXEMPTIONS {
+            if file == exempt_file {
+                code = code.replace(token, "");
+            }
+        }
         for word in FORBIDDEN {
             assert!(!code.contains(word), "{} uses {word}", path.display());
         }
