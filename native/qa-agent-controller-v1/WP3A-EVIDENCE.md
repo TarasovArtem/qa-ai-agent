@@ -2,8 +2,10 @@
 
 | Item | Value |
 |---|---|
-| Work package | R1 Stage 5 WP3-A — portable data components (OD-R1-STAGE5-WP3-A, -PREFLIGHT-1, -SHA256-1) |
-| Base | `main` a5a14cfea286df6c487a26ef0f15bff70068a185, branch `feature/r1-stage5-wp3-a` (local, not committed) |
+| Work package | R1 Stage 5 WP3-A — portable data components (OD-R1-STAGE5-WP3-A, -PREFLIGHT-1, -SHA256-1, -DELIVERY-1; corrective OD-R1-STAGE5-WP3-A-C1) |
+| Base | `main` a5a14cfea286df6c487a26ef0f15bff70068a185 |
+| Reviewed candidate | PR #280, branch `feature/r1-stage5-wp3-a`, HEAD 3b0e7e1d45b45123fa169469af567292d33b4a06, tree 04e92ee9c904d398b0fc1a80e1c4d0044df74baf, parent a5a14cfe (38 files, +5189) |
+| Current revision | Corrective C1: one commit on top of 3b0e7e1d (§8). It changes only `src/frame.rs`, `tests/frame.rs` and this file. A commit cannot name its own hash; the PR head identifies it |
 | Design inputs | `docs/controlled-v1-execution-contract-v1.md` (OD-06), `docs/controlled-v1-execution-amendment-r1-v1.md` (A1–A9), OD-04 §11 (CRS-1) and §13 (PPI-1) |
 | Status | Development evidence only. **No runtime qualification is claimed.** Execute stays DISABLED: this crate is a library with no binary and no execution capability |
 
@@ -17,7 +19,7 @@ A Rust library implementing only the portable, deterministic data contracts the 
 | `canonical`, `digest` | OD-06 §11.1, OD-04 §11.2 | CRS-1 `E(v)` byte rules; `H` = `sha256:`+hex; `H(domain, E(v))`, excluding the object's own digest field; all OD-06 domains |
 | `wire` | OD-06 §4.2, §7.2, §9.2 | Sans-IO client frames (u32 BE + JSON ≤262144) and broker frames (kind 1/2/3; structural ≤262144, raw ≤65536). The length is checked before any payload byte |
 | `request` | OD-06 §4.2, §5.4, §9.1, OD-04 §13 | Closed CREATE/RECONCILE schema and grammars: ID, runId, ordinal, `H`, root path/dev/ino, exact SemVer product version, PPI-1 targets (1..100, sorted, unique), timeout, SUT environment |
-| `frame` | OD-06 §7.1, §7.2, §11.3 | Closed broker frame; disposition, refusal, record and status enums; EXITED observation; unambiguous per-disposition field rules; transition table; frame sequence; identity constancy; raw-frame window |
+| `frame` | OD-06 §7.1, §7.2, §11.1, §11.3 | Closed broker frame; disposition, refusal, record and status enums; EXITED observation; unambiguous per-disposition field rules; transition table; frame sequence; identity constancy; raw-frame window. `frameSequence` is an `N` (`0..=2^53-1`) in both serialization and deserialization (C1) |
 | `proposal` | OD-06 §11.2, §9.3, §9.4 | Closed result proposal; report limits (≤100, 1..4194304 each, aggregate ≤16777216, sorted); normalized result; checks against bound identities, resultExpected, framework report grammar/count, adapter and exact target paths |
 | `fingerprint` | OD-06 §8.2, amendment A2.1–A2.3 | `od06-files-v1`; A2.1 membership; PPI-1 segment grammar for walked names; limits; byte ordering; required root files; fingerprint and browser-tree domains; enrolled `{algorithm, files, digest}` verification |
 
@@ -39,7 +41,7 @@ The library contains no `unsafe` (`#![forbid(unsafe_code)]`) and makes no proces
 
 ## 3. Test evidence (development toolchain, WSL Ubuntu, rustc/cargo 1.93.1)
 
-`cargo build --locked --offline`, `cargo build --release --locked --offline` and `cargo test --locked --offline`: 0 warnings (`deny(missing_docs, rust_2018_idioms)`); **54 passed, 0 failed**.
+`cargo build --locked --offline`, `cargo build --release --locked --offline` and `cargo test --locked --offline`: 0 warnings (`deny(missing_docs, rust_2018_idioms)`); **58 passed, 0 failed** after C1 (54 on the reviewed candidate 3b0e7e1d, plus 4 C1 frame tests).
 
 | Suite | Tests | Covers |
 |---|---:|---|
@@ -47,7 +49,7 @@ The library contains no `unsafe` (`#![forbid(unsafe_code)]`) and makes no proces
 | `canonical_digest` | 8 | **Byte-for-byte parity with the repository's JS `encodeValue`/`digest`** (vector files under `tests/vectors/` written by that JS code), round trip, CRS-1 domain refusals, own-digest exclusion, domain separation, SHA-256 known-answer vectors (FIPS 180-2 examples, including one million `a`) |
 | `wire` | 3 | Round trip, partial input, oversize length refused before payload, kinds, raw limit |
 | `request` | 11 | Closed keys at every level; every grammar and limit, positive and negative |
-| `frame` | 9 | Round trip of every disposition; closed keys; field rules; observation rule; status/reason pairs; happy path; every transition, sequence and identity violation; reconcile and malformed intake |
+| `frame` | 13 | Round trip of every disposition; closed keys; field rules; observation rule; status/reason pairs; happy path; every transition, sequence and identity violation; reconcile and malformed intake. C1: `frameSequence` round trip across the valid range (0 to 2^53-1); out-of-range values refused, never wrapped; deserialization admits only `N`; a refused frame leaves the sequence checker unchanged |
 | `proposal` | 4 | Structure, counts and totals, report limits and order, identity binding, resultExpected, Cypress/Playwright report grammar and count, adapter, exact spec paths |
 | `fingerprint` | 7 | JS-produced golden digest, order independence, membership, required files, all limits (exact boundaries), browser profile, enrolled verification and tamper detection |
 | `portability` | 2 | No OS, process, FS, network, FFI or unsafe tokens in `src/`; no binary target; lockfile has exactly one dependency |
@@ -64,15 +66,17 @@ All fixtures are synthetic.
 - R1 playwright-only stays an eligibility rule (INELIGIBLE), not a schema rule. A Cypress request is schema-valid (OD-06 §4.2) and is refused later by A1.
 - npm never builds or installs this directory: `npm pack --dry-run` lists 103 files, none under `native/`. No CI, workflow, release, product or demo file is changed.
 
-## 5. Open design questions (raised, not decided)
+## 5. Design questions
 
-| ID | Question | Current code behaviour |
-|---|---|---|
-| OQ-1 | OD-06 §7.2 lists only the *required* non-null fields per disposition and says the others are null. Yet TERMINAL carries `invocationId` once bound, and §7.1 echoes `executionId` in every frame. Are `operation`, `unitName`, `attemptDigest` and `observation` null or echoed on frames whose row omits them? This decides what the broker emits (WP4) | Only unambiguous rules are enforced: REFUSED nulls; progress frames' null reason and record; ACCEPTED without invocationId; required fields; status/reason pairs. The ambiguous fields are neither required nor refused |
-| OQ-2 | A2.3 raises only the browser tree's file count and total. The unchanged per-file limit (16 MiB) cannot hold a real Chromium binary (293 MB measured), so the A2.3 digest is unreachable as written | Fail-closed: the browser profile keeps 16 MiB per file and refuses larger files |
-| OQ-3 | §9.3 "sums consistent" | Read as per spec `total = passed + failed + skipped`, and `totals` = the sum over specs. Reviewers confirm |
-| RQ-7 | Amendment RQ-7: identity rule for a RECONCILE final frame at frameSequence 0 that carries `invocationId` | Accepted without a decision (`FrameSequence` treats it as learnable on reconcile only) |
-| RV-1 | PPI-1 rule 7 (JS classifiers) is argued to follow from rules 1–6 and 8 over the PPI-1 alphabet | Rules 1–6 and 8 are implemented; rule 7 is a review item |
+Dispositions as of corrective C1 (OD-R1-STAGE5-WP3-A-C1): OQ-1, OQ-2 and RQ-7 are **OPEN**; OQ-3 and RV-1 are **NOT_A_FINDING**. The code behaviour below is unchanged by C1.
+
+| ID | Status | Question | Current code behaviour |
+|---|---|---|---|
+| OQ-1 | OPEN | OD-06 §7.2 lists only the *required* non-null fields per disposition and says the others are null. Yet TERMINAL carries `invocationId` once bound, and §7.1 echoes `executionId` in every frame. Are `operation`, `unitName`, `attemptDigest` and `observation` null or echoed on frames whose row omits them? This decides what the broker emits (WP4) | Only unambiguous rules are enforced: REFUSED nulls; progress frames' null reason and record; ACCEPTED without invocationId; required fields; status/reason pairs. The ambiguous fields are neither required nor refused |
+| OQ-2 | OPEN | A2.3 raises only the browser tree's file count and total. The unchanged per-file limit (16 MiB) cannot hold a real Chromium binary (293 MB measured), so the A2.3 digest is unreachable as written | Fail-closed: the browser profile keeps 16 MiB per file and refuses larger files |
+| OQ-3 | NOT_A_FINDING | §9.3 "sums consistent" | Read as per spec `total = passed + failed + skipped`, and `totals` = the sum over specs |
+| RQ-7 | OPEN | Amendment RQ-7: identity rule for a RECONCILE final frame at frameSequence 0 that carries `invocationId` | Accepted without a decision (`FrameSequence` treats it as learnable on reconcile only) |
+| RV-1 | NOT_A_FINDING | PPI-1 rule 7 (JS classifiers) is argued to follow from rules 1–6 and 8 over the PPI-1 alphabet | Rules 1–6 and 8 are implemented; rule 7 is covered by that implication |
 
 ## 6. Deferred-requirements matrix (OPEN; not implemented by WP3-A)
 
@@ -102,3 +106,14 @@ cargo build --locked --offline
 cargo test --locked --offline
 cargo tree --locked --offline -e normal,build
 ```
+
+## 8. Corrective C1 record (OD-R1-STAGE5-WP3-A-C1, 2026-11-27)
+
+Delta on the reviewed candidate 3b0e7e1d (tree 04e92ee9). Files: `src/frame.rs`, `tests/frame.rs`, `WP3A-EVIDENCE.md`. No contract, dependency, CI, product or demo change.
+
+| Finding | Defect | Correction | Evidence |
+|---|---|---|---|
+| ARCH-WP3A-01 | Asymmetric `frameSequence` handling. Deserialization admitted only an OD-06 §11.1 `N` (`0..=2^53-1`), but serialization converted the `u64` with `as i64`: `u64::MAX` encoded as `"frameSequence":-1`, and values above 2^53-1 failed later with an unrelated canonical-encoder error | `MAX_FRAME_SEQUENCE` = 2^53-1 is applied in both directions. `validate_fields` refuses larger values (`FRAME_SEQUENCE_RANGE`). `to_value` now returns `Result` and converts losslessly or refuses. `from_value` converts with a checked conversion under the same bound. `FrameSequence::accept` computes the next sequence with a checked add before mutating any state | 4 tests in `tests/frame.rs`: the round trip across the range (0, 1, …, 2^32-1, 2^53-2, 2^53-1) is byte-identical and value-identical; 2^53, `i64::MAX`, 2^63 and `u64::MAX` are refused by validate/to_value/encode; the parser refuses -1, 2^53, 2^64-1, `-0`, `0.0`, `1e0`, `00`, `"0"`, null and bool; a refused frame leaves the sequence checker usable |
+| ARCH-WP3A-02 | Stale evidence metadata (the base row said "local, not committed"; no reviewed-candidate identity; no corrective record) | Header rows for the reviewed candidate and the current revision; test counts; design-question dispositions; this record | This file |
+
+Unchanged by C1: the dependency budget (`hmac-sha256` 1.1.15 only, same `Cargo.lock`); every other module; the wire format of every in-range frame (the encoding of `frameSequence` values in `0..=2^53-1` is byte-identical); OQ-1, OQ-2 and RQ-7 OPEN; D-01..D-15 OPEN; execute DISABLED; no runtime qualification claim.

@@ -271,6 +271,19 @@ const FRAME_KEYS: [&str; 12] = [
 /// Maximum frame JSON size (§7.2).
 pub const MAX_FRAME_BYTES: usize = 262_144;
 
+/// Largest `frameSequence`. The field is an OD-06 §11.1 `N` (nonnegative safe
+/// integer, `0..=2^53-1`). Serialization and deserialization apply this same
+/// bound, so every encodable value parses back to itself and nothing wraps.
+pub const MAX_FRAME_SEQUENCE: u64 = N_MAX as u64;
+
+/// Lossless `frameSequence` -> JSON integer conversion; out of range is refused.
+fn frame_sequence_value(sequence: u64) -> Result<Value> {
+    if sequence > MAX_FRAME_SEQUENCE {
+        return Err(err("FRAME_SEQUENCE_RANGE"));
+    }
+    i64::try_from(sequence).map(Value::Int).map_err(|_| err("FRAME_SEQUENCE_RANGE"))
+}
+
 fn opt_str_value(s: &Option<String>) -> Value {
     s.as_ref().map_or(Value::Null, |x| Value::Str(x.clone()))
 }
@@ -296,14 +309,15 @@ fn require(present: bool, code: &'static str) -> Result<()> {
 }
 
 impl BrokerFrame {
-    /// Closed JSON value of this frame.
-    pub fn to_value(&self) -> Value {
-        Value::object(vec![
+    /// Closed JSON value of this frame. Refuses a `frameSequence` outside
+    /// `0..=MAX_FRAME_SEQUENCE` instead of converting it lossily.
+    pub fn to_value(&self) -> Result<Value> {
+        Ok(Value::object(vec![
             ("schemaVersion", Value::Int(1)),
             ("contractVersion", Value::str(CONTRACT_VERSION)),
             ("operation", self.operation.map_or(Value::Null, |o| Value::str(o.as_str()))),
             ("executionId", opt_str_value(&self.execution_id)),
-            ("frameSequence", Value::Int(self.frame_sequence as i64)),
+            ("frameSequence", frame_sequence_value(self.frame_sequence)?),
             ("disposition", Value::str(self.disposition.as_str())),
             ("reason", self.reason.map_or(Value::Null, |r| Value::str(r.as_str()))),
             ("attemptDigest", opt_str_value(&self.attempt_digest)),
@@ -311,14 +325,14 @@ impl BrokerFrame {
             ("unitName", opt_str_value(&self.unit_name)),
             ("observation", self.observation.map_or(Value::Null, Observation::to_value)),
             ("record", self.record.clone().unwrap_or(Value::Null)),
-        ])
+        ]))
     }
 
     /// Validates field rules, then encodes as CRS-1 canonical JSON bytes
     /// (deterministic ASCII; the structural payload of a kind-3 frame).
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.validate_fields()?;
-        let bytes = crate::canonical::encode(&self.to_value())?;
+        let bytes = crate::canonical::encode(&self.to_value()?)?;
         if bytes.len() > MAX_FRAME_BYTES {
             return Err(err("FRAME_TOO_LARGE"));
         }
@@ -357,7 +371,10 @@ impl BrokerFrame {
         let frame = BrokerFrame {
             operation,
             execution_id: o.opt_grammar("executionId", grammar::is_id32)?.map(str::to_owned),
-            frame_sequence: o.int("frameSequence", 0, N_MAX)? as u64,
+            // Same N bound as serialization; the range check makes the
+            // conversion lossless.
+            frame_sequence: u64::try_from(o.int("frameSequence", 0, N_MAX)?)
+                .map_err(|_| err("FRAME_SEQUENCE_RANGE"))?,
             disposition,
             reason,
             attempt_digest: o.opt_grammar("attemptDigest", is_h)?.map(str::to_owned),
@@ -373,6 +390,7 @@ impl BrokerFrame {
     /// Enforces the unambiguous §7.1/§7.2/§11.3 field rules for the frame's
     /// disposition. Ambiguous cases (OQ-1) are neither required nor refused.
     pub fn validate_fields(&self) -> Result<()> {
+        require(self.frame_sequence <= MAX_FRAME_SEQUENCE, "FRAME_SEQUENCE_RANGE")?;
         if let Some(id) = &self.execution_id {
             require(grammar::is_id32(id), "FRAME_EXECUTION_ID")?;
         }
@@ -538,6 +556,10 @@ impl FrameSequence {
             return Err(err("SEQUENCE_NUMBER"));
         }
         f.validate_fields()?;
+        // validate_fields bounds frame_sequence (== next_sequence) by N, so
+        // this cannot overflow; checked anyway, fail-closed, before any state
+        // is updated.
+        let next = self.next_sequence.checked_add(1).ok_or(err("SEQUENCE_NUMBER"))?;
         if !self.allowed(f.disposition) {
             return Err(err("SEQUENCE_TRANSITION"));
         }
@@ -576,7 +598,7 @@ impl FrameSequence {
             (None, None) => {}
         }
         self.last = Some(f.disposition);
-        self.next_sequence += 1;
+        self.next_sequence = next;
         if matches!(f.disposition, Disposition::Refused | Disposition::Terminal | Disposition::Quarantined) {
             self.ended = true;
         }

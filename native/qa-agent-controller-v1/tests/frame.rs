@@ -3,6 +3,7 @@ mod common;
 use common::*;
 use qa_agent_controller_v1::frame::{
     BrokerFrame, Disposition, FrameSequence, ManagerResult, Observation, Reason, RecordReason, RefusalReason,
+    MAX_FRAME_SEQUENCE,
 };
 use qa_agent_controller_v1::grammar::unit_name;
 use qa_agent_controller_v1::json::Value;
@@ -93,7 +94,7 @@ fn every_valid_frame_round_trips_through_canonical_json() {
 
 #[test]
 fn frame_schema_is_closed() {
-    let v = accepted().to_value();
+    let v = accepted().to_value().unwrap();
     assert_eq!(BrokerFrame::from_value(&adding(&v, "extra", Value::Null)).unwrap_err().code, "SCHEMA_KEY_SET");
     assert_eq!(BrokerFrame::from_value(&with(&v, &["disposition"], s("DONE"))).unwrap_err().code, "FRAME_DISPOSITION");
     assert_eq!(BrokerFrame::from_value(&with(&v, &["schemaVersion"], Value::Int(2))).unwrap_err().code, "SCHEMA_RANGE");
@@ -150,7 +151,7 @@ fn observation_result_expected_rule() {
     }
     let not_expected = Observation { manager_result: Some(ManagerResult::Timeout), timeout_observed: true, ..observation(false) };
     assert!(not_expected.validate().is_ok());
-    let v = exited().to_value();
+    let v = exited().to_value().unwrap();
     let bad_signal = with(&v, &["observation", "signal"], Value::Int(65));
     assert_eq!(BrokerFrame::from_value(&bad_signal).unwrap_err().code, "SCHEMA_RANGE");
 }
@@ -248,4 +249,78 @@ fn reconcile_and_malformed_intake_sequences() {
     let malformed = BrokerFrame { operation: None, execution_id: None, ..refused(RefusalReason::SchemaInvalid) };
     m.accept(&malformed).unwrap();
     assert!(m.ended());
+}
+
+// ARCH-WP3A-01: frameSequence is an OD-06 §11.1 N (0..=2^53-1) in both
+// directions; serialization never wraps and every encodable value round-trips.
+
+#[test]
+fn frame_sequence_round_trips_across_the_valid_range() {
+    assert_eq!(MAX_FRAME_SEQUENCE, 9_007_199_254_740_991);
+    for seq in [0u64, 1, 2, 3, 4, 255, 65_536, u64::from(u32::MAX), MAX_FRAME_SEQUENCE - 1, MAX_FRAME_SEQUENCE] {
+        let f = BrokerFrame { frame_sequence: seq, ..accepted() };
+        assert_eq!(f.to_value().unwrap().get("frameSequence"), Some(&Value::Int(seq as i64)));
+        let bytes = f.encode().unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.contains(&format!("\"frameSequence\":{seq},")), "{text}");
+        let parsed = BrokerFrame::parse(&bytes).unwrap();
+        assert_eq!(parsed.frame_sequence, seq);
+        assert_eq!(parsed.encode().unwrap(), bytes);
+        assert_eq!(BrokerFrame::from_value(&f.to_value().unwrap()).unwrap().frame_sequence, seq);
+    }
+}
+
+#[test]
+fn out_of_range_frame_sequence_is_refused_never_wrapped() {
+    // u64::MAX formerly serialized as "frameSequence":-1 through `as i64`.
+    for seq in [MAX_FRAME_SEQUENCE + 1, i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+        let f = BrokerFrame { frame_sequence: seq, ..accepted() };
+        assert_eq!(f.validate_fields().unwrap_err().code, "FRAME_SEQUENCE_RANGE", "{seq}");
+        assert_eq!(f.to_value().unwrap_err().code, "FRAME_SEQUENCE_RANGE", "{seq}");
+        assert_eq!(f.encode().unwrap_err().code, "FRAME_SEQUENCE_RANGE", "{seq}");
+    }
+}
+
+#[test]
+fn frame_sequence_deserialization_accepts_only_n() {
+    let v = accepted().to_value().unwrap();
+    let max = with(&v, &["frameSequence"], Value::Int(MAX_FRAME_SEQUENCE as i64));
+    assert_eq!(BrokerFrame::from_value(&max).unwrap().frame_sequence, MAX_FRAME_SEQUENCE);
+    for (bad, code) in [
+        (Value::Int(-1), "SCHEMA_RANGE"),
+        (Value::Int(MAX_FRAME_SEQUENCE as i64 + 1), "SCHEMA_RANGE"),
+        (Value::Int(i64::MIN), "SCHEMA_RANGE"),
+        (Value::Null, "SCHEMA_TYPE"),
+        (s("0"), "SCHEMA_TYPE"),
+        (Value::Bool(false), "SCHEMA_TYPE"),
+    ] {
+        let mutated = with(&v, &["frameSequence"], bad.clone());
+        assert_eq!(BrokerFrame::from_value(&mutated).unwrap_err().code, code, "{bad:?}");
+    }
+    let text = String::from_utf8(accepted().encode().unwrap()).unwrap();
+    for (replacement, code) in [
+        ("9007199254740992", "JSON_NUMBER_UNSAFE"),
+        ("18446744073709551615", "JSON_NUMBER_UNSAFE"),
+        ("-1", "SCHEMA_RANGE"),
+        ("-0", "JSON_NEGATIVE_ZERO"),
+        ("0.0", "JSON_NUMBER_NOT_INTEGER"),
+        ("1e0", "JSON_NUMBER_NOT_INTEGER"),
+        ("00", "JSON_SYNTAX"),
+        ("\"0\"", "SCHEMA_TYPE"),
+    ] {
+        let mutated = text.replace("\"frameSequence\":0,", &format!("\"frameSequence\":{replacement},"));
+        assert_ne!(mutated, text);
+        assert_eq!(BrokerFrame::parse(mutated.as_bytes()).unwrap_err().code, code, "{replacement}");
+    }
+}
+
+#[test]
+fn sequence_checker_refusal_leaves_state_unchanged() {
+    let mut seq = FrameSequence::new(Operation::Create, Some(EXEC_ID.into()));
+    let huge = BrokerFrame { frame_sequence: u64::MAX, ..accepted() };
+    assert_eq!(seq.accept(&huge).unwrap_err().code, "SEQUENCE_NUMBER");
+    let out_of_order = BrokerFrame { frame_sequence: 1, ..accepted() };
+    assert_eq!(seq.accept(&out_of_order).unwrap_err().code, "SEQUENCE_NUMBER");
+    seq.accept(&accepted()).unwrap();
+    seq.accept(&bound()).unwrap();
 }
