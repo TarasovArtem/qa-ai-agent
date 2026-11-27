@@ -350,3 +350,125 @@ Full WP3 is INCOMPLETE. No runtime qualification, execution activation or releas
 - Exact-head [PR CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46034350062) 7/7 SUCCESS. Merge `f88a63aeed01a095b8f72806c82d6ac45596292f`, STANDARD_TWO_PARENT; parents `3f846729a40d9676021cc37f2f7b7953d4364865` and reviewed HEAD; merge TREE equals reviewed TREE. Fresh automatic [push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46036908786) on exact merge SHA/main, 7/7 SUCCESS. GitHub identities and CI verified by PM.
 - Accepted reported WSL and Debian builds and 99/99 tests (88 existing + 11 new), canonical parity; no Rust job in repository CI, no independent rerun.
 - D-04 runtime and all other deferred requirements retain their existing OPEN dispositions (§12.8). Full WP3 INCOMPLETE. No runtime qualification, execution activation or release approval. Further WP3-B implementation and WP4–WP9 require separate authority. Execute DISABLED; TPR SUSPENDED / NOT RELEASED; Issue #199 OPEN; WIP = 1 during closure.
+
+## 14. Slice B3: parser robustness and L1 verification (OD-R1-STAGE5-WP3-B-NEXT-3)
+
+| Item | Value |
+|---|---|
+| Authority | OD-R1-STAGE5-WP3-B-NEXT-3 (APPROVED) |
+| Base | `main` ecec4ef5cb20c3bdee900d03c0f5eea6917e667c, tree d9811dad6361962b75cf408e21d09e2fdc244b10 (B2 merged and closed, §13) |
+| Branch | `feature/r1-stage5-wp3-b-next-3` (local candidate; delivery needs separate PO authorization) |
+| Objective | Defensive robustness evidence for D-10 / L1: the P0 frame parser (`wire`) and the strict JSON parser (`json`) of the portable library |
+| Obligation | Amendment A8: "Fuzzing of the P0 frame parser and the strict JSON parser is still required for L1"; Q2: "L1 by the memory-safe parser (A8) plus fuzzing"; OD-06 §19.1 L1 |
+| Status | Development evidence only. **L1 is not closed** (§14.8). No runtime capability. Execute stays DISABLED |
+
+### 14.1 Components and method decision
+
+Components (mission text): B3-01 establish an A8-compatible verification method; B3-02 defensive P0 framing robustness assessment; B3-03 defensive strict JSON robustness assessment; B3-04 regression verification; B3-05 evidence and readiness matrix update.
+
+Preflight: no approved fuzzing method existed. D-10 recorded the tool choice as pending, and neither the WSL host nor the accepted WP2 VM had any fuzzer: no cargo-fuzz, AFL++, honggfuzz, clang or libFuzzer runtime. Coverage-guided fuzzing would need a toolchain-budget extension.
+
+| ID | Decision (2026-11-27) |
+|---|---|
+| PO-B3-1 | Method: an in-tree, test-only, **std-only** robustness harness on the existing Debian rustc. It uses a deterministic seeded PRNG, grammar-based generation and byte-level havoc mutation, and needs no dependency or toolchain change. It is black-box (not coverage-guided), so L1 is recorded as PARTIAL, not closed |
+
+### 14.2 Acceptance criteria (immutable, as issued)
+
+```text
+AC-B3-01: Exact baseline verified.
+AC-B3-02: Verification method complies with A8.
+AC-B3-03: P0 framing robustness evidence recorded.
+AC-B3-04: Strict JSON robustness evidence recorded.
+AC-B3-05: Existing 99 regression tests pass.
+AC-B3-06: Production dependency budget preserved.
+AC-B3-07: Portability preserved.
+AC-B3-08: D-10 evidence and readiness matrix updated.
+AC-B3-09: No new runtime capabilities.
+AC-B3-10: Execute DISABLED.
+```
+
+Status is reported only in the §14.7 crosswalk.
+
+### 14.3 Harness
+
+Files: `tests/robustness/mod.rs` (shared), `tests/robustness_json.rs` (4 tests) and `tests/robustness_wire.rs` (4 tests). No `src/` file changed.
+
+- **Generator.** SplitMix64, seeded. Fixed default seeds `0x5EED0001..3` run in every `cargo test`. `QA_ROBUSTNESS_ITERATIONS` and `QA_ROBUSTNESS_SEEDS` scale a campaign. Every failure report names the seed, the iteration and the input bytes (hex), so every case is reproducible.
+- **Strict JSON (B3-03)**, `json::parse_strict`:
+  - **Positive.** A random value (depth 0..12, Unicode across all planes, controls, quotes, boundary integers, unique keys) is serialized with random whitespace and escape spellings. The parse must equal the model exactly.
+  - **Negative.** A planted defect must yield its exact code: BOM, raw NUL, escaped NUL, invalid UTF-8 (lone continuation, overlong, encoded surrogate, beyond U+10FFFF, truncated), lone or mis-ordered surrogate escapes, raw control characters, floats and exponents, `-0`, unsafe integers, leading zero, bad literals, bad escapes, trailing commas, missing colons, non-string keys, a duplicate key spelled with an escape, trailing content, depth limit+1. This exercises 12 of the 13 codes. The 13th, `JSON_TOO_LARGE`, is covered by the size-boundary test.
+  - **Boundaries.** Exactly 262144 bytes and depth 12 are accepted; one more byte or level is refused. 100000 nested containers are refused without deep recursion.
+  - **Havoc.** Arbitrary mutations of valid documents and of random bytes must never panic and must refuse only with known `Json` codes. Every accepted input must satisfy every strict rule (size, no BOM, no raw NUL, valid UTF-8, depth, unique keys, NUL-free strings, safe integers), parse deterministically and round-trip through the CRS-1 canonical encoder.
+- **P0 framing (B3-02)**, `wire::decode_client_frame` and `decode_broker_frame`:
+  - every result is structurally consistent (`consumed`, `needed`, limits, payload slice);
+  - **prefix consistency**: a shorter prefix is always `Incomplete`; an oversize or unknown header is refused as soon as its deciding bytes are present and for any longer buffer, so an oversize frame can never be truncated into a shorter valid one;
+  - **chunking invariance** of frame streams under random split points (including 1-byte chunks), checked against a one-shot decode, with a bounded buffer;
+  - an encode/decode round trip at 0, 1, limit−1 and limit, with limit+1 refused;
+  - **the root P0 path**: a mutated client frame goes through strict JSON to the closed CREATE request (`parse_request`); refusals may only be `Json` or `Schema` kinds.
+
+### 14.4 Results
+
+| Run | Toolchain | Result |
+|---|---|---|
+| WSL, `cargo test` (debug, default seeds) | rustc/cargo 1.93.1 | `--locked --offline`, 0 warnings; **107 passed, 0 failed** (99 existing unchanged + 8 new) |
+| WSL, extended campaign (release) | rustc/cargo 1.93.1 | `QA_ROBUSTNESS_ITERATIONS=200000`, seeds 1592459265, 1592459266, 1592459267, 42, 20261127 (5 seeds distinct from the defaults): **all 8 robustness tests pass**, 268 s. About 1,000,000 iterations per target; 1,000,000 positive documents parsed to their model; about 3,000,000 frames reassembled; 0 panics |
+| Accepted WP2 VM (instance `wp2-r1-b3-1`; only `lo`; F-WZ disk flags; no reconfiguration) | Debian rustc/cargo 1.85.1+dfsg1-1+deb13u1 | `cargo build`, `cargo build --release`, `cargo test` as the runner: 0 warnings; **107 passed, 0 failed**. Release campaign `QA_ROBUSTNESS_ITERATIONS=50000`, default seeds: **pass**, 0 panics. VM disk still 0 unwritten blocks |
+
+Refusal classes exercised in the WSL extended campaign:
+- JSON negative: all 12 planted classes (each 10870 to 182518 times).
+- JSON havoc: 28856 accepted inputs, all invariant-checked, plus 12 refusal codes.
+- Wire: 39004 complete, 123952 incomplete, 465086 `WIRE_FRAME_TOO_LARGE` and 371958 `WIRE_UNKNOWN_KIND`.
+- P0 path: 5015 requests accepted, 664272 refused as JSON and 58794 refused by the schema.
+
+The Debian campaign shows the same classes at 3×50000 iterations.
+
+**Oracle sensitivity (mutation check).** Each defect below was planted in a throwaway copy of the crate, never in the candidate, and the harness ran against it:
+- **Killed (7):**
+  - M1: no raw-NUL precheck;
+  - M2: depth limit off by one;
+  - M3: no duplicate-key check;
+  - M4: no safe-integer bound;
+  - M5b: a lone high surrogate decodes to U+FFFD;
+  - M6: client frame limit off by one;
+  - M7: broker length checked after buffering.
+- **Survived (1):** M5 (removing the explicit lone-low-surrogate arm) is *equivalent*: `char::from_u32` refuses surrogates with the same code, so behaviour does not change.
+
+Records: operator-local `~/r1-wp3b-b3/` (`campaign-wsl/`, `debian/`, `mutants/results.txt`).
+
+### 14.5 Findings
+
+No confirmed defect. Observations from the assessment:
+- **B3-O1.** Both parsers keep a fixed check order. For JSON: size, BOM, raw NUL and UTF-8 before parsing. For frames: header complete, then length against the limit, before any payload is needed. Container recursion is bounded by `max_depth`, and decoding is zero-copy, so memory is bounded by the input buffer.
+- **B3-O2.** Lone low surrogates are refused twice (explicit arm and `char::from_u32`); this is defence in depth, not a defect.
+
+### 14.6 Invariants
+
+- `Cargo.toml`, `Cargo.lock`, `vendor/` and `.cargo/` unchanged: `hmac-sha256` 1.1.15 is the only dependency (A8). No dev-dependency was added.
+- No `src/` change; no `unsafe`, FFI, OS-specific API, process, file, network or environment access in the library. The harness reads two optional environment variables in test code only.
+- No existing test, fixture or vector changed; the portability guard passes unchanged.
+- OD-04, OD-06, product, demo, npm package and CI unchanged.
+
+### 14.7 Engineering-check crosswalk (B3)
+
+| AC | Engineering checks | Status |
+|---|---|---|
+| AC-B3-01 Exact baseline verified | `origin/main` = ecec4ef5…, tree d9811dad…, checked before branching; the branch starts there | MET |
+| AC-B3-02 Verification method complies with A8 | PO-B3-1: std-only, test-only harness built with the existing Debian `rustc`/`cargo`; no rustup, nightly, crate or system package; `--locked --offline` | MET |
+| AC-B3-03 P0 framing robustness evidence recorded | §14.3–§14.4: wire and P0-path campaign, prefix consistency, chunking invariance, limits, mutation check M6/M7 | MET |
+| AC-B3-04 Strict JSON robustness evidence recorded | §14.3–§14.4: positive, negative, boundary and havoc campaign, mutation check M1–M5b | MET |
+| AC-B3-05 Existing 99 regression tests pass | 99/99 unchanged pass in WSL and on Debian (within 107/107) | MET |
+| AC-B3-06 Production dependency budget preserved | Dependency inputs unchanged; no dev-dependency | MET |
+| AC-B3-07 Portability preserved | No `src/` change; portability guard passes; Debian rustc 1.85.1 build and tests pass | MET |
+| AC-B3-08 D-10 evidence and readiness matrix updated | This section and §14.8 | MET |
+| AC-B3-09 No new runtime capabilities | Test files only | MET |
+| AC-B3-10 Execute DISABLED | No execution capability; product state untouched | MET |
+
+### 14.8 D-10 / L1 disposition and readiness
+
+| Item | Status after B3 |
+|---|---|
+| D-10 L1 fuzzing of the P0 frame parser and the strict JSON parser | **PARTIAL.** A method is established (PO-B3-1), and a reproducible std-only black-box campaign with strong oracles is recorded (§14.4): no defect, all non-equivalent mutants killed. **OPEN:** (a) the PO decision on whether this black-box campaign satisfies the A8 "fuzzing" requirement, or whether a coverage-guided campaign (needing a toolchain-budget extension) is required; (b) the WP8 CI fuzz job (amendment WP8 row) |
+| L1 (OD-06 §19.1; Q2 "memory-safe parser (A8) plus fuzzing") | **OPEN.** The memory-safe parser part is in place (`#![forbid(unsafe_code)]`, A8 Rust). The fuzzing part is PARTIAL (D-10). The process-level prechecks are runtime (WP4+). The disposition belongs to WP7 qualification (Q2) |
+| All other WP3 and deferred items | OPEN, unchanged (§12.8, §13) |
+
+Full WP3 is INCOMPLETE. No runtime qualification, execution activation or release approval is claimed.
