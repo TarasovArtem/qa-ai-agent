@@ -7,23 +7,21 @@
 | Branch | `feature/r1-stage5-wp3-b-next-1` (local candidate; the PR head identifies the delivered revision) |
 | Design inputs | OD-06 §5.2, §5.4, §5.5, §8.2, §11.1; amendment A1, A2, A7.3, A8; existing JavaScript definitions named in §2 |
 | Status | Development evidence only. **No runtime qualification is claimed.** Execute stays DISABLED; the crate has no binary and no execution capability |
-| Delivery | OD-R1-STAGE5-WP3-B-NEXT-1-DELIVERY: one consolidated commit a5124c005cfe5ab8b0c4a08a42187fb49dd7e93a (PR #284). Corrective C1: OD-R1-STAGE5-WP3-B-NEXT-1-C1, one commit on the same branch (§9) |
+| Delivery | OD-R1-STAGE5-WP3-B-NEXT-1-DELIVERY: one consolidated commit a5124c005cfe5ab8b0c4a08a42187fb49dd7e93a (PR #284). Corrective C1: OD-R1-STAGE5-WP3-B-NEXT-1-C1, commit b4c1ef31da6b025641e8f47fee314b691d13be2d (§9). Corrective C2: OD-R1-STAGE5-WP3-B-NEXT-1-C2, documentation only (§10) |
 
 ## 1. Scope and owner decisions
 
-B1-01..06 and AC-B1-01..13 were not defined in the repository. Before implementation the PO adopted the proposed set and decided two §5.2 ambiguities (2026-11-27). These decisions are recorded here under OD-R1-STAGE5-WP3-B-NEXT-1-DELIVERY:
+B1-01..06 were not defined in the repository. Before implementation the PO adopted the proposed component set and decided two §5.2 ambiguities (2026-11-27). The acceptance criteria are the authoritative AC-B1-01..13 recorded under OD-R1-STAGE5-WP3-B-NEXT-1-C2 (below). These decisions are recorded here:
 
 | ID | Decision |
 |---|---|
-| PO-B1-1 | B1-01..06 and AC-B1-01..13 exactly as approved (verbatim below) |
+| PO-B1-1 | B1-01..06 as listed below (component scope). The acceptance criteria are not part of this decision: see "Authoritative acceptance criteria" |
 | PO-B1-2 | Enrollment `roots[].root` is the same record as the CREATE request root: `{platform:"linux", path, dev, ino, digest}` |
 | PO-B1-3 | Workspace: enforce only the literal rules ("/", controller artifact locations, A7.3 prefixes). "System directory" and per-account home checks stay runtime items, OPEN |
 | PO-B1-C1-1 | (C1, ARCH-B1-01) OD-06 §8.2 required fingerprint membership is enforced for both frameworks, as the literal members named by §8.2 and its adapter table; the closure stays profile-enumerated (runtime) |
 | PO-B1-C1-2 | (C1, ARCH-B1-01) The fixed Cypress config is exactly root `cypress.config.js` (§2.1 conventional root); other variants do not satisfy the requirement |
 
-### Approved definitions (PO-B1-1), verbatim
-
-These are the definitions the PO approved on 2026-11-27, reproduced unchanged (ARCH-B1-03). They are not amended by any status, mapping or interpretation in this document. Status against them is reported separately in the §8 engineering-check crosswalk.
+### Component scope (PO-B1-1), verbatim
 
 ```text
 B1-01 Compatibility record (OD-06 5.4): closed
@@ -46,20 +44,28 @@ B1-06 Request/record agreement (5.4 data part):
       request contractVersion + subject.product = record
 Not in B1: live checks (C1a, M1/M3/M4, live builds,
       broker self-digest), reason mapping (D-12), disk I/O
+```
 
-AC-B1-01 base f93c76d6/tree a465da20; clean; local branch
-AC-B1-02 B1-01..06 inert, data-only, no I/O or OS API
-AC-B1-03 only normative rules; ambiguities recorded OPEN
-AC-B1-04 closed schemas fail closed; no input echo
-AC-B1-05 digests via existing CRS-1/H; JS vectors match
-AC-B1-06 focused synthetic tests per item + boundaries
-AC-B1-07 existing 65 tests unchanged and passing
-AC-B1-08 WSL build/test --locked --offline, 0 warnings
-AC-B1-09 Debian Rust 1.85.1 build/test PASS (WP2 VM)
-AC-B1-10 A8 budget unchanged; no unsafe/FFI; guard OK
-AC-B1-11 no runtime capability/binary/network/creds
-AC-B1-12 product/demo/npm/CI/OD-04/OD-06/wire unchanged
-AC-B1-13 evidence + readiness matrix updated; open items kept
+The B1-03 text names "M2 + overlap rules 1-2". The implementation also enforces overlap rule 3 on enrolled identities and the I-5 derived checks. Architecture resolved this as R-C1-1 (§7).
+
+### Authoritative acceptance criteria (OD-R1-STAGE5-WP3-B-NEXT-1-C2)
+
+These are the exact authoritative definitions (ARCH-B1-03). They replace the AC text recorded at delivery and in C1, which was incorrect, and no status, mapping or interpretation in this document amends them. Status is reported separately in the §8 engineering-check crosswalk.
+
+```text
+AC-B1-01: Exact baseline verified.
+AC-B1-02: Models conform to unambiguous OD-06 requirements.
+AC-B1-03: Existing schemas and data formats unchanged.
+AC-B1-04: Existing canonical encoding infrastructure reused.
+AC-B1-05: A8 dependency budget preserved.
+AC-B1-06: Existing 65 regression tests pass.
+AC-B1-07: New applicable synthetic tests pass.
+AC-B1-08: WSL and Debian Rust 1.85.1 builds pass.
+AC-B1-09: Portability and security boundaries preserved.
+AC-B1-10: No runtime capabilities.
+AC-B1-11: Product, npm package and demo unchanged.
+AC-B1-12: Evidence and readiness matrix updated.
+AC-B1-13: Execute DISABLED.
 ```
 
 Module placement: B1-01, B1-02 and B1-06 in `compatibility`; B1-03 and B1-04 in `enrollment`; B1-05 in `enrollment` and `compatibility`.
@@ -94,7 +100,9 @@ Excluded (runtime or later): reading `enrollment.json`/`compatibility.json`; own
 | `workloadStorage` exactly `{fsType ext4/xfs/f2fs, maxBytes 2^30..2^40, minFreeBytes 2^26..maxBytes}` | §5.2 | `parse_workload_storage` | `workload_storage_bounds` |
 | R1: exactly one profile, playwright / `od06-playwright-v1` | A1 (§5.4 overlay; "enrollment validation") | `check_r1_profile` | `r1_profile_requires_exactly_one_playwright_profile` |
 
-## 3. Interpretations for review
+## 3. Interpretations
+
+I-1, I-4 and I-5 are ACCEPTED (Architecture). I-2, I-3 and I-6..I-9 remain review items.
 
 | ID | Interpretation | Why |
 |---|---|---|
@@ -144,7 +152,7 @@ C1 vectors: before deriving anything, the generator reproduced the published WP3
 | 8 | §5.5/§5.6 checks | **§5.5 data rules done (B1-03)**; live M1/M3/M4, ancestor identities and §5.6 OPEN (D-06) |
 | 9 | Fingerprint (A2) | Portable done (WP3-A); Cypress profile (B1); §8.2 required literal members for both frameworks (C1); profile-enumerated closure, live walk D-01 and OQ-2 OPEN |
 | 10 | Unit tests | Portable scope done: 88/88 (WSL and Debian 1.85.1) |
-| 11 | Architecture + Security review | WP3-A done; B1 HEAVY Architecture review raised ARCH-B1-01..03 (corrected in C1, §9); re-review of C1 and the Security review (including F-B1-01 and I-1..I-9) pending |
+| 11 | Architecture + Security review | WP3-A done. B1 Architecture: ARCH-B1-01 and ARCH-B1-02 RESOLVED (C1); ARCH-B1-03 corrected in C2, pending Architecture confirmation; R-C1-1 resolved; I-1, I-4, I-5 ACCEPTED. B1 Security review (including F-B1-01) PENDING |
 | 12 | Debian build of record | Compile and test only (dev and release profiles); reproducible build D-11 OPEN |
 
 D-03: the portable part (enrollment and §5.4 schemas, `profileDigest`/`compatibilityDigest` binding, product-version equality) is implemented by B1; its runtime part stays OPEN. All other D-items, OQ-1, OQ-2, RQ-7, L5, L6, K-1, I5 and Q1–Q7 remain OPEN; OQ-3 and RV-1 NOT_A_FINDING. "System directory"/home checks for the workspace are OPEN (PO-B1-3).
@@ -153,30 +161,40 @@ D-03: the portable part (enrollment and §5.4 schemas, `profileDigest`/`compatib
 
 | ID | Finding | Disposition |
 |---|---|---|
-| F-B1-01 | The portability guard (`tests/portability.rs`) refuses the bare guarded words anywhere in `src/`, but OD-06 §5.2 requires the qualification keys `systemdBuild` and `sudoBuild`. The guard was amended with a file-scoped exemption for exactly four tokens in `enrollment.rs` (§5); assembling the names to evade the scan was rejected | **Accepted for independent review** (OD-R1-STAGE5-WP3-B-NEXT-1-DELIVERY). This is **not a security waiver**: the HEAVY Security review decides whether the exemption stands, and no guarded capability is permitted by it |
-| ARCH-B1-01 | Mandatory fingerprint membership under OD-06 §8.2 was not enforced: Cypress roots required nothing, and Playwright roots required only the three A2.1 root files | **Corrected in C1** (§9): §8.2 required literal members for both frameworks; affected regression tests corrected |
-| ARCH-B1-02 | I-1 applied the build-specific "ASCII/no controls" rule to profile versions, for which §5.2 states only "versions<=256" | **Corrected in C1** (§9): versions are limited to ≤256 UTF-8 bytes only; builds unchanged |
-| ARCH-B1-03 | The delivery record restated AC-B1-01..13 with status and mapping text mixed into the definitions, and reworded B1-01..06 | **Corrected in C1** (§9): §1 reproduces the approved definitions verbatim; status is in the separate §8 crosswalk |
+| F-B1-01 | The portability guard (`tests/portability.rs`) refuses the bare guarded words anywhere in `src/`, but OD-06 §5.2 requires the qualification keys `systemdBuild` and `sudoBuild`. The guard was amended with a file-scoped exemption for exactly four tokens in `enrollment.rs` (§5); assembling the names to evade the scan was rejected | **Accepted for independent review** (OD-R1-STAGE5-WP3-B-NEXT-1-DELIVERY). This is **not a security waiver**. **Security review PENDING**: it decides whether the exemption stands, and no guarded capability is permitted by it |
+| ARCH-B1-01 | Mandatory fingerprint membership under OD-06 §8.2 was not enforced: Cypress roots required nothing, and Playwright roots required only the three A2.1 root files | **RESOLVED** (C1, §9): §8.2 required literal members for both frameworks; affected regression tests corrected |
+| ARCH-B1-02 | I-1 applied the build-specific "ASCII/no controls" rule to profile versions, for which §5.2 states only "versions<=256" | **RESOLVED** (C1, §9): versions are limited to ≤256 UTF-8 bytes only; builds unchanged |
+| ARCH-B1-03 (MINOR) | The evidence record carried incorrect AC-B1-01..13 definitions. C1 had reproduced the drafted list adopted at implementation instead of the authoritative criteria | **Corrected in C2** (§10): §1 holds the authoritative definitions exactly; §8 crosswalk rebuilt. Pending Architecture confirmation |
+| R-C1-1 | The B1-03 text names "M2 + overlap rules 1-2", while `parse_roots` also enforces overlap rule 3 on enrolled identities and the I-5 derived checks | **RESOLVED by Architecture** (I-5 ACCEPTED); no code change |
+
+### OD-R1-STAGE5-WP3-B-C1-AC07: existing regression-test amendments
+
+Recorded separately from the acceptance criteria.
+
+| Amendment | Tests | Disposition |
+|---|---|---|
+| C1 ARCH-B1-01 fingerprint corrections (with the shared `synthetic_root`/`required` fixtures) | `digest_matches_js_reference_and_is_input_order_independent`, `refuses_missing_required_files_and_foreign_paths`, `limits_root_profile`, `total_limit_is_enforced_before_hashing`, `total_limit_exact_boundary` | **APPROVED** (five fingerprint-test amendments) |
+| Portability guard exemption for four §5.2 data names in `enrollment.rs` | `library_source_is_portable_and_capability_free` | **Subject to Security disposition F-B1-01** (pending) |
 
 ## 8. Engineering-check crosswalk
 
-This section maps the approved criteria (§1, verbatim) to the checks that evidence them, at the C1 revision. It does not redefine any criterion. Where a criterion is not met as written, it says so.
+This section maps each authoritative criterion (§1) to the checks that evidence it, at the C2 revision. It does not redefine any criterion. Evidence from C1 is reused only because C2 changes no source, test, vector or dependency file (§10).
 
-| AC | Engineering checks | Status at C1 |
+| AC | Engineering checks | Status at C2 |
 |---|---|---|
-| AC-B1-01 | Base f93c76d6/tree a465da20 verified before implementation, at delivery (parent of a5124c00) and before C1 (head a5124c00, tree af9e22b5). The branch was pushed under OD-R1-STAGE5-WP3-B-NEXT-1-DELIVERY | MET for base and tree. "local branch" was superseded by the authorized delivery |
-| AC-B1-02 | `tests/portability.rs` guard; review of `compatibility.rs`, `enrollment.rs` and `fingerprint.rs` (no `std::fs`/`std::net`/`std::process`/`std::env`/`std::os`) | MET |
-| AC-B1-03 | §2 normative mapping; I-1..I-9 (§3) open for review; PO-B1-1..3 and PO-B1-C1-1/2 recorded | MET. Review note: `parse_roots` also enforces overlap rule 3 on enrolled identities and the I-5 derived checks, which go beyond the B1-03 text "M2 + overlap rules 1-2". They are stricter, fail-closed and recorded as I-5 |
-| AC-B1-04 | `closed_schema_at_every_level`, `closed_record_schema`, `document_size_and_strict_json`; error codes carry no input | MET |
-| AC-B1-05 | JS-generated `b1-*` and `fp-*` vectors; JS encoder parity with the WP3-A digest; `profileDigest` and `compatibilityDigest` byte-identical across C1 | MET |
-| AC-B1-06 | 23 B1 tests (5 compatibility, 18 enrollment) with boundary values; C1 adds per-member, config-variant and UTF-8 boundary assertions | MET |
-| AC-B1-07 | All 65 existing tests pass. Changed since base: `library_source_is_portable_and_capability_free` (F-B1-01), and under C1 ARCH-B1-01 the fingerprint tests `digest_matches_js_reference_and_is_input_order_independent`, `refuses_missing_required_files_and_foreign_paths`, `limits_root_profile`, `total_limit_is_enforced_before_hashing` and `total_limit_exact_boundary`, plus the shared `synthetic_root`/`required` fixtures | **NOT MET as written** ("unchanged"). The changes were made under F-B1-01 (pending review) and the PO-authorized C1 correction. Disposition rests with the PO |
-| AC-B1-08 | WSL rustc 1.93.1 dev/release build and test, `--locked --offline` (§4) | MET: 0 warnings, 88/88 |
-| AC-B1-09 | Debian rustc 1.85.1 on the accepted WP2 VM (§4) | MET: 0 warnings, 88/88 |
-| AC-B1-10 | `Cargo.toml`/`Cargo.lock`/`vendor/`/`.cargo/` unchanged; `#![forbid(unsafe_code)]`; portability guard passes | MET, with the guard amendment subject to F-B1-01 review |
-| AC-B1-11 | No binary target; no I/O, network or credential code; Execute DISABLED | MET |
-| AC-B1-12 | Changed paths only under `native/qa-agent-controller-v1/` | MET |
-| AC-B1-13 | §6 readiness matrix, this crosswalk and §9; open items listed in §6 | MET |
+| AC-B1-01 Exact baseline verified | Implementation base f93c76d6/tree a465da20; delivery a5124c00 (parent f93c76d6); C1 baseline a5124c00/af9e22b5; C2 baseline b4c1ef31/e6220920. Each was checked locally and on the remote before change | MET |
+| AC-B1-02 Models conform to unambiguous OD-06 requirements | §2 normative mapping (OD-06 §5.2, §5.4, §5.5, §8.2, §11.1; A1, A2, A7.3, A8); ARCH-B1-01 and ARCH-B1-02 RESOLVED; ambiguous text decided by PO-B1-2/3 and PO-B1-C1-1/2 or recorded as I-1..I-9 | MET. I-1, I-4, I-5 ACCEPTED; I-2, I-3, I-6..I-9 remain review items |
+| AC-B1-03 Existing schemas and data formats unchanged | OD-04, OD-06 and the wire/request schema unchanged (request tests 14/14); CRS-1 encoder and digest domains unchanged; fingerprint canonical object `{algorithm, files}` unchanged; `profileDigest` 99790619… and `compatibilityDigest` 3cd57603… byte-identical across C1. C1 enforces required membership; it adds no key or format | MET |
+| AC-B1-04 Existing canonical encoding infrastructure reused | `canonical` and `digest::h_value`, `fingerprint::verify_enrolled` and the request `parse_root` reused; golden vectors written by the repository's JS encoder, with parity against the WP3-A digest (§4) | MET |
+| AC-B1-05 A8 dependency budget preserved | `Cargo.toml`, `Cargo.lock`, `vendor/`, `.cargo/` unchanged since base; `hmac-sha256` 1.1.15 the only dependency | MET |
+| AC-B1-06 Existing 65 regression tests pass | 65/65 pass in WSL 1.93.1 and on Debian 1.85.1 (§4). Amendments are recorded in OD-R1-STAGE5-WP3-B-C1-AC07 (§7) | MET. The portability-guard amendment remains subject to F-B1-01 |
+| AC-B1-07 New applicable synthetic tests pass | 23/23 B1 tests (5 compatibility, 18 enrollment) pass; all fixtures synthetic | MET |
+| AC-B1-08 WSL and Debian Rust 1.85.1 builds pass | WSL rustc 1.93.1 and Debian rustc 1.85.1+dfsg1-1+deb13u1 (accepted WP2 VM): dev and release builds and tests, `--locked --offline`, 0 warnings, 88/88 (§4, C1 runs) | MET |
+| AC-B1-09 Portability and security boundaries preserved | `#![forbid(unsafe_code)]`; no `std::fs`/`net`/`process`/`env`/`os` in `src/`; portability guard passes; fail-closed checks unchanged or tightened (C1) | MET, subject to Security disposition F-B1-01 for the guard amendment |
+| AC-B1-10 No runtime capabilities | Library crate only, no binary target; no I/O, process, network or credential code | MET |
+| AC-B1-11 Product, npm package and demo unchanged | All changed paths are under `native/qa-agent-controller-v1/`. The npm `files` allowlist (`package.json`) contains only `scripts/ai/**`, so the package is unaffected; no product or demo path changed | MET |
+| AC-B1-12 Evidence and readiness matrix updated | This document: §6 readiness matrix, §7 dispositions, this crosswalk, §9 and §10 | MET |
+| AC-B1-13 Execute DISABLED | No execution capability exists in the crate; product execute state untouched | MET |
 
 ## 9. Corrective C1 (OD-R1-STAGE5-WP3-B-NEXT-1-C1)
 
@@ -186,5 +204,15 @@ Baseline: PR #284 head a5124c005cfe5ab8b0c4a08a42187fb49dd7e93a, tree af9e22b589
   - Corrected regression tests: the WP3-A synthetic Playwright root gains `node_modules/@playwright/test/cli.js`. Count, total and boundary arithmetic were re-derived (194 → 246 fixture bytes; 4093 → 4091 padding entries; 4089 → 4088 large entries; boundary file 16777022 → 16776970). The JS digests were regenerated, and every required member is tested for absence.
   - The B1 Cypress test is replaced by `cypress_roots_require_the_od06_8_2_members`.
 - **ARCH-B1-02.** `version_within_limit` applies only "versions<=256" (UTF-8 bytes) to `packageVersion`, `nativeVersion` and `browserVersion`; the build rule is unchanged. I-1 is revised.
-- **ARCH-B1-03.** §1 holds the approved definitions verbatim, §8 holds the status, and the B1 table that reworded the definitions is removed.
+- **ARCH-B1-03.** C1 separated the status into §8 and removed the reworded B1 table. However, the AC text it recorded was not the authoritative set, so it did not resolve the finding. C2 corrects it (§10).
 - Unchanged: schemas, CRS-1, digest domains, `profileDigest`, `compatibilityDigest`, limits, dependencies, the portability guard and F-B1-01, I-2, I-3, I-5..I-9, and every deferred item in §6.
+
+## 10. Corrective C2 (OD-R1-STAGE5-WP3-B-NEXT-1-C2)
+
+Baseline: PR #284 head b4c1ef31da6b025641e8f47fee314b691d13be2d, tree e62209206cd0394a276c59fcfb315f5df4e0a1a5. Documentation only: this file is the only changed path.
+
+- ARCH-B1-03 (MINOR): §1 now holds the exact authoritative AC-B1-01..13, replacing the incorrect definitions, and the §8 crosswalk is rebuilt against them.
+- OD-R1-STAGE5-WP3-B-C1-AC07 is recorded separately (§7): five fingerprint-test amendments APPROVED; the portability guard amendment remains subject to Security disposition F-B1-01.
+- R-C1-1 is recorded as resolved by Architecture. I-1, I-4 and I-5 are ACCEPTED, and ARCH-B1-01 and ARCH-B1-02 are RESOLVED. The affected status statements in §3, §6 row 11, §7 and §9 are corrected.
+- Evidence reuse: source, tests, vectors and dependency inputs are byte-identical to C1 (b4c1ef31), so the C1 WSL and Debian 88/88 runs (§4) apply unchanged. Rust builds and tests were not rerun.
+- Unchanged and still OPEN: F-B1-01 Security review, I-2, I-3, I-6..I-9, every deferred item in §6. Execute DISABLED.
