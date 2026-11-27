@@ -53,13 +53,20 @@ pub enum TreeProfile {
     /// is kept at the unchanged 16 MiB, fail-closed. Whether a real Chromium
     /// tree fits it is open question OQ-2 (see `WP3A-EVIDENCE.md`).
     BrowserTree,
+    /// An enrolled root whose framework has no amendment A2 membership rule
+    /// (`cypress`; amendment A1 keeps the literal while R1 defers Cypress).
+    /// Only the OD-06 §8.2 envelope is checked: root limits, canonical
+    /// root-relative paths of at most 300 bytes (the existing safe relative
+    /// path rule), byte order, `H` and the fingerprint domain. Which files
+    /// must be present is not defined for R1 and is not checked.
+    GenericRoot,
 }
 
 impl TreeProfile {
     /// Limits for this profile.
     pub fn limits(self) -> TreeLimits {
         match self {
-            TreeProfile::PlaywrightRoot => TreeLimits {
+            TreeProfile::PlaywrightRoot | TreeProfile::GenericRoot => TreeLimits {
                 max_files: 4096,
                 max_file_bytes: 16_777_216,
                 max_total_bytes: 67_108_864,
@@ -77,7 +84,7 @@ impl TreeProfile {
     /// Digest domain for this profile.
     pub fn domain(self) -> &'static str {
         match self {
-            TreeProfile::PlaywrightRoot => domains::FINGERPRINT,
+            TreeProfile::PlaywrightRoot | TreeProfile::GenericRoot => domains::FINGERPRINT,
             TreeProfile::BrowserTree => domains::BROWSER_TREE,
         }
     }
@@ -90,6 +97,7 @@ impl TreeProfile {
         match self {
             TreeProfile::PlaywrightRoot => is_playwright_root_member(path),
             TreeProfile::BrowserTree => path.split('/').all(is_ppi1_segment),
+            TreeProfile::GenericRoot => crate::grammar::is_safe_relative_path(path),
         }
     }
 }

@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "compatibilityDigest": "sha256:3cd57603bd13cb9e1f7366a0da75cae00661a98dec2baa6987431ee9d72aee33",
+  "caller": {
+    "uid": 1001,
+    "gid": 1001,
+    "account": "qarunner"
+  },
+  "workspace": {
+    "path": "/srv/qa-workspace",
+    "dev": "65025",
+    "ino": "131073"
+  },
+  "roots": [
+    {
+      "root": {
+        "platform": "linux",
+        "path": "/srv/qa-workspace/qa-agent-demo",
+        "dev": "65025",
+        "ino": "262145",
+        "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      },
+      "projectId": "qa-agent-demo",
+      "outputDir": "reports/qa-agent",
+      "framework": "playwright",
+      "sutNames": [
+        "SUT_BASE_URL"
+      ],
+      "fingerprint": {
+        "algorithm": "od06-files-v1",
+        "files": [
+          {
+            "path": "node_modules/@playwright/test/index.js",
+            "sha256": "sha256:04b5f4362303d6d0fd49c63c721cbeaa54e11a3be8c2c5313df2d5cc2128de35",
+            "size": 45
+          },
+          {
+            "path": "node_modules/@playwright/test/package.json",
+            "sha256": "sha256:19aa2d286a91db3634bda3dc0c75918cd0b5bc9e4b792d9cbace10de32b036d9",
+            "size": 28
+          },
+          {
+            "path": "node_modules/playwright-core/LICENSE",
+            "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "size": 0
+          },
+          {
+            "path": "node_modules/playwright/lib/x.js",
+            "sha256": "sha256:1d784cd061e7a4305f7b1cb99d46b7bbcc376cb4e29c33e4127c7c71e3f118be",
+            "size": 16
+          },
+          {
+            "path": "package-lock.json",
+            "sha256": "sha256:f25e7d293543b03d1a2cab20f9827739fd644af8400382bc4f6a5124e46aead0",
+            "size": 22
+          },
+          {
+            "path": "package.json",
+            "sha256": "sha256:3c45ef43cbc1913759ddde1d93baabaab5d57c94c1af7851152f183ab0edbb5b",
+            "size": 39
+          },
+          {
+            "path": "playwright.config.js",
+            "sha256": "sha256:22f548e2fb9dbf53873f052af47ac84687c5594d5e1180b8160ae8ce8c41d30b",
+            "size": 44
+          }
+        ],
+        "digest": "sha256:1c1aa7dc3cf32781fa6dd5ee3d8b428cc888c7fb7a35fd199358664caec6b612"
+      }
+    }
+  ],
+  "qualification": {
+    "profileVersion": "od06-linux-v1",
+    "osBuild": "synthetic Debian 13.8 genericcloud 20261123-2671",
+    "kernelBuild": "synthetic 6.12.118+deb13-cloud-amd64",
+    "systemdBuild": "synthetic systemd 257.13-1~deb13u1",
+    "sudoBuild": "synthetic sudo 1.9.16p2-3+deb13u5",
+    "nodePath": "/opt/qa-agent/node-v22.23.5-linux-x64/bin/node",
+    "nodeVersion": "22.23.5",
+    "nodeSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "brokerBuild": "synthetic broker build",
+    "frameworkProfiles": [
+      {
+        "framework": "playwright",
+        "packageVersion": "1.63.0",
+        "packageSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "nativePath": "/opt/qa-agent/node-v22.23.5-linux-x64/bin/node",
+        "nativeVersion": "22.23.5",
+        "nativeSha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "browserPath": "/opt/qa-agent/ms-playwright/chromium_headless_shell-1243",
+        "browserVersion": "153.0.8010.12",
+        "browserSha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "adapterVersion": "od06-playwright-v1"
+      }
+    ],
+    "workloadStorage": {
+      "fsType": "ext4",
+      "maxBytes": 1610612736,
+      "minFreeBytes": 67108864
+    }
+  }
+}

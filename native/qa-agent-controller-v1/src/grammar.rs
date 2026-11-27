@@ -164,6 +164,111 @@ pub fn is_ppi1_target_path(s: &str, framework: &str) -> bool {
     !is_protected_folded(&segments)
 }
 
+/// `nodeVersion` (OD-06 §5.2 "exact22.x.y"): `22.<minor>.<patch>` with SemVer
+/// numeric identifiers (no leading zeros) and no pre-release or build part.
+pub fn is_node22_version(s: &str) -> bool {
+    let mut parts = s.split('.');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("22"), Some(minor), Some(patch), None) => is_numeric_ident(minor) && is_numeric_ident(patch),
+        _ => false,
+    }
+}
+
+/// Printable ASCII (`0x20..=0x7E`, i.e. ASCII without control characters) of at
+/// most `max` bytes. OD-06 §5.2 qualification builds ("<=256 ASCII/no
+/// controls"); also applied to qualification version strings ("<=256").
+pub fn is_printable_ascii_max(s: &str, max: usize) -> bool {
+    s.len() <= max && s.bytes().all(|b| (0x20..=0x7E).contains(&b))
+}
+
+/// Enrolled caller account (OD-06 §5.2): `^[A-Za-z0-9_-]+$`, at most 64 ASCII.
+pub fn is_account(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+fn is_js_control(c: char) -> bool {
+    (c as u32) < 0x20 || c == '\u{7f}'
+}
+
+/// ECMAScript `String.prototype.trim` whitespace (WhiteSpace + LineTerminator).
+fn is_js_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'..='\u{d}'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
+/// Existing project ID grammar (OD-06 §5.2 "existing project ID grammar"): the
+/// JavaScript `isValidId` of `scripts/ai/generation/primitives.js`. 1..=128
+/// UTF-16 code units, no leading or trailing ECMAScript whitespace, and no
+/// `[\x00-\x1F\x7F]` code unit.
+pub fn is_project_id(s: &str) -> bool {
+    let units = s.encode_utf16().count();
+    if units == 0 || units > 128 || s.chars().any(is_js_control) {
+        return false;
+    }
+    let edge_ws = s.chars().next().is_some_and(is_js_whitespace) || s.chars().next_back().is_some_and(is_js_whitespace);
+    !edge_ws
+}
+
+/// Existing safe repository-relative path rule: the JavaScript
+/// `isSafeRelativePath` of `scripts/ai/cli/paths.js`. 1..=512 UTF-16 code
+/// units, no code unit below 0x20 or equal to 0x7F, no `\` or `:`, not
+/// starting with `/`, and every `/` segment non-empty and not `.` or `..`.
+pub fn is_safe_relative_path(s: &str) -> bool {
+    let units = s.encode_utf16().count();
+    if units == 0 || units > 512 || s.chars().any(is_js_control) {
+        return false;
+    }
+    if s.contains('\\') || s.contains(':') || s.starts_with('/') {
+        return false;
+    }
+    s.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+}
+
+/// Existing `pathsOverlap` of `scripts/ai/cli/paths.js`: compare the
+/// non-empty, lowercased `/` segments; overlap when either side has none or
+/// one segment list is a prefix of the other.
+pub fn paths_overlap(a: &str, b: &str) -> bool {
+    let seg = |p: &str| -> Vec<String> { p.split('/').filter(|s| !s.is_empty()).map(str::to_lowercase).collect() };
+    let (sa, sb) = (seg(a), seg(b));
+    if sa.is_empty() || sb.is_empty() {
+        return true;
+    }
+    sa.iter().zip(sb.iter()).all(|(x, y)| x == y)
+}
+
+/// `PROTECTED_OUTPUT_PREFIXES` of `scripts/ai/cli/config-file.js`: fixed
+/// prefixes a configured `output.dir` may never overlap.
+pub const PROTECTED_OUTPUT_PREFIXES: [&str; 4] = [".git", "node_modules", "cypress", "playwright"];
+
+/// Enrolled `outputDir` (OD-06 §5.2 "configured canonical relative
+/// outputDir<=300 bytes safe segments/no '..'"): the existing safe relative
+/// path rule, at most 300 UTF-8 bytes, and none of the fixed overlaps a
+/// configured `output.dir` already excludes. Equality with the target's
+/// configured value and its context-dependent overlaps (test source root,
+/// configuration file) need the target configuration and are not checked here.
+pub fn is_enrolled_output_dir(s: &str) -> bool {
+    s.len() <= 300 && is_safe_relative_path(s) && !PROTECTED_OUTPUT_PREFIXES.iter().any(|p| paths_overlap(s, p))
+}
+
+/// True when `path` equals `prefix` or lies beneath it (`prefix` + `/` is a
+/// byte prefix of `path`). Both are canonical absolute paths.
+pub fn is_at_or_beneath(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || (path.len() > prefix.len() && path.starts_with(prefix) && path.as_bytes()[prefix.len()] == b'/')
+}
+
 /// Unit name derived from `executionId` (OD-06 §6.2, §7.1). Never accepted as
 /// input; both sides derive it.
 pub fn unit_name(execution_id: &str) -> Option<String> {

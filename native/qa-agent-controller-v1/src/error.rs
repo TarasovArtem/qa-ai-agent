@@ -25,6 +25,10 @@ pub enum ErrorKind {
     Proposal,
     /// `od06-files-v1` fingerprint (OD-06 §8.2, amendment A2).
     Fingerprint,
+    /// Closed enrollment document and qualification (OD-06 §5.2, §5.5 data rules).
+    Enrollment,
+    /// Closed compatibility record and its agreements (OD-06 §5.4).
+    Compatibility,
 }
 
 /// A fixed-code error. `code` is a static identifier, never derived from input.

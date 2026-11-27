@@ -146,6 +146,20 @@ pub mod limits {
     pub const TIMEOUT_MS: (i64, i64) = (1000, 600_000);
 }
 
+/// Validates a `root` record, exactly `{platform:"linux", path, dev, ino,
+/// digest}` (OD-06 §4.2). Shared by the CREATE request and enrollment
+/// `roots[].root` (PO decision for OD-R1-STAGE5-WP3-B-NEXT-1: same record).
+pub(crate) fn parse_root(v: &Value, kind: ErrorKind) -> Result<Root> {
+    let r = Closed::new(v, &["platform", "path", "dev", "ino", "digest"], kind)?;
+    r.literal("platform", "linux")?;
+    Ok(Root {
+        path: r.grammar("path", grammar::is_canonical_absolute_path)?.to_owned(),
+        dev: r.grammar("dev", grammar::is_decimal_id)?.to_owned(),
+        ino: r.grammar("ino", grammar::is_decimal_id)?.to_owned(),
+        digest: r.grammar("digest", is_h)?.to_owned(),
+    })
+}
+
 /// Parses and validates one request payload (the bytes inside a client frame).
 pub fn parse_request(payload: &[u8]) -> Result<Request> {
     let v = json::parse_strict(payload, json::FRAME_LIMITS)?;
@@ -176,14 +190,7 @@ pub fn validate_request(v: &Value) -> Result<Request> {
         return Ok(Request::Reconcile { execution_id });
     }
 
-    let r = Closed::new(o.raw("root"), &["platform", "path", "dev", "ino", "digest"], K)?;
-    r.literal("platform", "linux")?;
-    let root = Root {
-        path: r.grammar("path", grammar::is_canonical_absolute_path)?.to_owned(),
-        dev: r.grammar("dev", grammar::is_decimal_id)?.to_owned(),
-        ino: r.grammar("ino", grammar::is_decimal_id)?.to_owned(),
-        digest: r.grammar("digest", is_h)?.to_owned(),
-    };
+    let root = parse_root(o.raw("root"), K)?;
 
     let s = Closed::new(
         o.raw("subject"),

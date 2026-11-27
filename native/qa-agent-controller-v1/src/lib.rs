@@ -9,20 +9,26 @@
 //! - [`request`], [`frame`], [`proposal`]: closed request, broker frame and
 //!   result-proposal models (OD-06 §4.2, §7, §9, §11);
 //! - [`fingerprint`]: the `od06-files-v1` digest (OD-06 §8.2, amendment A2);
-//! - [`grammar`]: whole-string grammars, including PPI-1.
+//! - [`grammar`]: whole-string grammars, including PPI-1;
+//! - [`enrollment`] and [`compatibility`]: closed enrollment document,
+//!   qualification, `profileDigest`, compatibility record,
+//!   `compatibilityDigest` and their data-only agreements (OD-06 §5.2, §5.4,
+//!   §5.5 data rules; WP3-B slice B1).
 //!
 //! This crate has no binary and no execution capability. It performs no
 //! process, filesystem, systemd, D-Bus, privilege, credential or network
 //! operation and uses no OS-specific API, so it builds and tests on any host.
-//! Everything that needs the qualified Linux VM is out of scope here (WP3-B
-//! and later); see `WP3A-EVIDENCE.md`.
+//! Everything that needs the qualified Linux VM is out of scope here; see
+//! `WP3A-EVIDENCE.md` and `WP3B-EVIDENCE.md`.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs, rust_2018_idioms)]
 
 pub mod canonical;
 mod closed;
+pub mod compatibility;
 pub mod digest;
+pub mod enrollment;
 pub mod error;
 pub mod fingerprint;
 pub mod frame;
