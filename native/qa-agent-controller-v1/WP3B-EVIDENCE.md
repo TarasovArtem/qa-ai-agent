@@ -472,3 +472,12 @@ No confirmed defect. Observations from the assessment:
 | All other WP3 and deferred items | OPEN, unchanged (§12.8, §13) |
 
 Full WP3 is INCOMPLETE. No runtime qualification, execution activation or release approval is claimed.
+
+## 15. B3 post-merge lifecycle record (2026-11-27)
+
+- PO authority: `OD-R1-STAGE5-WP3-B-NEXT-3-MERGE` and `OD-R1-STAGE5-WP3-B-NEXT-3-CLOSURE` APPROVED.
+- [PR #288](https://github.com/TarasovArtem/qa-ai-agent/pull/288): bounded B3 test/documentation scope MERGED / POST-MERGE CERTIFIED. Reviewed HEAD `d34737ba20aa1720275d247c10a0cedf5d1b20a0`, TREE `de919d83350ba8e9bcee92186a776ee938324b9b`.
+- Supplied exact-head Architecture and HEAVY defensive Security verdicts APPROVED; AC-B3-01..10 accepted; no confirmed findings. A8 compliance accepted for bounded B3 only; no risk waiver or final qualification.
+- Exact-head [PR CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46044273049) 7/7 SUCCESS. Merge `7d726b6b0c8d7d709a121f2ac2588e835de5aa8a`, STANDARD_TWO_PARENT; parents `ecec4ef5cb20c3bdee900d03c0f5eea6917e667c` and reviewed HEAD; merge TREE equals reviewed TREE. Fresh automatic [push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46046420379) on exact merge SHA/main, 7/7 SUCCESS. GitHub identities and CI verified by PM.
+- Accepted reported WSL and Debian builds and 107/107 tests and bounded robustness evidence; no Rust job in repository CI, no independent rerun. Finite campaigns do not establish exhaustive assurance or runtime qualification.
+- D-10 remains PARTIAL: final method/evidence disposition and WP8 CI integration remain outstanding. L1 remains OPEN; runtime and qualification obligations preserved. All other deferred requirements retain existing dispositions. Full WP3 INCOMPLETE; further implementation requires separate authority; WP4–WP9 NOT AUTHORIZED. Execute DISABLED; TPR SUSPENDED / NOT RELEASED; Issue #199 OPEN; WIP = 1 during closure.
