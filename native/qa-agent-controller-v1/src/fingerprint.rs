@@ -75,9 +75,8 @@ pub enum TreeProfile {
     PlaywrightRoot,
     /// The qualified browser directory (A2.3), digest domain execution-browser-tree.
     ///
-    /// A2.3 raises only the file-count and total limits; the per-file limit
-    /// is kept at the unchanged 16 MiB, fail-closed. Whether a real Chromium
-    /// tree fits it is open question OQ-2 (see `WP3A-EVIDENCE.md`).
+    /// A2.3 raises the file-count and total limits, and its OQ-2 amendment
+    /// (R1 amendment §20) sets the per-file limit to 512 MiB for this tree only.
     BrowserTree,
     /// An enrolled `cypress` root (amendment A1 keeps the literal while R1
     /// defers Cypress). Amendment A2 defines no Cypress file set, so paths
@@ -100,7 +99,7 @@ impl TreeProfile {
             },
             TreeProfile::BrowserTree => TreeLimits {
                 max_files: 16_384,
-                max_file_bytes: 16_777_216,
+                max_file_bytes: 536_870_912,
                 max_total_bytes: 1_073_741_824,
                 max_path_bytes: 300,
             },
