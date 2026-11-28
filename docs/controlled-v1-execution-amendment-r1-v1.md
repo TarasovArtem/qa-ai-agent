@@ -915,3 +915,11 @@ Everything else is unchanged: every other limit, the root tree, digests and gold
 
 - **PQ-OQ2-1 (performance qualification, WP7).** On the qualified tuple, measure browser-tree and `nativeSha256` hashing time, cold and warm. Show that P1 (A) and P1S (S) are met with margin, including the §5.5, §5.6 and A2.1 work in the same phase. Record peak broker memory.
 - **Not changed or claimed here:** D-01 live walk (B4), L1, D-10, OQ-1, RQ-7, L5, L6, K-1, Q1–Q7 and every other deferred requirement; no runtime qualification; Execute DISABLED.
+
+## 21. OQ-2 normative amendment lifecycle record (2026-11-28)
+
+- PO authority: `OD-R1-STAGE5-OQ2-AMENDMENT-MERGE` and `OD-R1-STAGE5-OQ2-AMENDMENT-CLOSURE` APPROVED.
+- [PR #290](https://github.com/TarasovArtem/qa-ai-agent/pull/290): documentation-only normative gate MERGED / POST-MERGE CERTIFIED. Reviewed HEAD `239e462103dc207c116c05b245510245e723b50a`, TREE `919216697a1a6ceb217da418d48768db6b4c8b81`.
+- Supplied exact-head Architecture and HEAVY defensive Security verdicts APPROVED, AC-OQ2-01..04 and 08 accepted for the normative gate only; no confirmed findings. This supersedes the candidate status in §20; no measured performance or runtime assurance is claimed.
+- Exact-head [PR CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46136511244) 7/7 SUCCESS. Merge `21b6cf1af453163fa6ea2aafcea3baaf84a0ef68`, STANDARD_TWO_PARENT; parents `2848543708b25d1428908e0765bb9f813de40baf` and reviewed HEAD; merge TREE equals reviewed TREE. Fresh automatic [push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46137785534) on exact merge SHA/main, 7/7 SUCCESS. GitHub identities and CI verified by PM.
+- AC-OQ2-05..06 portable implementation, AC-OQ2-07 B4 runtime streaming, and PQ-OQ2-1 WP7 qualification remain OPEN. OQ-2 overall OPEN. All other deferred requirements remain unchanged. Full WP3 INCOMPLETE; B4 implementation NOT AUTHORIZED; execute DISABLED; Issue #199 OPEN; WIP = 1 during closure.
