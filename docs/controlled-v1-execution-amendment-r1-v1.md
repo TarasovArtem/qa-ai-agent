@@ -276,7 +276,7 @@ Design-time measurement (PW-PILOT-1 install of Playwright 1.63.0): 187 files, 18
   - compares the request `bindingDigest` with its own reconstruction; a mismatch → REFUSED/INPUT_MISMATCH 4;
   - repeats both in P1S; a mismatch there → PRESUBMIT_FAILURE 7 (consumed), as in §6.4.
 
-**A2.3** Inside `frameworkProfiles`, `browserSha256` is defined as the same `od06-files-v1` digest computed over the qualified browser directory `browserPath`, which is root-owned and outside the root. It uses the domain `qa-ai-agent:execution-browser-tree:v1:`. The limits are raised for this tree only: ≤16384 files, ≤1 GiB total, measured at qualification.
+**A2.3** Inside `frameworkProfiles`, `browserSha256` is defined as the same `od06-files-v1` digest computed over the qualified browser directory `browserPath`, which is root-owned and outside the root. It uses the domain `qa-ai-agent:execution-browser-tree:v1:`. The limits are raised for this tree only: ≤16384 files, ≤512 MiB (536,870,912 bytes) per file, ≤1 GiB total, measured at qualification (OQ-2, §20). Every other A2.1 and OD-06 §8.2 rule applies to this tree unchanged. The A2.1 file set F keeps ≤4096 files, ≤16 MiB per file and ≤64 MiB total.
 
 `browserVersion` is the Playwright browser revision string (for example `chromium-1243`).
 
@@ -867,3 +867,51 @@ Under `OD-R1-STAGE5-WP3-B-NEXT-2-CLOSURE`, B2 portable execution binding and roo
 ## 19. WP3-B B3 lifecycle overlay (2026-11-27)
 
 Under `OD-R1-STAGE5-WP3-B-NEXT-3-CLOSURE`, the bounded B3 parser robustness evidence is MERGED / POST-MERGE CERTIFIED ([PR #288](https://github.com/TarasovArtem/qa-ai-agent/pull/288), merge `7d726b6b0c8d7d709a121f2ac2588e835de5aa8a`, [automatic push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46046420379), 7/7 SUCCESS). See [B3 lifecycle evidence](../native/qa-agent-controller-v1/WP3B-EVIDENCE.md#15-b3-post-merge-lifecycle-record-2026-11-27). D-10 PARTIAL; L1 OPEN; no waiver or runtime qualification. Full WP3 remains INCOMPLETE; all other deferred requirements retain existing dispositions. Further implementation requires separate PO authority; WP4–WP9 NOT AUTHORIZED. Execute DISABLED; R1 NOT RELEASE READY / NOT APPROVED; TPR SUSPENDED / NOT RELEASED; Issue #199 OPEN; WIP = 1 during closure.
+
+## 20. OQ-2 amendment: A2.3 browser-tree per-file limit (candidate)
+
+| Item | Value |
+|---|---|
+| Authority | `OD-R1-STAGE5-OQ2-AMENDMENT` and `OD-R1-STAGE5-WP3-B-NEXT-4-DESIGN-FINAL` (APPROVED) |
+| Status | **Candidate for PM assessment.** Normative once merged under separate delivery authority. No implementation, qualification or execute change |
+| Question | OQ-2 (`WP3A-EVIDENCE.md`): A2.3 raised only the browser tree's file count and total. The unchanged 16 MiB per-file limit cannot hold the qualified Chromium executable, so `browserSha256` was unreachable as written |
+| Evidence | Read-only measurement recorded in WP3-A: Chromium build 1243 has 305 files and 410,251,304 bytes; the largest file, `chrome-linux64/chrome`, is 293,285,184 bytes. The A2.1 file set measures 187 files and 18,576,425 bytes |
+
+### 20.1 Normative delta
+
+- **A2.3 browser tree only.** A per-file limit of ≤536,870,912 bytes (512 MiB) is added, about 1.83× the measured executable.
+- **Unchanged:** the file count (≤16384), the total (≤1,073,741,824 bytes) and the measurement at qualification.
+- **No other change:**
+  - the domain `qa-ai-agent:execution-browser-tree:v1:` and the `od06-files-v1` algorithm;
+  - the entry form `{path, sha256, size}`, canonical byte order and digest;
+  - the walk and refusal rules (descriptor-anchored, no-follow, no mount crossing; refusal of symlinks, FIFOs, sockets, devices, hard links, mount roots and PPI-1 segment violations);
+  - admission of count, path, per-file and total limits before any byte is hashed;
+  - the A2.1 file set limits (≤4096 files, ≤16 MiB per file, ≤64 MiB total);
+  - OD-06 §8.2.
+- **Not taken:**
+  - keeping 16 MiB, under which R1 Playwright can never qualify;
+  - binding the executable through a separate digest, which would mean a new field and domain.
+
+### 20.2 Resource budget
+
+| Resource | Bound under the amendment | Requirement and assessment |
+|---|---|---|
+| Memory | Independent of file size | Implementations hash file contents incrementally with a fixed buffer (≤1 MiB) and never hold a whole file in memory. The entry list is ≤16384 entries of at most 300-byte paths, and its canonical encoding is a few MiB, so memory is bounded at tens of MiB in the worst case. The portable in-memory `compute` helper is for fixtures only and is not a runtime path for this tree |
+| CPU | ≤1 GiB hashed per browser-tree pass (measured tree about 0.41 GB). `nativeSha256` (A2.3) additionally hashes the executable inside this tree (measured about 0.29 GB, bounded by the per-file limit) | Software SHA-256 cost is linear in bytes. For planning only (not measured): about 1–2 s per pass for the measured tree, and about 2–5 s for a worst-case 1 GiB tree, at 200–500 MB/s |
+| I/O | Sequential read-only, ≤1 GiB per pass | No new storage or writes. Cold-cache read time depends on the qualified disk and is unmeasured. The measured tree fits the R1 VM page cache (2 GiB RAM); a worst-case tree may not |
+| Time budgets (OD-06 §6) | P1 A = 120,000 ms; P1S S = 30,000 ms (unchanged) | Planning estimates fit both, but nothing is proven. Exhausting a budget stays fail-closed: P1 refuses (RECOVERY_BUDGET_EXHAUSTED, exit 5) and P1S consumes the attempt as PRESUBMIT_FAILURE (exit 7) with nothing sent. A slow host costs availability, never integrity |
+
+### 20.3 Proposed implementation delta (separately authorized; not applied)
+
+| File | Change |
+|---|---|
+| `native/qa-agent-controller-v1/src/fingerprint.rs` | `TreeProfile::BrowserTree` per-file limit `16_777_216` → `536_870_912`; the doc comment drops the OQ-2 fail-closed note. No other line |
+| `native/qa-agent-controller-v1/tests/fingerprint.rs` | `browser_tree_profile`: the single per-file boundary assertion moves from 16,777,217 to 536,870,913 refused, with 536,870,912 accepted (metadata-only entries, no allocation). The browser-tree total and count assertions are unchanged |
+| `native/qa-agent-controller-v1/WP3A-EVIDENCE.md` | The OQ-2 row records the disposition by reference to this section |
+
+Everything else is unchanged: every other limit, the root tree, digests and golden vectors (no vector contains a browser-tree entry above 16 MiB), and dependencies. B4 consumes the merged constant and streams browser-tree hashing; it does not edit the portable crate (B4 design C1).
+
+### 20.4 Outstanding
+
+- **PQ-OQ2-1 (performance qualification, WP7).** On the qualified tuple, measure browser-tree and `nativeSha256` hashing time, cold and warm. Show that P1 (A) and P1S (S) are met with margin, including the §5.5, §5.6 and A2.1 work in the same phase. Record peak broker memory.
+- **Not changed or claimed here:** D-01 live walk (B4), L1, D-10, OQ-1, RQ-7, L5, L6, K-1, Q1–Q7 and every other deferred requirement; no runtime qualification; Execute DISABLED.
