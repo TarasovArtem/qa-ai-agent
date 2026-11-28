@@ -149,3 +149,7 @@ Supersedes the historical WP2 suspension and D-14 compilation gap above. Under O
 ## 12. WP3-B limited readiness acceptance (2026-11-27)
 
 Under OD-R1-STAGE5-WP3-B-ACCEPTANCE-1 the PO accepted NO_CHANGES_REQUIRED and AC-3B-01..10 for the limited development-readiness assessment. Existing 65/65 tests and Debian Rust 1.85.1 compilation evidence were reused on reported byte-identical implementation inputs; no tests rerun and no source changes. See [canonical WP3-B acceptance record](../../docs/controlled-v1-execution-amendment-r1-v1.md#16-wp3-b-limited-readiness-acceptance-2026-11-27). This supersedes historical WP3-B authorization status above, not the outstanding requirements. Full WP3 remains INCOMPLETE; further implementation requires separate PO authority. All open obligations preserved; WP4–WP9 NOT AUTHORIZED; execute DISABLED.
+
+## 13. OQ-2 portable gate lifecycle overlay (2026-11-28)
+
+Under `OD-R1-STAGE5-OQ2-PORTABLE-CLOSURE`, the bounded portable gate is MERGED / POST-MERGE CERTIFIED ([PR #292](https://github.com/TarasovArtem/qa-ai-agent/pull/292), merge `81abe56d76b6f8c9f200ec8b4b57790ef993ab5f`, [automatic push CI](https://github.com/TarasovArtem/qa-ai-agent/actions/runs/46144747686), 7/7 SUCCESS). See [canonical lifecycle record](../../docs/controlled-v1-execution-amendment-r1-v1.md#22-oq-2-portable-implementation-lifecycle-record-2026-11-28). OQ-2 overall remains OPEN; AC-OQ2-07 and PQ-OQ2-1 remain OPEN. No runtime or qualification claim. All other deferred obligations preserved; execute DISABLED.
