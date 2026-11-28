@@ -173,8 +173,11 @@ fn browser_tree_profile() {
         "FINGERPRINT_PATH"
     );
     assert_eq!(compute(TreeProfile::BrowserTree, &[(".hidden", &b""[..])]).unwrap_err().code, "FINGERPRINT_PATH");
-    // A2.3 raises count/total only; the per-file limit stays 16 MiB (OQ-2).
-    let big = vec![fake("chrome-linux/chrome".into(), 16_777_217)];
+    // OQ-2 amendment (R1 amendment §20): the browser per-file limit is 512 MiB.
+    // Metadata-only entries; nothing is allocated or hashed.
+    let at = vec![fake("chrome-linux/chrome".into(), 536_870_912)];
+    assert!(validate_entries(TreeProfile::BrowserTree, &at).is_ok());
+    let big = vec![fake("chrome-linux/chrome".into(), 536_870_913)];
     assert_eq!(validate_entries(TreeProfile::BrowserTree, &big).unwrap_err().code, "FINGERPRINT_FILE_TOO_LARGE");
     let many: Vec<FileEntry> = (0..16_384).map(|i| fake(format!("f{i:05}"), 0)).collect();
     assert!(validate_entries(TreeProfile::BrowserTree, &many).is_ok());
